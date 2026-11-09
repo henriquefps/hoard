@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+*.local
+*.log
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+# Android build output and signing material (keystores live in skv, never in the repo)
+android/app/build
+android/build
+android/.gradle
+android/local.properties
+*.jks
+*.keystore
+keystore.properties
