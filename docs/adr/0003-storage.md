@@ -36,6 +36,14 @@ Schema (v1), ids are TEXT UUIDs created by the app and shared with the native pl
 | `transfers`         | id, machine_id → machines (cascade), share, remote_path, dest_tree_uri, dest_name, dest_uri, size, bytes_done, state, error_code, error, created_at, finished_at |
 | `settings`          | key, value (JSON)                                                                                                                                                |
 
+Known `settings` keys (no migration needed, the table is key/value; validated with defaults in
+`src/features/settings/settings.ts`): `showHiddenFiles`, `defaultSort` (`{ key, direction }`),
+`defaultConflict`, `lastDestination` (the SAF tree used for the last download), `probeTimeoutMs`,
+`onboarded`, and in the browser build `demoSeeded` / `worstCaseSeeded`.
+
+The transfer service writes progress to `transfers` at most once a second per job (plus every
+state change); speed and the active host live only in memory, fed by `transferProgress`.
+
 **Passwords never touch SQLite, localStorage or any JS-side storage.** `HoardSmb.setCredentials`
 sends the password once to native code, which encrypts it with an AES-GCM key held in the
 **Android Keystore** (non-exportable) and keeps only the ciphertext in app-private storage. No

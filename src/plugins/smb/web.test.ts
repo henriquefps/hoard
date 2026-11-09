@@ -189,4 +189,57 @@ describe("HoardSmbWeb", () => {
     await smb.cancelTransfer({ transferId: "t2" })
     expect((await smb.getTransfers()).transfers[0].state).toBe("cancelled")
   })
+
+  it("fails a 'broken' transfer for good mid-way (no address left)", async () => {
+    const folder = await smb.pickDestinationFolder()
+    const events: TransferProgressEvent[] = []
+    await smb.addListener("transferProgress", (e) => events.push(e))
+    await smb.startDownload({
+      transferId: "t3",
+      machineId: "worst-lab",
+      addresses: [{ host: "192.168.1.77" }],
+      expectedServerGuid: MOCK_SERVERS.lab.guid,
+      share: "Arquivo morto — 2019–2026 (não apagar)",
+      remotePath: "broken-transfer-demo.iso",
+      destTreeUri: folder.uri,
+      conflict: "overwrite",
+    })
+    for (let i = 0; i < 200 && events.at(-1)?.state !== "failed"; i++) {
+      await new Promise((r) => setTimeout(r, 2))
+    }
+    const last = events.at(-1)!
+    expect(last.state).toBe("failed")
+    expect(last.error?.code).toBe("UNREACHABLE")
+    expect(last.bytesDone).toBeGreaterThan(0)
+    expect(last.bytesDone).toBeLessThan(last.totalBytes)
+  })
+
+  it("lists the 5,000-entry worst-case folder", async () => {
+    const { sessionId } = await smb.connect({ machineId: "worst-lab", host: "192.168.1.77" })
+    const { entries } = await smb.list({
+      sessionId,
+      share: "Arquivo morto — 2019–2026 (não apagar)",
+      path: "5000 itens",
+    })
+    expect(entries).toHaveLength(5000)
+    expect(entries.some((e) => e.modifiedAt === null)).toBe(true)
+  })
+
+  it("simulates leaving home and going offline, emitting networkChanged", async () => {
+    const changes: unknown[] = []
+    await smb.addListener("networkChanged", (e) => changes.push(e))
+    try {
+      smb.simulateNetwork("away")
+      expect((await smb.probe({ host: "192.168.1.155", timeoutMs: 10 })).reachable).toBe(false)
+      expect((await smb.probe({ host: "100.101.12.34" })).reachable).toBe(true)
+      smb.simulateNetwork("offline")
+      expect((await smb.probe({ host: "100.101.12.34" })).reachable).toBe(false)
+      expect(changes).toEqual([
+        { transport: "cellular", vpn: true },
+        { transport: "none", vpn: false },
+      ])
+    } finally {
+      smb.simulateNetwork("home")
+    }
+  })
 })

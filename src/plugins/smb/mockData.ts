@@ -11,6 +11,9 @@
  *  - office-pc: local address unreachable (other network), reached through a public name; it rejects
  *    the demo password (AUTH_FAILED) until the user saves the password "office".
  *  - 192.168.0.10 is somebody else's server: answers on 445 with a different GUID (GUID_MISMATCH).
+ *  - lab (worst-case pass, seeded from Settings → Developer in the browser only): a folder with 5,000
+ *    entries, unicode and very long names, a 1.4 TiB image, zero-byte files, missing dates, an empty
+ *    share, a transfer that fails mid-way with no address left ("broken"), and 20 machines.
  */
 
 export interface MockFile {
@@ -86,6 +89,36 @@ const photos = (prefix: string, count: number, startDay: number): MockFile[] =>
       startDay + i
     )
   )
+
+const TiB = 1024 * GiB
+
+/** Plausible worst-case names (break-ui pass): long, unicode, RTL, emoji, one letter, dots. */
+const WORST_NAMES = [
+  "Relatório financeiro consolidado do terceiro trimestre — versão revisada pela diretoria (FINAL) (2).xlsx",
+  "مستندات العقد النهائي.pdf",
+  "提案書_最終版_修正済み_2026年11月.docx",
+  "🎉 Festa de aniversário da Jo 🎂.mp4",
+  "x",
+  "Ølstue på Nørrebro – billeder.jpg",
+  "IMG_20261108_235959_HDR_PORTRAIT_NIGHT_MODE_EDITED_COPY_COPY.jpg",
+  "a.b.c.d.e.tar.gz",
+  "no-extension-at-all",
+  "Ψηφιακό αρχείο.txt",
+]
+
+/** 5,000 entries: 300 folders, then files of every kind (deterministic). */
+const fiveThousand: MockFile[] = Array.from({ length: 5000 }, (_, i) => {
+  if (i < 300) return dir(`Pasta ${String(i + 1).padStart(3, "0")}`, [])
+  const kinds = ["jpg", "jpg", "jpg", "png", "mp4", "pdf", "docx", "flac", "zip", "txt", "heic"]
+  const ext = kinds[i % kinds.length]
+  const name =
+    i % 97 === 0
+      ? WORST_NAMES[((i / 97) % WORST_NAMES.length) | 0]
+      : `${ext === "jpg" || ext === "heic" ? "IMG" : "file"}_${String(i).padStart(5, "0")}.${ext}`
+  return file(name, i % 211 === 0 ? 0 : 40 * KiB + ((i * 7919) % (60 * MiB)), i % 900, {
+    modifiedAt: i % 53 === 0 ? undefined : day(i % 900),
+  })
+})
 
 const manyFiles = Array.from({ length: 1284 }, (_, i) =>
   file(
@@ -211,6 +244,34 @@ export const MOCK_SERVERS = {
       },
     ],
   },
+  lab: {
+    guid: "3b0f7c2a-55e1-4d0c-9a9e-6c1d2e3f4a5b",
+    serverName: "ARQUIVO-ESCRITORIO-2ANDAR",
+    dialect: "SMB_3_1_1",
+    passwords: ["demo"],
+    shares: [
+      {
+        name: "Arquivo morto — 2019–2026 (não apagar)",
+        comment:
+          "Documentos antigos do escritório; peça acesso à Aleksandra Wiśniewska-Kowalczyk antes de mexer",
+        root: [
+          dir("5000 itens", fiveThousand),
+          dir("Pasta vazia", []),
+          ...WORST_NAMES.map((name, i) => file(name, (i + 1) * 3.3 * MiB, i)),
+          file("disk-image-full-backup-2026.img", 1.4 * TiB, 1),
+          file("broken-transfer-demo.iso", 900 * MiB, 1),
+          file("empty.txt", 0, 0),
+          file("undated.bin", 12 * KiB, 0, { modifiedAt: undefined }),
+        ],
+      },
+      {
+        name: "共有フォルダ",
+        comment: "日本チームの共有",
+        root: [dir("写真", photos("写真", 6, 3))],
+      },
+      { name: "x", root: [] },
+    ],
+  },
   neighbor: {
     guid: "ffffffff-0000-4000-8000-000000000001",
     serverName: "SOMEONE-ELSES-NAS",
@@ -233,6 +294,8 @@ export const MOCK_ROUTES: Record<string, MockRoute> = {
   "10.0.0.40": { serverKey: null, latencyMs: 0, failure: "timeout" },
   "office.example.com": { serverKey: "office", latencyMs: 160 },
   "192.168.0.10": { serverKey: "neighbor", latencyMs: 10 },
+  "192.168.1.77": { serverKey: "lab", latencyMs: 25 },
+  "100.70.1.77": { serverKey: "lab", latencyMs: 95 },
 }
 
 /** Default "refused" behavior for unknown hosts. */
@@ -282,10 +345,61 @@ export const DEMO_MACHINES = [
   },
 ] as const
 
+/**
+ * Worst-case machines (dev only, Settings → Developer): one reachable server with absurd data plus
+ * enough unreachable ones to make 20 machines. Their credentials are "demo" like the others.
+ */
+export const WORST_CASE_MACHINES = [
+  {
+    id: "worst-lab",
+    name: "Servidor de arquivos do escritório da Aleksandra Wiśniewska-Kowalczyk (2º andar)",
+    icon: "hard-drives",
+    color: "amber",
+    username: "aleksandra.wisniewska-kowalczyk@northwind-industries-holdings.example.com",
+    domain: "NORTHWIND",
+    addresses: ["192.168.1.77", "100.70.1.77", "arquivo-escritorio-segundo-andar.tail1234.ts.net"],
+    favorites: [
+      { share: "Arquivo morto — 2019–2026 (não apagar)", path: "5000 itens", label: "5000 itens" },
+    ],
+  },
+  ...[
+    "X",
+    "Jo",
+    "Raspberry Pi 5 (garagem)",
+    "サーバー",
+    "خادم الملفات",
+    "media-server-01.home.arpa",
+    "Mac mini da sala de reuniões do terceiro andar, perto da copa",
+    "NAS",
+    "backup-offsite-hetzner-storagebox-bx11",
+    "Ølstue NAS",
+    "PC do Jo 🎮",
+    "Synology DS920+",
+    "TrueNAS Scale",
+    "windows-11-vm",
+    "old-laptop",
+    "Câmera de segurança (NVR)",
+    "printer-scan-folder",
+  ].map((name, i) => ({
+    id: `worst-${i}`,
+    name,
+    icon: ["desktop", "laptop", "cloud", "house", "desktop-tower", "hard-drives"][i % 6],
+    color: ["blue", "violet", "rose", "green", "amber", "teal", null][i % 7],
+    username: i % 2 ? "admin" : "j",
+    domain: null,
+    addresses:
+      i === 2
+        ? ["192.168.50.2", "192.168.50.3", "10.8.0.2", "100.64.0.9", "nas.local", "203.0.113.40"]
+        : [`192.168.9.${i + 10}`, ...(i % 3 ? [`100.99.0.${i}`] : [])],
+    favorites: [] as { share: string; path: string; label: string }[],
+  })),
+]
+
 /** Credentials the mock pretends are already in the Keystore for the demo machines. */
 export const DEMO_PASSWORDS: Record<string, string> = {
   "demo-cachyos-fps": "demo",
   "demo-nas-sala": "demo",
   // Wrong on purpose: connecting to Office PC fails with AUTH_FAILED until "office" is saved.
   "demo-office-pc": "demo",
+  "worst-lab": "demo",
 }

@@ -25,15 +25,15 @@ export function MachinesPage() {
         </Button>
       }
     >
-      <div className="@container">
-        {machines === undefined ? (
-          <Skeleton className="h-14 w-full" />
-        ) : machines.length === 0 ? (
-          <MachinesEmpty />
-        ) : (
+      {machines === undefined ? (
+        <Skeleton className="h-16 w-full" />
+      ) : machines.length === 0 ? (
+        <MachinesEmpty />
+      ) : (
+        <div className="-mx-4 -my-4 md:-mx-6 md:-my-6">
           <MachineList machines={machines} />
-        )}
-      </div>
+        </div>
+      )}
     </Page>
   )
 }

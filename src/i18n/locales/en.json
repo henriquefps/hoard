@@ -11,21 +11,42 @@
     "settings": "Settings",
     "main": "Navigation",
     "openMenu": "Open menu",
-    "noFavorites": "Pinned folders show up here."
+    "noFavorites": "Pinned folders show up here.",
+    "noMachines": "No machines yet."
   },
   "common": {
     "back": "Back",
     "backTo": "Back to {{name}}",
-    "comingSoon": "Coming soon",
     "more": "More actions",
     "edit": "Edit",
-    "browse": "Browse"
+    "browse": "Browse",
+    "cancel": "Cancel",
+    "save": "Save",
+    "create": "Create",
+    "delete": "Delete",
+    "done": "Done",
+    "retry": "Try again",
+    "moveUp": "Move {{name}} up",
+    "moveDown": "Move {{name}} down",
+    "moveUpShort": "Move up",
+    "moveDownShort": "Move down"
   },
   "home": {
     "favorites": "Favorites",
     "machines": "Machines",
     "favoritesEmptyTitle": "No favorites yet",
-    "favoritesEmptyBody": "Pin a folder while browsing and it shows up here, reachable from wherever you are."
+    "favoritesEmptyBody": "Pin a folder while browsing (the star at the top) and it shows up here, reachable from wherever you are."
+  },
+  "onboarding": {
+    "title": "Your files, from any network",
+    "body": "Hoard opens the shared folders of your computers and NAS boxes over SMB, at home or away through Tailscale.",
+    "step1Title": "Add a machine once",
+    "step1Body": "Give it every address it answers on: its local IP, its Tailscale IP or name.",
+    "step2Title": "Hoard picks the route",
+    "step2Body": "It tries them all and uses the one that works right now, and checks it is really your machine before sending the password.",
+    "step3Title": "Browse, pin and copy",
+    "step3Body": "Open files, pin favorite folders and copy files to the phone in the background.",
+    "cta": "Add your first machine"
   },
   "machines": {
     "title": "Machines",
@@ -37,25 +58,367 @@
     "emptyBody": "Add a machine once with every address it answers on: local network, Tailscale or a host name.",
     "addressCount_one": "{{count}} address",
     "addressCount_other": "{{count}} addresses",
-    "formPlaceholderTitle": "Machine form",
-    "formPlaceholderBody": "Name, credentials and the ordered list of addresses go here.",
-    "notFound": "This machine no longer exists."
+    "notFound": "This machine no longer exists.",
+    "actionsFor": "Actions for {{name}}",
+    "columns": {
+      "name": "Name",
+      "route": "Route in use",
+      "addresses": "Addresses"
+    },
+    "icons": {
+      "desktop-tower": "Tower",
+      "desktop": "Desktop",
+      "laptop": "Laptop",
+      "hard-drives": "NAS",
+      "cloud": "Cloud",
+      "house": "House",
+      "monitor-play": "Media center",
+      "cpu": "Mini PC"
+    },
+    "colors": {
+      "blue": "Blue",
+      "violet": "Violet",
+      "rose": "Rose",
+      "green": "Green",
+      "amber": "Amber",
+      "teal": "Teal",
+      "slate": "Slate"
+    },
+    "form": {
+      "machine": "Machine",
+      "name": "Name",
+      "namePlaceholder": "e.g. Living room NAS",
+      "icon": "Icon",
+      "color": "Color",
+      "addresses": "Addresses",
+      "addressesHint": "Hoard tries them in this order and uses the first that answers. Local addresses go first, then Tailscale, then the rest; drag to change.",
+      "hostPlaceholder": "192.168.1.20 or nas.local",
+      "hostLabel": "Address {{index}}",
+      "portLabel": "Port of address {{index}} (default 445)",
+      "removeAddress": "Remove {{host}}",
+      "emptyAddress": "empty address",
+      "addAddress": "Add address",
+      "sortByKind": "Sort local first",
+      "signIn": "Sign in",
+      "signInHint": "The password is stored encrypted on this device (Android Keystore) and never shown again.",
+      "username": "User name",
+      "password": "Password",
+      "passwordKeep": "Saved (leave empty to keep it)",
+      "passwordSaved": "A password is saved for this machine.",
+      "passwordHint": "Required to connect.",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
+      "domain": "Domain or workgroup (optional)",
+      "domainPlaceholder": "WORKGROUP",
+      "create": "Add machine",
+      "created": "Machine added",
+      "saved": "Changes saved",
+      "errors": {
+        "name": "Give the machine a name.",
+        "username": "Enter the user name.",
+        "password": "Enter the password.",
+        "passwordForUser": "Enter the password again to change the user name or domain.",
+        "addresses": "Add at least one address.",
+        "host": "This is not a valid address.",
+        "port": "The port must be between 1 and 65535.",
+        "duplicate": "This address is already in the list."
+      }
+    },
+    "discover": {
+      "title": "Found on this network",
+      "hint": "Tap one to fill in its name and address.",
+      "searching": "Looking for SMB servers on this network…",
+      "already": "already added"
+    },
+    "test": {
+      "title": "Test connection",
+      "hint": "Tries every address now and signs in. It uses the password you typed, which is then kept on this device.",
+      "run": "Test connection",
+      "running": "Testing…",
+      "signedIn": "signed in",
+      "signedInTo": "signed in to {{server}}",
+      "sameServer": "same server",
+      "otherServer": "Another server answers here (different identity): Hoard will not use it",
+      "summaryOk_one": "{{count}} of {{total}} addresses works.",
+      "summaryOk_other": "{{count}} of {{total}} addresses work.",
+      "summaryNone": "No address works right now."
+    },
+    "identity": {
+      "title": "Server identity",
+      "body": "On the first connection Hoard remembers the server's ID, so a different computer that happens to use the same address on another network never receives your password.",
+      "pinned": "Pinned",
+      "notPinned": "Not pinned yet",
+      "pinsOnConnect": "Pinned automatically on the next connection",
+      "repin": "Re-pin",
+      "repinTitle": "Forget the server identity?",
+      "repinBody": "Do this only if you reinstalled or replaced this machine's server. Hoard will trust whatever server answers first on these addresses and pin it again.",
+      "repinDone": "Identity cleared. It is pinned again on the next connection."
+    },
+    "delete": {
+      "section": "Delete",
+      "action": "Delete machine",
+      "title": "Delete {{name}}?",
+      "body": "Its saved password, favorites and transfer history are removed from this phone. Files on the machine are not touched.",
+      "done": "{{name}} deleted"
+    }
   },
   "addressKind": {
     "local": "Local",
     "tailscale": "Tailscale",
     "other": "Other"
   },
+  "route": {
+    "checking": "Checking…",
+    "latency": "{{ms}} ms",
+    "inUse": "Connected through {{kind}} ({{host}})",
+    "reachable": "Reachable · {{ms}} ms",
+    "notTried": "not needed",
+    "recheck": "Check again",
+    "problem": {
+      "UNREACHABLE": "Unreachable",
+      "TIMEOUT": "Not answering",
+      "AUTH_FAILED": "Wrong user or password",
+      "GUID_MISMATCH": "Different server",
+      "ACCESS_DENIED": "Access denied",
+      "NOT_FOUND": "Not found",
+      "ALREADY_EXISTS": "Already exists",
+      "NO_SPACE": "Phone storage full",
+      "CANCELLED": "Cancelled",
+      "PERMISSION_REVOKED": "Folder access lost",
+      "NO_APP": "No app to open it",
+      "UNKNOWN": "Something went wrong"
+    }
+  },
+  "errors": {
+    "UNREACHABLE": {
+      "title": "Can't reach this machine",
+      "body": "None of its addresses answered. Check that it is on and that this phone is on the same network or on Tailscale."
+    },
+    "TIMEOUT": {
+      "title": "The machine is not answering",
+      "body": "Every address timed out. It may be asleep, or the network is slow; you can raise the timeout in Settings."
+    },
+    "AUTH_FAILED": {
+      "title": "Wrong user name or password",
+      "body": "The machine answered but did not accept the saved credentials."
+    },
+    "GUID_MISMATCH": {
+      "title": "This is not your machine",
+      "body": "A different server answers on these addresses (you may be on someone else's network). Hoard did not send your password. If you replaced this machine's server, re-pin it in the machine settings."
+    },
+    "ACCESS_DENIED": {
+      "title": "No access",
+      "body": "This account may not open this share or folder."
+    },
+    "NOT_FOUND": {
+      "title": "Not found",
+      "body": "It was moved, renamed or deleted."
+    },
+    "ALREADY_EXISTS": {
+      "title": "That name is taken",
+      "body": "Something with this name already exists here."
+    },
+    "NO_SPACE": {
+      "title": "Not enough space on the phone",
+      "body": "Free some space and try again."
+    },
+    "CANCELLED": {
+      "title": "Cancelled",
+      "body": ""
+    },
+    "PERMISSION_REVOKED": {
+      "title": "Folder access was lost",
+      "body": "Choose the destination folder again."
+    },
+    "NO_APP": {
+      "title": "No app can open this file",
+      "body": ""
+    },
+    "UNKNOWN": {
+      "title": "Something went wrong",
+      "body": "Try again in a moment."
+    },
+    "editCredentials": "Edit credentials",
+    "reviewMachine": "Review machine"
+  },
   "browse": {
     "shares": "Shares",
-    "placeholderTitle": "File browser",
-    "placeholderBody": "Shares, folders and files of this machine will be listed here."
+    "noSharesTitle": "No shares",
+    "noSharesBody": "This account cannot see any shared folder on this machine.",
+    "folder": "Folder",
+    "kind": "Kind",
+    "openFolder": "Open folder {{name}}",
+    "opening": "Opening…",
+    "emptyTitle": "This folder is empty",
+    "emptyBody": "Nothing here yet.",
+    "noMatchesTitle": "No matches",
+    "noMatchesBody": "Nothing in this folder matches the search or filter.",
+    "onlyHidden": "This folder only has hidden files. Turn on “Show hidden files” to see them.",
+    "clearFilters": "Clear search and filter",
+    "toolbar": "Folder tools",
+    "search": "Search in this folder",
+    "clearSearch": "Clear search",
+    "filter": "Show",
+    "filters": {
+      "all": "All",
+      "folders": "Folders",
+      "images": "Images",
+      "videos": "Videos",
+      "audio": "Audio",
+      "documents": "Documents",
+      "archives": "Archives"
+    },
+    "sort": "Sort",
+    "sortBy": "Sort by",
+    "sortKeys": {
+      "name": "Name",
+      "size": "Size",
+      "modified": "Modified"
+    },
+    "directions": {
+      "name": {
+        "asc": "A to Z",
+        "desc": "Z to A"
+      },
+      "size": {
+        "asc": "Smallest first",
+        "desc": "Largest first"
+      },
+      "modified": {
+        "asc": "Oldest first",
+        "desc": "Newest first"
+      }
+    },
+    "newFolder": "New folder",
+    "newFolderDefault": "New folder",
+    "folderName": "Folder name",
+    "folderCreated": "Folder “{{name}}” created",
+    "refresh": "Refresh",
+    "showHidden": "Show hidden files",
+    "rename": "Rename",
+    "newName": "New name",
+    "nameInvalid": "Names can't be empty or contain \\ / : * ? \" < > |",
+    "nameTaken": "Something with this name already exists here.",
+    "download": "Download",
+    "copyPath": "Copy path",
+    "pathCopied": "Path copied",
+    "copyFailed": "Could not copy the path",
+    "actionsFor": "Actions for {{name}}",
+    "select": "Select {{name}}",
+    "selectAll": "Select all",
+    "selectMode": "Select",
+    "selection": "Selection",
+    "clearSelection": "Cancel selection",
+    "selected_one": "{{count}} selected",
+    "selected_other": "{{count}} selected",
+    "count_one": "{{formatted}} item",
+    "count_other": "{{formatted}} items",
+    "deleteOne": "Delete “{{name}}”?",
+    "deleteMany_one": "Delete {{count}} item?",
+    "deleteMany_other": "Delete {{count}} items?",
+    "deleteBody": "It is deleted on the machine, not moved to a recycle bin.",
+    "deleteFolderBody_one": "The folder and everything inside it are deleted on the machine. This can't be undone.",
+    "deleteFolderBody_other": "These {{count}} folders and everything inside them are deleted on the machine. This can't be undone.",
+    "deleted_one": "Deleted",
+    "deleted_other": "{{count}} items deleted",
+    "deleteFailed_one": "{{count}} item could not be deleted",
+    "deleteFailed_other": "{{count}} items could not be deleted",
+    "openError": {
+      "NO_APP": "No app on this phone can open this kind of file",
+      "ACCESS_DENIED": "You don't have access to this file",
+      "NOT_FOUND": "The file is gone",
+      "NO_SPACE": "Not enough space to open it",
+      "UNREACHABLE": "Lost the connection while opening",
+      "TIMEOUT": "Lost the connection while opening",
+      "UNKNOWN": "Could not open the file"
+    }
+  },
+  "fileKind": {
+    "folder": "Folder",
+    "image": "Image",
+    "video": "Video",
+    "audio": "Audio",
+    "document": "Document",
+    "spreadsheet": "Spreadsheet",
+    "pdf": "PDF",
+    "archive": "Archive",
+    "code": "Code",
+    "text": "Text",
+    "other": "File"
+  },
+  "favorites": {
+    "add": "Add to favorites",
+    "remove": "Remove from favorites",
+    "added": "“{{name}}” added to favorites",
+    "removed": "“{{name}}” removed from favorites",
+    "rename": "Rename favorite",
+    "label": "Name",
+    "labelRequired": "Give it a name.",
+    "reorder": "Reorder",
+    "actionsFor": "Actions for {{name}}"
+  },
+  "download": {
+    "titleOne": "Download file",
+    "title_one": "Download {{count}} file",
+    "title_other": "Download {{count}} files",
+    "summary_one": "{{count}} file · {{size}}",
+    "summary_other": "{{count}} files · {{size}}",
+    "foldersSkipped_one": "{{count}} folder is skipped (folders can't be downloaded yet).",
+    "foldersSkipped_other": "{{count}} folders are skipped (folders can't be downloaded yet).",
+    "onlyFolders": "Folders can't be downloaded yet. Open the folder and select its files.",
+    "destination": "Save to",
+    "noFolders": "No folder chosen yet. Hoard asks Android once for each folder it may write to.",
+    "chooseFolder": "Choose folder…",
+    "conflict": "If the file already exists",
+    "start": "Download"
+  },
+  "conflict": {
+    "rename": "Keep both",
+    "renameHint": "Saves the new copy as “name (1)”.",
+    "overwrite": "Replace",
+    "overwriteHint": "Overwrites the file on the phone.",
+    "skip": "Skip",
+    "skipHint": "Leaves the existing file alone."
   },
   "transfers": {
     "title": "Transfers",
     "description": "Copies from your machines to this phone.",
     "emptyTitle": "No transfers",
-    "emptyBody": "Files you copy to the phone show up here with their progress."
+    "emptyBody": "Files you download show up here with their progress. They keep going with the screen off.",
+    "active_one": "Active · {{count}}",
+    "active_other": "Active · {{count}}",
+    "finished": "Finished",
+    "clearFinished": "Clear finished",
+    "more_one": "{{count}} more on the Transfers page",
+    "more_other": "{{count}} more on the Transfers page",
+    "openPage": "Open all transfers",
+    "activeSummary_one": "{{count}} transfer · {{percent}}%",
+    "activeSummary_other": "{{count}} transfers · {{percent}}%",
+    "indicator_one": "{{count}} transfer running, {{percent}}%",
+    "indicator_other": "{{count}} transfers running, {{percent}}%",
+    "indicatorFailed": "A transfer failed",
+    "progress": "{{done}} of {{total}}",
+    "left": "{{time}} left",
+    "progressLabel": "Progress of {{name}}",
+    "retryingHint": "Connection lost. Retrying, then trying the next address…",
+    "unknownMachine": "Deleted machine",
+    "cancel": "Cancel {{name}}",
+    "retry": "Retry {{name}}",
+    "remove": "Remove from history",
+    "view": "View",
+    "started_one": "Download started",
+    "started_other": "{{count}} downloads started",
+    "startFailed_one": "{{count}} download could not start: {{reason}}",
+    "startFailed_other": "{{count}} downloads could not start: {{reason}}",
+    "states": {
+      "queued": "Waiting",
+      "running": "Downloading",
+      "retrying": "Retrying",
+      "completed": "Done",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "skipped": "Skipped"
+    }
   },
   "settings": {
     "title": "Settings",
@@ -63,9 +426,38 @@
     "theme": "Theme",
     "palette": "Color",
     "language": "Language",
+    "browsing": "Browsing",
+    "showHidden": "Show hidden files",
+    "showHiddenHint": "Files and folders starting with a dot or marked hidden on the server.",
+    "defaultSort": "Default sort",
+    "sortDirection": "Sort direction",
+    "foldersFirst": "Folders are always listed before files.",
+    "probeTimeout": "Route check timeout",
+    "probeTimeoutHint": "How long Hoard waits for each address to answer. Raise it on slow networks.",
+    "seconds": "{{value}} s",
+    "default": "default",
+    "downloads": "Downloads",
+    "defaultConflict": "If a downloaded file already exists",
+    "destinations": "Folders Hoard can save to",
+    "destinationsHint": "Android gave Hoard access to these folders. Release one to revoke it.",
+    "lastUsed": "Last used",
+    "release": "Release",
+    "released": "Released access to {{name}}",
     "about": "About",
-    "aboutBody": "Hoard is free and open source software (AGPL-3.0-or-later).",
-    "demoData": "Browser demo: data comes from a simulated SMB network."
+    "aboutBody": "Hoard is free and open source software, licensed under the GNU AGPL 3.0 or later.",
+    "sourceCode": "Source code",
+    "license": "License (AGPL-3.0)",
+    "developer": "Developer (browser only)",
+    "developerHint": "The browser build talks to a simulated SMB network. These switches exist only here.",
+    "network": "Simulated network",
+    "networkHint": "Away: local addresses stop answering, Tailscale still works. Watch the routes switch.",
+    "networks": {
+      "home": "Home Wi-Fi",
+      "away": "Away (Tailscale)",
+      "offline": "Offline"
+    },
+    "worstCase": "Worst-case data",
+    "worstCaseHint": "Adds 18 machines with very long, unicode and one-letter names, a folder with 5,000 entries, a 1.4 TB file and a transfer that fails mid-way."
   },
   "theme": {
     "label": "Theme",

@@ -4,6 +4,8 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/s
 import { Toaster } from "@/components/ui/sonner"
 import { useAndroidBackButton } from "@/hooks/useAndroidBackButton"
 import { useTheme } from "@/lib/theme/theme"
+import { TransfersIndicator } from "@/features/transfers/TransfersIndicator"
+import { TransfersDrawer } from "@/features/transfers/TransfersViews"
 import { AppLogo } from "./AppLogo"
 import { AppSidebar } from "./AppSidebar"
 import { ThemeMenu } from "./ThemeMenu"
@@ -24,6 +26,7 @@ export function AppShell() {
           <SidebarTrigger className="size-9 md:hidden" aria-label={t("nav.openMenu")} />
           <AppLogo />
           <div className="ml-auto flex items-center gap-1">
+            <TransfersIndicator />
             <ThemeMenu />
           </div>
         </header>
@@ -34,7 +37,12 @@ export function AppShell() {
           </SidebarInset>
         </div>
       </SidebarProvider>
-      <Toaster theme={theme} position="bottom-center" />
+      <TransfersDrawer />
+      <Toaster
+        theme={theme}
+        position="bottom-center"
+        mobileOffset={{ bottom: "calc(env(safe-area-inset-bottom) + 1rem)" }}
+      />
     </div>
   )
 }

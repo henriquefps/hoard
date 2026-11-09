@@ -346,3 +346,32 @@
   --bh: 260;
   --bc: 0.02;
 }
+
+/* Machine colors (machines.color): a semantic tint per machine, the same in every palette, with the
+   brand lightness (0.5 light / 0.72 dark) so icon glyphs keep >= 3:1 on their 12% tint and on the
+   card in both modes. light-dark() follows color-scheme, which the theme sets on <html>. No
+   attribute or an unknown id falls back to the palette's primary. */
+[data-machine-color] {
+  --machine: var(--primary);
+}
+[data-machine-color="blue"] {
+  --machine: light-dark(oklch(0.5 0.14 255), oklch(0.72 0.14 255));
+}
+[data-machine-color="violet"] {
+  --machine: light-dark(oklch(0.5 0.17 295), oklch(0.72 0.15 295));
+}
+[data-machine-color="rose"] {
+  --machine: light-dark(oklch(0.52 0.18 360), oklch(0.72 0.16 360));
+}
+[data-machine-color="green"] {
+  --machine: light-dark(oklch(0.5 0.12 150), oklch(0.74 0.14 150));
+}
+[data-machine-color="amber"] {
+  --machine: light-dark(oklch(0.52 0.12 65), oklch(0.78 0.14 75));
+}
+[data-machine-color="teal"] {
+  --machine: light-dark(oklch(0.5 0.09 195), oklch(0.74 0.1 195));
+}
+[data-machine-color="slate"] {
+  --machine: light-dark(oklch(0.45 0.03 250), oklch(0.75 0.03 250));
+}
