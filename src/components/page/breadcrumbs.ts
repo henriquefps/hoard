@@ -115,3 +115,20 @@ export function viewTrail(
   }
   return [...folder, { label: segments.at(-1) }]
 }
+
+/** <folder trail> › Cull: the culled folder links back to the browser (ADR 0008). */
+export function cullTrail(
+  t: TFunction,
+  location: TrailLocation,
+  share: string | undefined,
+  path: string
+): Crumb[] {
+  const folder = browseTrail(t, location, share, path)
+  const current = folder[folder.length - 1]
+  current.link = {
+    to: "/browse/$locationId",
+    params: { locationId: location.id },
+    search: { share, path: path || undefined },
+  }
+  return [...folder, { label: t("cull.title") }]
+}

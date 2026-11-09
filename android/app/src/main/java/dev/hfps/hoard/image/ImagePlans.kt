@@ -2,11 +2,17 @@ package dev.hfps.hoard.image
 
 import dev.hfps.hoard.image.cache.FileIdentity
 import dev.hfps.hoard.image.source.RandomAccessSource
+import java.io.File
 
-/** One file the core can read: its identity (cache key) and how to open it (SMB, local, SAF…). */
+/**
+ * One file the core can read: its identity (cache key) and how to open it (SMB, local, SAF…).
+ * [local] is the file itself when it can be read by path (phone storage, a USB drive with all
+ * files access): decoders and LibRaw then read it in place instead of a staged copy.
+ */
 class ImageFile(
     val identity: FileIdentity,
     val name: String,
+    val local: File? = null,
     val open: () -> RandomAccessSource,
 ) {
     override fun toString() = "ImageFile(${identity.sourceId}:${identity.path})"
@@ -88,6 +94,7 @@ object ImagePlans {
      * image itself, requested directly by the UI).
      */
     fun prefetchWindow(current: Int, count: Int, ahead: Int, behind: Int): List<Pair<Int, Int>> {
+        if (count <= 0 || current !in 0 until count) return emptyList()
         val out = ArrayList<Pair<Int, Int>>()
         var priority = 1
         for (step in 1..maxOf(ahead, behind)) {
@@ -96,4 +103,54 @@ object ImagePlans {
         }
         return out
     }
+}
+
+/** One prefetch request of the culling view: which shot, which step, how urgent. */
+data class PrefetchStep(val index: Int, val step: Step, val priority: Int) {
+    enum class Step { FAST, FINAL, ZOOM }
+}
+
+/** Pure prefetch planning for the culling view (JVM-tested). */
+object CullPlans {
+
+    /**
+     * What to prepare around [current]: the fast screen image of every shot in the window first
+     * (so a swipe always lands on something), then the final images in the same order, then the
+     * 100% sources of the next [zoomAhead] shots. Priorities start at 1 (0 is the shot on screen,
+     * requested directly) and never repeat.
+     */
+    fun prefetch(current: Int, count: Int, ahead: Int, behind: Int, zoomAhead: Int, fastAhead: Int = ahead): List<PrefetchStep> {
+        val window = ImagePlans.prefetchWindow(current, count, ahead, behind).map { it.first }
+        // Fast images (a RAW's ~0.5 MB preview) reach further ahead than final ones (a whole
+        // 5-8 MB camera JPEG), so paging quickly over a slow link still lands on a picture.
+        val fastWindow = ImagePlans.prefetchWindow(current, count, maxOf(ahead, fastAhead), behind).map { it.first }
+        var priority = 1
+        val out = ArrayList<PrefetchStep>()
+        fastWindow.forEach { out += PrefetchStep(it, PrefetchStep.Step.FAST, priority++) }
+        window.forEach { out += PrefetchStep(it, PrefetchStep.Step.FINAL, priority++) }
+        window.filter { it > current && it - current <= zoomAhead }.forEach { out += PrefetchStep(it, PrefetchStep.Step.ZOOM, priority++) }
+        return out
+    }
+
+    /**
+     * Whether an embedded preview can be served as the screen file as it is (no decode, no
+     * re-encode): upright, and not much larger than needed (a 1616 px preview for a 3120 px screen).
+     */
+    fun servePreviewAsIs(orientation: Int, previewLongSide: Int, targetLongSide: Int): Boolean =
+        orientation == 1 && previewLongSide <= targetLongSide * 3 / 2
+
+    /** A tile request clipped to the image; null when it falls outside or is not a valid tile. */
+    fun clipTile(x: Int, y: Int, width: Int, height: Int, sample: Int, imageWidth: Int, imageHeight: Int): IntArray? {
+        if (sample !in setOf(1, 2, 4, 8, 16) || width <= 0 || height <= 0) return null
+        if (width / sample > MAX_TILE_SIDE || height / sample > MAX_TILE_SIDE) return null
+        val left = x.coerceAtLeast(0)
+        val top = y.coerceAtLeast(0)
+        val right = minOf(x + width, imageWidth)
+        val bottom = minOf(y + height, imageHeight)
+        if (right <= left || bottom <= top) return null
+        return intArrayOf(left, top, right - left, bottom - top)
+    }
+
+    /** Longest side of one decoded tile, in output pixels. */
+    const val MAX_TILE_SIDE = 2048
 }

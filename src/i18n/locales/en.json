@@ -29,7 +29,8 @@
     "moveUp": "Move {{name}} up",
     "moveDown": "Move {{name}} down",
     "moveUpShort": "Move up",
-    "moveDownShort": "Move down"
+    "moveDownShort": "Move down",
+    "close": "Close"
   },
   "home": {
     "favorites": "Favorites",
@@ -819,5 +820,142 @@
     "rejectedHint": "Hoard only takes files another app shares from its own storage, not file paths or Hoard's own files.",
     "allRejected_one": "The shared item could not be received: Hoard only takes files another app shares from its own storage.",
     "allRejected_other": "None of the {{count}} shared items could be received: Hoard only takes files another app shares from its own storage."
+  },
+  "cull": {
+    "title": "Cull",
+    "open": "Cull photos",
+    "start": "Start culling",
+    "resume": "Continue",
+    "finish": "Finish",
+    "progress": "{{decided}} of {{total}} decided · {{picked}} picked · {{rejected}} rejected",
+    "progressLabel": "Culling progress",
+    "readingExif": "Reading capture times…",
+    "showing_one": "{{shown}} shot",
+    "showing_other": "{{shown}} shots",
+    "grid": "Shots",
+    "cellLabel": "{{name}}, {{kind}}, {{state}}",
+    "emptyTitle": "No photos here",
+    "emptyBody": "This folder has no RAW, JPEG or HEIF files to cull.",
+    "noMatchTitle": "No shots match",
+    "noMatchBody": "Change the filter to see the other shots.",
+    "saveFailed": "Could not save that decision. Try again.",
+    "pick": "Pick",
+    "reject": "Reject",
+    "undo": "Undo",
+    "rating": "Rating",
+    "stars_one": "{{count}} star",
+    "stars_other": "{{count}} stars",
+    "autoAdvance": "Move to the next shot after a pick or reject",
+    "filmstrip": "Filmstrip",
+    "burst": "Burst, frame {{index}} of {{size}}",
+    "kind": {
+      "pair": "RAW+JPG",
+      "raw": "RAW",
+      "jpeg": "JPG"
+    },
+    "flag": {
+      "picked": "Picked",
+      "rejected": "Rejected",
+      "unmarked": "Not decided"
+    },
+    "filter": {
+      "label": "Show",
+      "stars": "Stars",
+      "all": "All",
+      "picked": "Picked",
+      "rejected": "Rejected",
+      "unmarked": "Not decided",
+      "anyStars": "Any stars",
+      "minStars_one": "{{count}} star or more",
+      "minStars_other": "{{count}} stars or more"
+    },
+    "exif": {
+      "equivalent": "({{value}} equivalent)",
+      "none": "No camera data"
+    },
+    "source": {
+      "screen": {
+        "rawPreview": "Embedded preview",
+        "rendered": "Camera JPEG",
+        "rawHalf": "RAW, half size"
+      },
+      "zoom": {
+        "rendered": "100% from the camera JPEG",
+        "rawPreview": "100% from the embedded full-size JPEG",
+        "rawFull": "100% from the RAW (LibRaw)"
+      }
+    },
+    "viewer": {
+      "title": "Viewing {{name}}",
+      "position": "{{index}} of {{total}}",
+      "info": "Camera data",
+      "imageFailed": "This shot could not be shown.",
+      "renderingRaw": "Rendering the RAW at 100%…",
+      "loadingFull": "Loading 100%…"
+    },
+    "compare": {
+      "open": "Compare",
+      "close": "Back to one shot",
+      "title": "Compare",
+      "previous": "Previous shot on the right",
+      "next": "Next shot on the right",
+      "keep": "Keep",
+      "focus": "Focus {{value}}",
+      "focusHelp": "Focus score (sharpest area). Compare shots of the same burst; higher is sharper."
+    },
+    "copy": {
+      "menu_one": "Copy {{count}} pick to…",
+      "menu_other": "Copy {{count}} picks to…",
+      "title": "Copy picks",
+      "summary_one": "{{shots}} picked shots, {{files}} file, {{size}}",
+      "summary_other": "{{shots}} picked shots, {{files}} files, {{size}}",
+      "destination": "Destination",
+      "destinationHelp": "Any folder on this phone, a USB drive, an SD card or a machine.",
+      "chooseDestination": "Choose a folder",
+      "change": "Change",
+      "lastUsed": "Last used for this source",
+      "files": "Files of each shot",
+      "files_both": "RAW and JPEG",
+      "files_raw": "RAW only",
+      "files_jpeg": "JPEG only",
+      "fallbackRaw_one": "{{count}} pick has no RAW: its JPEG is copied instead.",
+      "fallbackRaw_other": "{{count}} picks have no RAW: their JPEGs are copied instead.",
+      "fallbackJpeg_one": "{{count}} pick has no JPEG: its RAW is copied instead.",
+      "fallbackJpeg_other": "{{count}} picks have no JPEG: their RAWs are copied instead.",
+      "folder": "Folder",
+      "folder_keep": "Into a folder named {{name}}",
+      "folder_new": "Into a new folder",
+      "folder_none": "Straight into the destination",
+      "subfolderName": "Folder name",
+      "noFolders": "No folders here.",
+      "readOnly": "This folder is read-only.",
+      "useFolder": "Use this folder",
+      "start_one": "Copy {{count}} file",
+      "start_other": "Copy {{count}} files",
+      "queued_one": "{{count}} file queued. Progress is in Transfers.",
+      "queued_other": "{{count}} files queued. Progress is in Transfers.",
+      "unavailable": "Copying between locations arrives with the new transfer engine. Your picks and the destination are saved."
+    },
+    "delete": {
+      "menu_one": "Delete {{count}} reject…",
+      "menu_other": "Delete {{count}} rejects…",
+      "readOnly": "Delete rejects (read-only folder)",
+      "title_one": "Delete {{count}} rejected shot?",
+      "title_other": "Delete {{count}} rejected shots?",
+      "body_one": "{{shots}} shots, {{files}} file ({{size}}) {{where}}. A RAW + JPEG pair deletes both files.",
+      "body_other": "{{shots}} shots, {{files}} files ({{size}}) {{where}}. A RAW + JPEG pair deletes both files.",
+      "whereSmb": "on {{name}}",
+      "whereDrive": "on {{name}}",
+      "wherePhone": "on this phone",
+      "permanent": "This is permanent: there is no trash to restore them from.",
+      "confirm_one": "Delete {{count}} file",
+      "confirm_other": "Delete {{count}} files",
+      "deleting": "Deleting…",
+      "done_one": "{{count}} rejected shot deleted.",
+      "done_other": "{{count}} rejected shots deleted.",
+      "refused": "The location refused to delete (read-only).",
+      "partial_one": "{{count}} shot was deleted before it stopped.",
+      "partial_other": "{{count}} shots were deleted before it stopped."
+    }
   }
 }

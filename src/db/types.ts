@@ -111,13 +111,65 @@ export interface RecentDestination {
   treeUri?: string
 }
 
+/** A culled folder: where (same keys as favorites) and the culling session's times (v5, ADR 0008). */
+export interface CullFolderKey {
+  /** Machine id (SMB), `device` or `vol-<uuid>`. */
+  locationId: string
+  /** SMB share; `""` for local locations. */
+  share: string
+  /** Folder inside the share or location root. */
+  path: string
+}
+
+/** Row of `cull_sessions`: one culled folder (started, last visited, where the viewer was). */
+export interface CullSessionRecord {
+  location_id: string
+  share: string
+  path: string
+  started_at: string
+  last_visited_at: string
+  /** Shot id (lowercase stem) last shown in the viewer. */
+  last_shot_id: string | null
+  shot_count: number
+}
+
+/** A culling flag; absent (null) = unmarked. */
+export type CullFlag = "pick" | "reject"
+
+/** Row of `cull_decisions`: a shot that is picked, rejected or rated (others have no row). */
+export interface CullDecisionRecord {
+  location_id: string
+  share: string
+  path: string
+  /** Lowercase stem: a RAW + JPEG pair is one shot. */
+  shot_id: string
+  flag: CullFlag | null
+  /** 0 (none) .. 5 stars. */
+  rating: number
+  updated_at: string
+}
+
+/** Row of `cull_destinations`: the last "Copy picks" destination for a source location. */
+export interface CullDestinationRecord {
+  source_location_id: string
+  source_share: string
+  location_id: string
+  share: string
+  path: string
+  label: string | null
+  /** JSON of the copy options last used (`CopyPicksOptions`). */
+  options: string
+  updated_at: string
+}
+
 /**
  * Known keys of `settings` (values are JSON strings):
  *  - `showHiddenFiles` boolean, `defaultSort` `{ key, direction }`, `defaultConflict` ConflictPolicy,
  *  - `lastDestination` (≤1.3, unused since 1.4), `recentDestinations` RecentDestination[] (the
  *    destination picker's "Recent", newest first), `probeTimeoutMs` number,
  *  - `onboarded` boolean (first-launch hint dismissed), `demoSeeded` / `worstCaseSeeded` (browser),
- *  - `storageIntroSeen` boolean (the all files access screen was shown once, ADR 0005).
+ *  - `storageIntroSeen` boolean (the all files access screen was shown once, ADR 0005),
+ *  - `cullAutoAdvance` boolean (the culling viewer moves on after a pick or reject, ADR 0008).
  */
 export type SettingKey =
   | "language"
@@ -129,5 +181,6 @@ export type SettingKey =
   | "probeTimeoutMs"
   | "onboarded"
   | "storageIntroSeen"
+  | "cullAutoAdvance"
   | "demoSeeded"
   | "worstCaseSeeded"

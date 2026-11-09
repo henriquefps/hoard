@@ -1,6 +1,7 @@
 package dev.hfps.hoard.smb.location
 
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import dev.hfps.hoard.smb.Cancellation
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.FolderListing
@@ -79,6 +80,15 @@ interface LocalFs : HoardFs {
 
     /** Opens [file] for reading (path or SAF). */
     fun openInput(file: LocalFile): InputStream
+
+    /**
+     * The file at [path] as a plain path when this location is read by path ([PathFs]), without
+     * checking that it exists; null for SAF. The image core decodes such files in place.
+     */
+    fun pathFile(path: String): File? = null
+
+    /** A read-only descriptor for random access (the image core's SAF source). */
+    fun openDescriptor(path: String): ParcelFileDescriptor
 }
 
 /** Exceptions from java.io / java.nio / SAF providers → contract codes. */

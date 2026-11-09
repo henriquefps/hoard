@@ -3,6 +3,7 @@ package dev.hfps.hoard.smb.location
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import dev.hfps.hoard.smb.Cancellation
@@ -136,6 +137,10 @@ class SafFs(
 
     override fun openInput(file: LocalFile): InputStream = LocalErrors.guard(file.name) {
         resolver.openInputStream(file.documentUri!!) ?: smbFail(ErrorCode.NOT_FOUND, "${file.name} could not be opened")
+    }
+
+    override fun openDescriptor(path: String): ParcelFileDescriptor = LocalErrors.guard(path) {
+        resolver.openFileDescriptor(documentUri(LocalPaths.normalize(path)), "r") ?: smbFail(ErrorCode.NOT_FOUND, "$path could not be opened")
     }
 
     private fun exists(path: String): Boolean = runCatching { query(documentUri(path)).isNotEmpty() }.getOrDefault(false)

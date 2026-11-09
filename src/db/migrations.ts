@@ -166,6 +166,50 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_transfers_dest_machine ON transfers(dest_machine_id);
     `,
   },
+  {
+    // Photo culling (ADR 0008). A culled folder is keyed like a favorite: location id (machine id,
+    // `device`, `vol-<uuid>`), share ('' for local) and path. Decisions are per shot, keyed by its
+    // lowercase stem (a RAW + JPEG pair is one shot); a row exists only while a shot is picked,
+    // rejected or rated. No foreign keys: local locations are not rows, and deleting a machine
+    // clears its rows in `deleteMachine`. The last destination of "Copy picks" is per source
+    // location (the same card reader, the same NAS share).
+    version: 5,
+    sql: `
+      CREATE TABLE cull_sessions (
+        location_id TEXT NOT NULL,
+        share TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT '',
+        started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        last_visited_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        last_shot_id TEXT,
+        shot_count INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (location_id, share, path)
+      );
+
+      CREATE TABLE cull_decisions (
+        location_id TEXT NOT NULL,
+        share TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT '',
+        shot_id TEXT NOT NULL,
+        flag TEXT CHECK (flag IS NULL OR flag IN ('pick', 'reject')),
+        rating INTEGER NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (location_id, share, path, shot_id)
+      );
+
+      CREATE TABLE cull_destinations (
+        source_location_id TEXT NOT NULL,
+        source_share TEXT NOT NULL DEFAULT '',
+        location_id TEXT NOT NULL,
+        share TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT '',
+        label TEXT,
+        options TEXT NOT NULL DEFAULT '{}',
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (source_location_id, source_share)
+      );
+    `,
+  },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.at(-1)?.version ?? 0

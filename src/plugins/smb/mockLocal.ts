@@ -11,6 +11,7 @@
  * Settings → Developer attaches and detaches them and toggles all files access.
  */
 import type { MockFile } from "./mockData"
+import { longShoot, zvE10Shoot } from "./mockShoot"
 import type { StorageVolumeInfo } from "./definitions"
 
 const MiB = 1024 * 1024
@@ -98,7 +99,12 @@ export function buildDeviceTree(): MockFile[] {
 
 export function buildUsbTree(): MockFile[] {
   return [
-    d("DCIM", [d("100MSDCF", sony(1, 320, true)), d("101MSDCF", sony(1001, 20_000, false))]),
+    d("DCIM", [
+      d("100MSDCF", sony(1, 320, true)),
+      d("101MSDCF", sony(1001, 20_000, false)),
+      d("102MSDCF", zvE10Shoot()),
+      d("103MSDCF", longShoot()),
+    ]),
     d("PRIVATE", [d("M4ROOT", [d("CLIP", []), f("MEDIAPRO.XML", 18_000, 1)])]),
     d(
       "Seleção — viagem a Lisboa e ao Porto, novembro de 2026 (fotos escolhidas para imprimir)",

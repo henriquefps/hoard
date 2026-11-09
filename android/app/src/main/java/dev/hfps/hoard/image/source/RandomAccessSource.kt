@@ -62,12 +62,22 @@ fun RandomAccessSource.copyTo(out: OutputStream, position: Long = 0, length: Lon
     }
 }
 
+/**
+ * A source that copies itself faster than range by range (SMB: several READs in flight instead of
+ * one round trip per chunk). [copyToFile] uses it when present.
+ */
+interface BulkCopySource : RandomAccessSource {
+    fun copyAllTo(out: OutputStream, cancel: CancelToken)
+}
+
 /** Copies the whole source to [target] through a temp file (atomic rename). */
 fun RandomAccessSource.copyToFile(target: File, cancel: CancelToken = CancelToken.NONE) {
     target.parentFile?.mkdirs()
     val temp = File(target.parentFile, ".${target.name}.part")
     try {
-        FileOutputStream(temp).use { copyTo(it, cancel = cancel) }
+        FileOutputStream(temp).use { out ->
+            if (this is BulkCopySource) copyAllTo(out, cancel) else copyTo(out, cancel = cancel)
+        }
         if (!temp.renameTo(target)) throw IOException("Could not move ${temp.name} into place")
     } finally {
         temp.delete()

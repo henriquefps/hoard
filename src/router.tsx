@@ -80,6 +80,25 @@ const viewRoute = createRoute({
   }),
   component: lazyRouteComponent(() => import("@/features/text/TextViewerPage"), "TextViewerPage"),
 })
+export interface CullSearch {
+  share?: string
+  /** The culled folder, `/`-separated inside the share or location. */
+  path?: string
+}
+
+// Photo culling (ADR 0008): its own chunk, like the text viewer.
+const cullRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/cull/$locationId",
+  validateSearch: (search: Record<string, unknown>): CullSearch => ({
+    share: typeof search.share === "string" && search.share ? search.share : undefined,
+    path:
+      typeof search.path === "string" && search.path
+        ? search.path.replace(/^\/+|\/+$/g, "")
+        : undefined,
+  }),
+  component: lazyRouteComponent(() => import("@/features/cull/CullPage"), "CullPage"),
+})
 const transfersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/transfers",
@@ -109,6 +128,7 @@ const routeTree = rootRoute.addChildren([
   editMachineRoute,
   browseRoute,
   viewRoute,
+  cullRoute,
   transfersRoute,
   storageAccessRoute,
   saveRoute,

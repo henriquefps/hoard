@@ -1,4 +1,5 @@
 import {
+  ApertureIcon,
   EjectIcon,
   GearSixIcon,
   CheckSquareIcon,
@@ -101,6 +102,7 @@ import {
 } from "@/lib/files"
 import { formatBytes, formatNumber } from "@/lib/format"
 import { goUp } from "@/lib/historyTrail"
+import { CULL_MIN_PHOTOS, countPhotos } from "@/lib/photos"
 import { isTextFile, opensInViewer } from "@/lib/text/textFiles"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
@@ -130,7 +132,10 @@ export function BrowsePage() {
   // The open folder's access, reported by FolderView once listed (keyed so a stale answer from
   // the previous folder never shows on the next one).
   const folderKey = showsFolder ? `${isSmb ? share : ""}/${path}` : ""
-  const [access, setAccess] = useState<{ key: string; access?: SmbAccess }>({ key: "" })
+  const [access, setAccess] = useState<{ key: string; access?: SmbAccess; photos?: number }>({
+    key: "",
+  })
+  const photos = showsFolder && access.key === folderKey ? (access.photos ?? 0) : 0
   const readOnly = showsFolder && access.key === folderKey && isReadOnly(access.access)
   const readOnlyReason = useReadOnlyReason(location, path)
   const trailLocation = {
@@ -170,7 +175,7 @@ export function BrowsePage() {
           status
         )
       }
-      actions={location && <HeaderActions location={location} path={path} />}
+      actions={location && <HeaderActions location={location} path={path} photos={photos} />}
     >
       {location === undefined ? (
         <ListSkeleton className="-mt-4 md:-mt-6" />
@@ -180,7 +185,7 @@ export function BrowsePage() {
           key={`${location.cacheKey}/${path}`}
           location={location}
           path={path}
-          onAccess={(value) => setAccess({ key: folderKey, access: value })}
+          onAccess={(value, count) => setAccess({ key: folderKey, access: value, photos: count })}
         />
       ) : (
         <SharesView machine={machine!} />
@@ -206,7 +211,16 @@ function useReadOnlyReason(
   return t(readOnlyReasonKey(path, user !== null), { user })
 }
 
-function HeaderActions({ location, path }: { location: BrowseLocation; path: string }) {
+function HeaderActions({
+  location,
+  path,
+  photos,
+}: {
+  location: BrowseLocation
+  path: string
+  /** Photo files in the folder: from CULL_MIN_PHOTOS up, "Cull" opens the culling mode. */
+  photos: number
+}) {
   const { t } = useTranslation()
   const db = useDb()
   const { machine, share } = location
@@ -220,6 +234,19 @@ function HeaderActions({ location, path }: { location: BrowseLocation; path: str
   const label = splitPath(path).at(-1) ?? share ?? location.name ?? ""
   return (
     <>
+      {photos >= CULL_MIN_PHOTOS && (
+        <Button asChild variant="outline">
+          <Link
+            to="/cull/$locationId"
+            params={{ locationId: location.id }}
+            search={{ share, path: path || undefined }}
+            aria-label={t("cull.open")}
+          >
+            <ApertureIcon data-icon="inline-start" />
+            <span className="max-sm:sr-only">{t("cull.open")}</span>
+          </Link>
+        </Button>
+      )}
       {canPin && (
         <Button
           variant="ghost"
@@ -536,8 +563,11 @@ function FolderView({
 }: {
   location: BrowseLocation
   path: string
-  /** Called with the folder's access whenever a listing arrives (for the header badge). */
-  onAccess: (access: SmbAccess | undefined) => void
+  /**
+   * Called with the folder's access and its number of photo files whenever a listing arrives (the
+   * header's read-only badge and its "Cull" action).
+   */
+  onAccess: (access: SmbAccess | undefined, photos: number) => void
 }) {
   const { t, i18n } = useTranslation()
   const db = useDb()
@@ -557,7 +587,11 @@ function FolderView({
     onAccessRef.current = onAccess
   })
   useEffect(() => {
-    if (folder.data) onAccessRef.current(access)
+    if (folder.data)
+      onAccessRef.current(
+        access,
+        folder.data.kind === "entries" ? countPhotos(folder.data.entries) : 0
+      )
   }, [folder.data, access])
   const [showHidden] = useSetting("showHiddenFiles")
   const [defaultSort] = useSetting("defaultSort")
