@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings of the native HoardSmb plugin (transfer notifications). Keep values-pt-rBR in sync. -->
+<resources>
+    <string name="transfer_channel_progress">Transfers</string>
+    <string name="transfer_channel_progress_description">Downloads in progress</string>
+    <string name="transfer_channel_results">Finished transfers</string>
+    <string name="transfer_channel_results_description">Completed or failed downloads</string>
+    <string name="transfer_waiting">Waiting…</string>
+    <string name="transfer_reconnecting">Reconnecting…</string>
+    <string name="transfer_progress">%1$s of %2$s</string>
+    <string name="transfer_progress_speed">%1$s of %2$s · %3$s/s</string>
+    <string name="transfer_cancel">Cancel</string>
+    <string name="transfer_completed">Downloaded · %1$s</string>
+    <string name="transfer_failed">Download failed: %1$s</string>
+</resources>
