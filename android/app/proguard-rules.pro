@@ -62,3 +62,13 @@
 # annotations.
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
+
+# --- Native image core (dev.hfps.hoard.image, libhoardimage.so) --------------------------------
+# JNI: native methods are bound by name; the native code constructs LibRawException(int, String)
+# and calls RawProgressListener.onProgress(int, int, int) by name.
+-keepclasseswithmembernames,includedescriptorclasses class dev.hfps.hoard.image.raw.LibRawNative {
+    native <methods>;
+}
+-keep class dev.hfps.hoard.image.raw.LibRawException { <init>(int, java.lang.String); }
+-keep interface dev.hfps.hoard.image.raw.RawProgressListener { boolean onProgress(int, int, int); }
+-keep class * implements dev.hfps.hoard.image.raw.RawProgressListener { boolean onProgress(int, int, int); }
