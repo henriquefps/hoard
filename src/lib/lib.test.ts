@@ -6,7 +6,9 @@ import {
   hasThumbnail,
   isValidName,
   joinPath,
+  openStrategy,
   parentPath,
+  STREAM_FROM_BYTES,
   uncPath,
   viewEntries,
 } from "./files"
@@ -67,6 +69,18 @@ describe("files", () => {
     expect(hasThumbnail(entry("cover.jpg", { isDirectory: true }))).toBe(false)
     expect(hasThumbnail(entry("Spirited Away.mkv"))).toBe(true)
     expect(hasThumbnail(entry("notes.md"))).toBe(false)
+  })
+
+  it("picks how a tap opens a file", () => {
+    expect(openStrategy(entry("index.html", { size: 4000 }))).toBe("web")
+    expect(openStrategy(entry("Page.HTM", { size: 4000 }))).toBe("web")
+    expect(openStrategy(entry("index.html", { size: 4000 }), true)).toBe("cache")
+    expect(openStrategy(entry("movie.mkv", { size: 1000 }))).toBe("stream")
+    expect(openStrategy(entry("song.flac", { size: 1000 }))).toBe("stream")
+    expect(openStrategy(entry("movie.mp4", { size: 1000 }), true)).toBe("stream")
+    expect(openStrategy(entry("scan.pdf", { size: 1000 }))).toBe("cache")
+    expect(openStrategy(entry("disk.iso", { size: STREAM_FROM_BYTES }))).toBe("stream")
+    expect(openStrategy(entry("disk.iso", { size: STREAM_FROM_BYTES - 1 }))).toBe("cache")
   })
 
   const listing = [

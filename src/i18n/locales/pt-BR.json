@@ -300,6 +300,7 @@
     "nameInvalid": "O nome não pode ficar vazio nem conter \\ / : * ? \" < > |",
     "nameTaken": "Já existe algo com este nome aqui.",
     "download": "Baixar",
+    "openWith": "Abrir com…",
     "copyPath": "Copiar caminho",
     "pathCopied": "Caminho copiado",
     "copyFailed": "Não foi possível copiar o caminho",
@@ -330,6 +331,8 @@
       "NO_SPACE": "Sem espaço para abrir",
       "UNREACHABLE": "A conexão caiu ao abrir",
       "TIMEOUT": "A conexão caiu ao abrir",
+      "AUTH_FAILED": "O login falhou ao abrir",
+      "GUID_MISMATCH": "Outro servidor respondeu neste endereço",
       "UNKNOWN": "Não foi possível abrir o arquivo"
     }
   },

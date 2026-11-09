@@ -14,12 +14,15 @@ import java.util.concurrent.TimeUnit
 /**
  * Sequential reader of [file] from [startOffset] to [endOffset] with up to [depth] READ requests in
  * flight. [next] returns chunks strictly in file order; null at the end of the file.
+ *
+ * [depth] can change between calls: the stream reader starts a fresh pipeline at depth 1 (a seek
+ * may be followed by a single small read) and deepens it once reads turn out to be sequential.
  */
 class PipelinedFileReader(
     private val file: File,
     startOffset: Long,
     private val endOffset: Long,
-    private val depth: Int = 4,
+    var depth: Int = 4,
     private val timeoutMs: Long = 30_000,
 ) {
     private class Pending(val offset: Long, val length: Int, val future: Future<SMB2ReadResponse>)

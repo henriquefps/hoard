@@ -246,4 +246,88 @@ describe("HoardSmbWeb", () => {
       smb.simulateNetwork("home")
     }
   })
+  describe("streaming and served pages", () => {
+    const source = {
+      machineId: CACHY,
+      // A dead Tailscale address first: the stream fails over to the local one.
+      addresses: [{ host: "100.88.7.5" }, { host: "192.168.1.155" }],
+      expectedServerGuid: MOCK_SERVERS.cachy.guid,
+    }
+
+    it("streams a video as a content:// URI with its size and type", async () => {
+      const result = await smb.streamFile({
+        ...source,
+        share: "media",
+        path: "Movies/Spirited Away (2001).mkv",
+      })
+      expect(result.uri).toMatch(
+        /^content:\/\/dev\.hfps\.hoard\.stream\/[0-9a-f]{64}\/Spirited%20Away%20\(2001\)\.mkv$/
+      )
+      expect(result.mimeType).toBe("video/x-matroska")
+      expect(result.size).toBeGreaterThan(4 * 1024 ** 3)
+      expect(smb.streams.size).toBe(1)
+    })
+
+    it("offers the http transport and honours mimeType", async () => {
+      const result = await smb.streamFile({
+        ...source,
+        share: "media",
+        path: "Movies/Spirited Away (2001).mkv",
+        transport: "http",
+        mimeType: "video/*",
+      })
+      expect(result.uri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{64}\//)
+      expect(result.mimeType).toBe("video/*")
+    })
+
+    it("rejects folders, missing files, unknown types and another server", async () => {
+      const code = (p: Promise<unknown>) => p.then(() => "OK", smbErrorCode)
+      expect(await code(smb.streamFile({ ...source, share: "media", path: "Movies" }))).toBe(
+        "UNKNOWN"
+      )
+      expect(
+        await code(smb.streamFile({ ...source, share: "media", path: "Movies/nope.mkv" }))
+      ).toBe("NOT_FOUND")
+      expect(await code(smb.streamFile({ ...source, share: "media", path: ".DS_Store" }))).toBe(
+        "NO_APP"
+      )
+      expect(
+        await code(
+          smb.streamFile({
+            ...source,
+            addresses: [{ host: "192.168.0.10" }],
+            share: "media",
+            path: "Movies/Spirited Away (2001).mkv",
+          })
+        )
+      ).toBe("GUID_MISMATCH")
+      expect(
+        await code(
+          smb.streamFile({
+            ...source,
+            addresses: [{ host: "100.88.7.5" }],
+            share: "media",
+            path: "Movies/Spirited Away (2001).mkv",
+          })
+        )
+      ).toBe("TIMEOUT")
+    })
+
+    it("serves an HTML page's folder on 127.0.0.1 and stops every stream", async () => {
+      const { url } = await smb.openWebPage({
+        ...source,
+        share: "homes",
+        path: "henrique/Documents/Site/index.html",
+      })
+      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{64}\/index\.html$/)
+      expect(
+        await smb
+          .openWebPage({ ...source, share: "homes", path: "henrique/Documents/Site" })
+          .then(() => "OK", smbErrorCode)
+      ).toBe("UNKNOWN")
+      expect(smb.streams.size).toBe(1)
+      await smb.stopStreams()
+      expect(smb.streams.size).toBe(0)
+    })
+  })
 })

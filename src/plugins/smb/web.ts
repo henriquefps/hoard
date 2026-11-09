@@ -17,6 +17,8 @@ import type {
   MachineRef,
   NativeTransfer,
   OpenFileOptions,
+  OpenWebPageOptions,
+  OpenWebPageResult,
   PathOptions,
   ProbeOptions,
   ProbeResult,
@@ -28,12 +30,15 @@ import type {
   StartDownloadOptions,
   StartDownloadResult,
   StatResult,
+  StreamFileOptions,
+  StreamFileResult,
+  StreamSourceOptions,
   ThumbnailOptions,
   ThumbnailResult,
   TransferProgressEvent,
   TransferRef,
 } from "./definitions"
-import { TERMINAL_TRANSFER_STATES } from "./definitions"
+import { smbErrorCode as smbErrorCodeOf, TERMINAL_TRANSFER_STATES } from "./definitions"
 import { detectAddressKind } from "@/lib/addressKind"
 import {
   DEMO_PASSWORDS,
@@ -94,6 +99,27 @@ const THUMBNAIL_EXTENSIONS = new Set([
   ...["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif"],
   ...["mp4", "m4v", "mov", "3gp", "mkv", "webm"],
 ])
+
+/** MIME types the mock reports for streams (the native side has the full table). */
+const MOCK_MIME_TYPES: Record<string, string> = {
+  mp4: "video/mp4",
+  m4v: "video/x-m4v",
+  mkv: "video/x-matroska",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  mp3: "audio/mpeg",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  ogg: "audio/ogg",
+  wav: "audio/wav",
+  pdf: "application/pdf",
+  zip: "application/zip",
+  html: "text/html",
+  htm: "text/html",
+}
+
+/** Types no app opens in the mock (`NO_APP`), like a phone without a matching viewer. */
+const MOCK_NO_APP_EXTENSIONS = ["bin", "zst", "ds_store"]
 
 const DESTINATIONS_KEY = "hoard.mock.destinations"
 
@@ -653,8 +679,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     const { session, node } = this.resolve(sessionId, share, path)
     if (node.children) throw fail("UNKNOWN", "Cannot open a folder")
     const ext = extension(node.name)
-    if (["bin", "zst", "ds_store"].includes(ext))
-      throw fail("NO_APP", `No app can open .${ext} files`)
+    if (MOCK_NO_APP_EXTENSIONS.includes(ext)) throw fail("NO_APP", `No app can open .${ext} files`)
     // Simulates the download to cache at local speed (capped so the UI doesn't wait forever).
     await this.wait(
       Math.min(
@@ -663,6 +688,82 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       )
     )
     console.info(`[HoardSmbWeb] would open ${share}/${path} with ACTION_VIEW`)
+  }
+
+  // --- Streaming and the local web server ----------------------------------------------------
+
+  /** Live mock tokens (`stopStreams` clears them); mock-only, for tests and dev tools. */
+  readonly streams = new Map<string, { kind: "file" | "folder"; share: string; path: string }>()
+
+  /** Like native: an own connection over the addresses in order (GUID checked), then the file. */
+  private async streamSource({
+    machineId,
+    addresses,
+    expectedServerGuid,
+    share,
+    path,
+  }: StreamSourceOptions) {
+    if (addresses.length === 0) throw fail("UNKNOWN", "addresses is required")
+    let lastError: unknown = fail("UNREACHABLE", "No address answered")
+    for (const address of addresses) {
+      try {
+        const { serverKey, route } = await this.open(
+          machineId,
+          address.host,
+          address.port ?? 445,
+          expectedServerGuid,
+          8000
+        )
+        const sessionId = `mock-stream-${this.nextId++}`
+        this.sessions.set(sessionId, { serverKey, latencyMs: route.latencyMs })
+        try {
+          return this.resolve(sessionId, share, path)
+        } finally {
+          this.sessions.delete(sessionId)
+        }
+      } catch (error) {
+        const code = smbErrorCodeOf(error)
+        if (code !== "UNREACHABLE" && code !== "TIMEOUT") throw error
+        lastError = error
+      }
+    }
+    throw lastError
+  }
+
+  async streamFile(options: StreamFileOptions): Promise<StreamFileResult> {
+    const { node } = await this.streamSource(options)
+    if (node.children) throw fail("UNKNOWN", "Cannot stream a folder")
+    const ext = extension(node.name)
+    if (MOCK_NO_APP_EXTENSIONS.includes(ext)) throw fail("NO_APP", `No app can open .${ext} files`)
+    const token = this.newToken()
+    this.streams.set(token, { kind: "file", share: options.share, path: options.path })
+    const mimeType = options.mimeType ?? MOCK_MIME_TYPES[ext] ?? "application/octet-stream"
+    const uri =
+      options.transport === "http"
+        ? `http://127.0.0.1:38080/${token}/${encodeURIComponent(node.name)}`
+        : `content://dev.hfps.hoard.stream/${token}/${encodeURIComponent(node.name)}`
+    console.info(`[HoardSmbWeb] would stream ${options.share}/${options.path} as ${uri}`)
+    return { uri, size: node.size ?? 0, mimeType }
+  }
+
+  async openWebPage(options: OpenWebPageOptions): Promise<OpenWebPageResult> {
+    const { node } = await this.streamSource(options)
+    if (node.children) throw fail("UNKNOWN", "Not a page")
+    const token = this.newToken()
+    this.streams.set(token, { kind: "folder", share: options.share, path: options.path })
+    const url = `http://127.0.0.1:38080/${token}/${encodeURIComponent(node.name)}`
+    console.info(`[HoardSmbWeb] would serve ${options.share}/${options.path} at ${url}`)
+    return { url }
+  }
+
+  async stopStreams(): Promise<void> {
+    this.streams.clear()
+  }
+
+  private newToken(): string {
+    const bytes = new Uint8Array(32)
+    crypto.getRandomValues(bytes)
+    return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")
   }
 
   async thumbnail({ sessionId, share, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {

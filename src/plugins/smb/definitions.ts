@@ -8,7 +8,8 @@
  *
  * Ground rules (ADR 0001 / 0002 / 0003):
  *  - File bytes never cross the JS bridge. Transfers stream SMB → SAF natively; thumbnails and opened
- *    files come back as cache-file URLs, never as base64.
+ *    files come back as cache-file URLs, never as base64; streams and served pages are URIs/URLs
+ *    another app (or a native WebView) reads natively.
  *  - Passwords are write-only from JS: `setCredentials` stores them in the Android Keystore and no
  *    method ever returns one. `connect` and `startDownload` read them natively by `machineId`.
  *  - A machine is pinned by its SMB server GUID. Once the app knows it, every call that connects
@@ -342,6 +343,8 @@ export interface GetTransfersResult {
 export interface OpenFileOptions extends PathOptions {
   /** Overrides the MIME type guessed from the extension. */
   mimeType?: string
+  /** Always show the system "Open with" chooser, even when the user set a default app. */
+  chooser?: boolean
 }
 
 export interface ThumbnailOptions extends PathOptions {
@@ -357,6 +360,65 @@ export interface ThumbnailResult {
   src: string
   width: number
   height: number
+}
+
+// --- Streaming and the local web server ---------------------------------------------------------
+
+/**
+ * Where a stream or a served page reads from. Like `startDownload`, native opens its **own**
+ * connection (not a `sessionId`): it outlives the UI's sessions and the WebView, and reconnects /
+ * fails over across `addresses` while another app plays, re-checking the GUID before credentials.
+ */
+export interface StreamSourceOptions {
+  machineId: string
+  /** Priority order, the route in use first. */
+  addresses: SmbAddress[]
+  /** Pinned GUID, checked on every (re)connect. */
+  expectedServerGuid: string
+  share: string
+  /** File path inside the share. */
+  path: string
+}
+
+/**
+ * How another app reaches a stream:
+ *  - `content`: `content://dev.hfps.hoard.stream/<token>/<name>`, a seekable proxy file descriptor
+ *    (Android 8+) with a one-off read grant for the chosen app. The default: works with every
+ *    player (VLC, MX Player, mpv…) and non-media apps, nothing listens on a port.
+ *  - `http`: `http://127.0.0.1:<port>/<token>/<name>` with Range support, from the local web
+ *    server. For players that only take URLs. Native also uses it below Android 8.
+ */
+export type StreamTransport = "content" | "http"
+
+export interface StreamFileOptions extends StreamSourceOptions {
+  /** Overrides the MIME type guessed from the extension. */
+  mimeType?: string
+  /** Always show the system "Open with" chooser. */
+  chooser?: boolean
+  /** Default `content`. */
+  transport?: StreamTransport
+}
+
+export interface StreamFileResult {
+  /** The URI handed to the other app (unguessable token; ends after inactivity). */
+  uri: string
+  /** File size in bytes. */
+  size: number
+  /** MIME type sent with the intent. */
+  mimeType: string
+}
+
+export interface OpenWebPageOptions extends StreamSourceOptions {
+  /**
+   * `viewer` (default): Hoard's full-screen native web viewer (its toolbar has "Open in browser").
+   * `browser`: hand the URL straight to the default browser.
+   */
+  target?: "viewer" | "browser"
+}
+
+export interface OpenWebPageResult {
+  /** `http://127.0.0.1:<port>/<token>/<file name>`: the page's folder (and below) is served. */
+  url: string
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,9 +550,32 @@ export interface HoardSmbPlugin {
 
   /**
    * Download the file to the app cache and open it with ACTION_VIEW (chooser if several apps
-   * match). Rejects `NO_APP` when nothing can open it, `CANCELLED` if superseded.
+   * match, always with `chooser: true`). Rejects `NO_APP` when nothing can open it, `CANCELLED` if
+   * superseded. For small files; large ones and media go through `streamFile`.
    */
   openFile(options: OpenFileOptions): Promise<void>
+
+  /**
+   * Hand a remote file to another app **without downloading it first**: the app reads (and seeks)
+   * it through a stream URI served from SMB on demand, with read-ahead. Native connects, checks the
+   * file, registers a token and fires ACTION_VIEW (or the chooser); a foreground service with a
+   * "Streaming" notification keeps Hoard serving while the other app is in front. Tokens end after
+   * 15 min unused (never while the app has the file open) or with `stopStreams`. Rejects `NO_APP`,
+   * `NOT_FOUND`, `UNREACHABLE`, `AUTH_FAILED`, `GUID_MISMATCH`, `CANCELLED` if superseded.
+   */
+  streamFile(options: StreamFileOptions): Promise<StreamFileResult>
+
+  /**
+   * Open an `.html`/`.htm` file with its folder served by Hoard's local web server (HTTP/1.1 on
+   * 127.0.0.1 only, random port, per-page random token in every URL; subfolders allowed, nothing
+   * above the page's folder), so relative CSS, JS and images load. Shown in the native web viewer
+   * or the browser (`target`). The server stops when its last page expires (30 min unused, never
+   * while the viewer shows it). Rejects like `streamFile`.
+   */
+  openWebPage(options: OpenWebPageOptions): Promise<OpenWebPageResult>
+
+  /** End every stream and served page now (open players get read errors). Idempotent. */
+  stopStreams(): Promise<void>
 
   /**
    * Thumbnail for an image or a video file (natively a frame read with MediaMetadataRetriever, the

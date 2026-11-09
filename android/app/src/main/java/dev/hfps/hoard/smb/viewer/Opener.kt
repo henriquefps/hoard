@@ -44,8 +44,8 @@ class Opener(private val context: Context) {
         }
     }
 
-    /** Fire ACTION_VIEW; NO_APP when nothing on the phone handles the type. */
-    fun view(activity: Activity, file: File, mimeType: String?) {
+    /** Fire ACTION_VIEW (or the "Open with" chooser); NO_APP when nothing on the phone handles the type. */
+    fun view(activity: Activity, file: File, mimeType: String?, chooser: Boolean = false) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val type = mimeType?.takeIf { it.isNotBlank() } ?: SafDestinations.mimeTypeFor(file.name)
         val intent = Intent(Intent.ACTION_VIEW)
@@ -55,7 +55,7 @@ class Opener(private val context: Context) {
         if (handlers.isEmpty()) smbFail(ErrorCode.NO_APP, "No app can open ${file.name} ($type)")
         try {
             // Several handlers and no default → the system shows its chooser ("Just once" / "Always").
-            activity.startActivity(intent)
+            activity.startActivity(if (chooser) Intent.createChooser(intent, null) else intent)
         } catch (e: ActivityNotFoundException) {
             smbFail(ErrorCode.NO_APP, "No app can open ${file.name} ($type)")
         }
