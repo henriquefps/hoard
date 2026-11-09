@@ -112,6 +112,60 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_favorites_machine ON favorites(machine_id);
     `,
   },
+  {
+    // Transfers between any two locations (ADR 0007): copy or move, many sources (files and
+    // folders), one destination folder, per-job item counts. Locations are ids like favorites'
+    // (machine id, `device`, `vol-<uuid>`), plus `tree` (a SAF folder, `dest_tree_uri`) and
+    // `incoming` (files another app shared). The machine columns cascade, so deleting a machine
+    // still deletes its history. 1.3 downloads become copies SMB → tree with one source.
+    version: 4,
+    sql: `
+      CREATE TABLE transfers_v4 (
+        id TEXT PRIMARY KEY NOT NULL,
+        op TEXT NOT NULL DEFAULT 'copy' CHECK (op IN ('copy', 'move')),
+        source_location_id TEXT NOT NULL,
+        source_machine_id TEXT REFERENCES machines(id) ON DELETE CASCADE,
+        source_share TEXT NOT NULL DEFAULT '',
+        source_paths TEXT NOT NULL DEFAULT '[]',
+        dest_location_id TEXT NOT NULL,
+        dest_machine_id TEXT REFERENCES machines(id) ON DELETE CASCADE,
+        dest_share TEXT NOT NULL DEFAULT '',
+        dest_path TEXT NOT NULL DEFAULT '',
+        dest_tree_uri TEXT,
+        name TEXT NOT NULL,
+        conflict TEXT NOT NULL DEFAULT 'rename'
+          CHECK (conflict IN ('ask', 'rename', 'overwrite', 'skip')),
+        size INTEGER NOT NULL DEFAULT 0,
+        bytes_done INTEGER NOT NULL DEFAULT 0,
+        items_total INTEGER NOT NULL DEFAULT 0,
+        items_done INTEGER NOT NULL DEFAULT 0,
+        items_failed INTEGER NOT NULL DEFAULT 0,
+        items_skipped INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT 'queued'
+          CHECK (state IN ('queued', 'scanning', 'conflict', 'running', 'retrying', 'completed', 'failed', 'cancelled', 'skipped')),
+        error_code TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        finished_at TEXT
+      );
+      INSERT INTO transfers_v4 (id, op, source_location_id, source_machine_id, source_share, source_paths,
+          dest_location_id, dest_tree_uri, name, size, bytes_done, items_total, items_done, items_failed,
+          items_skipped, state, error_code, error, created_at, finished_at)
+        SELECT id, 'copy', machine_id, machine_id, share,
+          '["' || replace(replace(remote_path, '\\', '\\\\'), '"', '\\"') || '"]',
+          'tree', dest_tree_uri, dest_name, size, bytes_done, 1,
+          CASE WHEN state = 'completed' THEN 1 ELSE 0 END,
+          CASE WHEN state IN ('failed', 'cancelled') THEN 1 ELSE 0 END,
+          CASE WHEN state = 'skipped' THEN 1 ELSE 0 END,
+          state, error_code, error, created_at, finished_at
+        FROM transfers;
+      DROP TABLE transfers;
+      ALTER TABLE transfers_v4 RENAME TO transfers;
+      CREATE INDEX idx_transfers_created ON transfers(created_at);
+      CREATE INDEX idx_transfers_source_machine ON transfers(source_machine_id);
+      CREATE INDEX idx_transfers_dest_machine ON transfers(dest_machine_id);
+    `,
+  },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.at(-1)?.version ?? 0

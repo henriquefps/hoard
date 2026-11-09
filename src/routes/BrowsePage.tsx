@@ -5,7 +5,12 @@ import {
   CopyIcon,
   DotsThreeVerticalIcon,
   ArrowSquareOutIcon,
+  ArrowsLeftRightIcon,
   DownloadSimpleIcon,
+  FolderSimpleIcon,
+  ScissorsIcon,
+  ShareNetworkIcon,
+  UploadSimpleIcon,
   EyeIcon,
   FilePlusIcon,
   FileTextIcon,
@@ -77,8 +82,11 @@ import { invalidateFolder, useFolder } from "@/features/browse/useFolder"
 import { useMachineRoute, useRouteEngine } from "@/features/route/RouteProvider"
 import { RouteStatus } from "@/features/route/RouteStatus"
 import { useSetting } from "@/features/settings/settings"
-import { DownloadDialog } from "@/features/transfers/DownloadDialog"
-import type { DownloadFile } from "@/features/transfers/service"
+import { clipboard, pasteTarget } from "@/features/transfers/clipboard"
+import type { PickedEntry } from "@/features/transfers/places"
+import { TransferToDialog } from "@/features/transfers/TransferToDialog"
+import { useFolderTransferSignal } from "@/features/transfers/TransfersProvider"
+import type { TransferIntent } from "@/features/transfers/useStartTransfer"
 import { useBackHandler } from "@/hooks/useAndroidBackButton"
 import {
   DEFAULT_SORT,
@@ -518,7 +526,7 @@ type Dialog =
   | { kind: "newTextFile" }
   | { kind: "rename"; entry: SmbEntry }
   | { kind: "delete"; entries: SmbEntry[] }
-  | { kind: "download"; files: DownloadFile[]; folders: number }
+  | { kind: "transferTo"; intent: Exclude<TransferIntent, "save">; entries: PickedEntry[] }
   | null
 
 function FolderView({
@@ -700,18 +708,87 @@ function FolderView({
     }
   }
 
-  function download(list: SmbEntry[]) {
+  const source = { locationId: location.id, share }
+  const folderLabel = splitPath(path).at(-1) ?? share ?? location.name ?? ""
+  const picked = (list: SmbEntry[]): PickedEntry[] =>
+    list
+      .filter((e) => !e.restricted)
+      .map((e) => ({ path: e.path, name: e.name, isDirectory: e.isDirectory, size: e.size }))
+
+  /** "Copy" / "Move": put the selection on the clipboard, then "Paste here" anywhere (ADR 0007). */
+  function toClipboard(op: "copy" | "move", list: SmbEntry[]) {
+    const entries = picked(list)
+    if (entries.length === 0) return
+    clipboard.set({ op, source: { ...source, path }, sourceLabel: folderLabel, entries })
+    clearSelection()
+    toast(
+      t(op === "move" ? "transfer.clipboard.cut" : "transfer.clipboard.copied", {
+        count: entries.length,
+      }),
+      {
+        description: t("transfer.clipboard.hint"),
+      }
+    )
+  }
+
+  /** "Copy to…", "Move to…", "Download", "Upload": the destination picker. */
+  function transferTo(intent: Exclude<TransferIntent, "save">, list: SmbEntry[]) {
+    const entries = picked(list)
+    if (entries.length) setDialog({ kind: "transferTo", intent, entries })
+  }
+
+  /** The system share sheet with the selected files (folders are left out). */
+  async function shareOut(list: SmbEntry[]) {
     const files = list.filter((e) => !e.isDirectory)
     if (files.length === 0) {
-      toast(t("download.onlyFolders"))
+      toast(t("transfer.shareFoldersOnly"))
       return
     }
-    setDialog({
-      kind: "download",
-      folders: list.length - files.length,
-      files: files.map((e) => ({ share: share ?? "", path: e.path, name: e.name, size: e.size })),
-    })
+    try {
+      await HoardSmb.shareFiles({
+        location: await location.streamLocation(),
+        paths: files.map((e) => e.path),
+      })
+      if (files.length < list.length)
+        toast(t("transfer.shareFoldersSkipped", { count: list.length - files.length }))
+    } catch (error) {
+      const code = smbErrorCode(error)
+      if (code !== "CANCELLED") {
+        toast.error(t(`browse.openError.${code}`, t("browse.openError.UNKNOWN")))
+      }
+    }
   }
+
+  // Files landing here (or leaving with a move) show up without a manual refresh.
+  const transferSignal = useFolderTransferSignal(location.id, share, path)
+  const lastSignal = useRef(transferSignal)
+  useEffect(() => {
+    if (lastSignal.current === transferSignal) return
+    lastSignal.current = transferSignal
+    const timer = setTimeout(() => void refresh(), 400)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh is rebuilt every render
+  }, [transferSignal])
+
+  // "Paste here" targets the folder on screen while it is open.
+  useEffect(() => {
+    const target = {
+      ...source,
+      path,
+      label: folderLabel,
+      readOnlyReason: readOnly ? readOnlyReason : undefined,
+    }
+    pasteTarget.set(target)
+    return () => {
+      if (
+        pasteTarget.get()?.locationId === target.locationId &&
+        pasteTarget.get()?.path === target.path
+      ) {
+        pasteTarget.set(null)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- source is rebuilt every render
+  }, [location.id, share, path, folderLabel, readOnly, readOnlyReason])
 
   async function copyPath(entry: SmbEntry) {
     await copyText(location.displayPath(entry.path), t)
@@ -764,12 +841,44 @@ function FolderView({
             {t("browse.openWith")}
           </DropdownMenuItem>
         )}
-        {/* Downloads are SMB → phone; copying between any locations comes in phase 2a. */}
-        {!entry.isDirectory && isSmb && (
-          <DropdownMenuItem onSelect={() => download([entry])}>
-            <DownloadSimpleIcon />
-            {t("browse.download")}
-          </DropdownMenuItem>
+        {!entry.restricted && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => toClipboard("copy", [entry])}>
+              <CopyIcon />
+              {t("transfer.copy")}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={readOnly} onSelect={() => toClipboard("move", [entry])}>
+              <ScissorsIcon />
+              {t("transfer.move")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => transferTo("copy", [entry])}>
+              <FolderSimpleIcon />
+              {t("transfer.copyTo")}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={readOnly} onSelect={() => transferTo("move", [entry])}>
+              <ArrowsLeftRightIcon />
+              {t("transfer.moveTo")}
+            </DropdownMenuItem>
+            {isSmb ? (
+              <DropdownMenuItem onSelect={() => transferTo("download", [entry])}>
+                <DownloadSimpleIcon />
+                {t("browse.download")}
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onSelect={() => transferTo("upload", [entry])}>
+                <UploadSimpleIcon />
+                {t("transfer.upload")}
+              </DropdownMenuItem>
+            )}
+            {!entry.isDirectory && (
+              <DropdownMenuItem onSelect={() => void shareOut([entry])}>
+                <ShareNetworkIcon />
+                {t("transfer.share")}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+          </>
         )}
         {entry.isDirectory && !entry.restricted && (
           <DropdownMenuItem onSelect={() => void favorite(entry)}>
@@ -954,7 +1063,10 @@ function FolderView({
           )}
           onClear={clearSelection}
           onSelectAll={() => setSelected(new Set(visible.map((e) => e.path)))}
-          onDownload={isSmb ? () => download(selectedEntries) : undefined}
+          isSmb={isSmb}
+          onClipboard={(op) => toClipboard(op, selectedEntries)}
+          onTransferTo={(intent) => transferTo(intent, selectedEntries)}
+          onShare={() => void shareOut(selectedEntries)}
           onDelete={() =>
             selectedEntries.length && setDialog({ kind: "delete", entries: selectedEntries })
           }
@@ -1087,13 +1199,13 @@ function FolderView({
           else toast.success(t("browse.deleted", { count: list.length }))
         }}
       />
-      {dialog?.kind === "download" && machine && (
-        <DownloadDialog
+      {dialog?.kind === "transferTo" && (
+        <TransferToDialog
           open
           onOpenChange={(o) => !o && setDialog(null)}
-          machine={machine}
-          files={dialog.files}
-          skippedFolders={dialog.folders}
+          intent={dialog.intent}
+          source={source}
+          entries={dialog.entries}
           onStarted={clearSelection}
         />
       )}
@@ -1104,26 +1216,32 @@ function FolderView({
 function SelectionBar({
   count,
   size,
+  isSmb,
   onClear,
   onSelectAll,
-  onDownload,
+  onClipboard,
+  onTransferTo,
+  onShare,
   onDelete,
   readOnlyReason,
 }: {
   count: number
   size: string
+  isSmb: boolean
   onClear: () => void
   onSelectAll: () => void
-  /** Absent where downloads do not apply (local storage until phase 2a). */
-  onDownload?: () => void
+  onClipboard: (op: "copy" | "move") => void
+  onTransferTo: (intent: Exclude<TransferIntent, "save">) => void
+  onShare: () => void
   onDelete: () => void
-  /** Set in a read-only folder: Delete stays visible, disabled, with this as its explanation. */
+  /** Set in a read-only folder: Move and Delete stay visible, disabled, with this as their explanation. */
   readOnlyReason?: string
 }) {
   const { t } = useTranslation()
+  const none = count === 0
   return (
     <div
-      className="flex min-h-9 items-center gap-2"
+      className="flex min-h-9 items-center gap-1"
       role="toolbar"
       aria-label={t("browse.selection")}
     >
@@ -1132,24 +1250,55 @@ function SelectionBar({
       </Button>
       <span className="min-w-0 flex-1 truncate text-[0.9375rem] font-medium" aria-live="polite">
         {t("browse.selected", { count })}
-        {count > 0 && <span className="font-normal text-muted-foreground"> · {size}</span>}
+        {count > 0 && (
+          <span className="font-normal text-muted-foreground @max-sm:hidden"> · {size}</span>
+        )}
       </span>
-      <Button variant="ghost" onClick={onSelectAll} className="max-@md:hidden">
+      <Button variant="ghost" onClick={onSelectAll} className="@max-2xl:hidden">
         {t("browse.selectAll")}
       </Button>
-      {onDownload && (
-        <Button variant="outline" onClick={onDownload} disabled={count === 0}>
-          <DownloadSimpleIcon data-icon="inline-start" />
-          <span className="max-@md:sr-only">{t("browse.download")}</span>
+      <Button
+        variant="ghost"
+        onClick={() => onClipboard("copy")}
+        disabled={none}
+        aria-label={t("transfer.copy")}
+        title={t("transfer.copy")}
+      >
+        <CopyIcon data-icon="inline-start" />
+        <span className="@max-xl:sr-only">{t("transfer.copy")}</span>
+      </Button>
+      <span title={readOnlyReason} className="inline-flex">
+        <Button
+          variant="ghost"
+          onClick={() => onClipboard("move")}
+          disabled={none || Boolean(readOnlyReason)}
+          aria-label={t("transfer.move")}
+          aria-description={readOnlyReason}
+          title={t("transfer.move")}
+        >
+          <ScissorsIcon data-icon="inline-start" />
+          <span className="@max-xl:sr-only">{t("transfer.move")}</span>
         </Button>
-      )}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onShare}
+        disabled={none}
+        aria-label={t("transfer.share")}
+        title={t("transfer.share")}
+        className="@max-sm:hidden"
+      >
+        <ShareNetworkIcon />
+      </Button>
       {/* A disabled button gets no pointer events: the wrapper carries the explanation. */}
       <span title={readOnlyReason} className="inline-flex">
         <Button
-          variant="destructive"
+          variant="ghost"
           size="icon"
+          className="text-destructive hover:text-destructive"
           onClick={onDelete}
-          disabled={count === 0 || Boolean(readOnlyReason)}
+          disabled={none || Boolean(readOnlyReason)}
           aria-label={t("common.delete")}
           aria-description={readOnlyReason}
         >
@@ -1158,11 +1307,38 @@ function SelectionBar({
       </span>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="@md:hidden" aria-label={t("common.more")}>
+          <Button variant="ghost" size="icon" aria-label={t("common.more")}>
             <DotsThreeVerticalIcon weight="bold" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent align="end" className="min-w-48">
+          <DropdownMenuItem disabled={none} onSelect={() => onTransferTo("copy")}>
+            <FolderSimpleIcon />
+            {t("transfer.copyTo")}
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={none || Boolean(readOnlyReason)}
+            onSelect={() => onTransferTo("move")}
+          >
+            <ArrowsLeftRightIcon />
+            {t("transfer.moveTo")}
+          </DropdownMenuItem>
+          {isSmb ? (
+            <DropdownMenuItem disabled={none} onSelect={() => onTransferTo("download")}>
+              <DownloadSimpleIcon />
+              {t("browse.download")}
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem disabled={none} onSelect={() => onTransferTo("upload")}>
+              <UploadSimpleIcon />
+              {t("transfer.upload")}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem disabled={none} onSelect={onShare}>
+            <ShareNetworkIcon />
+            {t("transfer.share")}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onSelectAll}>{t("browse.selectAll")}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

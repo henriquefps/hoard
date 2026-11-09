@@ -38,7 +38,7 @@ class PathFs(
     override val cacheId: String,
     override val label: String,
     /** The volume is mounted read-only (or path writes are not allowed on this Android version). */
-    private val readOnly: Boolean,
+    val readOnly: Boolean,
     private val sdkInt: Int = Build.VERSION.SDK_INT,
 ) : LocalFs {
 

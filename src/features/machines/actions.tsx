@@ -29,8 +29,8 @@ export function useDeleteMachine() {
   const engine = useRouteEngine()
   return async (machineId: string) => {
     const running = await db.query<TransferRecord>(
-      `SELECT * FROM transfers WHERE machine_id = ? AND state NOT IN (${TERMINAL_TRANSFER_STATES.map(() => "?").join(", ")})`,
-      [machineId, ...TERMINAL_TRANSFER_STATES]
+      `SELECT * FROM transfers WHERE (source_machine_id = ? OR dest_machine_id = ?) AND state NOT IN (${TERMINAL_TRANSFER_STATES.map(() => "?").join(", ")})`,
+      [machineId, machineId, ...TERMINAL_TRANSFER_STATES]
     )
     await Promise.all(
       running.map((row) => HoardSmb.cancelTransfer({ transferId: row.id }).catch(() => {}))

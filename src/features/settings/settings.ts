@@ -3,28 +3,32 @@ import { useDb, useLiveQuery } from "@/db/DbProvider"
 import { getSetting, setSetting } from "@/db/queries"
 import type { SettingKey } from "@/db/types"
 import { DEFAULT_SORT, isSortOrder, type SortOrder } from "@/lib/files"
-import type { ConflictPolicy } from "@/plugins/smb/definitions"
+import type { RecentDestination } from "@/db/types"
+import type { TransferConflict } from "@/plugins/smb/definitions"
 
 /** App settings kept in the `settings` table, with their defaults and validation. */
 export interface Settings {
   showHiddenFiles: boolean
   defaultSort: SortOrder
-  defaultConflict: ConflictPolicy
-  lastDestination: string | null
+  /** What happens when a name exists; `ask` shows one dialog with "apply to all". */
+  defaultConflict: TransferConflict
+  /** The destination picker's "Recent" (newest first, at most {@link MAX_RECENT_DESTINATIONS}). */
+  recentDestinations: RecentDestination[]
   probeTimeoutMs: number
   onboarded: boolean
   /** The all files access screen was shown once (granted or "Not now"); ADR 0005. */
   storageIntroSeen: boolean
 }
 
-export const CONFLICT_POLICIES: ConflictPolicy[] = ["rename", "overwrite", "skip"]
+export const CONFLICT_POLICIES: TransferConflict[] = ["ask", "rename", "overwrite", "skip"]
+export const MAX_RECENT_DESTINATIONS = 6
 export const PROBE_TIMEOUTS = [800, 1500, 3000, 5000] as const
 
 export const SETTING_DEFAULTS: Settings = {
   showHiddenFiles: false,
   defaultSort: DEFAULT_SORT,
-  defaultConflict: "rename",
-  lastDestination: null,
+  defaultConflict: "ask",
+  recentDestinations: [],
   probeTimeoutMs: 1500,
   onboarded: false,
   storageIntroSeen: false,
@@ -33,8 +37,17 @@ export const SETTING_DEFAULTS: Settings = {
 const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
   showHiddenFiles: (v) => typeof v === "boolean",
   defaultSort: isSortOrder,
-  defaultConflict: (v) => CONFLICT_POLICIES.includes(v as ConflictPolicy),
-  lastDestination: (v) => v === null || typeof v === "string",
+  defaultConflict: (v) => CONFLICT_POLICIES.includes(v as TransferConflict),
+  recentDestinations: (v) =>
+    Array.isArray(v) &&
+    v.every(
+      (d) =>
+        typeof d === "object" &&
+        d !== null &&
+        typeof (d as RecentDestination).locationId === "string" &&
+        typeof (d as RecentDestination).path === "string" &&
+        typeof (d as RecentDestination).label === "string"
+    ),
   probeTimeoutMs: (v) => typeof v === "number" && v >= 200 && v <= 30_000,
   onboarded: (v) => typeof v === "boolean",
   storageIntroSeen: (v) => typeof v === "boolean",

@@ -1,7 +1,6 @@
 package dev.hfps.hoard.smb.transfer
 
 import android.content.Context
-import android.net.Uri
 import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -11,10 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import dev.hfps.hoard.smb.CredentialStore
 import dev.hfps.hoard.smb.ErrorCode
-import dev.hfps.hoard.smb.HoardSmbException
 import dev.hfps.hoard.smb.IsoTime
-import dev.hfps.hoard.smb.SafDestinations
-import dev.hfps.hoard.smb.SmbConnector
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.smbFail
 import kotlinx.coroutines.sync.Semaphore
@@ -23,32 +19,30 @@ import java.util.concurrent.CopyOnWriteArraySet
 /** Contract `TransferProgressEvent`. */
 data class TransferProgress(val job: TransferJob, val bytesPerSecond: Long?)
 
-/** What `startDownload` asks for. */
-data class StartDownloadRequest(
+/** What `startTransfer` asks for. */
+data class StartTransferRequest(
     val transferId: String,
-    val machineId: String,
-    val addresses: List<TransferAddress>,
-    val expectedServerGuid: String,
-    val share: String,
-    val remotePath: String,
-    val destTreeUri: String,
-    val destName: String?,
+    val op: String,
+    val sources: List<TransferSource>,
+    val destination: Endpoint,
+    val destPath: String,
     val conflict: String,
-    val resumeFromBytes: Long,
+    val resume: Boolean,
 )
 
 /**
- * Process-wide owner of transfer jobs: accepts them (`startDownload`), cancels them, answers
- * `getTransfers`, and fans progress out to the plugin. The bytes move in [TransferWorker].
+ * Process-wide owner of transfer jobs (ADR 0007): accepts them (`startTransfer`), answers
+ * conflicts, cancels, answers `getTransfers` / `getTransferItems`, and fans progress out to the
+ * plugin. The bytes move in [TransferWorker] → [TransferRunner].
  */
 class TransferManager private constructor(context: Context) {
 
     val appContext: Context = context.applicationContext
     val store = TransferStore(appContext)
-    val destinations = SafDestinations(appContext)
     val credentials = CredentialStore(appContext)
+    val endpoints by lazy { TransferEndpoints(appContext, credentials) }
 
-    /** At most two downloads move bytes at the same time; the others wait in `queued`. */
+    /** At most two jobs move bytes at the same time; the others wait in `queued`. */
     val slots = Semaphore(MAX_CONCURRENT)
 
     private val listeners = CopyOnWriteArraySet<(TransferProgress) -> Unit>()
@@ -61,133 +55,140 @@ class TransferManager private constructor(context: Context) {
         listeners.forEach { runCatching { it(event) } }
     }
 
-    /**
-     * Validate, resolve the destination name per [StartDownloadRequest.conflict], create (or reuse,
-     * when resuming) the destination document, persist the job and enqueue its worker.
-     */
+    /** Validate, persist and enqueue a job (or, with `resume`, run a known job's unfinished items again). */
     @Synchronized
-    fun start(request: StartDownloadRequest): TransferJob {
-        if (!DestinationRules.acceptsNew(store.get(request.transferId))) {
-            smbFail(ErrorCode.UNKNOWN, "Transfer ${request.transferId} is already running")
-        }
-        if (request.addresses.isEmpty()) smbFail(ErrorCode.UNREACHABLE, "No addresses given")
-        val guid = SmbConnector.normalizeGuid(request.expectedServerGuid)
-            ?: smbFail(ErrorCode.UNKNOWN, "expectedServerGuid is required for transfers")
-        val remotePath = SmbPaths.normalize(request.remotePath)
-        if (remotePath.isEmpty()) smbFail(ErrorCode.UNKNOWN, "remotePath must be a file")
-        val tree = destinations.requireWritableTree(request.destTreeUri)
-        val wanted = SmbPaths.requireValidName(request.destName ?: SmbPaths.name(remotePath), "destName")
-        val now = IsoTime.now()
-        val base = TransferJob(
-            transferId = request.transferId,
-            machineId = request.machineId,
-            addresses = request.addresses,
-            expectedServerGuid = guid,
-            share = request.share,
-            remotePath = remotePath,
-            destTreeUri = request.destTreeUri,
-            destName = wanted,
-            destUri = null,
-            startedAt = now,
-        )
-        val decision = DestinationRules.plan(
-            wanted, request.conflict, request.resumeFromBytes, destinations.children(tree),
-            nameOf = { it.name }, sizeOf = { it.size },
-        )
-        return when (decision) {
-            // Retry of an interrupted job: same document, append when the size matches, else from 0.
-            is DestinationRules.Decision.Resume -> accept(
-                base.copy(
-                    destUri = decision.document.uri.toString(),
-                    resumeFromBytes = decision.fromBytes,
-                    bytesDone = decision.fromBytes,
-                ),
-            )
-            is DestinationRules.Decision.Skip -> {
-                val job = base.copy(destUri = decision.document.uri.toString(), state = TransferStates.SKIPPED, finishedAt = now)
-                store.put(job)
-                emit(job)
-                job
-            }
-            is DestinationRules.Decision.Overwrite -> accept(base.copy(destUri = decision.document.uri.toString()))
-            is DestinationRules.Decision.Create -> {
-                val created = destinations.create(tree, decision.name)
-                accept(base.copy(destName = created.name, destUri = created.uri.toString(), createdDocument = true))
+    fun start(request: StartTransferRequest): TransferJob {
+        val existing = store.get(request.transferId)
+        if (existing != null && !existing.isTerminal) smbFail(ErrorCode.UNKNOWN, "Transfer ${request.transferId} is already running")
+        if (request.op != "copy" && request.op != "move") smbFail(ErrorCode.UNKNOWN, "op must be copy or move")
+        if (request.conflict !in Conflicts.ALL) smbFail(ErrorCode.UNKNOWN, "conflict must be ask, rename, overwrite or skip")
+        if (request.destination is Endpoint.Incoming) smbFail(ErrorCode.UNKNOWN, "Shared files are not a destination")
+        if (request.sources.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No sources")
+        val destPath = SmbPaths.normalize(request.destPath)
+        for (source in request.sources) {
+            val path = SmbPaths.normalize(source.path)
+            if (source.endpoint !is Endpoint.Incoming && path.isEmpty()) smbFail(ErrorCode.UNKNOWN, "A location's root cannot be copied as a whole")
+            if (source.endpoint.key == request.destination.key && TransferPaths.isSameOrInside(path, destPath)) {
+                smbFail(ErrorCode.UNKNOWN, "${SmbPaths.name(path)} cannot go into itself")
             }
         }
-    }
 
-    private fun accept(job: TransferJob): TransferJob {
+        if (existing != null && request.resume) {
+            synchronized(existing) {
+                existing.items.forEach {
+                    if (it.state == TransferStates.FAILED || it.state == TransferStates.CANCELLED) {
+                        it.state = TransferStates.QUEUED
+                        it.errorCode = null
+                        it.errorMessage = null
+                    }
+                }
+            }
+            existing.state = TransferStates.QUEUED
+            existing.errorCode = null
+            existing.errorMessage = null
+            existing.finishedAt = null
+            existing.acknowledged = false
+            existing.spaceChecked = false
+            store.put(existing)
+            emit(existing)
+            enqueue(existing, ExistingWorkPolicy.REPLACE)
+            return existing
+        }
+
+        val job = TransferJob(
+            transferId = request.transferId,
+            op = request.op,
+            sources = request.sources.map { it.copy(path = if (it.endpoint is Endpoint.Incoming) it.path else SmbPaths.normalize(it.path)) },
+            destination = request.destination,
+            destPath = destPath,
+            conflict = request.conflict,
+            startedAt = IsoTime.now(),
+            resumeExisting = request.resume,
+        )
         store.put(job)
         emit(job)
-        enqueue(job.transferId, ExistingWorkPolicy.REPLACE)
+        enqueue(job, ExistingWorkPolicy.REPLACE)
         return job
     }
 
-    private fun enqueue(transferId: String, policy: ExistingWorkPolicy) {
-        val request = OneTimeWorkRequestBuilder<TransferWorker>()
-            .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to transferId))
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .addTag(WORK_TAG)
-            .build()
-        WorkManager.getInstance(appContext).enqueueUniqueWork(workName(transferId), policy, request)
+    /** Answers for a job waiting in `conflict`; it is queued again. */
+    @Synchronized
+    fun resolveConflicts(transferId: String, all: String?, perItem: Map<Int, String>) {
+        val job = store.get(transferId) ?: smbFail(ErrorCode.NOT_FOUND, "No transfer $transferId")
+        if (all != null && all !in Conflicts.POLICIES) smbFail(ErrorCode.UNKNOWN, "all must be rename, overwrite or skip")
+        if (perItem.values.any { it !in Conflicts.POLICIES }) smbFail(ErrorCode.UNKNOWN, "Invalid policy")
+        synchronized(job) {
+            job.items.forEach { item ->
+                if (item.conflict != Conflicts.ASK || item.isFinished) return@forEach
+                item.conflict = perItem[item.index] ?: all ?: return@forEach
+            }
+        }
+        if (job.state != TransferStates.CONFLICT || job.counts().conflicts > 0) {
+            store.save(job)
+            return
+        }
+        job.state = TransferStates.QUEUED
+        store.save(job)
+        emit(job)
+        enqueue(job, ExistingWorkPolicy.REPLACE)
     }
 
-    /** Cancel a queued/running job: state `cancelled`, partial file deleted. Idempotent. */
+    private fun enqueue(job: TransferJob, policy: ExistingWorkPolicy) {
+        val network = job.sources.any { it.endpoint.isNetwork } || job.destination.isNetwork
+        val request = OneTimeWorkRequestBuilder<TransferWorker>()
+            .setInputData(workDataOf(TransferWorker.KEY_TRANSFER_ID to job.transferId))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .apply { if (network) setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()) }
+            .addTag(WORK_TAG)
+            .build()
+        WorkManager.getInstance(appContext).enqueueUniqueWork(workName(job.transferId), policy, request)
+    }
+
+    /** Cancel a queued/running job: state `cancelled`, unfinished items cancelled. Idempotent. */
     fun cancel(transferId: String) {
         val job = synchronized(this) {
             val current = store.get(transferId) ?: return
             if (current.isTerminal) return
-            store.update(transferId) {
-                it.copy(
-                    state = TransferStates.CANCELLED,
-                    errorCode = ErrorCode.CANCELLED,
-                    errorMessage = "Cancelled",
-                    finishedAt = IsoTime.now(),
-                )
-            } ?: return
+            synchronized(current) {
+                current.items.forEach { if (!it.isFinished && !it.superseded) it.state = TransferStates.CANCELLED }
+            }
+            current.state = TransferStates.CANCELLED
+            current.errorCode = ErrorCode.CANCELLED
+            current.errorMessage = "Cancelled"
+            current.finishedAt = IsoTime.now()
+            store.save(current)
+            current
         }
         WorkManager.getInstance(appContext).cancelUniqueWork(workName(transferId))
-        job.destUri?.let { destinations.delete(Uri.parse(it)) }
         TransferNotifications.cancelAll(appContext, transferId)
         emit(job)
     }
 
-    fun all(): List<TransferJob> = store.all()
+    /** Jobs the UI has not acknowledged (running ones, and finished ones it has not stored yet). */
+    fun reported(): List<TransferJob> = store.all().filter { !it.acknowledged || !it.isTerminal }
 
     fun acknowledge(transferIds: Collection<String>) {
-        store.remove(transferIds, onlyTerminal = true)
+        transferIds.forEach { id ->
+            val job = store.get(id) ?: return@forEach
+            if (job.isTerminal && !job.acknowledged) {
+                job.acknowledged = true
+                store.save(job)
+            }
+        }
     }
 
     /**
-     * After a process restart: make sure every unfinished job still has a worker (KEEP leaves a
-     * pending or running one alone). Runs once per process.
+     * After a process restart: make sure every unfinished job has a worker (KEEP leaves a pending
+     * or running one alone). Jobs waiting for a conflict answer stay put. Runs once per process.
      */
     @Synchronized
     fun reconcile() {
         if (reconciled) return
         reconciled = true
-        store.all().filter { !it.isTerminal }.forEach { enqueue(it.transferId, ExistingWorkPolicy.KEEP) }
+        store.all().filter { !it.isTerminal && it.state != TransferStates.CONFLICT }.forEach { enqueue(it, ExistingWorkPolicy.KEEP) }
     }
 
     private var reconciled = false
-
-    /** Final state of a job (from the worker). Ignored if the job was cancelled meanwhile. */
-    @Synchronized
-    fun finish(transferId: String, state: String, error: HoardSmbException? = null): TransferJob? {
-        val current = store.get(transferId) ?: return null
-        if (current.isTerminal) return null
-        return store.update(transferId) {
-            it.copy(
-                state = state,
-                bytesDone = if (state == TransferStates.COMPLETED) it.totalBytes else it.bytesDone,
-                errorCode = error?.code,
-                errorMessage = error?.message,
-                finishedAt = IsoTime.now(),
-            )
-        }
-    }
 
     companion object {
         const val MAX_CONCURRENT = 2

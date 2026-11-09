@@ -22,7 +22,6 @@ import type {
   VolumeRef,
   VolumeState,
   MachineRef,
-  NativeTransfer,
   OpenFileOptions,
   OpenWebPageOptions,
   OpenWebPageResult,
@@ -36,22 +35,27 @@ import type {
   SessionRef,
   SetCredentialsOptions,
   SmbEntry,
-  StartDownloadOptions,
-  StartDownloadResult,
+  StartTransferOptions,
+  StartTransferResult,
+  GetTransferItemsOptions,
+  GetTransferItemsResult,
+  ResolveTransferConflictsOptions,
+  ShareFilesOptions,
+  GetSharedFilesResult,
+  SharedFiles,
+  TransferSourceLocation,
   StatResult,
   StreamFileOptions,
   StreamFileResult,
   StreamSourceOptions,
   ThumbnailOptions,
   ThumbnailResult,
-  TransferProgressEvent,
   TransferRef,
   WriteTextFileOptions,
   WriteTextFileResult,
 } from "./definitions"
 import {
   smbErrorCode as smbErrorCodeOf,
-  TERMINAL_TRANSFER_STATES,
   TEXT_FILE_HARD_LIMIT,
   TEXT_FILE_MAX_BYTES,
 } from "./definitions"
@@ -60,6 +64,7 @@ import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
 import { isTextFile } from "@/lib/text/textFiles"
 import { GENERATED_TEXT } from "./mockText"
 import { MOCK_VOLUMES } from "./mockLocal"
+import { type MockRoot, MockTransferEngine } from "./mockTransfers"
 import {
   DEMO_PASSWORDS,
   MOCK_ROUTES,
@@ -170,17 +175,6 @@ interface MockSession {
   latencyMs: number
 }
 
-interface MockJob extends NativeTransfer {
-  timer?: ReturnType<typeof setInterval>
-  speed: number
-  addressIndex: number
-  addresses: { host: string; port?: number }[]
-  /** For the "flaky" scenario: drop once at this byte count. */
-  dropAt?: number
-  /** For the "broken" scenario: fail for good at this byte count (no address left). */
-  failAt?: number
-}
-
 function toEntry(node: MockFile, path: string): SmbEntry {
   return {
     name: node.name,
@@ -221,7 +215,16 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     { username: string; password: string; domain?: string }
   >(Object.entries(DEMO_PASSWORDS).map(([id, password]) => [id, { username: "demo", password }]))
   private readonly sessions = new Map<string, MockSession>()
-  private readonly jobs = new Map<string, MockJob>()
+  /** SAF folders picked with `pickDestinationFolder` (`tree` locations), by URI. */
+  private readonly treeRoots = new Map<string, MockFile>()
+  /** Files "shared from another app" (`simulateIncomingShare`). */
+  private readonly incoming = new Map<string, SharedFiles & { cleared: boolean }>()
+  private readonly transfers = new MockTransferEngine({
+    rootOf: (location) => this.transferRoot(location),
+    emit: (event) => this.notifyListeners("transferProgress", event),
+    fail,
+    tickMs: () => (this.latencyScale === 0 ? 0 : 250),
+  })
   private readonly trees = structuredClone(MOCK_SERVERS) as Record<MockServerKey, MockServer>
   private nextId = 1
   /** All files access (mock: remembered in localStorage, toggled from Settings → Developer). */
@@ -696,219 +699,142 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     this.writeDestinations(this.readDestinations().filter((f) => f.uri !== uri))
   }
 
-  // --- Transfers ----------------------------------------------------------------------------
+  // --- Transfers (ADR 0007) ------------------------------------------------------------------
 
-  private emit(job: MockJob, bytesPerSecond?: number) {
-    const event: TransferProgressEvent = {
-      transferId: job.transferId,
-      bytesDone: job.bytesDone,
-      totalBytes: job.totalBytes,
-      state: job.state,
-      error: job.error,
-      activeHost: job.activeHost,
-      bytesPerSecond,
-    }
-    this.notifyListeners("transferProgress", event)
-  }
-
-  private finish(job: MockJob, state: MockJob["state"], error?: MockJob["error"]) {
-    clearInterval(job.timer)
-    job.timer = undefined
-    job.state = state
-    job.error = error
-    job.finishedAt = new Date().toISOString()
-    this.emit(job)
-  }
-
-  /** Connect through the job's address list starting at `addressIndex`; null when none works. */
-  private async connectJob(job: MockJob): Promise<MockRoute | null> {
-    for (; job.addressIndex < job.addresses.length; job.addressIndex++) {
-      const address = job.addresses[job.addressIndex]
-      try {
-        const { route } = await this.open(
-          job.machineId,
-          address.host,
-          address.port ?? 445,
-          this.jobGuid.get(job.transferId),
-          1500
-        )
-        job.activeHost = address.host
-        return route
-      } catch (error) {
-        const code = (error as HoardSmbWebError).code
-        // A wrong password is not an address problem: failing over would not help. A GUID mismatch
-        // means this address is somebody else's server: skip it like an unreachable one.
-        if (code === "AUTH_FAILED") {
-          this.finish(job, "failed", { code, message: (error as Error).message })
-          return null
+  /** The tree a transfer reads or writes, like native endpoints (own connection for SMB). */
+  private transferRoot(location: TransferSourceLocation): MockRoot {
+    switch (location.kind) {
+      case "smb": {
+        const routes = location.addresses.map((a) => ({ host: a.host, route: routeFor(a.host) }))
+        const live = routes.find((r) => r.route.serverKey && !r.route.failure)
+        if (!live) throw fail("UNREACHABLE", "No address answered")
+        const server = this.trees[live.route.serverKey!]
+        if (location.expectedServerGuid.toLowerCase() !== server.guid) {
+          throw fail("GUID_MISMATCH", `${live.host} is a different server`, {
+            serverGuid: server.guid,
+          })
         }
-        job.error = { code, message: (error as Error).message }
+        const share = server.shares.find(
+          (s) => s.name.toLowerCase() === location.share.toLowerCase()
+        )
+        if (!share) throw fail("NOT_FOUND", `Share ${location.share} not found`)
+        if (share.denied) throw fail("ACCESS_DENIED", `No access to ${location.share}`)
+        return {
+          root: { name: share.name, children: share.root },
+          readOnly: Boolean(share.readOnly),
+          speed: mockSpeedFor(live.route.latencyMs),
+          host: live.host,
+          fallbackHosts: routes.filter((r) => r !== live).map((r) => r.host),
+          key: `smb:${location.machineId}:${share.name.toLowerCase()}`,
+        }
+      }
+      case "tree": {
+        if (!this.readDestinations().some((f) => f.uri === location.uri)) {
+          throw fail("PERMISSION_REVOKED", "The destination folder is no longer accessible")
+        }
+        let root = this.treeRoots.get(location.uri)
+        if (!root) {
+          root = {
+            name: "tree",
+            children: [{ name: "notes.md", size: 120, modifiedAt: new Date().toISOString() }],
+          }
+          this.treeRoots.set(location.uri, root)
+        }
+        return { root, readOnly: false, speed: 60 * 1024 * 1024, key: `tree:${location.uri}` }
+      }
+      case "incoming": {
+        const shared = this.incoming.get(location.shareId)
+        if (!shared) throw fail("NOT_FOUND", "The shared files are no longer available")
+        return {
+          root: {
+            name: "incoming",
+            children: shared.files.map((f) => ({
+              name: f.name,
+              size: Math.max(0, f.size),
+              modifiedAt: shared.receivedAt,
+            })),
+          },
+          readOnly: true,
+          speed: 80 * 1024 * 1024,
+          key: `incoming:${location.shareId}`,
+        }
+      }
+      default: {
+        const { volume, readOnly } = this.localRoot(location)
+        return {
+          root: { name: volume.info.label, children: volume.root },
+          readOnly,
+          speed: 80 * 1024 * 1024,
+          freeBytes: volume.info.freeBytes,
+          key: location.kind === "device" ? "device" : `volume:${location.uuid}`,
+        }
       }
     }
-    this.finish(job, "failed", job.error ?? { code: "UNREACHABLE", message: "No address answered" })
-    return null
   }
 
-  private readonly jobGuid = new Map<string, string>()
-
-  private run(job: MockJob, route: MockRoute) {
-    job.state = "running"
-    job.speed = mockSpeedFor(route.latencyMs)
-    this.emit(job)
-    const tickMs = 250
-    job.timer = setInterval(
-      () => {
-        if (job.state !== "running") return
-        const step = Math.max(1, Math.round((job.speed * tickMs) / 1000))
-        job.bytesDone = Math.min(job.totalBytes, job.bytesDone + step)
-        if (job.failAt !== undefined && job.bytesDone >= job.failAt) {
-          this.finish(job, "failed", {
-            code: "UNREACHABLE",
-            message: `Connection reset by ${job.activeHost}; no other address answered`,
-          })
-          return
-        }
-        if (job.dropAt !== undefined && job.bytesDone >= job.dropAt) {
-          // Simulated Wi-Fi drop: retry, fail over to the next address, resume at the same offset.
-          job.dropAt = undefined
-          clearInterval(job.timer)
-          job.state = "retrying"
-          job.error = { code: "UNREACHABLE", message: `Lost connection to ${job.activeHost}` }
-          this.emit(job)
-          job.addressIndex++
-          void this.wait(1500).then(async () => {
-            if (job.state !== "retrying") return
-            const next = await this.connectJob(job)
-            if (next) {
-              job.error = undefined
-              this.run(job, next)
-            }
-          })
-          return
-        }
-        if (job.bytesDone >= job.totalBytes) {
-          this.finish(job, "completed")
-          return
-        }
-        this.emit(job, job.speed)
-      },
-      this.latencyScale === 0 ? 0 : tickMs
-    )
+  async startTransfer(options: StartTransferOptions): Promise<StartTransferResult> {
+    await this.wait(20)
+    return this.transfers.start(options)
   }
 
-  async startDownload(options: StartDownloadOptions): Promise<StartDownloadResult> {
-    const { transferId, machineId, addresses, expectedServerGuid, share, remotePath, destTreeUri } =
-      options
-    if (
-      this.jobs.has(transferId) &&
-      !TERMINAL_TRANSFER_STATES.includes(this.jobs.get(transferId)!.state)
-    ) {
-      throw fail("UNKNOWN", `Transfer ${transferId} is already running`)
-    }
-    if (addresses.length === 0) throw fail("UNREACHABLE", "No addresses given")
-    if (!this.readDestinations().some((f) => f.uri === destTreeUri)) {
-      throw fail("PERMISSION_REVOKED", "The destination folder is no longer accessible")
-    }
-    const serverKey = addresses.map((a) => routeFor(a.host).serverKey).find(Boolean)
-    if (!serverKey) throw fail("UNREACHABLE", "No address answered")
-    const node = this.findNode(serverKey, share, remotePath)
-    if (!node) throw fail("NOT_FOUND", `${remotePath} not found`)
-    if (node.children) throw fail("UNKNOWN", "Folder downloads are not supported yet")
-
-    const remoteName = splitPath(remotePath).at(-1) ?? remotePath
-    const wanted = options.destName ?? remoteName
-    const destName =
-      options.conflict === "rename" && this.destinationHas(destTreeUri, wanted)
-        ? withSuffix(wanted)
-        : wanted
-    const totalBytes = node.size ?? 0
-    const resumeFrom = Math.min(options.resumeFromBytes ?? 0, totalBytes)
-    const job: MockJob = {
-      transferId,
-      machineId,
-      share,
-      remotePath,
-      destTreeUri,
-      destName,
-      destUri: `${destTreeUri}/document/${encodeURIComponent(destName)}`,
-      totalBytes,
-      bytesDone: resumeFrom,
-      state: "queued",
-      startedAt: new Date().toISOString(),
-      speed: 0,
-      addressIndex: 0,
-      addresses,
-      dropAt: remoteName.includes("flaky") ? Math.round(totalBytes * 0.4) : undefined,
-      failAt:
-        remoteName.includes("broken") && resumeFrom === 0
-          ? Math.round(totalBytes * 0.6)
-          : undefined,
-    }
-    this.jobs.set(transferId, job)
-    this.jobGuid.set(transferId, expectedServerGuid)
-
-    if (options.conflict === "skip" && this.destinationHas(destTreeUri, wanted)) {
-      this.finish(job, "skipped")
-      return { transferId, destName, destUri: job.destUri! }
-    }
-
-    this.emit(job)
-    void this.connectJob(job).then(
-      (route) => route && job.state === "queued" && this.run(job, route)
-    )
-    return { transferId, destName, destUri: job.destUri! }
-  }
-
-  /** The mock "destination" already holds anything a completed job wrote, plus `notes.md`. */
-  private destinationHas(treeUri: string, name: string) {
-    if (name === "notes.md") return true
-    return [...this.jobs.values()].some(
-      (j) => j.destTreeUri === treeUri && j.destName === name && j.state === "completed"
-    )
-  }
-
-  private findNode(serverKey: MockServerKey, shareName: string, path: string): MockFile | null {
-    const share = this.trees[serverKey].shares.find((s) => s.name === shareName)
-    if (!share) return null
-    let node: MockFile = { name: share.name, children: share.root }
-    for (const segment of splitPath(path)) {
-      const next = node.children?.find((child) => child.name === segment)
-      if (!next) return null
-      node = next
-    }
-    return node
+  async resolveTransferConflicts(options: ResolveTransferConflictsOptions): Promise<void> {
+    this.transfers.resolve(options)
   }
 
   async cancelTransfer({ transferId }: TransferRef): Promise<void> {
-    const job = this.jobs.get(transferId)
-    if (!job || TERMINAL_TRANSFER_STATES.includes(job.state)) return
-    this.finish(job, "cancelled", { code: "CANCELLED", message: "Cancelled" })
+    this.transfers.cancel(transferId)
   }
 
   async getTransfers(): Promise<GetTransfersResult> {
-    return {
-      transfers: [...this.jobs.values()].map(
-        ({
-          timer: _timer,
-          speed: _speed,
-          addressIndex: _i,
-          addresses: _a,
-          dropAt: _d,
-          failAt: _f,
-          ...rest
-        }) => rest
-      ),
-    }
+    return { transfers: this.transfers.list() }
+  }
+
+  async getTransferItems(options: GetTransferItemsOptions): Promise<GetTransferItemsResult> {
+    return this.transfers.items(options)
   }
 
   async acknowledgeTransfers({ transferIds }: { transferIds: string[] }): Promise<void> {
-    for (const id of transferIds) {
-      const job = this.jobs.get(id)
-      if (job && TERMINAL_TRANSFER_STATES.includes(job.state)) {
-        this.jobs.delete(id)
-        this.jobGuid.delete(id)
-      }
+    this.transfers.acknowledge(transferIds)
+  }
+
+  // --- Share in and out ------------------------------------------------------------------------
+
+  async shareFiles({ location, paths }: ShareFilesOptions): Promise<void> {
+    if (paths.length === 0) throw fail("UNKNOWN", "paths is required")
+    for (const path of paths) {
+      const { node } = await this.streamSource({ location, path })
+      if (node.children) throw fail("UNKNOWN", "Folders cannot be shared")
     }
+    console.info(`[HoardSmbWeb] would open the share sheet with ${paths.length} file(s)`, paths)
+  }
+
+  /** Dev tool: pretend another app shared files to Hoard (emits `filesShared`). */
+  simulateIncomingShare(
+    files: { name: string; size: number; mimeType?: string }[],
+    /** Items native would refuse (`file://`, Hoard's own providers): only counted. */
+    rejected = 0
+  ): SharedFiles {
+    const shared: SharedFiles = {
+      shareId: `mock-share-${this.nextId++}`,
+      files: files.map((f, index) => ({ index, ...f })),
+      ...(rejected > 0 ? { rejected } : {}),
+      receivedAt: new Date().toISOString(),
+    }
+    this.incoming.set(shared.shareId, { ...shared, cleared: false })
+    this.notifyListeners("filesShared", shared)
+    return shared
+  }
+
+  async getSharedFiles(): Promise<GetSharedFilesResult> {
+    const latest = [...this.incoming.values()].reverse().find((s) => !s.cleared)
+    if (!latest) return { shared: null }
+    const { cleared: _cleared, ...shared } = latest
+    return { shared }
+  }
+
+  async clearSharedFiles({ shareId }: { shareId: string }): Promise<void> {
+    const shared = this.incoming.get(shareId)
+    if (shared) shared.cleared = true
   }
 
   // --- Viewing ------------------------------------------------------------------------------
@@ -1150,10 +1076,4 @@ function isValidMockName(name: string) {
     ![...name].some((c) => c.charCodeAt(0) < 32) &&
     !name.endsWith(".")
   )
-}
-
-/** `photo.jpg` → `photo (1).jpg`, like Android's DocumentsProvider does on a name clash. */
-function withSuffix(name: string): string {
-  const dot = name.lastIndexOf(".")
-  return dot > 0 ? `${name.slice(0, dot)} (1)${name.slice(dot)}` : `${name} (1)`
 }

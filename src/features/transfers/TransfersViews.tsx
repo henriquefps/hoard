@@ -14,9 +14,12 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDb, useLiveQuery } from "@/db/DbProvider"
 import { clearFinishedTransfers, listMachines } from "@/db/queries"
+import { parseLocationId } from "@/features/locations/ids"
+import { useVolumes } from "@/features/locations/volumesContext"
 import { cn } from "@/lib/utils"
 import { setTransfersDrawerOpen, useTransfersDrawerOpen } from "./drawerState"
-import { TransferRow } from "./TransferRow"
+import { INCOMING_LOCATION_ID, TREE_LOCATION_ID } from "./service"
+import { type PlaceNamer, TransferRow } from "./TransferRow"
 import { type TransferView, useTransfers } from "./TransfersProvider"
 
 /** Overall progress of the active transfers (0-100), or null when nothing runs. */
@@ -26,6 +29,33 @@ export function overallProgress(transfers: TransferView[] | undefined) {
   const total = active.reduce((sum, t) => sum + t.total, 0)
   const done = active.reduce((sum, t) => sum + t.bytesDone, 0)
   return { count: active.length, percent: total > 0 ? (done / total) * 100 : 0 }
+}
+
+/** "NAS · media › Photos", "Internal storage › DCIM", "USB drive", "Download (Android folder)". */
+function usePlaceNamer(): PlaceNamer {
+  const { t } = useTranslation()
+  const machines = useLiveQuery(listMachines)
+  const { volumes } = useVolumes()
+  return (locationId, share, path, treeUri) => {
+    if (locationId === INCOMING_LOCATION_ID) return t("transfers.fromOtherApp")
+    if (locationId === TREE_LOCATION_ID) {
+      const folder = decodeURIComponent(treeUri?.split("/tree/")[1] ?? "")
+        .split(":")
+        .slice(1)
+        .join(":")
+      return [folder || t("transfer.androidFolder"), path].filter(Boolean).join(" › ")
+    }
+    const parsed = parseLocationId(locationId)
+    const base =
+      parsed.kind === "device"
+        ? t("locations.internal")
+        : parsed.kind === "volume"
+          ? (volumes?.find((v) => v.uuid === parsed.uuid)?.label ?? t("locations.drive"))
+          : (machines?.find((m) => m.id === parsed.machineId)?.name ??
+            t("transfers.unknownMachine"))
+    const head = share ? `${base} · ${share}` : base
+    return path ? `${head} › ${path.split("/").filter(Boolean).join(" › ")}` : head
+  }
 }
 
 /** Active transfers first, then the history; "Clear finished". Used by the page and the drawer. */
@@ -39,7 +69,7 @@ export function TransfersList({
   const { t } = useTranslation()
   const db = useDb()
   const transfers = useTransfers()
-  const machines = useLiveQuery(listMachines)
+  const placeName = usePlaceNamer()
   if (!transfers) {
     return (
       <div className="flex flex-col gap-2 p-4">
@@ -51,7 +81,6 @@ export function TransfersList({
   const active = transfers.filter((x) => x.active)
   const finished = transfers.filter((x) => !x.active)
   const shown = limitFinished ? finished.slice(0, limitFinished) : finished
-  const machine = (id: string) => machines?.find((m) => m.id === id)
   if (transfers.length === 0) {
     return (
       <Empty className={cn("border", compact && "m-4")}>
@@ -78,11 +107,7 @@ export function TransfersList({
           <ul className="border-t">
             {active.map((transfer) => (
               <li key={transfer.id}>
-                <TransferRow
-                  transfer={transfer}
-                  machine={machine(transfer.machine_id)}
-                  compact={compact}
-                />
+                <TransferRow transfer={transfer} placeName={placeName} compact={compact} />
               </li>
             ))}
           </ul>
@@ -107,11 +132,7 @@ export function TransfersList({
           <ul className="border-t">
             {shown.map((transfer) => (
               <li key={transfer.id}>
-                <TransferRow
-                  transfer={transfer}
-                  machine={machine(transfer.machine_id)}
-                  compact={compact}
-                />
+                <TransferRow transfer={transfer} placeName={placeName} compact={compact} />
               </li>
             ))}
           </ul>

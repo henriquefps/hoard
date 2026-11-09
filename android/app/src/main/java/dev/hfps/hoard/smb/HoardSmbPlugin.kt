@@ -19,9 +19,14 @@ import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
-import dev.hfps.hoard.smb.transfer.StartDownloadRequest
-import dev.hfps.hoard.smb.transfer.TransferAddress
+import dev.hfps.hoard.smb.share.IncomingShare
+import dev.hfps.hoard.smb.share.IncomingShares
+import dev.hfps.hoard.smb.share.ShareOut
+import dev.hfps.hoard.smb.stream.SmbSource
+import dev.hfps.hoard.smb.transfer.Endpoint
+import dev.hfps.hoard.smb.transfer.StartTransferRequest
 import dev.hfps.hoard.smb.transfer.TransferJob
+import dev.hfps.hoard.smb.transfer.TransferSource
 import dev.hfps.hoard.smb.transfer.TransferManager
 import dev.hfps.hoard.smb.transfer.TransferNotifications
 import dev.hfps.hoard.smb.transfer.TransferProgress
@@ -67,7 +72,10 @@ import java.util.concurrent.CancellationException
  * the phone's storage and removable volumes through [HoardFs] ([PathFs] by path with all files
  * access, [SafFs] through a volume's SAF tree).
  *
- * Events: `transferProgress`, `networkChanged`, `volumesChanged`.
+ * Since 1.4.0 transfers go from any location to any location (ADR 0007), and Hoard shares files
+ * to other apps and receives them (`ACTION_SEND`, `ACTION_SEND_MULTIPLE`).
+ *
+ * Events: `transferProgress`, `networkChanged`, `volumesChanged`, `filesShared`.
  */
 @CapacitorPlugin(
     name = "HoardSmb",
@@ -97,8 +105,14 @@ class HoardSmbPlugin : Plugin() {
     private var openJob: Job? = null
     private var askedForNotifications = false
 
+    private lateinit var shareOut: ShareOut
+
     private val transferListener: (TransferProgress) -> Unit = { event ->
         notifyListeners("transferProgress", progressJson(event.job, event.bytesPerSecond))
+    }
+
+    private val shareListener: (IncomingShare) -> Unit = { share ->
+        notifyListeners("filesShared", sharedJson(share), true)
     }
 
     override fun load() {
@@ -109,6 +123,14 @@ class HoardSmbPlugin : Plugin() {
         opener = Opener(context)
         thumbnailer = Thumbnailer(context)
         streamer = Streamer(context, credentials)
+        shareOut = ShareOut(context, opener)
+        IncomingShares.init(context)
+        IncomingShares.addListener(shareListener)
+        // Launched (or relaunched) from another app's share sheet.
+        activity?.intent?.takeIf { IncomingShares.isShare(it) }?.let { intent ->
+            scope.launch { runCatching { IncomingShares.receive(context, intent) } }
+            activity?.intent = android.content.Intent(android.content.Intent.ACTION_MAIN)
+        }
         TransferNotifications.ensureChannels(context)
         transfers.addListener(transferListener)
         scope.launch { runCatching { transfers.reconcile() } }
@@ -127,7 +149,15 @@ class HoardSmbPlugin : Plugin() {
         }.also { it.start() }
     }
 
+    /** `singleTask`: a share while Hoard is running arrives here. */
+    override fun handleOnNewIntent(intent: Intent) {
+        super.handleOnNewIntent(intent)
+        if (!IncomingShares.isShare(intent)) return
+        scope.launch { runCatching { IncomingShares.receive(context, intent) } }
+    }
+
     override fun handleOnDestroy() {
+        IncomingShares.removeListener(shareListener)
         networkMonitor?.stop()
         volumeMonitor?.stop()
         transfers.removeListener(transferListener)
@@ -229,36 +259,50 @@ class HoardSmbPlugin : Plugin() {
 
     private fun errorJson(job: TransferJob): JSObject? {
         val code = job.errorCode ?: return null
-        if (job.state == TransferStates.COMPLETED || job.state == TransferStates.RUNNING || job.state == TransferStates.QUEUED) return null
+        if (job.state != TransferStates.FAILED && job.state != TransferStates.RETRYING && job.state != TransferStates.CANCELLED) return null
         return JSObject().put("code", code.name).put("message", job.errorMessage ?: code.name)
     }
 
-    private fun transferJson(job: TransferJob) = JSObject().apply {
+    /** The fields `NativeTransfer` and `TransferProgressEvent` share. */
+    private fun jobFields(job: TransferJob) = JSObject().apply {
+        val counts = job.counts()
         put("transferId", job.transferId)
-        put("machineId", job.machineId)
-        put("share", job.share)
-        put("remotePath", job.remotePath)
-        put("destTreeUri", job.destTreeUri)
-        put("destName", job.destName)
-        job.destUri?.let { put("destUri", it) }
-        put("totalBytes", job.totalBytes)
-        put("bytesDone", job.bytesDone)
         put("state", job.state)
+        put("totalBytes", job.totalBytes())
+        put("bytesDone", job.bytesDone())
+        put("itemsTotal", counts.total)
+        put("itemsDone", counts.done)
+        put("itemsFailed", counts.failed)
+        put("itemsSkipped", counts.skipped)
+        if (counts.conflicts > 0) put("conflicts", counts.conflicts)
+        job.currentName?.let { put("currentName", it) }
         errorJson(job)?.let { put("error", it) }
         job.activeHost?.let { put("activeHost", it) }
+    }
+
+    private fun transferJson(job: TransferJob) = jobFields(job).apply {
+        put("op", job.op)
         put("startedAt", job.startedAt)
         job.finishedAt?.let { put("finishedAt", it) }
     }
 
-    private fun progressJson(job: TransferJob, bytesPerSecond: Long?) = JSObject().apply {
-        put("transferId", job.transferId)
-        put("bytesDone", job.bytesDone)
-        put("totalBytes", job.totalBytes)
-        put("state", job.state)
-        errorJson(job)?.let { put("error", it) }
-        job.activeHost?.let { put("activeHost", it) }
+    private fun progressJson(job: TransferJob, bytesPerSecond: Long?) = jobFields(job).apply {
         if (bytesPerSecond != null && job.state == TransferStates.RUNNING) put("bytesPerSecond", bytesPerSecond)
     }
+
+    private fun sharedJson(share: IncomingShare) = JSObject().apply {
+        put("shareId", share.shareId)
+        put("files", JSArray().apply {
+            share.items.forEach {
+                put(JSObject().put("index", it.index).put("name", it.name).put("size", it.size).apply { it.mimeType?.let { m -> put("mimeType", m) } })
+            }
+        })
+        share.text?.let { put("text", it) }
+        if (share.rejected > 0) put("rejected", share.rejected)
+        put("receivedAt", share.receivedAt)
+    }
+
+    private fun endpoint(json: JSONObject?): Endpoint = Endpoint.parse(json) { host, port -> Net.requireValidAddress(host, port) }
 
     // --- Reachability and discovery -------------------------------------------------------
 
@@ -540,40 +584,102 @@ class HoardSmbPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun startDownload(call: PluginCall) {
+    fun startTransfer(call: PluginCall) {
         if (askForNotifications(call, "onNotificationPermission")) return
-        doStartDownload(call)
+        doStartTransfer(call)
     }
 
     @PermissionCallback
-    private fun onNotificationPermission(call: PluginCall) = doStartDownload(call)
+    private fun onNotificationPermission(call: PluginCall) = doStartTransfer(call)
 
-    private fun doStartDownload(call: PluginCall) = run(call) {
-        val addresses = call.getArray("addresses")?.toList<JSONObject>().orEmpty().map {
-            val (host, port) = Net.requireValidAddress(it.optString("host"), if (it.has("port")) it.optInt("port") else null)
-            TransferAddress(host, port)
+    private fun doStartTransfer(call: PluginCall) = run(call) {
+        val sources = call.getArray("sources")?.toList<JSONObject>().orEmpty().map {
+            TransferSource(endpoint(it.optJSONObject("location")), it.optString("path"))
         }
-        val request = StartDownloadRequest(
-            transferId = call.requireString("transferId"),
-            machineId = call.requireString("machineId"),
-            addresses = addresses,
-            expectedServerGuid = call.getString("expectedServerGuid").orEmpty(),
-            share = call.requireString("share"),
-            remotePath = call.requireString("remotePath"),
-            destTreeUri = call.requireString("destTreeUri"),
-            destName = call.getString("destName")?.takeIf { it.isNotBlank() },
-            conflict = call.getString("conflict") ?: "rename",
-            resumeFromBytes = (call.getDouble("resumeFromBytes") ?: 0.0).toLong().coerceAtLeast(0),
+        val destination = call.getObject("destination") ?: smbFail(ErrorCode.UNKNOWN, "destination is required")
+        val job = transfers.start(
+            StartTransferRequest(
+                transferId = call.requireString("transferId"),
+                op = call.getString("op") ?: "copy",
+                sources = sources,
+                destination = endpoint(destination.optJSONObject("location")),
+                destPath = destination.optString("path"),
+                conflict = call.getString("conflict") ?: "rename",
+                resume = call.getBoolean("resume", false) ?: false,
+            ),
         )
-        if (request.conflict !in setOf("rename", "overwrite", "skip")) {
-            smbFail(ErrorCode.UNKNOWN, "conflict must be rename, overwrite or skip")
+        JSObject().put("transferId", job.transferId)
+    }
+
+    @PluginMethod
+    fun resolveTransferConflicts(call: PluginCall) = run(call) {
+        val items = call.getArray("items")?.toList<JSONObject>().orEmpty().associate { it.getInt("index") to it.getString("policy") }
+        transfers.resolveConflicts(call.requireString("transferId"), call.getString("all"), items)
+        null
+    }
+
+    @PluginMethod
+    fun getTransferItems(call: PluginCall) = run(call) {
+        val job = transfers.store.get(call.requireString("transferId")) ?: smbFail(ErrorCode.NOT_FOUND, "The transfer's details are gone")
+        val states = call.getArray("states")?.toList<String>()?.toSet()
+        val conflictsOnly = call.getBoolean("conflictsOnly", false) ?: false
+        val offset = (call.getInt("offset") ?: 0).coerceAtLeast(0)
+        val limit = (call.getInt("limit") ?: 200).coerceIn(1, 1000)
+        val matching = synchronized(job) {
+            job.items.filter {
+                !it.superseded && (it.counts || it.state == TransferStates.FAILED) &&
+                    (states == null || it.state in states) &&
+                    (!conflictsOnly || (it.conflict == "ask" && !it.isFinished))
+            }.map { item ->
+                JSObject().apply {
+                    put("index", item.index)
+                    put("sourcePath", item.sourcePath)
+                    put("destPath", item.destPath)
+                    put("isDirectory", item.isDirectory)
+                    put("size", item.size.coerceAtLeast(0))
+                    put("bytesDone", item.bytesDone)
+                    put("state", if (item.state == TransferStates.QUEUED || TransferStates.isTerminal(item.state) || item.state == TransferStates.RUNNING || item.state == TransferStates.RETRYING) item.state else TransferStates.QUEUED)
+                    item.conflict?.let { put("conflict", it) }
+                    item.errorCode?.let { put("error", JSObject().put("code", it.name).put("message", item.errorMessage ?: it.name)) }
+                }
+            }
         }
-        val job = transfers.start(request)
-        JSObject().apply {
-            put("transferId", job.transferId)
-            put("destName", job.destName)
-            put("destUri", job.destUri ?: "")
+        val page = JSArray()
+        matching.drop(offset).take(limit).forEach { page.put(it) }
+        JSObject().put("items", page).put("total", matching.size)
+    }
+
+    // --- Share in and out -------------------------------------------------------------------
+
+    @PluginMethod
+    fun shareFiles(call: PluginCall) = run(call) {
+        val location = call.getObject("location") ?: smbFail(ErrorCode.UNKNOWN, "location is required")
+        val paths = call.getArray("paths")?.toList<String>().orEmpty()
+        if (paths.isEmpty()) smbFail(ErrorCode.UNKNOWN, "paths is required")
+        val files = withContext(Dispatchers.IO) {
+            if (location.optString("kind") == "smb") {
+                val request = streamRequest(call, paths[0])
+                shareOut.smb({
+                    SmbSource(request.machineId, request.addresses, request.expectedServerGuid, request.share, credentials::get)
+                }, paths)
+            } else {
+                shareOut.local(volumes.fs(Location.parse(location) as Location.Local), paths)
+            }
         }
+        val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to share from")
+        withContext(Dispatchers.Main) { shareOut.launch(activity, files) }
+        null
+    }
+
+    @PluginMethod
+    fun getSharedFiles(call: PluginCall) = run(call) {
+        JSObject().put("shared", IncomingShares.latest()?.let(::sharedJson) ?: JSONObject.NULL)
+    }
+
+    @PluginMethod
+    fun clearSharedFiles(call: PluginCall) = run(call) {
+        IncomingShares.clear(call.requireString("shareId"))
+        null
     }
 
     @PluginMethod
@@ -585,7 +691,7 @@ class HoardSmbPlugin : Plugin() {
     @PluginMethod
     fun getTransfers(call: PluginCall) = run(call) {
         val list = JSArray()
-        transfers.all().forEach { list.put(transferJson(it)) }
+        transfers.reported().forEach { list.put(transferJson(it)) }
         JSObject().put("transfers", list)
     }
 
@@ -634,7 +740,7 @@ class HoardSmbPlugin : Plugin() {
     private fun isSmbSource(call: PluginCall) = call.getObject("location")?.optString("kind") == "smb"
 
     /** The `StreamSourceOptions` of an SMB call (own connection: machine, addresses, GUID, share, path). */
-    private fun streamRequest(call: PluginCall): StreamRequest {
+    private fun streamRequest(call: PluginCall, path: String = call.requireString("path")): StreamRequest {
         val location = call.getObject("location") ?: smbFail(ErrorCode.UNKNOWN, "location is required")
         val array = location.optJSONArray("addresses")
         val addresses = (0 until (array?.length() ?: 0)).map { index ->
@@ -648,7 +754,7 @@ class HoardSmbPlugin : Plugin() {
             addresses = addresses,
             expectedServerGuid = location.optString("expectedServerGuid").takeIf { it.isNotBlank() && it != "null" },
             share = location.optString("share").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "location.share is required"),
-            path = call.requireString("path"),
+            path = path,
         )
     }
 

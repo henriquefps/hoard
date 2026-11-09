@@ -15,8 +15,10 @@ import {
   listMachines,
   listManualShares,
   listTransfers,
+  type NewTransfer,
   removeManualShare,
   saveMachine,
+  transferSourcePaths,
   setServerGuid,
   setSetting,
 } from "./queries"
@@ -24,6 +26,26 @@ import { seedDemoData } from "./seed"
 import { sqljsDb } from "./sqljsDb"
 
 const SQL = await initSqlJs()
+
+const newTransfer = (machineId: string, over: Partial<NewTransfer> = {}): NewTransfer => ({
+  op: "copy",
+  sourceLocationId: machineId,
+  sourceMachineId: machineId,
+  sourceShare: "media",
+  sourcePaths: ["a.mkv"],
+  destLocationId: "device",
+  destMachineId: null,
+  destShare: "",
+  destPath: "Download",
+  destTreeUri: null,
+  name: "a.mkv",
+  conflict: "ask",
+  size: 100,
+  itemsTotal: 1,
+  ...over,
+})
+
+const progress = { itemsTotal: 1, itemsDone: 0, itemsFailed: 0, itemsSkipped: 0 }
 
 async function freshDb(): Promise<Db> {
   const db = sqljsDb(new SQL.Database())
@@ -34,8 +56,8 @@ async function freshDb(): Promise<Db> {
 
 describe("migrations", () => {
   it("plans every migration for a new database and none at the latest version", () => {
-    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3])
-    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3])
+    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4])
+    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4])
     expect(pendingMigrations(LATEST_VERSION)).toEqual([])
   })
 
@@ -122,6 +144,44 @@ describe("migrations", () => {
     ])
   })
 
+  it("v4 turns 1.3 downloads into copies from the machine to a SAF folder", async () => {
+    const db = sqljsDb(new SQL.Database())
+    await db.execute("PRAGMA foreign_keys = ON")
+    for (const migration of pendingMigrations(0).filter((m) => m.version <= 3)) {
+      await db.execute(migration.sql)
+      await db.execute(`PRAGMA user_version = ${migration.version}`)
+    }
+    await db.run("INSERT INTO machines (id, name) VALUES ('m1', 'nas')")
+    await db.run(
+      `INSERT INTO transfers (id, machine_id, share, remote_path, dest_tree_uri, dest_name, dest_uri, size, bytes_done, state)
+       VALUES ('t1', 'm1', 'media', 'Movies/"Quoted" \\ name.mkv', 'content://tree', 'x (1).mkv', 'content://doc', 100, 100, 'completed'),
+              ('t2', 'm1', 'media', 'b.iso', 'content://tree', 'b.iso', NULL, 900, 30, 'failed')`
+    )
+    await migrate(db)
+    const rows = await listTransfers(db)
+    const done = rows.find((r) => r.id === "t1")!
+    expect(done).toMatchObject({
+      op: "copy",
+      source_location_id: "m1",
+      source_machine_id: "m1",
+      source_share: "media",
+      dest_location_id: "tree",
+      dest_tree_uri: "content://tree",
+      name: "x (1).mkv",
+      items_total: 1,
+      items_done: 1,
+      state: "completed",
+    })
+    expect(transferSourcePaths(done)).toEqual(['Movies/"Quoted" \\ name.mkv'])
+    expect(rows.find((r) => r.id === "t2")).toMatchObject({
+      items_failed: 1,
+      items_done: 0,
+      bytes_done: 30,
+    })
+    await deleteMachine(db, "m1")
+    expect(await listTransfers(db)).toEqual([])
+  })
+
   it("has no column that could hold a password", async () => {
     const db = await freshDb()
     const columns = await db.query<{ name: string }>(
@@ -201,14 +261,18 @@ describe("queries", () => {
     })
     expect(f2).toBe(f1)
     expect((await listFavorites(db)).map((f) => f.label)).toEqual(["Films"])
-    await createTransfer(db, {
-      machineId: id,
-      share: "media",
-      remotePath: "a.mkv",
-      destTreeUri: "content://t",
-      destName: "a.mkv",
-      size: 10,
-    })
+    await createTransfer(db, newTransfer(id))
+    // An upload to the machine goes with it too.
+    await createTransfer(
+      db,
+      newTransfer("device", {
+        sourceMachineId: null,
+        destLocationId: id,
+        destMachineId: id,
+        destShare: "media",
+      })
+    )
+    expect(await listTransfers(db)).toHaveLength(2)
     await deleteMachine(db, id)
     expect(await listFavorites(db)).toEqual([])
     expect(await listTransfers(db)).toEqual([])
@@ -234,23 +298,26 @@ describe("queries", () => {
 
   it("applies transfer progress and clears finished ones", async () => {
     const machineId = await saveMachine(db, { name: "m", username: "u", addresses: [] })
-    const id = await createTransfer(db, {
-      machineId,
-      share: "s",
-      remotePath: "f",
-      destTreeUri: "content://t",
-      destName: "f",
-      size: 100,
-    })
+    const id = await createTransfer(db, newTransfer(machineId))
     await applyTransferProgress(db, {
+      ...progress,
       transferId: id,
       bytesDone: 40,
       totalBytes: 100,
+      itemsTotal: 12,
+      itemsDone: 5,
       state: "running",
     })
     let [row] = await listTransfers(db)
-    expect([row.bytes_done, row.state, row.finished_at]).toEqual([40, "running", null])
+    expect([row.bytes_done, row.state, row.finished_at, row.items_total, row.items_done]).toEqual([
+      40,
+      "running",
+      null,
+      12,
+      5,
+    ])
     await applyTransferProgress(db, {
+      ...progress,
       transferId: id,
       bytesDone: 40,
       totalBytes: 100,

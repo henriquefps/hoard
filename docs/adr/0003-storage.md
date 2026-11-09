@@ -26,29 +26,29 @@ Every screen goes through one small query interface, `Db` (`src/db/db.ts`: `quer
   directly over jeep-sqlite (which wraps it in a web component plus IndexedDB) because it is less
   machinery and also runs in Node for the tests.
 
-Schema (v3), ids are TEXT UUIDs created by the app and shared with the native plugin:
+Schema (v4), ids are TEXT UUIDs created by the app and shared with the native plugin:
 
-| Table               | Columns                                                                                                                                                                                                                                                            |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `machines`          | id, name, icon, color, username, domain, server_guid (nullable), sort_order, created_at                                                                                                                                                                            |
-| `machine_addresses` | id, machine_id → machines (cascade), host, port (445), kind (`local`/`tailscale`/`other`), label, sort_order                                                                                                                                                       |
-| `favorites`         | id, location_id (machine id, `device` or `vol-<uuid>`), machine_id → machines (cascade; null for local locations), share (`''` for local), path (`""` = root), label, sort_order, created_at; unique (location_id, share, path). v3, [ADR 0005](0005-locations.md) |
-| `transfers`         | id, machine_id → machines (cascade), share, remote_path, dest_tree_uri, dest_name, dest_uri, size, bytes_done, state, error_code, error, created_at, finished_at                                                                                                   |
-| `settings`          | key, value (JSON)                                                                                                                                                                                                                                                  |
-| `manual_shares`     | machine_id → machines (cascade), name (`COLLATE NOCASE`), created_at; primary key (machine_id, name). v2: shares opened by name that the server does not list                                                                                                      |
+| Table               | Columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `machines`          | id, name, icon, color, username, domain, server_guid (nullable), sort_order, created_at                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `machine_addresses` | id, machine_id → machines (cascade), host, port (445), kind (`local`/`tailscale`/`other`), label, sort_order                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `favorites`         | id, location_id (machine id, `device` or `vol-<uuid>`), machine_id → machines (cascade; null for local locations), share (`''` for local), path (`""` = root), label, sort_order, created_at; unique (location_id, share, path). v3, [ADR 0005](0005-locations.md)                                                                                                                                                                                                                                                 |
+| `transfers`         | id, op (`copy`/`move`), source_location_id, source_machine_id → machines (cascade, null unless a machine), source_share, source_paths (JSON array; `incoming`: item indexes), dest_location_id (machine id, `device`, `vol-<uuid>`, `tree`), dest_machine_id → machines (cascade), dest_share, dest_path, dest_tree_uri, name, conflict, size, bytes_done, items_total, items_done, items_failed, items_skipped, state, error_code, error, created_at, finished_at. v4, [ADR 0007](0007-transfers-any-location.md) |
+| `settings`          | key, value (JSON)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `manual_shares`     | machine_id → machines (cascade), name (`COLLATE NOCASE`), created_at; primary key (machine_id, name). v2: shares opened by name that the server does not list                                                                                                                                                                                                                                                                                                                                                      |
 
 Known `settings` keys (no migration needed, the table is key/value; validated with defaults in
 `src/features/settings/settings.ts`): `showHiddenFiles`, `defaultSort` (`{ key, direction }`),
-`defaultConflict`, `lastDestination` (the SAF tree used for the last download), `probeTimeoutMs`,
+`defaultConflict` (`ask` / `rename` / `overwrite` / `skip`), `recentDestinations` (the destination picker's "Recent", newest first; 1.4), `lastDestination` (≤ 1.3, no longer read), `probeTimeoutMs`,
 `onboarded`, `storageIntroSeen` (the all files access screen was shown, ADR 0005), and in the browser build `demoSeeded` / `worstCaseSeeded`.
 
-The transfer service writes progress to `transfers` at most once a second per job (plus every
+The transfer service writes progress (bytes and item counts) to `transfers` at most once a second per job (plus every
 state change); speed and the active host live only in memory, fed by `transferProgress`.
 
 **Passwords never touch SQLite, localStorage or any JS-side storage.** `HoardSmb.setCredentials`
 sends the password once to native code, which encrypts it with an AES-GCM key held in the
 **Android Keystore** (non-exportable) and keeps only the ciphertext in app-private storage. No
-plugin method returns a password; `connect` and `startDownload` look credentials up natively by
+plugin method returns a password; `connect`, `startTransfer` and streams look credentials up natively by
 `machineId`. Deleting a machine also calls `deleteCredentials`.
 
 Theme, palette and language are per-device conveniences in `localStorage`, as in other hfps apps.
@@ -58,7 +58,8 @@ Theme, palette and language are per-device conveniences in `localStorage`, as in
 - No secret ever reaches a backup. The app opts out of Android backup and device-to-device
   transfer entirely (`allowBackup="false"` plus `data_extraction_rules.xml`): the Keystore key would
   not migrate anyway, and SAF grants do not survive a move. A new phone starts empty.
-- The transfers table mirrors native jobs. After the app was killed the UI reconciles it with
-  `HoardSmb.getTransfers()` and then `acknowledgeTransfers`.
+- The transfers table mirrors native jobs (per-item states stay native, `getTransferItems`). After
+  the app was killed the UI reconciles it with `HoardSmb.getTransfers()` and then
+  `acknowledgeTransfers`.
 - The web build ships the sql.js WebAssembly file (about 650 KB) in `dist/`; Android loads it only on
   the web code path, so it costs APK size but no startup time.

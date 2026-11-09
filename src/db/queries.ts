@@ -1,5 +1,5 @@
 import { detectAddressKind } from "@/lib/addressKind"
-import type { TransferProgressEvent } from "@/plugins/smb/definitions"
+import type { TransferConflict, TransferOp, TransferProgressEvent } from "@/plugins/smb/definitions"
 import { TERMINAL_TRANSFER_STATES } from "@/plugins/smb/definitions"
 import type { Db } from "./db"
 import type {
@@ -228,33 +228,62 @@ export async function listTransfers(db: Db): Promise<TransferRecord[]> {
   return db.query<TransferRecord>("SELECT * FROM transfers ORDER BY created_at DESC")
 }
 
-/** Records a transfer before `HoardSmb.startDownload` is called with the same id. */
-export async function createTransfer(
-  db: Db,
-  transfer: {
-    machineId: string
-    share: string
-    remotePath: string
-    destTreeUri: string
-    destName: string
-    size: number
-  }
-): Promise<string> {
+export interface NewTransfer {
+  op: TransferOp
+  sourceLocationId: string
+  sourceMachineId: string | null
+  sourceShare: string
+  sourcePaths: string[]
+  destLocationId: string
+  destMachineId: string | null
+  destShare: string
+  destPath: string
+  destTreeUri: string | null
+  name: string
+  conflict: TransferConflict
+  /** Known up front (the selection's files); native reports the real total after its scan. */
+  size: number
+  itemsTotal: number
+}
+
+/** Records a transfer before `HoardSmb.startTransfer` is called with the same id. */
+export async function createTransfer(db: Db, transfer: NewTransfer): Promise<string> {
   const id = newId()
   await db.run(
-    "INSERT INTO transfers (id, machine_id, share, remote_path, dest_tree_uri, dest_name, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    `INSERT INTO transfers (id, op, source_location_id, source_machine_id, source_share, source_paths,
+       dest_location_id, dest_machine_id, dest_share, dest_path, dest_tree_uri, name, conflict, size,
+       items_total, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
-      transfer.machineId,
-      transfer.share,
-      transfer.remotePath,
+      transfer.op,
+      transfer.sourceLocationId,
+      transfer.sourceMachineId,
+      transfer.sourceShare,
+      JSON.stringify(transfer.sourcePaths),
+      transfer.destLocationId,
+      transfer.destMachineId,
+      transfer.destShare,
+      transfer.destPath,
       transfer.destTreeUri,
-      transfer.destName,
+      transfer.name,
+      transfer.conflict,
       transfer.size,
+      transfer.itemsTotal,
       now(),
     ]
   )
   return id
+}
+
+/** The source paths of a row. */
+export function transferSourcePaths(row: Pick<TransferRecord, "source_paths">): string[] {
+  try {
+    const value: unknown = JSON.parse(row.source_paths)
+    return Array.isArray(value) ? value.filter((p): p is string => typeof p === "string") : []
+  } catch {
+    return []
+  }
 }
 
 /** Applies a native progress event (or a `getTransfers` entry) to the row. */
@@ -262,6 +291,7 @@ export async function applyTransferProgress(db: Db, event: TransferProgressEvent
   const finished = TERMINAL_TRANSFER_STATES.includes(event.state)
   await db.run(
     `UPDATE transfers SET bytes_done = ?, size = ?, state = ?, error_code = ?, error = ?,
+       items_total = ?, items_done = ?, items_failed = ?, items_skipped = ?,
        finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE NULL END
      WHERE id = ?`,
     [
@@ -270,24 +300,15 @@ export async function applyTransferProgress(db: Db, event: TransferProgressEvent
       event.state,
       event.error?.code ?? null,
       event.error?.message ?? null,
+      event.itemsTotal,
+      event.itemsDone,
+      event.itemsFailed,
+      event.itemsSkipped,
       finished ? 1 : 0,
       now(),
       event.transferId,
     ]
   )
-}
-
-export async function setTransferDestination(
-  db: Db,
-  id: string,
-  destName: string,
-  destUri: string
-) {
-  await db.run("UPDATE transfers SET dest_name = ?, dest_uri = ? WHERE id = ?", [
-    destName,
-    destUri,
-    id,
-  ])
 }
 
 export async function getTransfer(db: Db, id: string): Promise<TransferRecord | null> {
