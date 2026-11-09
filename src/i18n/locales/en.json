@@ -1,0 +1,96 @@
+{
+  "app": {
+    "name": "Hoard",
+    "tagline": "SMB file client"
+  },
+  "nav": {
+    "home": "Home",
+    "machines": "Machines",
+    "favorites": "Favorites",
+    "transfers": "Transfers",
+    "settings": "Settings",
+    "main": "Navigation",
+    "openMenu": "Open menu",
+    "noFavorites": "Pinned folders show up here."
+  },
+  "common": {
+    "back": "Back",
+    "backTo": "Back to {{name}}",
+    "comingSoon": "Coming soon",
+    "more": "More actions",
+    "edit": "Edit",
+    "browse": "Browse"
+  },
+  "home": {
+    "favorites": "Favorites",
+    "machines": "Machines",
+    "favoritesEmptyTitle": "No favorites yet",
+    "favoritesEmptyBody": "Pin a folder while browsing and it shows up here, reachable from wherever you are."
+  },
+  "machines": {
+    "title": "Machines",
+    "description": "Computers and NAS boxes you browse over SMB.",
+    "add": "Add machine",
+    "new": "New machine",
+    "edit": "Edit machine",
+    "emptyTitle": "No machines yet",
+    "emptyBody": "Add a machine once with every address it answers on: local network, Tailscale or a host name.",
+    "addressCount_one": "{{count}} address",
+    "addressCount_other": "{{count}} addresses",
+    "formPlaceholderTitle": "Machine form",
+    "formPlaceholderBody": "Name, credentials and the ordered list of addresses go here.",
+    "notFound": "This machine no longer exists."
+  },
+  "addressKind": {
+    "local": "Local",
+    "tailscale": "Tailscale",
+    "other": "Other"
+  },
+  "browse": {
+    "shares": "Shares",
+    "placeholderTitle": "File browser",
+    "placeholderBody": "Shares, folders and files of this machine will be listed here."
+  },
+  "transfers": {
+    "title": "Transfers",
+    "description": "Copies from your machines to this phone.",
+    "emptyTitle": "No transfers",
+    "emptyBody": "Files you copy to the phone show up here with their progress."
+  },
+  "settings": {
+    "title": "Settings",
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "palette": "Color",
+    "language": "Language",
+    "about": "About",
+    "aboutBody": "Hoard is free and open source software (AGPL-3.0-or-later).",
+    "demoData": "Browser demo: data comes from a simulated SMB network."
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "palette": "Palette",
+    "palettes": {
+      "blue": "Blue",
+      "olive": "Olive",
+      "violet": "Violet",
+      "rose": "Rose",
+      "graphite": "Graphite"
+    }
+  },
+  "language": {
+    "en": "English",
+    "pt-BR": "Português (Brasil)"
+  },
+  "backButton": {
+    "exitHint": "Press back again to exit"
+  },
+  "notFound": {
+    "title": "Page not found",
+    "body": "This page does not exist.",
+    "home": "Go home"
+  }
+}
