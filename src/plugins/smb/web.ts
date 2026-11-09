@@ -34,6 +34,7 @@ import type {
   TransferRef,
 } from "./definitions"
 import { TERMINAL_TRANSFER_STATES } from "./definitions"
+import { detectAddressKind } from "@/lib/addressKind"
 import {
   DEMO_PASSWORDS,
   MOCK_ROUTES,
@@ -63,8 +64,24 @@ const fail = (code: HoardSmbErrorCode, message: string, data?: Record<string, un
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-const routeFor = (host: string): MockRoute =>
-  MOCK_ROUTES[host.trim().toLowerCase()] ?? UNKNOWN_ROUTE
+/**
+ * Mock-only network simulation (dev tools in Settings, never part of the contract): `home` is the
+ * normal table, `away` makes every local address time out (left the house, Tailscale still up),
+ * `offline` makes everything unreachable.
+ */
+export type MockNetwork = "home" | "away" | "offline"
+
+let network: MockNetwork = "home"
+
+const routeFor = (host: string): MockRoute => {
+  const clean = host.trim().toLowerCase()
+  const route = MOCK_ROUTES[clean] ?? UNKNOWN_ROUTE
+  if (network === "offline") return { serverKey: null, latencyMs: 5, failure: "refused" }
+  if (network === "away" && detectAddressKind(clean) === "local") {
+    return { serverKey: null, latencyMs: 0, failure: "timeout" }
+  }
+  return route
+}
 
 const splitPath = (path: string) => path.split("/").filter(Boolean)
 
@@ -88,6 +105,8 @@ interface MockJob extends NativeTransfer {
   addresses: { host: string; port?: number }[]
   /** For the "flaky" scenario: drop once at this byte count. */
   dropAt?: number
+  /** For the "broken" scenario: fail for good at this byte count (no address left). */
+  failAt?: number
 }
 
 function toEntry(node: MockFile, path: string): SmbEntry {
@@ -126,6 +145,19 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   private readonly jobs = new Map<string, MockJob>()
   private readonly trees = structuredClone(MOCK_SERVERS) as Record<MockServerKey, MockServer>
   private nextId = 1
+
+  /** Dev tool: switch the simulated network and emit `networkChanged` like Android would. */
+  simulateNetwork(next: MockNetwork) {
+    network = next
+    this.notifyListeners("networkChanged", {
+      transport: next === "offline" ? "none" : next === "away" ? "cellular" : "wifi",
+      vpn: next === "away",
+    })
+  }
+
+  get simulatedNetwork(): MockNetwork {
+    return network
+  }
 
   private wait(ms: number) {
     return this.latencyScale === 0 ? Promise.resolve() : sleep(ms * this.latencyScale)
@@ -461,6 +493,13 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
         if (job.state !== "running") return
         const step = Math.max(1, Math.round((job.speed * tickMs) / 1000))
         job.bytesDone = Math.min(job.totalBytes, job.bytesDone + step)
+        if (job.failAt !== undefined && job.bytesDone >= job.failAt) {
+          this.finish(job, "failed", {
+            code: "UNREACHABLE",
+            message: `Connection reset by ${job.activeHost}; no other address answered`,
+          })
+          return
+        }
         if (job.dropAt !== undefined && job.bytesDone >= job.dropAt) {
           // Simulated Wi-Fi drop: retry, fail over to the next address, resume at the same offset.
           job.dropAt = undefined
@@ -532,6 +571,10 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       addressIndex: 0,
       addresses,
       dropAt: remoteName.includes("flaky") ? Math.round(totalBytes * 0.4) : undefined,
+      failAt:
+        remoteName.includes("broken") && resumeFrom === 0
+          ? Math.round(totalBytes * 0.6)
+          : undefined,
     }
     this.jobs.set(transferId, job)
     this.jobGuid.set(transferId, expectedServerGuid)
@@ -577,8 +620,15 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   async getTransfers(): Promise<GetTransfersResult> {
     return {
       transfers: [...this.jobs.values()].map(
-        ({ timer: _timer, speed: _speed, addressIndex: _i, addresses: _a, dropAt: _d, ...rest }) =>
-          rest
+        ({
+          timer: _timer,
+          speed: _speed,
+          addressIndex: _i,
+          addresses: _a,
+          dropAt: _d,
+          failAt: _f,
+          ...rest
+        }) => rest
       ),
     }
   }

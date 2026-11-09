@@ -1,5 +1,6 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
 import { AppShell } from "@/components/AppShell"
+import { trackHistory } from "@/lib/historyTrail"
 import { NotFoundPage } from "@/routes/NotFoundPage"
 import { HomePage } from "@/routes/HomePage"
 import { MachinesPage } from "@/routes/MachinesPage"
@@ -73,6 +74,7 @@ const routeTree = rootRoute.addChildren([
 // Capacitor's local server answers every extension-less path with index.html, so browser history
 // works in the APK as well as in `bun run dev`.
 export const router = createRouter({ routeTree, defaultPreload: "intent" })
+trackHistory(router)
 
 declare module "@tanstack/react-router" {
   interface Register {

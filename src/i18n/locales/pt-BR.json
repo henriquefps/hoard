@@ -11,21 +11,42 @@
     "settings": "Configurações",
     "main": "Navegação",
     "openMenu": "Abrir menu",
-    "noFavorites": "As pastas fixadas aparecem aqui."
+    "noFavorites": "As pastas fixadas aparecem aqui.",
+    "noMachines": "Nenhuma máquina ainda."
   },
   "common": {
     "back": "Voltar",
     "backTo": "Voltar para {{name}}",
-    "comingSoon": "Em breve",
     "more": "Mais ações",
     "edit": "Editar",
-    "browse": "Navegar"
+    "browse": "Navegar",
+    "cancel": "Cancelar",
+    "save": "Salvar",
+    "create": "Criar",
+    "delete": "Excluir",
+    "done": "Concluído",
+    "retry": "Tentar de novo",
+    "moveUp": "Mover {{name}} para cima",
+    "moveDown": "Mover {{name}} para baixo",
+    "moveUpShort": "Mover para cima",
+    "moveDownShort": "Mover para baixo"
   },
   "home": {
     "favorites": "Favoritos",
     "machines": "Máquinas",
     "favoritesEmptyTitle": "Nenhum favorito ainda",
-    "favoritesEmptyBody": "Fixe uma pasta enquanto navega e ela aparece aqui, acessível de onde você estiver."
+    "favoritesEmptyBody": "Fixe uma pasta enquanto navega (a estrela no topo) e ela aparece aqui, acessível de onde você estiver."
+  },
+  "onboarding": {
+    "title": "Seus arquivos, de qualquer rede",
+    "body": "O Hoard abre as pastas compartilhadas dos seus computadores e NAS por SMB, em casa ou fora dela pelo Tailscale.",
+    "step1Title": "Cadastre a máquina uma vez",
+    "step1Body": "Informe todos os endereços dela: o IP local, o IP ou o nome no Tailscale.",
+    "step2Title": "O Hoard escolhe o caminho",
+    "step2Body": "Ele testa todos, usa o que está funcionando agora e confere se é mesmo a sua máquina antes de enviar a senha.",
+    "step3Title": "Navegue, fixe e copie",
+    "step3Body": "Abra arquivos, fixe pastas favoritas e copie arquivos para o celular em segundo plano.",
+    "cta": "Adicionar a primeira máquina"
   },
   "machines": {
     "title": "Máquinas",
@@ -37,25 +58,367 @@
     "emptyBody": "Cadastre uma máquina uma vez com todos os endereços dela: rede local, Tailscale ou um nome de host.",
     "addressCount_one": "{{count}} endereço",
     "addressCount_other": "{{count}} endereços",
-    "formPlaceholderTitle": "Formulário da máquina",
-    "formPlaceholderBody": "Nome, credenciais e a lista ordenada de endereços ficam aqui.",
-    "notFound": "Esta máquina não existe mais."
+    "notFound": "Esta máquina não existe mais.",
+    "actionsFor": "Ações de {{name}}",
+    "columns": {
+      "name": "Nome",
+      "route": "Caminho em uso",
+      "addresses": "Endereços"
+    },
+    "icons": {
+      "desktop-tower": "Torre",
+      "desktop": "Desktop",
+      "laptop": "Notebook",
+      "hard-drives": "NAS",
+      "cloud": "Nuvem",
+      "house": "Casa",
+      "monitor-play": "Central de mídia",
+      "cpu": "Mini PC"
+    },
+    "colors": {
+      "blue": "Azul",
+      "violet": "Violeta",
+      "rose": "Rosa",
+      "green": "Verde",
+      "amber": "Âmbar",
+      "teal": "Verde-azulado",
+      "slate": "Ardósia"
+    },
+    "form": {
+      "machine": "Máquina",
+      "name": "Nome",
+      "namePlaceholder": "ex.: NAS da sala",
+      "icon": "Ícone",
+      "color": "Cor",
+      "addresses": "Endereços",
+      "addressesHint": "O Hoard tenta nesta ordem e usa o primeiro que responder. Endereços locais vêm primeiro, depois Tailscale, depois o resto; arraste para mudar.",
+      "hostPlaceholder": "192.168.1.20 ou nas.local",
+      "hostLabel": "Endereço {{index}}",
+      "portLabel": "Porta do endereço {{index}} (padrão 445)",
+      "removeAddress": "Remover {{host}}",
+      "emptyAddress": "endereço vazio",
+      "addAddress": "Adicionar endereço",
+      "sortByKind": "Ordenar locais primeiro",
+      "signIn": "Login",
+      "signInHint": "A senha fica criptografada neste aparelho (Android Keystore) e nunca mais é exibida.",
+      "username": "Usuário",
+      "password": "Senha",
+      "passwordKeep": "Salva (deixe em branco para manter)",
+      "passwordSaved": "Há uma senha salva para esta máquina.",
+      "passwordHint": "Necessária para conectar.",
+      "showPassword": "Mostrar senha",
+      "hidePassword": "Ocultar senha",
+      "domain": "Domínio ou grupo de trabalho (opcional)",
+      "domainPlaceholder": "WORKGROUP",
+      "create": "Adicionar máquina",
+      "created": "Máquina adicionada",
+      "saved": "Alterações salvas",
+      "errors": {
+        "name": "Dê um nome à máquina.",
+        "username": "Informe o usuário.",
+        "password": "Informe a senha.",
+        "passwordForUser": "Digite a senha de novo para trocar o usuário ou o domínio.",
+        "addresses": "Adicione pelo menos um endereço.",
+        "host": "Este endereço não é válido.",
+        "port": "A porta deve estar entre 1 e 65535.",
+        "duplicate": "Este endereço já está na lista."
+      }
+    },
+    "discover": {
+      "title": "Encontradas nesta rede",
+      "hint": "Toque em uma para preencher o nome e o endereço.",
+      "searching": "Procurando servidores SMB nesta rede…",
+      "already": "já cadastrada"
+    },
+    "test": {
+      "title": "Testar conexão",
+      "hint": "Tenta todos os endereços agora e faz login. Usa a senha que você digitou, que fica guardada neste aparelho.",
+      "run": "Testar conexão",
+      "running": "Testando…",
+      "signedIn": "login feito",
+      "signedInTo": "login feito em {{server}}",
+      "sameServer": "mesmo servidor",
+      "otherServer": "Outro servidor responde aqui (identidade diferente): o Hoard não vai usá-lo",
+      "summaryOk_one": "{{count}} de {{total}} endereços funciona.",
+      "summaryOk_other": "{{count}} de {{total}} endereços funcionam.",
+      "summaryNone": "Nenhum endereço funciona agora."
+    },
+    "identity": {
+      "title": "Identidade do servidor",
+      "body": "Na primeira conexão o Hoard guarda o ID do servidor, para que outro computador que use o mesmo endereço em outra rede nunca receba a sua senha.",
+      "pinned": "Fixada",
+      "notPinned": "Ainda não fixada",
+      "pinsOnConnect": "Fixada automaticamente na próxima conexão",
+      "repin": "Fixar de novo",
+      "repinTitle": "Esquecer a identidade do servidor?",
+      "repinBody": "Faça isso só se você reinstalou ou trocou o servidor desta máquina. O Hoard vai confiar no primeiro servidor que responder nesses endereços e fixá-lo de novo.",
+      "repinDone": "Identidade apagada. Ela é fixada de novo na próxima conexão."
+    },
+    "delete": {
+      "section": "Excluir",
+      "action": "Excluir máquina",
+      "title": "Excluir {{name}}?",
+      "body": "A senha salva, os favoritos e o histórico de transferências dela são removidos deste celular. Os arquivos na máquina não são afetados.",
+      "done": "{{name}} excluída"
+    }
   },
   "addressKind": {
     "local": "Local",
     "tailscale": "Tailscale",
     "other": "Outro"
   },
+  "route": {
+    "checking": "Verificando…",
+    "latency": "{{ms}} ms",
+    "inUse": "Conectado via {{kind}} ({{host}})",
+    "reachable": "Acessível · {{ms}} ms",
+    "notTried": "não foi preciso",
+    "recheck": "Verificar de novo",
+    "problem": {
+      "UNREACHABLE": "Inacessível",
+      "TIMEOUT": "Sem resposta",
+      "AUTH_FAILED": "Usuário ou senha incorretos",
+      "GUID_MISMATCH": "Outro servidor",
+      "ACCESS_DENIED": "Acesso negado",
+      "NOT_FOUND": "Não encontrado",
+      "ALREADY_EXISTS": "Já existe",
+      "NO_SPACE": "Armazenamento do celular cheio",
+      "CANCELLED": "Cancelado",
+      "PERMISSION_REVOKED": "Acesso à pasta perdido",
+      "NO_APP": "Nenhum app para abrir",
+      "UNKNOWN": "Algo deu errado"
+    }
+  },
+  "errors": {
+    "UNREACHABLE": {
+      "title": "Não foi possível acessar esta máquina",
+      "body": "Nenhum dos endereços respondeu. Confira se ela está ligada e se o celular está na mesma rede ou no Tailscale."
+    },
+    "TIMEOUT": {
+      "title": "A máquina não está respondendo",
+      "body": "Todos os endereços demoraram demais. Ela pode estar em repouso ou a rede está lenta; dá para aumentar o tempo limite nas Configurações."
+    },
+    "AUTH_FAILED": {
+      "title": "Usuário ou senha incorretos",
+      "body": "A máquina respondeu, mas não aceitou as credenciais salvas."
+    },
+    "GUID_MISMATCH": {
+      "title": "Esta não é a sua máquina",
+      "body": "Outro servidor responde nesses endereços (talvez você esteja na rede de outra pessoa). O Hoard não enviou a sua senha. Se você trocou o servidor desta máquina, fixe-o de novo nas configurações dela."
+    },
+    "ACCESS_DENIED": {
+      "title": "Sem acesso",
+      "body": "Esta conta não pode abrir este compartilhamento ou pasta."
+    },
+    "NOT_FOUND": {
+      "title": "Não encontrado",
+      "body": "Foi movido, renomeado ou excluído."
+    },
+    "ALREADY_EXISTS": {
+      "title": "Esse nome já está em uso",
+      "body": "Já existe algo com este nome aqui."
+    },
+    "NO_SPACE": {
+      "title": "Sem espaço no celular",
+      "body": "Libere espaço e tente de novo."
+    },
+    "CANCELLED": {
+      "title": "Cancelado",
+      "body": ""
+    },
+    "PERMISSION_REVOKED": {
+      "title": "O acesso à pasta foi perdido",
+      "body": "Escolha a pasta de destino de novo."
+    },
+    "NO_APP": {
+      "title": "Nenhum app consegue abrir este arquivo",
+      "body": ""
+    },
+    "UNKNOWN": {
+      "title": "Algo deu errado",
+      "body": "Tente de novo daqui a pouco."
+    },
+    "editCredentials": "Editar credenciais",
+    "reviewMachine": "Revisar máquina"
+  },
   "browse": {
     "shares": "Compartilhamentos",
-    "placeholderTitle": "Navegador de arquivos",
-    "placeholderBody": "Os compartilhamentos, pastas e arquivos desta máquina aparecem aqui."
+    "noSharesTitle": "Nenhum compartilhamento",
+    "noSharesBody": "Esta conta não enxerga nenhuma pasta compartilhada nesta máquina.",
+    "folder": "Pasta",
+    "kind": "Tipo",
+    "openFolder": "Abrir a pasta {{name}}",
+    "opening": "Abrindo…",
+    "emptyTitle": "Esta pasta está vazia",
+    "emptyBody": "Nada aqui ainda.",
+    "noMatchesTitle": "Nada encontrado",
+    "noMatchesBody": "Nada nesta pasta corresponde à busca ou ao filtro.",
+    "onlyHidden": "Esta pasta só tem arquivos ocultos. Ative “Mostrar arquivos ocultos” para vê-los.",
+    "clearFilters": "Limpar busca e filtro",
+    "toolbar": "Ferramentas da pasta",
+    "search": "Buscar nesta pasta",
+    "clearSearch": "Limpar busca",
+    "filter": "Mostrar",
+    "filters": {
+      "all": "Tudo",
+      "folders": "Pastas",
+      "images": "Imagens",
+      "videos": "Vídeos",
+      "audio": "Áudio",
+      "documents": "Documentos",
+      "archives": "Compactados"
+    },
+    "sort": "Ordenar",
+    "sortBy": "Ordenar por",
+    "sortKeys": {
+      "name": "Nome",
+      "size": "Tamanho",
+      "modified": "Modificado"
+    },
+    "directions": {
+      "name": {
+        "asc": "De A a Z",
+        "desc": "De Z a A"
+      },
+      "size": {
+        "asc": "Menores primeiro",
+        "desc": "Maiores primeiro"
+      },
+      "modified": {
+        "asc": "Mais antigos primeiro",
+        "desc": "Mais recentes primeiro"
+      }
+    },
+    "newFolder": "Nova pasta",
+    "newFolderDefault": "Nova pasta",
+    "folderName": "Nome da pasta",
+    "folderCreated": "Pasta “{{name}}” criada",
+    "refresh": "Atualizar",
+    "showHidden": "Mostrar arquivos ocultos",
+    "rename": "Renomear",
+    "newName": "Novo nome",
+    "nameInvalid": "O nome não pode ficar vazio nem conter \\ / : * ? \" < > |",
+    "nameTaken": "Já existe algo com este nome aqui.",
+    "download": "Baixar",
+    "copyPath": "Copiar caminho",
+    "pathCopied": "Caminho copiado",
+    "copyFailed": "Não foi possível copiar o caminho",
+    "actionsFor": "Ações de {{name}}",
+    "select": "Selecionar {{name}}",
+    "selectAll": "Selecionar tudo",
+    "selectMode": "Selecionar",
+    "selection": "Seleção",
+    "clearSelection": "Cancelar seleção",
+    "selected_one": "{{count}} selecionado",
+    "selected_other": "{{count}} selecionados",
+    "count_one": "{{formatted}} item",
+    "count_other": "{{formatted}} itens",
+    "deleteOne": "Excluir “{{name}}”?",
+    "deleteMany_one": "Excluir {{count}} item?",
+    "deleteMany_other": "Excluir {{count}} itens?",
+    "deleteBody": "Ele é excluído na máquina, não vai para uma lixeira.",
+    "deleteFolderBody_one": "A pasta e tudo o que há dentro dela são excluídos na máquina. Não dá para desfazer.",
+    "deleteFolderBody_other": "Estas {{count}} pastas e tudo o que há dentro delas são excluídos na máquina. Não dá para desfazer.",
+    "deleted_one": "Excluído",
+    "deleted_other": "{{count}} itens excluídos",
+    "deleteFailed_one": "{{count}} item não pôde ser excluído",
+    "deleteFailed_other": "{{count}} itens não puderam ser excluídos",
+    "openError": {
+      "NO_APP": "Nenhum app deste celular abre este tipo de arquivo",
+      "ACCESS_DENIED": "Você não tem acesso a este arquivo",
+      "NOT_FOUND": "O arquivo não existe mais",
+      "NO_SPACE": "Sem espaço para abrir",
+      "UNREACHABLE": "A conexão caiu ao abrir",
+      "TIMEOUT": "A conexão caiu ao abrir",
+      "UNKNOWN": "Não foi possível abrir o arquivo"
+    }
+  },
+  "fileKind": {
+    "folder": "Pasta",
+    "image": "Imagem",
+    "video": "Vídeo",
+    "audio": "Áudio",
+    "document": "Documento",
+    "spreadsheet": "Planilha",
+    "pdf": "PDF",
+    "archive": "Compactado",
+    "code": "Código",
+    "text": "Texto",
+    "other": "Arquivo"
+  },
+  "favorites": {
+    "add": "Adicionar aos favoritos",
+    "remove": "Remover dos favoritos",
+    "added": "“{{name}}” adicionado aos favoritos",
+    "removed": "“{{name}}” removido dos favoritos",
+    "rename": "Renomear favorito",
+    "label": "Nome",
+    "labelRequired": "Dê um nome.",
+    "reorder": "Reordenar",
+    "actionsFor": "Ações de {{name}}"
+  },
+  "download": {
+    "titleOne": "Baixar arquivo",
+    "title_one": "Baixar {{count}} arquivo",
+    "title_other": "Baixar {{count}} arquivos",
+    "summary_one": "{{count}} arquivo · {{size}}",
+    "summary_other": "{{count}} arquivos · {{size}}",
+    "foldersSkipped_one": "{{count}} pasta fica de fora (ainda não dá para baixar pastas).",
+    "foldersSkipped_other": "{{count}} pastas ficam de fora (ainda não dá para baixar pastas).",
+    "onlyFolders": "Ainda não dá para baixar pastas. Abra a pasta e selecione os arquivos.",
+    "destination": "Salvar em",
+    "noFolders": "Nenhuma pasta escolhida ainda. O Hoard pede ao Android uma vez para cada pasta em que pode gravar.",
+    "chooseFolder": "Escolher pasta…",
+    "conflict": "Se o arquivo já existir",
+    "start": "Baixar"
+  },
+  "conflict": {
+    "rename": "Manter os dois",
+    "renameHint": "Salva a nova cópia como “nome (1)”.",
+    "overwrite": "Substituir",
+    "overwriteHint": "Sobrescreve o arquivo no celular.",
+    "skip": "Pular",
+    "skipHint": "Deixa o arquivo existente como está."
   },
   "transfers": {
     "title": "Transferências",
     "description": "Cópias das suas máquinas para este celular.",
     "emptyTitle": "Nenhuma transferência",
-    "emptyBody": "Os arquivos que você copiar para o celular aparecem aqui com o progresso."
+    "emptyBody": "Os arquivos que você baixar aparecem aqui com o progresso. Eles continuam com a tela desligada.",
+    "active_one": "Em andamento · {{count}}",
+    "active_other": "Em andamento · {{count}}",
+    "finished": "Concluídas",
+    "clearFinished": "Limpar concluídas",
+    "more_one": "Mais {{count}} na página Transferências",
+    "more_other": "Mais {{count}} na página Transferências",
+    "openPage": "Ver todas as transferências",
+    "activeSummary_one": "{{count}} transferência · {{percent}}%",
+    "activeSummary_other": "{{count}} transferências · {{percent}}%",
+    "indicator_one": "{{count}} transferência em andamento, {{percent}}%",
+    "indicator_other": "{{count}} transferências em andamento, {{percent}}%",
+    "indicatorFailed": "Uma transferência falhou",
+    "progress": "{{done}} de {{total}}",
+    "left": "faltam {{time}}",
+    "progressLabel": "Progresso de {{name}}",
+    "retryingHint": "A conexão caiu. Tentando de novo e, se preciso, o próximo endereço…",
+    "unknownMachine": "Máquina excluída",
+    "cancel": "Cancelar {{name}}",
+    "retry": "Tentar {{name}} de novo",
+    "remove": "Remover do histórico",
+    "view": "Ver",
+    "started_one": "Download iniciado",
+    "started_other": "{{count}} downloads iniciados",
+    "startFailed_one": "{{count}} download não pôde começar: {{reason}}",
+    "startFailed_other": "{{count}} downloads não puderam começar: {{reason}}",
+    "states": {
+      "queued": "Na fila",
+      "running": "Baixando",
+      "retrying": "Tentando de novo",
+      "completed": "Concluído",
+      "failed": "Falhou",
+      "cancelled": "Cancelado",
+      "skipped": "Pulado"
+    }
   },
   "settings": {
     "title": "Configurações",
@@ -63,9 +426,38 @@
     "theme": "Tema",
     "palette": "Cor",
     "language": "Idioma",
+    "browsing": "Navegação",
+    "showHidden": "Mostrar arquivos ocultos",
+    "showHiddenHint": "Arquivos e pastas que começam com ponto ou estão marcados como ocultos no servidor.",
+    "defaultSort": "Ordem padrão",
+    "sortDirection": "Direção da ordem",
+    "foldersFirst": "As pastas sempre aparecem antes dos arquivos.",
+    "probeTimeout": "Tempo limite da verificação de caminho",
+    "probeTimeoutHint": "Quanto o Hoard espera cada endereço responder. Aumente em redes lentas.",
+    "seconds": "{{value}} s",
+    "default": "padrão",
+    "downloads": "Downloads",
+    "defaultConflict": "Se um arquivo baixado já existir",
+    "destinations": "Pastas onde o Hoard pode salvar",
+    "destinationsHint": "O Android deu ao Hoard acesso a estas pastas. Libere uma para revogar o acesso.",
+    "lastUsed": "Usada por último",
+    "release": "Liberar",
+    "released": "Acesso a {{name}} liberado",
     "about": "Sobre",
-    "aboutBody": "Hoard é software livre e de código aberto (AGPL-3.0-or-later).",
-    "demoData": "Demonstração no navegador: os dados vêm de uma rede SMB simulada."
+    "aboutBody": "O Hoard é software livre e de código aberto, sob a licença GNU AGPL 3.0 ou posterior.",
+    "sourceCode": "Código-fonte",
+    "license": "Licença (AGPL-3.0)",
+    "developer": "Desenvolvedor (só no navegador)",
+    "developerHint": "A versão de navegador conversa com uma rede SMB simulada. Estes controles só existem aqui.",
+    "network": "Rede simulada",
+    "networkHint": "Fora de casa: os endereços locais param de responder e o Tailscale continua. Veja os caminhos mudarem.",
+    "networks": {
+      "home": "Wi-Fi de casa",
+      "away": "Fora (Tailscale)",
+      "offline": "Sem rede"
+    },
+    "worstCase": "Dados de pior caso",
+    "worstCaseHint": "Adiciona 18 máquinas com nomes muito longos, em outros alfabetos e de uma letra, uma pasta com 5.000 itens, um arquivo de 1,4 TB e uma transferência que falha no meio."
   },
   "theme": {
     "label": "Tema",
@@ -86,7 +478,7 @@
     "pt-BR": "Português (Brasil)"
   },
   "backButton": {
-    "exitHint": "Toque em voltar de novo para sair"
+    "exitHint": "Pressione voltar de novo para sair"
   },
   "notFound": {
     "title": "Página não encontrada",

@@ -62,5 +62,19 @@ export interface TransferRecord {
   finished_at: string | null
 }
 
-/** Known keys of `settings` (values are JSON strings). */
-export type SettingKey = "language" | "showHiddenFiles" | "defaultConflict" | "demoSeeded"
+/**
+ * Known keys of `settings` (values are JSON strings):
+ *  - `showHiddenFiles` boolean, `defaultSort` `{ key, direction }`, `defaultConflict` ConflictPolicy,
+ *  - `lastDestination` the SAF tree URI used for the last download, `probeTimeoutMs` number,
+ *  - `onboarded` boolean (first-launch hint dismissed), `demoSeeded` / `worstCaseSeeded` (browser).
+ */
+export type SettingKey =
+  | "language"
+  | "showHiddenFiles"
+  | "defaultSort"
+  | "defaultConflict"
+  | "lastDestination"
+  | "probeTimeoutMs"
+  | "onboarded"
+  | "demoSeeded"
+  | "worstCaseSeeded"

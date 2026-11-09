@@ -1,11 +1,13 @@
 import {
+  CloudIcon,
   DesktopIcon,
   DesktopTowerIcon,
   HardDrivesIcon,
+  HouseIcon,
   LaptopIcon,
   type Icon,
-  CloudIcon,
-  HouseIcon,
+  MonitorPlayIcon,
+  CpuIcon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 
@@ -17,22 +19,23 @@ export const MACHINE_ICONS = {
   "hard-drives": HardDrivesIcon,
   cloud: CloudIcon,
   house: HouseIcon,
+  "monitor-play": MonitorPlayIcon,
+  cpu: CpuIcon,
 } satisfies Record<string, Icon>
 
 export type MachineIconId = keyof typeof MACHINE_ICONS
+export const MACHINE_ICON_IDS = Object.keys(MACHINE_ICONS) as MachineIconId[]
 
-/**
- * `machines.color` is stored but not rendered yet: the base theme's chart tokens are a neutral ramp,
- * so per-machine colors need their own semantic tokens (checked for contrast in every palette and
- * both modes) before they are shown. Until then every machine uses the brand tint.
- */
+/** Colors a machine can have (`machines.color`), styled by `[data-machine-color]` in index.css. */
+export const MACHINE_COLORS = ["blue", "violet", "rose", "green", "amber", "teal", "slate"] as const
+export type MachineColor = (typeof MACHINE_COLORS)[number]
 
 export function MachineIcon({
   icon,
+  color,
   className,
 }: {
   icon: string | null
-  /** Reserved, see above. */
   color?: string | null
   className?: string
 }) {
@@ -40,8 +43,9 @@ export function MachineIcon({
   return (
     <span
       aria-hidden
+      data-machine-color={color ?? ""}
       className={cn(
-        "inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary [&_svg]:size-5",
+        "inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-(--machine)/12 text-(--machine) [&_svg]:size-5",
         className
       )}
     >

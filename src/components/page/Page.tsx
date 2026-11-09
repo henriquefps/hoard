@@ -25,11 +25,14 @@ export function Page({
   title,
   titleActions,
   description,
+  meta,
   actions,
   breadcrumbs,
   fill = false,
   children,
 }: {
+  /** A live line under the title (the route in use, item counts). */
+  meta?: ReactNode
   title: string
   /** Buttons right after the title (the room's Go live and chat). */
   titleActions?: ReactNode
@@ -45,13 +48,14 @@ export function Page({
     <div
       className={cn(
         "flex flex-1 flex-col",
-        // The inset card's bottom margin (0.5rem) and its border (2px) are outside the page.
-        fill && "h-[calc(100dvh-var(--header-height)-0.5rem-2px)] min-h-0 flex-none"
+        // The inset card (SidebarInset) is a fixed-height flex column: flex-1 + min-h-0 makes the
+        // page exactly as tall as the card, and its parts scroll inside.
+        fill && "min-h-0 overflow-hidden"
       )}
       data-fill={fill ? "true" : undefined}
     >
       <header className="flex shrink-0 flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b px-4 py-4 md:px-6">
-        <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
           {breadcrumbs && <PageBreadcrumb trail={breadcrumbs} />}
           <div className="flex min-w-0 items-center gap-1">
             {parent?.link && (
@@ -68,8 +72,9 @@ export function Page({
             )}
           </div>
           {description && <p className="text-[0.9375rem] text-muted-foreground">{description}</p>}
+          {meta}
         </div>
-        {actions}
+        {actions && <div className="flex shrink-0 items-center gap-1">{actions}</div>}
       </header>
       <div
         className={cn(

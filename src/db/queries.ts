@@ -49,11 +49,20 @@ export interface MachineInput {
   addresses: { host: string; port?: number; label?: string | null }[]
 }
 
-/** Creates (no `id`) or updates a machine and replaces its addresses atomically. Returns the id. */
-export async function saveMachine(db: Db, input: MachineInput, id?: string): Promise<string> {
+/**
+ * Creates (no `id`) or updates a machine and replaces its addresses atomically. Returns the id.
+ * `create: true` inserts with the given id (the form picks the id up front so the password can be
+ * stored natively under it before the row exists).
+ */
+export async function saveMachine(
+  db: Db,
+  input: MachineInput,
+  id?: string,
+  { create = false }: { create?: boolean } = {}
+): Promise<string> {
   return db.transaction(async () => {
     const machineId = id ?? newId()
-    if (id) {
+    if (id && !create) {
       const [existing] = await db.query<MachineRecord>("SELECT * FROM machines WHERE id = ?", [id])
       if (!existing) throw new Error(`Machine ${id} not found`)
       await db.run(
@@ -173,6 +182,28 @@ export async function removeFavorite(db: Db, id: string): Promise<void> {
   await db.run("DELETE FROM favorites WHERE id = ?", [id])
 }
 
+/** Persist a new favorites order (ids in display order). */
+export async function reorderFavorites(db: Db, ids: string[]): Promise<void> {
+  await db.transaction(async () => {
+    for (const [index, id] of ids.entries()) {
+      await db.run("UPDATE favorites SET sort_order = ? WHERE id = ?", [index, id])
+    }
+  })
+}
+
+export async function findFavorite(
+  db: Db,
+  machineId: string,
+  share: string,
+  path: string
+): Promise<FavoriteRecord | null> {
+  const [row] = await db.query<FavoriteRecord>(
+    "SELECT * FROM favorites WHERE machine_id = ? AND share = ? AND path = ?",
+    [machineId, share, path]
+  )
+  return row ?? null
+}
+
 // --- Transfers -----------------------------------------------------------------------------
 
 export async function listTransfers(db: Db): Promise<TransferRecord[]> {
@@ -239,6 +270,16 @@ export async function setTransferDestination(
     destUri,
     id,
   ])
+}
+
+export async function getTransfer(db: Db, id: string): Promise<TransferRecord | null> {
+  const [row] = await db.query<TransferRecord>("SELECT * FROM transfers WHERE id = ?", [id])
+  return row ?? null
+}
+
+/** Removes one finished transfer from the history. */
+export async function deleteTransfer(db: Db, id: string): Promise<void> {
+  await db.run("DELETE FROM transfers WHERE id = ?", [id])
 }
 
 /** Removes finished transfers from the history. */
