@@ -1,9 +1,10 @@
-import { FolderSimplePlusIcon, ShareFatIcon } from "@phosphor-icons/react"
+import { FolderSimplePlusIcon, ShareFatIcon, ShieldWarningIcon } from "@phosphor-icons/react"
 import { useNavigate } from "@tanstack/react-router"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { FileIcon } from "@/components/FileIcon"
 import { Page } from "@/components/page/Page"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Empty,
@@ -35,6 +36,14 @@ export function SavePage() {
   const files = shared?.files ?? []
   const known = files.filter((f) => f.size >= 0)
   const total = known.reduce((s, f) => s + f.size, 0)
+  const rejected = shared?.rejected ?? 0
+  const refusedNote = rejected > 0 && (
+    <Alert>
+      <ShieldWarningIcon />
+      <AlertTitle>{t("save.rejected", { count: rejected })}</AlertTitle>
+      <AlertDescription>{t("save.rejectedHint")}</AlertDescription>
+    </Alert>
+  )
 
   async function dismiss() {
     if (shared) await HoardSmb.clearSharedFiles({ shareId: shared.shareId }).catch(() => {})
@@ -52,7 +61,11 @@ export function SavePage() {
             </EmptyMedia>
             <EmptyTitle>{t("save.emptyTitle")}</EmptyTitle>
             <EmptyDescription>
-              {shared?.text ? t("save.textOnly") : t("save.emptyBody")}
+              {rejected > 0
+                ? t("save.allRejected", { count: rejected })
+                : shared?.text
+                  ? t("save.textOnly")
+                  : t("save.emptyBody")}
             </EmptyDescription>
           </EmptyHeader>
           {shared && (
@@ -65,6 +78,7 @@ export function SavePage() {
         </Empty>
       ) : (
         <div className="flex flex-col gap-4">
+          {refusedNote}
           <p className="text-[0.9375rem]">
             {t("save.summary", {
               count: files.length,

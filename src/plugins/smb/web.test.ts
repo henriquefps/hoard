@@ -487,6 +487,13 @@ describe("HoardSmbWeb", () => {
       expect(await names(usb, "")).toEqual(expect.arrayContaining(["IMG_0001.jpg", "notes.pdf"]))
       await smb.clearSharedFiles({ shareId: shared.shareId })
       expect((await smb.getSharedFiles()).shared).toBeNull()
+      // Items native refused (file://, Hoard's own providers) are only counted.
+      const refused = smb.simulateIncomingShare([], 2)
+      expect((await smb.getSharedFiles()).shared).toMatchObject({
+        shareId: refused.shareId,
+        files: [],
+        rejected: 2,
+      })
 
       const error = await smb
         .startTransfer({

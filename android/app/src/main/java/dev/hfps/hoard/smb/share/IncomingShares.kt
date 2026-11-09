@@ -25,6 +25,8 @@ data class IncomingShare(
     val receivedAt: String,
     /** Not offered to the UI any more (saved or dismissed); kept while a transfer may read it. */
     val cleared: Boolean = false,
+    /** URIs refused by [SharedUris] (not `content://`, or Hoard's own providers). */
+    val rejected: Int = 0,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("shareId", shareId)
@@ -36,6 +38,7 @@ data class IncomingShare(
         putOpt("text", text)
         put("receivedAt", receivedAt)
         put("cleared", cleared)
+        if (rejected > 0) put("rejected", rejected)
     }
 
     companion object {
@@ -50,6 +53,7 @@ data class IncomingShare(
                 text = json.optString("text").takeIf { json.has("text") },
                 receivedAt = json.getString("receivedAt"),
                 cleared = json.optBoolean("cleared"),
+                rejected = json.optInt("rejected"),
             )
         }
     }
@@ -63,7 +67,7 @@ data class IncomingShare(
  * finds its URIs (and fails with `PERMISSION_REVOKED` when the grant is gone).
  */
 object IncomingShares {
-    private const val TAG = "HoardSmb"
+    const val TAG = "HoardSmb"
     private const val KEEP = 8
 
     private val shares = LinkedHashMap<String, IncomingShare>()
@@ -117,12 +121,17 @@ object IncomingShares {
         if (uris.isEmpty()) intent.clipData?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(uris::add) }
         val text = intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
         if (uris.isEmpty() && text == null) return null
-        val items = uris.distinct().mapIndexed { index, uri ->
+        // Only other apps' content: never a file:// path or one of Hoard's own providers, which
+        // Hoard would otherwise read with its own permissions (private files, its grants) and copy
+        // wherever the user saves ("share intent file theft").
+        val (accepted, refused) = uris.distinct().partition { SharedUris.isAllowed(context, it) }
+        refused.forEach { Log.w(TAG, "Refused a shared URI: ${SharedUris.describe(it)}") }
+        val items = accepted.mapIndexed { index, uri ->
             runCatching { resolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val (name, size) = describe(resolver, uri, index)
             IncomingItem(index, uri, name, size, runCatching { resolver.getType(uri) }.getOrNull() ?: intent.type)
         }
-        val share = IncomingShare(UUID.randomUUID().toString(), items, text, IsoTime.now())
+        val share = IncomingShare(UUID.randomUUID().toString(), items, text, IsoTime.now(), rejected = refused.size)
         synchronized(this) {
             shares[share.shareId] = share
             while (shares.size > KEEP) shares.remove(shares.keys.first())
@@ -179,6 +188,48 @@ object IncomingShares {
             target.failWrite(out)
         }
     }
+}
+
+/**
+ * Which shared URIs Hoard reads (ADR 0007, "Share in"). Another app chooses what it puts in a share
+ * intent, and Hoard opens it with Hoard's own identity, so only `content://` URIs of **other** apps'
+ * providers are taken: `file://` (Hoard's private `/data/data/dev.hfps.hoard/…`, or anything all
+ * files access can read) and Hoard's own authorities (FileProvider with its `storage/` root, the
+ * stream provider, any other `dev.hfps.hoard…` provider) are refused. Applied when a share arrives
+ * and again before each read.
+ */
+object SharedUris {
+    enum class Refusal { NOT_CONTENT, NO_AUTHORITY, OWN_PROVIDER }
+
+    /**
+     * Pure rule (JVM-tested): [ownerPackage] is the package that serves [authority] (null when
+     * Android does not know it). Returns why the URI is refused, or null when it may be read.
+     */
+    fun check(scheme: String?, authority: String?, ownPackage: String, ownerPackage: String?): Refusal? {
+        if (!scheme.equals("content", ignoreCase = true)) return Refusal.NOT_CONTENT
+        val auth = authority?.substringAfterLast('@')?.trim().orEmpty()
+        if (auth.isEmpty()) return Refusal.NO_AUTHORITY
+        val own = ownPackage.lowercase(java.util.Locale.ROOT)
+        val lower = auth.lowercase(java.util.Locale.ROOT)
+        // Every authority in Hoard's manifest starts with the application id; a provider owned by
+        // Hoard under another name is caught by the owner check.
+        if (lower == own || lower.startsWith("$own.") || lower.startsWith("$own-")) return Refusal.OWN_PROVIDER
+        if (ownerPackage != null && ownerPackage.equals(ownPackage, ignoreCase = true)) return Refusal.OWN_PROVIDER
+        return null
+    }
+
+    fun refusal(context: Context, uri: Uri): Refusal? {
+        val authority = uri.authority
+        val owner = authority?.let { auth ->
+            runCatching { context.packageManager.resolveContentProvider(auth.substringAfterLast('@'), 0)?.packageName }.getOrNull()
+        }
+        return check(uri.scheme, authority, context.packageName, owner)
+    }
+
+    fun isAllowed(context: Context, uri: Uri) = refusal(context, uri) == null
+
+    /** For logs: scheme and authority only (never the path, which may be private). */
+    fun describe(uri: Uri) = "${uri.scheme}://${uri.authority ?: ""}"
 }
 
 /** File names from other apps, made safe for any destination (pure, JVM-tested). */

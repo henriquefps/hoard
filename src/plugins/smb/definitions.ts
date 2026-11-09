@@ -699,6 +699,11 @@ export interface SharedFiles {
   files: SharedFile[]
   /** Text shared without a file (a link, a note), when any. Not saved by transfers. */
   text?: string
+  /**
+   * Items Hoard refused to read (ADR 0007, "Share in"): anything that is not `content://`
+   * (`file://` paths) or that one of Hoard's own providers serves. They are not in `files`.
+   */
+  rejected?: number
   receivedAt: IsoDateTime
 }
 

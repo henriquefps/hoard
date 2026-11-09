@@ -813,6 +813,11 @@
     "here": "Salvar aqui",
     "emptyTitle": "Nada para salvar",
     "emptyBody": "Compartilhe arquivos com o Hoard pelo menu de compartilhar de qualquer app e eles aparecem aqui.",
-    "textOnly": "Só texto foi compartilhado. O Hoard salva arquivos, não texto."
+    "textOnly": "Só texto foi compartilhado. O Hoard salva arquivos, não texto.",
+    "rejected_one": "1 item não pôde ser recebido",
+    "rejected_other": "{{count}} itens não puderam ser recebidos",
+    "rejectedHint": "O Hoard só aceita arquivos que outro app compartilha do próprio armazenamento, não caminhos de arquivo nem arquivos do próprio Hoard.",
+    "allRejected_one": "O item compartilhado não pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento.",
+    "allRejected_other": "Nenhum dos {{count}} itens compartilhados pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento."
   }
 }

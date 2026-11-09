@@ -175,7 +175,15 @@ several, `ClipData` + read grant, a common MIME type like `image/*`):
 resolves each URI's display name (made safe for FAT/SMB) and size through the ContentResolver,
 takes a persistable grant when the provider offers one, remembers the share (also in a small file,
 so a job resumed after a restart finds its URIs) and emits `filesShared`; the launch intent is read
-in `load()`, later ones in `handleOnNewIntent` (`singleTask`). The UI opens **Save to Hoard**
+in `load()`, later ones in `handleOnNewIntent` (`singleTask`). **Only other apps' content is read** (`SharedUris`, JVM-tested): another app picks what goes in
+the intent and Hoard would open it with its own identity, so a `file://` URI (Hoard's private
+`/data/data/dev.hfps.hoard/…` databases, preferences and files, or anything all files access can
+read) or a URI of one of Hoard's own providers (authority starting with the application id, or any
+provider Android resolves to Hoard's package: FileProvider with its `storage/` root, the stream
+provider) would turn "Save to…" into a way to copy Hoard's private data out ("share intent file
+theft"). Such URIs are dropped when the share arrives (counted in `SharedFiles.rejected`, the Save
+to… screen says "n items could not be received") and checked again before every read of a
+persisted share. The UI opens **Save to Hoard**
 (`/save`): the files, then the destination picker (any location, SMB shares included), then a
 normal job with `incoming` sources. Bytes never cross the bridge. Limits: Android's read grant
 from a share intent lasts while Hoard's task lives; a job resumed after the task was removed fails

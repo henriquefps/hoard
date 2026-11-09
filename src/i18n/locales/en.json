@@ -813,6 +813,11 @@
     "here": "Save here",
     "emptyTitle": "Nothing to save",
     "emptyBody": "Share files to Hoard from any app's share menu and they show up here.",
-    "textOnly": "Only text was shared. Hoard saves files, not text."
+    "textOnly": "Only text was shared. Hoard saves files, not text.",
+    "rejected_one": "1 item could not be received",
+    "rejected_other": "{{count}} items could not be received",
+    "rejectedHint": "Hoard only takes files another app shares from its own storage, not file paths or Hoard's own files.",
+    "allRejected_one": "The shared item could not be received: Hoard only takes files another app shares from its own storage.",
+    "allRejected_other": "None of the {{count}} shared items could be received: Hoard only takes files another app shares from its own storage."
   }
 }

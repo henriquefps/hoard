@@ -298,6 +298,7 @@ class HoardSmbPlugin : Plugin() {
             }
         })
         share.text?.let { put("text", it) }
+        if (share.rejected > 0) put("rejected", share.rejected)
         put("receivedAt", share.receivedAt)
     }
 

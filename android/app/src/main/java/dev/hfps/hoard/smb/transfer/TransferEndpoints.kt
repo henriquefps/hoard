@@ -34,6 +34,7 @@ import dev.hfps.hoard.smb.location.Location
 import dev.hfps.hoard.smb.location.SafVolumes
 import dev.hfps.hoard.smb.location.VolumeRegistry
 import dev.hfps.hoard.smb.share.IncomingShares
+import dev.hfps.hoard.smb.share.SharedUris
 import dev.hfps.hoard.smb.smbFail
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asExecutor
@@ -395,11 +396,17 @@ class DocumentTransferFs private constructor(
 
 /** Read-only: the URIs of one incoming share; a path is the item's index. */
 class IncomingTransferFs(context: Context, private val shareId: String) : TransferFs {
-    private val resolver = context.applicationContext.contentResolver
+    private val appContext = context.applicationContext
+    private val resolver = appContext.contentResolver
     override val label = "Shared files"
 
-    private fun item(path: String) = IncomingShares.get(shareId)?.items?.getOrNull(path.toIntOrNull() ?: -1)
-        ?: smbFail(ErrorCode.NOT_FOUND, "The shared file is no longer available")
+    /** The item, re-checked before every use (defense in depth: the persisted list could be stale or edited). */
+    private fun item(path: String): dev.hfps.hoard.smb.share.IncomingItem {
+        val item = IncomingShares.get(shareId)?.items?.getOrNull(path.toIntOrNull() ?: -1)
+            ?: smbFail(ErrorCode.NOT_FOUND, "The shared file is no longer available")
+        if (!SharedUris.isAllowed(appContext, item.uri)) smbFail(ErrorCode.ACCESS_DENIED, "Hoard does not read this kind of shared file")
+        return item
+    }
 
     override fun stat(path: String): FileStat? {
         val item = runCatching { item(path) }.getOrNull() ?: return null

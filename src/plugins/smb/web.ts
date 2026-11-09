@@ -809,10 +809,15 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   }
 
   /** Dev tool: pretend another app shared files to Hoard (emits `filesShared`). */
-  simulateIncomingShare(files: { name: string; size: number; mimeType?: string }[]): SharedFiles {
+  simulateIncomingShare(
+    files: { name: string; size: number; mimeType?: string }[],
+    /** Items native would refuse (`file://`, Hoard's own providers): only counted. */
+    rejected = 0
+  ): SharedFiles {
     const shared: SharedFiles = {
       shareId: `mock-share-${this.nextId++}`,
       files: files.map((f, index) => ({ index, ...f })),
+      ...(rejected > 0 ? { rejected } : {}),
       receivedAt: new Date().toISOString(),
     }
     this.incoming.set(shared.shareId, { ...shared, cleared: false })
