@@ -7,6 +7,7 @@ import com.hierynomus.msfscc.fileinformation.FileIdBothDirectoryInformation
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.smbj.share.Directory
 import com.hierynomus.smbj.share.DiskShare
 import java.util.EnumSet
 import java.util.Locale
@@ -149,6 +150,31 @@ object SmbBrowser {
         modifiedMillis = info.basicInformation.lastWriteTime?.toEpochMillis(),
     )
 
+    /**
+     * Every entry of a directory (including `.`/`..`), always read from the server.
+     *
+     * Never use smbj's `DiskShare.list`/`openDirectory` here: on servers that grant SMB3 directory
+     * leases (macOS smbd, Windows) smbj 0.15.0 keeps a connection-wide listing cache and lease-key
+     * table keyed by the path *inside* the share only, without host, share or tree. Once share A's
+     * root was listed, listing the root of share B on the same connection returned A's cached
+     * entries (every share showed the same folder), and so did any path both shares have. A plain
+     * CREATE without a lease context plus QUERY_DIRECTORY has no such cache.
+     */
+    fun listDirectory(share: DiskShare, smbPath: String): List<FileIdBothDirectoryInformation> {
+        val entry = share.open(
+            smbPath,
+            EnumSet.of(AccessMask.FILE_LIST_DIRECTORY, AccessMask.FILE_READ_ATTRIBUTES, AccessMask.FILE_READ_EA),
+            null,
+            SMB2ShareAccess.ALL,
+            SMB2CreateDisposition.FILE_OPEN,
+            EnumSet.of(SMB2CreateOptions.FILE_DIRECTORY_FILE),
+        )
+        return entry.use {
+            (it as? Directory ?: smbFail(ErrorCode.NOT_FOUND, "Not a folder: $smbPath"))
+                .list(FileIdBothDirectoryInformation::class.java)
+        }
+    }
+
     fun listShares(session: SmbSession): List<ShareInfo> =
         SrvSvc.listShares(session.handle.session, session.handle.host)
             .filter { it.isDisk && it.name.isNotEmpty() && !it.name.equals("IPC$", ignoreCase = true) }
@@ -157,7 +183,7 @@ object SmbBrowser {
     fun list(session: SmbSession, shareName: String, path: String): List<SmbEntry> {
         val clean = SmbPaths.normalize(path)
         val share = session.share(shareName)
-        return share.list(SmbPaths.toSmb(clean), FileIdBothDirectoryInformation::class.java)
+        return listDirectory(share, SmbPaths.toSmb(clean))
             .asSequence()
             .filter { it.fileName != "." && it.fileName != ".." }
             .map {
@@ -226,7 +252,7 @@ object SmbBrowser {
 
     /** Depth-first delete that also clears the read-only attribute that would block it. */
     private fun deleteTree(share: DiskShare, smbPath: String) {
-        for (child in share.list(smbPath, FileIdBothDirectoryInformation::class.java)) {
+        for (child in listDirectory(share, smbPath)) {
             if (child.fileName == "." || child.fileName == "..") continue
             val childPath = "$smbPath\\${child.fileName}"
             if (isSet(child.fileAttributes, FileAttributes.FILE_ATTRIBUTE_DIRECTORY)) {

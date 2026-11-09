@@ -69,6 +69,8 @@ android {
                 // The opt-in GUID smoke test (SmbSmokeTest) reads its targets from this variable.
                 environment 'HOARD_SMOKE_HOSTS', System.getenv('HOARD_SMOKE_HOSTS') ?: ''
                 environment 'HOARD_SMOKE_SMB', System.getenv('HOARD_SMOKE_SMB') ?: ''
+                // Opt-in read-only multi-share test (SmbMultiShareTest).
+                ['HOARD_SMOKE_SHARES', 'HOARD_SMOKE_USER', 'HOARD_SMOKE_PASSWORD'].each { environment it, System.getenv(it) ?: '' }
                 testLogging { events 'passed', 'skipped', 'failed'; showStandardStreams = true }
             }
         }
