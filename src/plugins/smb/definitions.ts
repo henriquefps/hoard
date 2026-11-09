@@ -788,6 +788,206 @@ export interface WriteTextFileResult {
   entry: SmbEntry
 }
 
+// --- Culling (ADR 0008) ----------------------------------------------------------------------
+
+/** What a shot is made of: RAW + camera JPEG (one shot), RAW only, or the camera JPEG/HEIF only. */
+export type CullShotKind = "pair" | "raw" | "jpeg"
+
+/** One file of a shot, as listed. */
+export interface CullFile {
+  name: string
+  /** Path inside the location (as in {@link SmbEntry.path}). */
+  path: string
+  size: number
+  modifiedAt: IsoDateTime | null
+}
+
+/**
+ * One shot of a culling folder. Files are paired natively by case-insensitive stem
+ * (`DSC07668.ARW` + `dsc07668.jpg`); a pair is one shot and decisions apply to both files.
+ */
+export interface CullShot {
+  /** The lowercase stem: unique in the folder and stable across visits (decisions are keyed by it). */
+  id: string
+  /** The stem as written (`DSC07668`). */
+  stem: string
+  kind: CullShotKind
+  raw?: CullFile
+  /** The camera's rendering (JPEG preferred over HEIF). */
+  rendered?: CullFile
+  /** More files with the same stem (a HEIF next to the JPEG, a second RAW): they go with the shot. */
+  others: CullFile[]
+}
+
+export type CullOpenOptions = PathOptions
+
+export interface CullOpenResult {
+  /** Handle for the other cull calls; valid until `cullClose` or until the app restarts (then `NOT_FOUND`). */
+  cullId: string
+  /** Every shot in the folder, natural name order (`DSC9` < `DSC10`); the UI re-sorts by capture time. */
+  shots: CullShot[]
+  /** LibRaw is available (RAW-only shots get a real 100% render; false on 32-bit ABIs). */
+  libRaw: boolean
+  /** The folder's access as `list` reports it ("Delete rejects" is off on `read`). */
+  access?: SmbAccess
+}
+
+/**
+ * Every call after `cullOpen` passes the handle and the location again: for SMB the session can
+ * change between calls (a reconnect over another route), and native reads through the current one.
+ */
+export interface CullRef {
+  cullId: string
+  location: LocationRef
+}
+
+/** EXIF essentials of a shot (from the RAW's header when there is one, else the JPEG's). */
+export interface CullMetadata {
+  /** Camera clock, no zone: `2026-08-07T15:04:05.733` (sub-seconds when the camera wrote them). */
+  captureTime?: string
+  /** `captureTime` read as UTC, in ms: sortable and comparable within one camera clock. */
+  captureMillis?: number
+  /** `-03:00` when the camera wrote OffsetTimeOriginal. */
+  offset?: string
+  make?: string
+  model?: string
+  lens?: string
+  /** `1/250`, `0.5`, `2` (seconds). */
+  exposure?: string
+  fNumber?: number
+  iso?: number
+  /** Millimetres. */
+  focalLength?: number
+  /** 35 mm equivalent. */
+  focalLength35?: number
+  /** Upright full-image size (EXIF orientation applied). */
+  width?: number
+  height?: number
+  /** EXIF orientation 1..8. */
+  orientation: number
+  /** Rating written by the camera or an editor (0..5, -1 = rejected), when present. Informational. */
+  rating?: number
+}
+
+export interface CullMetadataOptions extends CullRef {
+  /** Up to 500 per call; native reads a few headers at once (two small reads per RAW). */
+  shotIds: string[]
+}
+
+export interface CullMetadataResult {
+  /** One entry per requested id, in order; a file that cannot be read has `error` instead. */
+  shots: {
+    id: string
+    metadata?: CullMetadata
+    error?: { code: HoardSmbErrorCode; message: string }
+  }[]
+}
+
+/** Where a screen image came from (ADR 0006 plans). */
+export type CullScreenSource = "rawPreview" | "rendered" | "rawHalf"
+
+export interface CullImageOptions extends CullRef {
+  shotId: string
+  /** Device pixels of the screen's long side (native keeps at least 90% of it when the source allows). */
+  longSide: number
+  /**
+   * `fast`: the first step of the plan (the RAW's embedded preview, ~0.5 MB read); `final`: the
+   * best screen image (camera JPEG, or LibRaw's half-size render for a RAW-only shot whose preview
+   * is small). Equal when the plan has one step.
+   */
+  quality: "fast" | "final"
+  /**
+   * A shot next to the one on screen (preloaded by the viewer): queued like a prefetch instead of
+   * as urgent work, and joined with the prefetch of the same image. Default false.
+   */
+  background?: boolean
+}
+
+export interface CullImageResult {
+  /** A cached upright JPEG for `<img src>` (native: a file URL; never bytes over the bridge). */
+  src: string
+  width: number
+  height: number
+  source: CullScreenSource
+  /** This is the plan's final quality (no better screen image will come). */
+  final: boolean
+}
+
+export interface CullThumbnailOptions extends CullRef {
+  shotId: string
+  /** Longest side in px (grid cells: ~320-480). */
+  maxSize: number
+}
+
+export interface CullPrefetchOptions extends CullRef {
+  /** The shots in the order the viewer pages through them (sorted and filtered as shown). */
+  shotIds: string[]
+  /** Index in `shotIds` of the shot on screen. */
+  current: number
+  longSide: number
+  /** Shots ahead and behind whose final screen image to prepare (defaults 2 and 1). */
+  ahead?: number
+  behind?: number
+  /** Shots ahead whose fast image (the RAW's preview) to prepare; default 6 (cheap, ~0.5 MB each). */
+  fastAhead?: number
+  /** Also prepare the 100% source of this many next shots (stage the JPEG, render a RAW-only shot); default 0. */
+  zoomAhead?: number
+}
+
+/** Where 100% pixels come from: the camera JPEG, a full-size embedded JPEG, or a LibRaw render. */
+export type CullZoomSource = "rendered" | "rawPreview" | "rawFull"
+
+export interface CullShotOptions extends CullRef {
+  shotId: string
+}
+
+export interface CullZoomResult {
+  /** Upright size of the 100% image (tile coordinates are in this space). */
+  width: number
+  height: number
+  source: CullZoomSource
+}
+
+export interface CullTileOptions extends CullShotOptions {
+  /** Upright rectangle in the 100% image. */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** 1 = 100%, 2 = 50%, … (powers of two up to 16); the tile is about width/sample px wide. */
+  sample: number
+}
+
+export interface CullTileResult {
+  src: string
+  width: number
+  height: number
+}
+
+export interface CullSharpnessOptions extends CullRef {
+  /** Up to 50 per call. Compare scores within a burst or scene, never across shoots (ADR 0006). */
+  shotIds: string[]
+}
+
+export interface CullSharpnessScore {
+  id: string
+  /** Variance of the Laplacian over the whole frame. */
+  global?: number
+  /** The sharpest tile of a 4×4 grid (a sharp face on a soft background). */
+  best?: number
+  /** Index of that tile, row-major. */
+  bestTile?: number
+  error?: { code: HoardSmbErrorCode; message: string }
+}
+
+export interface CullSharpnessResult {
+  scores: CullSharpnessScore[]
+}
+
+export interface CullCloseOptions {
+  cullId: string
+}
+
 // ---------------------------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------------------------
@@ -1052,6 +1252,49 @@ export interface HoardSmbPlugin {
    * `expectedModifiedAt`), `ALREADY_EXISTS` (`mode: "create"`), `ACCESS_DENIED`, `NO_SPACE`.
    */
   writeTextFile(options: WriteTextFileOptions): Promise<WriteTextFileResult>
+
+  // --- Culling (ADR 0008) --------------------------------------------------------------------
+  // Images come back as cached JPEG files (URLs for `<img>`); the bytes never cross the bridge.
+
+  /**
+   * Open a folder of any location for culling: lists it and pairs RAW and JPEG files into shots.
+   * Rejects like `list`.
+   */
+  cullOpen(options: CullOpenOptions): Promise<CullOpenResult>
+
+  /** EXIF essentials of some shots (capture time with sub-seconds, exposure, lens…). */
+  cullMetadata(options: CullMetadataOptions): Promise<CullMetadataResult>
+
+  /**
+   * A screen-sized upright image of a shot. Ask `fast` first for an instant picture (the embedded
+   * preview), then `final`. Rejects `CANCELLED` when the view closed, `NOT_FOUND` for an unknown
+   * `cullId` or shot (or an SMB session that dropped: reconnect and retry).
+   */
+  cullImage(options: CullImageOptions): Promise<CullImageResult>
+
+  /** Grid thumbnail of a shot (the RAW's preview, or the JPEG's EXIF thumbnail on a remote JPEG-only shot). */
+  cullThumbnail(options: CullThumbnailOptions): Promise<ThumbnailResult>
+
+  /**
+   * Keep the screen images around `current` prepared (ahead first), cancel what left the window.
+   * Resolves at once; the work runs in the background.
+   */
+  cullPrefetch(options: CullPrefetchOptions): Promise<void>
+
+  /**
+   * Prepare the 100% image of a shot and return its size: stages the camera JPEG, or renders a
+   * RAW-only shot with LibRaw (about a second the first time, then cached on disk).
+   */
+  cullZoom(options: CullShotOptions): Promise<CullZoomResult>
+
+  /** One region of the 100% image at a sample size, as a cached JPEG (calls `cullZoom`'s work if needed). */
+  cullTile(options: CullTileOptions): Promise<CullTileResult>
+
+  /** Focus scores of some shots (computed on their preview), for choosing within a burst. */
+  cullSharpness(options: CullSharpnessOptions): Promise<CullSharpnessResult>
+
+  /** Forget a culling handle and stop its background work. Idempotent. */
+  cullClose(options: CullCloseOptions): Promise<void>
 
   // --- Events -------------------------------------------------------------------------------
 

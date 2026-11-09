@@ -2,6 +2,23 @@ import { WebPlugin } from "@capacitor/core"
 import type {
   ConnectOptions,
   ConnectResult,
+  CullCloseOptions,
+  CullImageOptions,
+  CullImageResult,
+  CullMetadataOptions,
+  CullMetadataResult,
+  CullOpenOptions,
+  CullOpenResult,
+  CullPrefetchOptions,
+  CullRef,
+  CullSharpnessOptions,
+  CullSharpnessResult,
+  CullShot,
+  CullShotOptions,
+  CullThumbnailOptions,
+  CullTileOptions,
+  CullTileResult,
+  CullZoomResult,
   CreateFolderOptions,
   DeleteOptions,
   DestinationFolder,
@@ -62,7 +79,9 @@ import {
 import { detectAddressKind } from "@/lib/addressKind"
 import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
 import { isTextFile } from "@/lib/text/textFiles"
+import { pairShots } from "@/lib/photos"
 import { GENERATED_TEXT } from "./mockText"
+import { derivedPhoto, type MockPhoto, photoMetadata, photoSharpness, photoSvg } from "./mockShoot"
 import { MOCK_VOLUMES } from "./mockLocal"
 import { type MockRoot, MockTransferEngine } from "./mockTransfers"
 import {
@@ -168,6 +187,23 @@ function readStorageGrant(): boolean {
   } catch {
     return false
   }
+}
+
+/** An open culling folder (`cullOpen`). */
+interface MockCull {
+  location: LocationRef
+  path: string
+  shots: Map<string, CullShot>
+  /** Shots whose 100% image was prepared (a RAW-only shot's first LibRaw render is slow). */
+  zoomed: Set<string>
+}
+
+/** Size of the ZV-E10's embedded preview (ADR 0006). */
+const PREVIEW_LONG_SIDE = 1616
+
+const fitLongSide = (width: number, height: number, longSide: number) => {
+  const scale = Math.min(1, longSide / Math.max(width, height))
+  return { width: Math.round(width * scale), height: Math.round(height * scale) }
 }
 
 interface MockSession {
@@ -1041,6 +1077,165 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     target.modifiedAt = laterThan(existing?.modifiedAt)
     if (!existing) folder.children.push(target)
     return { entry: toEntry(target, segments.join("/")) }
+  }
+
+  // --- Culling (ADR 0008) -------------------------------------------------------------------
+
+  private readonly culls = new Map<string, MockCull>()
+
+  async cullOpen({ location, path }: CullOpenOptions): Promise<CullOpenResult> {
+    const { entries, access } = await this.list({ location, path })
+    const shots = pairShots(entries)
+    const cullId = `cull-${this.nextId++}`
+    this.culls.set(cullId, {
+      location,
+      path,
+      shots: new Map(shots.map((shot) => [shot.id, shot])),
+      zoomed: new Set(),
+    })
+    return { cullId, shots, libRaw: true, ...(access ? { access } : {}) }
+  }
+
+  /** The open culling folder and how slow its location is (validates the SMB session too). */
+  private cull({ cullId, location }: CullRef) {
+    const cull = this.culls.get(cullId)
+    if (!cull) throw fail("NOT_FOUND", "Culling session expired; open the folder again")
+    if (cull.location.kind !== location.kind) {
+      throw fail("UNKNOWN", "location does not match the culling session")
+    }
+    cull.location = location
+    const { latencyMs } = this.resolve(location, cull.path)
+    return { cull, latencyMs }
+  }
+
+  private shotOf(cull: MockCull, shotId: string) {
+    const shot = cull.shots.get(shotId)
+    if (!shot) throw fail("NOT_FOUND", `No shot ${shotId}`)
+    return shot
+  }
+
+  private photoOf(cull: MockCull, shot: CullShot): MockPhoto {
+    const file = shot.raw ?? shot.rendered!
+    const { node } = this.resolve(cull.location, file.path)
+    return node.photo ?? derivedPhoto(file.name, node.modifiedAt)
+  }
+
+  async cullMetadata(options: CullMetadataOptions): Promise<CullMetadataResult> {
+    const { cull, latencyMs } = this.cull(options)
+    await this.wait(latencyMs * 2 + options.shotIds.length * 2)
+    return {
+      shots: options.shotIds.map((id) => {
+        try {
+          return { id, metadata: photoMetadata(this.photoOf(cull, this.shotOf(cull, id))) }
+        } catch (error) {
+          return {
+            id,
+            error: { code: smbErrorCodeOf(error), message: (error as Error).message },
+          }
+        }
+      }),
+    }
+  }
+
+  async cullImage(options: CullImageOptions): Promise<CullImageResult> {
+    const { cull, latencyMs } = this.cull(options)
+    const shot = this.shotOf(cull, options.shotId)
+    const photo = this.photoOf(cull, shot)
+    const local = cull.location.kind !== "smb"
+    // Plans like the native ImagePlans.screen: the RAW's 1616 px preview first, then the camera
+    // JPEG (pairs) or LibRaw's half-size render (RAW-only); a JPEG-only shot has one step.
+    const usePreview =
+      Boolean(shot.raw) &&
+      (options.quality === "fast" || options.longSide <= PREVIEW_LONG_SIDE / 0.75)
+    const source = usePreview ? "rawPreview" : shot.rendered ? "rendered" : "rawHalf"
+    const final = source !== "rawPreview" || options.longSide <= PREVIEW_LONG_SIDE / 0.75
+    await this.wait(
+      source === "rawPreview"
+        ? latencyMs * 2 + 12
+        : source === "rendered"
+          ? local
+            ? 70
+            : latencyMs * 6 + 220
+          : 320
+    )
+    const size =
+      source === "rawPreview"
+        ? fitLongSide(photo.width, photo.height, PREVIEW_LONG_SIDE)
+        : fitLongSide(photo.width, photo.height, Math.max(options.longSide, 1))
+    return {
+      src: photoSvg(photo, shot.stem, size.width, size.height),
+      ...size,
+      source,
+      final,
+    }
+  }
+
+  async cullThumbnail(options: CullThumbnailOptions): Promise<ThumbnailResult> {
+    const { cull, latencyMs } = this.cull(options)
+    const shot = this.shotOf(cull, options.shotId)
+    const photo = this.photoOf(cull, shot)
+    await this.wait(latencyMs * 2 + 20)
+    const size = fitLongSide(photo.width, photo.height, options.maxSize)
+    return { src: photoSvg(photo, shot.stem, size.width, size.height), ...size }
+  }
+
+  async cullPrefetch(options: CullPrefetchOptions): Promise<void> {
+    const { cull } = this.cull(options)
+    for (const id of options.shotIds) this.shotOf(cull, id)
+  }
+
+  async cullZoom(options: CullShotOptions): Promise<CullZoomResult> {
+    const { cull, latencyMs } = this.cull(options)
+    const shot = this.shotOf(cull, options.shotId)
+    const photo = this.photoOf(cull, shot)
+    const first = !cull.zoomed.has(shot.id)
+    cull.zoomed.add(shot.id)
+    // A RAW-only shot is rendered by LibRaw the first time (~1 s); a JPEG is staged once.
+    await this.wait(first ? (shot.rendered ? latencyMs * 6 + 150 : 950) : 5)
+    return {
+      width: photo.width,
+      height: photo.height,
+      source: shot.rendered ? "rendered" : "rawFull",
+    }
+  }
+
+  async cullTile(options: CullTileOptions): Promise<CullTileResult> {
+    const { cull } = this.cull(options)
+    const shot = this.shotOf(cull, options.shotId)
+    if (![1, 2, 4, 8, 16].includes(options.sample)) {
+      throw fail("UNKNOWN", "sample must be 1, 2, 4, 8 or 16")
+    }
+    const photo = this.photoOf(cull, shot)
+    const x = Math.max(0, options.x)
+    const y = Math.max(0, options.y)
+    const right = Math.min(photo.width, options.x + options.width)
+    const bottom = Math.min(photo.height, options.y + options.height)
+    if (right <= x || bottom <= y) throw fail("UNKNOWN", "Tile outside the image")
+    if (!cull.zoomed.has(shot.id)) await this.cullZoom(options)
+    await this.wait(25)
+    const view = { x, y, width: right - x, height: bottom - y }
+    const width = Math.ceil(view.width / options.sample)
+    const height = Math.ceil(view.height / options.sample)
+    return { src: photoSvg(photo, shot.stem, width, height, view), width, height }
+  }
+
+  async cullSharpness(options: CullSharpnessOptions): Promise<CullSharpnessResult> {
+    const { cull, latencyMs } = this.cull(options)
+    await this.wait(latencyMs * 2 + options.shotIds.length * 8)
+    return {
+      scores: options.shotIds.map((id) => {
+        try {
+          const shot = this.shotOf(cull, id)
+          return { id, ...photoSharpness(this.photoOf(cull, shot), shot.stem) }
+        } catch (error) {
+          return { id, error: { code: smbErrorCodeOf(error), message: (error as Error).message } }
+        }
+      }),
+    }
+  }
+
+  async cullClose({ cullId }: CullCloseOptions): Promise<void> {
+    this.culls.delete(cullId)
   }
 
   async thumbnail({ location, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {

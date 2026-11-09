@@ -3,6 +3,11 @@ import type { TransferConflict, TransferOp, TransferProgressEvent } from "@/plug
 import { TERMINAL_TRANSFER_STATES } from "@/plugins/smb/definitions"
 import type { Db } from "./db"
 import type {
+  CullDecisionRecord,
+  CullDestinationRecord,
+  CullFlag,
+  CullFolderKey,
+  CullSessionRecord,
   FavoriteRecord,
   MachineAddressRecord,
   ManualShareRecord,
@@ -119,7 +124,16 @@ export async function saveMachine(
  * deletes the credentials (`HoardSmb.deleteCredentials`).
  */
 export async function deleteMachine(db: Db, id: string): Promise<void> {
-  await db.run("DELETE FROM machines WHERE id = ?", [id])
+  await db.transaction(async () => {
+    await db.run("DELETE FROM machines WHERE id = ?", [id])
+    // Culling rows have no foreign key (local locations are not rows): clear them by hand.
+    await db.run("DELETE FROM cull_decisions WHERE location_id = ?", [id])
+    await db.run("DELETE FROM cull_sessions WHERE location_id = ?", [id])
+    await db.run("DELETE FROM cull_destinations WHERE source_location_id = ? OR location_id = ?", [
+      id,
+      id,
+    ])
+  })
 }
 
 /** Pin (or clear, with null) the machine's SMB server GUID. */
@@ -368,5 +382,149 @@ export async function setSetting(db: Db, key: SettingKey, value: unknown): Promi
   await db.run(
     "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     [key, JSON.stringify(value)]
+  )
+}
+
+// --- Culling (ADR 0008) ----------------------------------------------------------------------
+
+const folderParams = (key: CullFolderKey) => [key.locationId, key.share, key.path]
+
+export async function getCullSession(
+  db: Db,
+  key: CullFolderKey
+): Promise<CullSessionRecord | null> {
+  const [row] = await db.query<CullSessionRecord>(
+    "SELECT * FROM cull_sessions WHERE location_id = ? AND share = ? AND path = ?",
+    folderParams(key)
+  )
+  return row ?? null
+}
+
+/**
+ * Start or continue the culling session of a folder: created on the first visit, `last_visited_at`
+ * (and the shot count, and the last shot when given) updated on every later one.
+ */
+export async function touchCullSession(
+  db: Db,
+  key: CullFolderKey,
+  update: { shotCount?: number; lastShotId?: string | null } = {}
+): Promise<void> {
+  const at = now()
+  await db.run(
+    `INSERT INTO cull_sessions (location_id, share, path, started_at, last_visited_at, last_shot_id, shot_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (location_id, share, path) DO UPDATE SET
+       last_visited_at = excluded.last_visited_at,
+       last_shot_id = CASE WHEN ? THEN excluded.last_shot_id ELSE cull_sessions.last_shot_id END,
+       shot_count = CASE WHEN ? THEN excluded.shot_count ELSE cull_sessions.shot_count END`,
+    [
+      ...folderParams(key),
+      at,
+      at,
+      update.lastShotId ?? null,
+      update.shotCount ?? 0,
+      update.lastShotId !== undefined ? 1 : 0,
+      update.shotCount !== undefined ? 1 : 0,
+    ]
+  )
+}
+
+export async function listCullDecisions(db: Db, key: CullFolderKey): Promise<CullDecisionRecord[]> {
+  return db.query<CullDecisionRecord>(
+    "SELECT * FROM cull_decisions WHERE location_id = ? AND share = ? AND path = ?",
+    folderParams(key)
+  )
+}
+
+/** What a shot is marked as; `{ flag: null, rating: 0 }` is "unmarked" (no row). */
+export interface CullDecisionInput {
+  shotId: string
+  flag: CullFlag | null
+  rating: number
+}
+
+/**
+ * Save decisions for some shots in one transaction (one for a pick, several for an undo or a bulk
+ * change). An unmarked shot's row is deleted, so the table only holds what was decided.
+ */
+export async function saveCullDecisions(
+  db: Db,
+  key: CullFolderKey,
+  decisions: readonly CullDecisionInput[]
+): Promise<void> {
+  if (decisions.length === 0) return
+  const at = now()
+  await db.transaction(async () => {
+    for (const { shotId, flag, rating } of decisions) {
+      const stars = Math.max(0, Math.min(5, Math.round(rating)))
+      if (!flag && stars === 0) {
+        await db.run(
+          "DELETE FROM cull_decisions WHERE location_id = ? AND share = ? AND path = ? AND shot_id = ?",
+          [...folderParams(key), shotId]
+        )
+      } else {
+        await db.run(
+          `INSERT INTO cull_decisions (location_id, share, path, shot_id, flag, rating, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (location_id, share, path, shot_id) DO UPDATE SET
+             flag = excluded.flag, rating = excluded.rating, updated_at = excluded.updated_at`,
+          [...folderParams(key), shotId, flag, stars, at]
+        )
+      }
+    }
+  })
+}
+
+/** Forget the decisions of shots that no longer exist (after "Delete rejects"). */
+export async function forgetCullShots(
+  db: Db,
+  key: CullFolderKey,
+  shotIds: readonly string[]
+): Promise<void> {
+  if (shotIds.length === 0) return
+  await db.transaction(async () => {
+    for (const shotId of shotIds) {
+      await db.run(
+        "DELETE FROM cull_decisions WHERE location_id = ? AND share = ? AND path = ? AND shot_id = ?",
+        [...folderParams(key), shotId]
+      )
+    }
+  })
+}
+
+export async function getCullDestination(
+  db: Db,
+  source: { locationId: string; share: string }
+): Promise<CullDestinationRecord | null> {
+  const [row] = await db.query<CullDestinationRecord>(
+    "SELECT * FROM cull_destinations WHERE source_location_id = ? AND source_share = ?",
+    [source.locationId, source.share]
+  )
+  return row ?? null
+}
+
+/** Remember where the picks of a source location were copied last (and with which options). */
+export async function setCullDestination(
+  db: Db,
+  source: { locationId: string; share: string },
+  destination: CullFolderKey & { label?: string | null },
+  options: unknown
+): Promise<void> {
+  await db.run(
+    `INSERT INTO cull_destinations (source_location_id, source_share, location_id, share, path, label, options, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (source_location_id, source_share) DO UPDATE SET
+       location_id = excluded.location_id, share = excluded.share, path = excluded.path,
+       label = excluded.label, options = excluded.options, updated_at = excluded.updated_at`,
+    [
+      source.locationId,
+      source.share,
+      destination.locationId,
+      destination.share,
+      destination.path,
+      destination.label ?? null,
+      JSON.stringify(options ?? {}),
+      now(),
+    ]
   )
 }

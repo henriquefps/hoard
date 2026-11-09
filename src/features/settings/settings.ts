@@ -18,6 +18,8 @@ export interface Settings {
   onboarded: boolean
   /** The all files access screen was shown once (granted or "Not now"); ADR 0005. */
   storageIntroSeen: boolean
+  /** The culling viewer moves to the next shot after a pick or reject (ADR 0008). */
+  cullAutoAdvance: boolean
 }
 
 export const CONFLICT_POLICIES: TransferConflict[] = ["ask", "rename", "overwrite", "skip"]
@@ -32,6 +34,7 @@ export const SETTING_DEFAULTS: Settings = {
   probeTimeoutMs: 1500,
   onboarded: false,
   storageIntroSeen: false,
+  cullAutoAdvance: true,
 }
 
 const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
@@ -51,6 +54,7 @@ const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
   probeTimeoutMs: (v) => typeof v === "number" && v >= 200 && v <= 30_000,
   onboarded: (v) => typeof v === "boolean",
   storageIntroSeen: (v) => typeof v === "boolean",
+  cullAutoAdvance: (v) => typeof v === "boolean",
 }
 
 export async function readSetting<K extends keyof Settings>(

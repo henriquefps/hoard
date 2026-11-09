@@ -925,3 +925,181 @@ describe("HoardSmbWeb local locations (ADR 0005)", () => {
     expect(await code(smb.list({ location: device, path: "" }))).toBe("STORAGE_PERMISSION")
   })
 })
+
+describe("HoardSmbWeb culling (ADR 0008)", () => {
+  const usb = { kind: "volume", uuid: "1A2B-3C4D" } as const
+  const code = (p: Promise<unknown>) =>
+    p.then(
+      () => "OK",
+      (e: unknown) => smbErrorCode(e)
+    )
+
+  it("opens a Sony folder as shots: pairs, RAW-only and JPEG-only", async () => {
+    smb.simulateStorageAccess(true)
+    const { cullId, shots, libRaw } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+    expect(cullId).toBeTruthy()
+    expect(libRaw).toBe(true)
+    expect(shots).toHaveLength(36)
+    const kinds = new Set(shots.map((s) => s.kind))
+    expect(kinds).toEqual(new Set(["pair", "raw", "jpeg"]))
+    const pair = shots.find((s) => s.kind === "pair")!
+    expect(pair.id).toBe(pair.stem.toLowerCase())
+    expect(pair.raw?.name).toMatch(/\.ARW$/)
+    expect(pair.rendered?.name).toMatch(/\.JPG$/)
+    expect(pair.raw?.path).toBe(`DCIM/102MSDCF/${pair.raw?.name}`)
+  })
+
+  it("reports EXIF essentials with sub-second capture times and bursts", async () => {
+    smb.simulateStorageAccess(true)
+    const { cullId, shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+    const { shots: meta } = await smb.cullMetadata({
+      cullId,
+      location: usb,
+      shotIds: [...shots.map((s) => s.id), "nope"],
+    })
+    expect(meta).toHaveLength(37)
+    const first = meta[0].metadata!
+    expect(first.captureTime).toMatch(/^2026-08-09T10:\d\d:\d\d\.\d{3}$/)
+    expect(first.model).toBe("ZV-E10")
+    expect(first.exposure).toMatch(/^1\/\d+$/)
+    expect(first.captureMillis).toBeGreaterThan(0)
+    expect(meta.at(-1)!.error?.code).toBe("NOT_FOUND")
+    const times = meta.slice(0, -1).map((m) => m.metadata!.captureMillis!)
+    const gaps = times.slice(1).map((t, i) => t - times[i])
+    expect(gaps.some((g) => g < 1000)).toBe(true)
+    expect(meta.some((m) => m.metadata?.orientation === 8)).toBe(true)
+  })
+
+  it("serves the embedded preview first, then the final image, and 100% tiles", async () => {
+    smb.simulateStorageAccess(true)
+    const { cullId, shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+    const pair = shots.find((s) => s.kind === "pair")!
+    const rawOnly = shots.find((s) => s.kind === "raw")!
+    const jpegOnly = shots.find((s) => s.kind === "jpeg")!
+    const ref = { cullId, location: usb }
+    const fast = await smb.cullImage({ ...ref, shotId: pair.id, longSide: 2400, quality: "fast" })
+    expect([fast.source, fast.final, Math.max(fast.width, fast.height)]).toEqual([
+      "rawPreview",
+      false,
+      1616,
+    ])
+    expect(fast.src).toMatch(/^data:image\/svg\+xml/)
+    const final = await smb.cullImage({ ...ref, shotId: pair.id, longSide: 2400, quality: "final" })
+    expect([final.source, final.final, Math.max(final.width, final.height)]).toEqual([
+      "rendered",
+      true,
+      2400,
+    ])
+    expect(
+      (await smb.cullImage({ ...ref, shotId: rawOnly.id, longSide: 2400, quality: "final" })).source
+    ).toBe("rawHalf")
+    expect(
+      (await smb.cullImage({ ...ref, shotId: jpegOnly.id, longSide: 2400, quality: "fast" })).final
+    ).toBe(true)
+
+    expect(await smb.cullZoom({ ...ref, shotId: rawOnly.id })).toMatchObject({ source: "rawFull" })
+    const zoom = await smb.cullZoom({ ...ref, shotId: pair.id })
+    expect(zoom.source).toBe("rendered")
+    const tile = await smb.cullTile({
+      ...ref,
+      shotId: pair.id,
+      x: 512,
+      y: 0,
+      width: 512,
+      height: 512,
+      sample: 1,
+    })
+    expect([tile.width, tile.height]).toEqual([512, 512])
+    const edge = await smb.cullTile({
+      ...ref,
+      shotId: pair.id,
+      x: zoom.width - 100,
+      y: 0,
+      width: 512,
+      height: 512,
+      sample: 2,
+    })
+    expect([edge.width, edge.height]).toEqual([50, 256])
+    expect(
+      await code(
+        smb.cullTile({ ...ref, shotId: pair.id, x: 0, y: 0, width: 512, height: 512, sample: 3 })
+      )
+    ).toBe("UNKNOWN")
+    expect(
+      await code(
+        smb.cullTile({
+          ...ref,
+          shotId: pair.id,
+          x: 99_999,
+          y: 0,
+          width: 512,
+          height: 512,
+          sample: 1,
+        })
+      )
+    ).toBe("UNKNOWN")
+  })
+
+  it("scores sharpness, prefetches, thumbnails and closes", async () => {
+    smb.simulateStorageAccess(true)
+    const { cullId, shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+    const ref = { cullId, location: usb }
+    const { scores } = await smb.cullSharpness({
+      ...ref,
+      shotIds: shots.slice(0, 6).map((s) => s.id),
+    })
+    expect(scores).toHaveLength(6)
+    expect(scores.every((s) => (s.best ?? 0) > 0 && (s.global ?? 0) > 0)).toBe(true)
+    const thumb = await smb.cullThumbnail({ ...ref, shotId: shots[0].id, maxSize: 320 })
+    expect(Math.max(thumb.width, thumb.height)).toBe(320)
+    await smb.cullPrefetch({
+      ...ref,
+      shotIds: shots.slice(0, 5).map((s) => s.id),
+      current: 1,
+      longSide: 2400,
+    })
+    expect(
+      await code(smb.cullPrefetch({ ...ref, shotIds: ["missing"], current: 0, longSide: 2400 }))
+    ).toBe("NOT_FOUND")
+    await smb.cullClose({ cullId })
+    await smb.cullClose({ cullId })
+    expect(
+      await code(smb.cullImage({ ...ref, shotId: shots[0].id, longSide: 100, quality: "fast" }))
+    ).toBe("NOT_FOUND")
+  })
+
+  it("culls an SMB folder through the session, and refuses a dropped one", async () => {
+    const { sessionId } = await connectCachy()
+    const location = { kind: "smb", sessionId, share: "photos" } as const
+    const { cullId, shots } = await smb.cullOpen({ location, path: "2026/2026-08-07 Park" })
+    expect(shots).toHaveLength(30)
+    expect(shots.every((s) => s.kind === "pair")).toBe(true)
+    const image = await smb.cullImage({
+      cullId,
+      location,
+      shotId: shots[0].id,
+      longSide: 3120,
+      quality: "final",
+    })
+    expect(image.source).toBe("rendered")
+    await smb.disconnect({ sessionId })
+    expect(
+      await code(
+        smb.cullImage({ cullId, location, shotId: shots[0].id, longSide: 3120, quality: "final" })
+      )
+    ).toBe("NOT_FOUND")
+    // A reconnect continues the same culling handle with the new session.
+    const again = await connectCachy()
+    const moved = { ...location, sessionId: again.sessionId }
+    expect(
+      (await smb.cullMetadata({ cullId, location: moved, shotIds: [shots[0].id] })).shots[0]
+        .metadata
+    ).toBeTruthy()
+    expect(await code(smb.cullMetadata({ cullId, location: usb, shotIds: [] }))).toBe("UNKNOWN")
+  })
+
+  it("rejects a folder that cannot be listed like list does", async () => {
+    smb.simulateStorageAccess(true)
+    expect(await code(smb.cullOpen({ location: usb, path: "DCIM/nope" }))).toBe("NOT_FOUND")
+  })
+})

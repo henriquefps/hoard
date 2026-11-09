@@ -5,6 +5,13 @@ import { LATEST_VERSION, migrate, pendingMigrations } from "./migrations"
 import {
   addFavorite,
   addManualShare,
+  forgetCullShots,
+  getCullDestination,
+  getCullSession,
+  listCullDecisions,
+  saveCullDecisions,
+  setCullDestination,
+  touchCullSession,
   applyTransferProgress,
   clearFinishedTransfers,
   createTransfer,
@@ -56,8 +63,8 @@ async function freshDb(): Promise<Db> {
 
 describe("migrations", () => {
   it("plans every migration for a new database and none at the latest version", () => {
-    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4])
-    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4])
+    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4, 5])
+    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4, 5])
     expect(pendingMigrations(LATEST_VERSION)).toEqual([])
   })
 
@@ -79,6 +86,9 @@ describe("migrations", () => {
         "transfers",
         "settings",
         "manual_shares",
+        "cull_sessions",
+        "cull_decisions",
+        "cull_destinations",
       ])
     )
   })
@@ -344,5 +354,101 @@ describe("queries", () => {
     expect(machines.map((m) => m.name)).toEqual(["cachyos-fps", "NAS da sala", "Office PC"])
     expect(machines[0].addresses.map((a) => a.kind)).toEqual(["local", "tailscale", "other"])
     expect((await listFavorites(db)).length).toBe(3)
+  })
+
+  it("keeps culling sessions, decisions and the last destination per source (v5)", async () => {
+    const key = { locationId: "vol-1A2B-3C4D", share: "", path: "DCIM/100MSDCF" }
+    expect(await getCullSession(db, key)).toBeNull()
+    await touchCullSession(db, key, { shotCount: 36 })
+    const first = (await getCullSession(db, key))!
+    expect([first.shot_count, first.last_shot_id]).toEqual([36, null])
+    await touchCullSession(db, key, { lastShotId: "dsc07651" })
+    const second = (await getCullSession(db, key))!
+    expect([second.shot_count, second.last_shot_id, second.started_at]).toEqual([
+      36,
+      "dsc07651",
+      first.started_at,
+    ])
+    expect(second.last_visited_at >= first.last_visited_at).toBe(true)
+
+    await saveCullDecisions(db, key, [
+      { shotId: "dsc07650", flag: "pick", rating: 4 },
+      { shotId: "dsc07651", flag: "reject", rating: 0 },
+      { shotId: "dsc07652", flag: null, rating: 2 },
+      { shotId: "dsc07653", flag: null, rating: 0 },
+    ])
+    const rows = async () =>
+      (await listCullDecisions(db, key))
+        .map((r) => [r.shot_id, r.flag, r.rating])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    expect(await rows()).toEqual([
+      ["dsc07650", "pick", 4],
+      ["dsc07651", "reject", 0],
+      ["dsc07652", null, 2],
+    ])
+    // Unmarking deletes the row; another folder or location is separate; stars are clamped.
+    await saveCullDecisions(db, key, [
+      { shotId: "dsc07652", flag: null, rating: 0 },
+      { shotId: "dsc07650", flag: "pick", rating: 9 },
+    ])
+    await saveCullDecisions(db, { ...key, path: "DCIM/101MSDCF" }, [
+      { shotId: "dsc07650", flag: "reject", rating: 0 },
+    ])
+    expect(await rows()).toEqual([
+      ["dsc07650", "pick", 5],
+      ["dsc07651", "reject", 0],
+    ])
+    await expect(
+      db.run(
+        "INSERT INTO cull_decisions (location_id, share, path, shot_id, flag) VALUES ('device', '', '', 'x', 'maybe')"
+      )
+    ).rejects.toThrow()
+    await forgetCullShots(db, key, ["dsc07651"])
+    expect(await rows()).toEqual([["dsc07650", "pick", 5]])
+
+    const source = { locationId: key.locationId, share: "" }
+    expect(await getCullDestination(db, source)).toBeNull()
+    await setCullDestination(
+      db,
+      source,
+      { locationId: "device", share: "", path: "Pictures" },
+      { files: "raw" }
+    )
+    await setCullDestination(
+      db,
+      source,
+      { locationId: "m1", share: "photos", path: "2026", label: "photos" },
+      { files: "both", folder: "keep" }
+    )
+    const destination = (await getCullDestination(db, source))!
+    expect([
+      destination.location_id,
+      destination.share,
+      destination.path,
+      destination.label,
+    ]).toEqual(["m1", "photos", "2026", "photos"])
+    expect(JSON.parse(destination.options)).toEqual({ files: "both", folder: "keep" })
+  })
+
+  it("clears a machine's culling rows when the machine is deleted", async () => {
+    const id = await saveMachine(db, {
+      name: "nas",
+      username: "u",
+      addresses: [{ host: "10.0.0.2" }],
+    })
+    const key = { locationId: id, share: "photos", path: "2026" }
+    await touchCullSession(db, key, { shotCount: 3 })
+    await saveCullDecisions(db, key, [{ shotId: "a", flag: "pick", rating: 0 }])
+    await saveCullDecisions(db, { locationId: "device", share: "", path: "" }, [
+      { shotId: "a", flag: "pick", rating: 0 },
+    ])
+    await setCullDestination(db, { locationId: "device", share: "" }, { ...key }, {})
+    await deleteMachine(db, id)
+    expect(await getCullSession(db, key)).toBeNull()
+    expect(await listCullDecisions(db, key)).toEqual([])
+    expect(await getCullDestination(db, { locationId: "device", share: "" })).toBeNull()
+    expect(await listCullDecisions(db, { locationId: "device", share: "", path: "" })).toHaveLength(
+      1
+    )
   })
 })

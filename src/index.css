@@ -34,6 +34,8 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-warning: var(--warning);
+  --color-viewer: var(--viewer);
+  --color-viewer-foreground: var(--viewer-foreground);
   --color-destructive: var(--destructive);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
@@ -374,4 +376,11 @@
 }
 [data-machine-color="slate"] {
   --machine: light-dark(oklch(0.45 0.03 250), oklch(0.75 0.03 250));
+}
+
+/* The culling viewer (ADR 0008) is dark in both themes, like every photo viewer: photos are judged
+   on a neutral near-black. It also sets the `dark` class, so tokens inside it are the dark ones. */
+:root {
+  --viewer: oklch(0.13 0.004 250);
+  --viewer-foreground: oklch(0.97 0.002 250);
 }

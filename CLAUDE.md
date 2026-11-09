@@ -20,6 +20,10 @@ cards, all as _locations_ (ADR 0005), with copy/move/share between any of them (
 - Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/app/src/main/cpp`): see
   `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
   `HOARD_ARW_DIR` JVM tests. Real photos are private: never commit them, use copies.
+- Culling (ADR 0008, `src/features/cull/`): the WebView shows JPEG files the image core writes
+  (`cull*` plugin methods); pure logic in `model.ts` (tested). Measure on the emulator with
+  `hoardCull.summary()` over CDP and `adb logcat -s HoardCull HoardImage`. The copy step goes only
+  through `copyPicks.ts` (the transfer engine's adapter), never a culling-specific copy.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules

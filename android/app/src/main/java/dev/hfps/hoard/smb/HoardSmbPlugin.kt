@@ -50,6 +50,19 @@ import dev.hfps.hoard.smb.text.TextCodec
 import dev.hfps.hoard.smb.text.TextFiles
 import dev.hfps.hoard.smb.viewer.Opener
 import dev.hfps.hoard.smb.viewer.Thumbnailer
+import dev.hfps.hoard.smb.cull.CullFolder
+import dev.hfps.hoard.smb.cull.CullService
+import dev.hfps.hoard.image.CullModel
+import dev.hfps.hoard.image.ScreenSource
+import dev.hfps.hoard.image.ZoomSource
+import dev.hfps.hoard.image.cache.PriorityScheduler
+import dev.hfps.hoard.image.source.CancelledException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.future.await
+import java.io.File
+import java.util.concurrent.CompletionException
+import java.util.concurrent.ExecutionException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -100,6 +113,8 @@ class HoardSmbPlugin : Plugin() {
     private lateinit var streamer: Streamer
     private var networkMonitor: NetworkMonitor? = null
     private lateinit var volumes: VolumeRegistry
+    private lateinit var cull: CullService
+    private val metadataSlots = Semaphore(4)
     private var volumeMonitor: VolumeMonitor? = null
     private val thumbnailSlots = Semaphore(3)
     private var openJob: Job? = null
@@ -138,6 +153,7 @@ class HoardSmbPlugin : Plugin() {
             notifyListeners("networkChanged", JSObject().put("transport", state.transport).put("vpn", state.vpn))
         }.also { it.start() }
         volumes = VolumeRegistry(context)
+        cull = CullService(context, sessions, volumes)
         volumeMonitor = VolumeMonitor(context) { change ->
             scope.launch {
                 val event = JSObject().put("volumes", volumesJson())
@@ -878,7 +894,232 @@ class HoardSmbPlugin : Plugin() {
         JSObject().put("entry", entryJson(entry))
     }
 
+
+    // --- Culling (ADR 0008) -----------------------------------------------------------------
+
+    /** URL of a native file for `<img src>` (what Capacitor.convertFileSrc produces). */
+    private fun fileSrc(file: File) = bridge.localUrl + "/_capacitor_file_" + file.absolutePath
+
+    /** The call's open culling folder, reached through the call's `location` now. */
+    private fun PluginCall.cullFolder(): CullFolder = cull.folder(getString("cullId"), location())
+
+    /**
+     * Waits for an image-core job. Its failures carry contract codes: cancelled work (superseded
+     * prefetch, closed view) is `CANCELLED`; an SMB failure that killed the connection drops the
+     * session and rejects `NOT_FOUND`, so the UI reconnects (the same rule as [SmbSessions.use]).
+     */
+    private suspend fun <T> await(folder: CullFolder, job: PriorityScheduler.Job<T>): T = try {
+        job.future.await()
+    } catch (e: Throwable) {
+        val cause = generateSequence(e) { if (it is ExecutionException || it is CompletionException) it.cause else null }.last()
+        if (cause is CancelledException) throw HoardSmbException(ErrorCode.CANCELLED, "Superseded", cause)
+        val location = folder.location
+        if (location is Location.Smb && cause !is HoardSmbException && SmbErrors.isSessionGone(cause)) {
+            sessions.remove(location.sessionId)
+            throw HoardSmbException(ErrorCode.NOT_FOUND, "Session expired: ${SmbErrors.map(cause).message}", cause)
+        }
+        throw cause
+    }
+
+    private fun cullFileJson(file: dev.hfps.hoard.image.CullFileRef) = JSObject().apply {
+        put("name", file.name)
+        put("path", file.path)
+        put("size", file.size)
+        put("modifiedAt", file.modifiedAt ?: JSONObject.NULL)
+    }
+
+    private fun screenSourceName(source: ScreenSource) = when (source) {
+        ScreenSource.RAW_PREVIEW -> "rawPreview"
+        ScreenSource.RENDERED -> "rendered"
+        ScreenSource.RAW_HALF -> "rawHalf"
+    }
+
+    private fun zoomSourceName(source: ZoomSource) = when (source) {
+        ZoomSource.RENDERED -> "rendered"
+        ZoomSource.RAW_PREVIEW -> "rawPreview"
+        ZoomSource.RAW_FULL -> "rawFull"
+    }
+
+    private fun PluginCall.requireShotId(): String = requireString("shotId")
+
+    private fun PluginCall.positiveInt(key: String, default: Int? = null, max: Int = 16_384): Int {
+        val value = getInt(key) ?: default ?: smbFail(ErrorCode.UNKNOWN, "$key is required")
+        if (value !in 1..max) smbFail(ErrorCode.UNKNOWN, "$key must be between 1 and $max")
+        return value
+    }
+
+    @PluginMethod
+    fun cullOpen(call: PluginCall) = run(call) {
+        val started = System.nanoTime()
+        val path = call.getString("path").orEmpty()
+        val location = call.location()
+        val listing = withFs(call) { fs, cancel -> fs.list(path, cancel) }
+        val folder = withContext(Dispatchers.IO) {
+            if (location is Location.Smb) sessions.use(location.sessionId) { cull.open(location, path, listing.entries) } else cull.open(location, path, listing.entries)
+        }
+        CullService.log("open ${folder.shots.size} shots in ${(System.nanoTime() - started) / 1_000_000} ms")
+        val shots = JSArray()
+        folder.shots.forEach { shot ->
+            shots.put(JSObject().apply {
+                put("id", shot.id)
+                put("stem", shot.stem)
+                put("kind", shot.kind)
+                shot.raw?.let { put("raw", cullFileJson(it)) }
+                shot.rendered?.let { put("rendered", cullFileJson(it)) }
+                put("others", JSArray().apply { shot.others.forEach { put(cullFileJson(it)) } })
+            })
+        }
+        JSObject().put("cullId", folder.id).put("shots", shots).put("libRaw", cull.core.libRawAvailable).apply {
+            listing.access?.let { put("access", it.json) }
+        }
+    }
+
+    @PluginMethod
+    fun cullMetadata(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val ids = call.getArray("shotIds")?.toList<String>().orEmpty()
+        if (ids.size > 500) smbFail(ErrorCode.UNKNOWN, "At most 500 shots per call")
+        val results = kotlinx.coroutines.coroutineScope {
+            ids.map { id ->
+                async(Dispatchers.IO) {
+                    metadataSlots.withPermit {
+                        val item = JSObject().put("id", id)
+                        try {
+                            val m = cull.metadata(folder, id)
+                            item.put("metadata", JSObject().apply {
+                                CullModel.captureTime(m)?.let { put("captureTime", it) }
+                                m.captureSortMillis?.let { put("captureMillis", it) }
+                                m.offsetTime?.let { put("offset", it) }
+                                m.make?.let { put("make", it) }
+                                m.model?.let { put("model", it) }
+                                m.lens?.let { put("lens", it) }
+                                m.exposureLabel?.let { put("exposure", it) }
+                                m.fNumber?.let { put("fNumber", it) }
+                                m.iso?.let { put("iso", it) }
+                                m.focalLength?.let { put("focalLength", it) }
+                                m.focalLength35?.let { put("focalLength35", it) }
+                                CullModel.uprightSize(m)?.let { (w, h) -> put("width", w); put("height", h) }
+                                put("orientation", m.orientation)
+                                m.rating?.let { put("rating", it) }
+                            })
+                        } catch (e: Throwable) {
+                            val error = SmbErrors.map(e)
+                            item.put("error", JSObject().put("code", error.code.name).put("message", error.message ?: error.code.name))
+                        }
+                        item
+                    }
+                }
+            }.awaitAll()
+        }
+        JSObject().put("shots", JSArray().apply { results.forEach { put(it) } })
+    }
+
+    @PluginMethod
+    fun cullImage(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val shotId = call.requireShotId()
+        val longSide = call.positiveInt("longSide", max = 8192)
+        val quality = call.getString("quality") ?: "final"
+        if (quality != "fast" && quality != "final") smbFail(ErrorCode.UNKNOWN, "quality must be fast or final")
+        val started = System.nanoTime()
+        // Neighbours of the shot on screen wait like prefetch (and join it); the shot itself is urgent.
+        val priority = if (call.getBoolean("background", false) == true) BACKGROUND_PRIORITY else 0
+        val file = await(folder, cull.core.screenFile(cull.request(folder, shotId), longSide, fast = quality == "fast", priority = priority))
+        CullService.log("image $quality $shotId ${screenSourceName(file.source)} in ${(System.nanoTime() - started) / 1_000_000} ms")
+        JSObject().apply {
+            put("src", fileSrc(file.file))
+            put("width", file.width)
+            put("height", file.height)
+            put("source", screenSourceName(file.source))
+            put("final", file.final)
+        }
+    }
+
+    @PluginMethod
+    fun cullThumbnail(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val maxSize = call.positiveInt("maxSize", max = 1024)
+        val thumb = await(folder, cull.core.thumbnailFile(cull.request(folder, call.requireShotId()), maxSize, priority = 50))
+        JSObject().put("src", fileSrc(thumb.file)).put("width", thumb.width).put("height", thumb.height)
+    }
+
+    @PluginMethod
+    fun cullPrefetch(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val ids = call.getArray("shotIds")?.toList<String>().orEmpty()
+        val current = call.getInt("current") ?: smbFail(ErrorCode.UNKNOWN, "current is required")
+        val longSide = call.positiveInt("longSide", max = 8192)
+        val requests = ids.map { cull.request(folder, it) }
+        cull.core.prefetchFiles(
+            requests,
+            current,
+            longSide,
+            ahead = (call.getInt("ahead") ?: 2).coerceIn(0, 10),
+            behind = (call.getInt("behind") ?: 1).coerceIn(0, 10),
+            zoomAhead = (call.getInt("zoomAhead") ?: 0).coerceIn(0, 3),
+            fastAhead = (call.getInt("fastAhead") ?: 6).coerceIn(0, 20),
+        )
+        null
+    }
+
+    @PluginMethod
+    fun cullZoom(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val shotId = call.requireShotId()
+        val started = System.nanoTime()
+        val info = await(folder, cull.core.zoomInfo(cull.request(folder, shotId)))
+        CullService.log("zoom $shotId ${zoomSourceName(info.source)} ${info.width}x${info.height} in ${(System.nanoTime() - started) / 1_000_000} ms")
+        JSObject().put("width", info.width).put("height", info.height).put("source", zoomSourceName(info.source))
+    }
+
+    @PluginMethod
+    fun cullTile(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val sample = call.getInt("sample") ?: 1
+        if (sample !in setOf(1, 2, 4, 8, 16)) smbFail(ErrorCode.UNKNOWN, "sample must be 1, 2, 4, 8 or 16")
+        val x = call.getInt("x") ?: smbFail(ErrorCode.UNKNOWN, "x is required")
+        val y = call.getInt("y") ?: smbFail(ErrorCode.UNKNOWN, "y is required")
+        val width = call.positiveInt("width", max = 32_768)
+        val height = call.positiveInt("height", max = 32_768)
+        val tile = await(folder, cull.core.tileFile(cull.request(folder, call.requireShotId()), x, y, width, height, sample))
+        JSObject().put("src", fileSrc(tile.file)).put("width", tile.width).put("height", tile.height)
+    }
+
+    @PluginMethod
+    fun cullSharpness(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val ids = call.getArray("shotIds")?.toList<String>().orEmpty()
+        if (ids.size > 50) smbFail(ErrorCode.UNKNOWN, "At most 50 shots per call")
+        val scores = JSArray()
+        for (id in ids) {
+            val item = JSObject().put("id", id)
+            try {
+                val request = cull.request(folder, id)
+                val step = withContext(Dispatchers.IO) { cull.core.screenPlan(request, SHARPNESS_SIDE).firstOrNull() }
+                    ?: smbFail(ErrorCode.UNKNOWN, "Nothing displayable")
+                val decoded = await(folder, cull.core.screen(request, SHARPNESS_SIDE, priority = 20, step = step))
+                val score = withContext(Dispatchers.Default) { cull.core.sharpness(decoded.bitmap) }
+                item.put("global", score.global).put("best", score.best).put("bestTile", score.bestIndex)
+            } catch (e: Throwable) {
+                val error = SmbErrors.map(e)
+                item.put("error", JSObject().put("code", error.code.name).put("message", error.message ?: error.code.name))
+            }
+            scores.put(item)
+        }
+        JSObject().put("scores", scores)
+    }
+
+    @PluginMethod
+    fun cullClose(call: PluginCall) = run(call) {
+        cull.close(call.requireString("cullId"))
+        null
+    }
+
     companion object {
+        /** Long side the sharpness score is computed at (the RAW preview size; ADR 0006). */
+        private const val SHARPNESS_SIDE = 1600
+        /** Priority of `cullImage(background: true)`: right after the prefetch window's fast images. */
+        private const val BACKGROUND_PRIORITY = 2
         const val NOTIFICATIONS = "notifications"
         const val STORAGE = "storage"
         private const val TAG = "HoardSmb"

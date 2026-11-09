@@ -20,6 +20,7 @@
  *    share, a transfer that fails mid-way with no address left ("broken"), and 20 machines.
  */
 
+import { type MockPhoto, parkShoot } from "./mockShoot"
 import {
   CONFIG_YAML,
   DATA_CSV,
@@ -56,6 +57,8 @@ export interface MockFile {
   bytes?: Uint8Array
   /** Content generated on first read (worst-case files). */
   generated?: GeneratedTextKey
+  /** Camera data of a photo (culling mock, `mockShoot.ts`); shared by a RAW and its JPEG. */
+  photo?: MockPhoto
 }
 
 export interface MockShare {
@@ -220,6 +223,7 @@ export const MOCK_SERVERS = {
         comment: "Phone backups",
         root: [
           dir("2026", [
+            dir("2026-08-07 Park", parkShoot()),
             dir("2026-10 Lisbon trip", photos("IMG", 48, 30)),
             dir("2026-11", [
               ...photos("PXL_20261101", 12, 1),

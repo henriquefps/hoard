@@ -3,6 +3,7 @@ package dev.hfps.hoard.smb.location
 import android.content.Context
 import android.media.MediaScannerConnection
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import dev.hfps.hoard.smb.Cancellation
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.FolderListing
@@ -114,6 +115,12 @@ class PathFs(
     }
 
     override fun openInput(file: LocalFile): InputStream = LocalErrors.guard(file.name) { FileInputStream(file.file!!) }
+
+    override fun pathFile(path: String): File? = resolve(LocalPaths.normalize(path))
+
+    override fun openDescriptor(path: String): ParcelFileDescriptor = LocalErrors.guard(path) {
+        ParcelFileDescriptor.open(resolve(LocalPaths.normalize(path)), ParcelFileDescriptor.MODE_READ_ONLY)
+    }
 
     private fun requireWritable(dir: File) {
         if (readOnly) smbFail(ErrorCode.ACCESS_DENIED, "$label is read-only")

@@ -21,6 +21,12 @@ enum class Variant(val extension: String) {
     RAW_HALF("jpg"),
     /** A local copy of the original file (camera JPEG for region decode, RAW for LibRaw). */
     ORIGINAL("bin"),
+    /** Upright screen-sized JPEG for the culling view (WebView `<img>`). */
+    SCREEN("jpg"),
+    /** Upright grid thumbnail JPEG. */
+    THUMB("jpg"),
+    /** Upright JPEG of one region at one sample size (100% zoom). */
+    TILE("jpg"),
 }
 
 object CacheKeys {

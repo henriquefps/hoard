@@ -1,7 +1,7 @@
 # ADR 0006: Native image core for culling (RAW previews, region decode, LibRaw, sharpness)
 
 - **Date**: 2026-11-09
-- **Status**: Accepted (engine only; the culling UI and its plugin methods come later)
+- **Status**: Accepted (engine; the culling UI and its plugin methods are [ADR 0008](0008-culling.md))
 
 ## Context
 

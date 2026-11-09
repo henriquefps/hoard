@@ -29,7 +29,8 @@
     "moveUp": "Mover {{name}} para cima",
     "moveDown": "Mover {{name}} para baixo",
     "moveUpShort": "Mover para cima",
-    "moveDownShort": "Mover para baixo"
+    "moveDownShort": "Mover para baixo",
+    "close": "Fechar"
   },
   "home": {
     "favorites": "Favoritos",
@@ -819,5 +820,136 @@
     "rejectedHint": "O Hoard só aceita arquivos que outro app compartilha do próprio armazenamento, não caminhos de arquivo nem arquivos do próprio Hoard.",
     "allRejected_one": "O item compartilhado não pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento.",
     "allRejected_other": "Nenhum dos {{count}} itens compartilhados pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento."
+  },
+  "cull": {
+    "title": "Seleção",
+    "open": "Selecionar fotos",
+    "start": "Começar a seleção",
+    "resume": "Continuar",
+    "finish": "Concluir",
+    "progress": "{{decided}} de {{total}} decididas · {{picked}} escolhidas · {{rejected}} descartadas",
+    "progressLabel": "Progresso da seleção",
+    "readingExif": "Lendo horários de captura…",
+    "showing_one": "{{shown}} foto",
+    "showing_other": "{{shown}} fotos",
+    "grid": "Fotos",
+    "cellLabel": "{{name}}, {{kind}}, {{state}}",
+    "emptyTitle": "Nenhuma foto aqui",
+    "emptyBody": "Esta pasta não tem arquivos RAW, JPEG ou HEIF para selecionar.",
+    "noMatchTitle": "Nenhuma foto corresponde",
+    "noMatchBody": "Mude o filtro para ver as outras fotos.",
+    "saveFailed": "Não foi possível salvar essa decisão. Tente de novo.",
+    "pick": "Escolher",
+    "reject": "Descartar",
+    "undo": "Desfazer",
+    "rating": "Estrelas",
+    "stars_one": "{{count}} estrela",
+    "stars_other": "{{count}} estrelas",
+    "autoAdvance": "Ir para a próxima foto após escolher ou descartar",
+    "filmstrip": "Tira de miniaturas",
+    "burst": "Sequência, quadro {{index}} de {{size}}",
+    "kind": {
+      "pair": "RAW+JPG",
+      "raw": "RAW",
+      "jpeg": "JPG"
+    },
+    "flag": {
+      "picked": "Escolhida",
+      "rejected": "Descartada",
+      "unmarked": "Não decidida"
+    },
+    "filter": {
+      "label": "Mostrar",
+      "stars": "Estrelas",
+      "all": "Todas",
+      "picked": "Escolhidas",
+      "rejected": "Descartadas",
+      "unmarked": "Não decididas",
+      "anyStars": "Qualquer nota",
+      "minStars_one": "{{count}} estrela ou mais",
+      "minStars_other": "{{count}} estrelas ou mais"
+    },
+    "exif": {
+      "equivalent": "({{value}} equivalente)",
+      "none": "Sem dados da câmera"
+    },
+    "source": {
+      "screen": {
+        "rawPreview": "Prévia embutida",
+        "rendered": "JPEG da câmera",
+        "rawHalf": "RAW, metade do tamanho"
+      },
+      "zoom": {
+        "rendered": "100% do JPEG da câmera",
+        "rawPreview": "100% do JPEG embutido em tamanho real",
+        "rawFull": "100% do RAW (LibRaw)"
+      }
+    },
+    "viewer": {
+      "title": "Vendo {{name}}",
+      "position": "{{index}} de {{total}}",
+      "info": "Dados da câmera",
+      "imageFailed": "Não foi possível mostrar esta foto.",
+      "renderingRaw": "Revelando o RAW em 100%…",
+      "loadingFull": "Carregando 100%…"
+    },
+    "compare": {
+      "open": "Comparar",
+      "close": "Voltar para uma foto",
+      "title": "Comparar",
+      "previous": "Foto anterior à direita",
+      "next": "Próxima foto à direita",
+      "keep": "Ficar com esta",
+      "focus": "Foco {{value}}",
+      "focusHelp": "Nota de foco (a área mais nítida). Compare fotos da mesma sequência; maior é mais nítida."
+    },
+    "copy": {
+      "menu_one": "Copiar {{count}} escolhida para…",
+      "menu_other": "Copiar {{count}} escolhidas para…",
+      "title": "Copiar escolhidas",
+      "summary_one": "{{shots}} fotos escolhidas, {{files}} arquivo, {{size}}",
+      "summary_other": "{{shots}} fotos escolhidas, {{files}} arquivos, {{size}}",
+      "destination": "Destino",
+      "destinationHelp": "Qualquer pasta deste celular, de um pendrive, de um cartão SD ou de uma máquina.",
+      "chooseDestination": "Escolher uma pasta",
+      "change": "Alterar",
+      "files": "Arquivos de cada foto",
+      "files_both": "RAW e JPEG",
+      "files_raw": "Só RAW",
+      "files_jpeg": "Só JPEG",
+      "fallbackRaw_one": "{{count}} escolhida não tem RAW: o JPEG dela é copiado no lugar.",
+      "fallbackRaw_other": "{{count}} escolhidas não têm RAW: os JPEGs delas são copiados no lugar.",
+      "fallbackJpeg_one": "{{count}} escolhida não tem JPEG: o RAW dela é copiado no lugar.",
+      "fallbackJpeg_other": "{{count}} escolhidas não têm JPEG: os RAWs delas são copiados no lugar.",
+      "folder": "Pasta",
+      "folder_keep": "Numa pasta chamada {{name}}",
+      "folder_new": "Numa pasta nova",
+      "folder_none": "Direto no destino",
+      "subfolderName": "Nome da pasta",
+      "useFolder": "Usar esta pasta",
+      "start_one": "Copiar {{count}} arquivo",
+      "start_other": "Copiar {{count}} arquivos"
+    },
+    "delete": {
+      "menu_one": "Apagar {{count}} descartada…",
+      "menu_other": "Apagar {{count}} descartadas…",
+      "readOnly": "Apagar descartadas (pasta somente leitura)",
+      "title_one": "Apagar {{count}} foto descartada?",
+      "title_other": "Apagar {{count}} fotos descartadas?",
+      "body_one": "{{shots}} fotos, {{files}} arquivo ({{size}}) {{where}}. Um par RAW + JPEG apaga os dois arquivos.",
+      "body_other": "{{shots}} fotos, {{files}} arquivos ({{size}}) {{where}}. Um par RAW + JPEG apaga os dois arquivos.",
+      "whereSmb": "em {{name}}",
+      "whereDrive": "em {{name}}",
+      "wherePhone": "neste celular",
+      "permanent": "Isto é permanente: não há lixeira para restaurá-las.",
+      "confirm_one": "Apagar {{count}} arquivo",
+      "confirm_other": "Apagar {{count}} arquivos",
+      "deleting": "Apagando…",
+      "done_one": "{{count}} foto descartada apagada.",
+      "done_other": "{{count}} fotos descartadas apagadas.",
+      "refused": "O local recusou apagar (somente leitura).",
+      "partial_one": "{{count}} foto foi apagada antes de parar.",
+      "partial_other": "{{count}} fotos foram apagadas antes de parar."
+    }
   }
 }
