@@ -1,6 +1,7 @@
 package dev.hfps.hoard.smb
 
 import com.hierynomus.smbj.share.PipelinedFileReader
+import dev.hfps.hoard.smb.text.TextFiles
 import dev.hfps.hoard.smb.viewer.RemoteFiles
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -92,7 +93,7 @@ class SmbIntegrationTest {
 
         // List: no . / .., hidden flag for dotfiles, sizes, ISO times.
         val root = sessions.use(session.id) { SmbBrowser.list(it, "media", "") }
-        assertEquals(setOf(".hidden", "Empty", "Photos", "readme.txt"), root.map { it.name }.toSet())
+        assertEquals(setOf(".hidden", "Docs", "Empty", "Photos", "readme.txt"), root.map { it.name }.toSet())
         assertTrue(root.first { it.name == ".hidden" }.isHidden)
         val readme = root.first { it.name == "readme.txt" }
         assertEquals(6, readme.size)
@@ -152,6 +153,59 @@ class SmbIntegrationTest {
         session.handle.connection.close(true)
         expect(ErrorCode.NOT_FOUND) { sessions.use(session.id) { SmbBrowser.list(it, "media", "") } }
         expect(ErrorCode.NOT_FOUND) { sessions.get(session.id) }
+    }
+
+    @Test
+    fun `read and write text files with encodings, conflicts and atomic replace`() {
+        val session = sessions.add("m1", connect())
+        fun <T> on(block: (SmbSession) -> T) = sessions.use(session.id, block)
+
+        val notes = on { TextFiles.read(it, "media", "Docs/notes.md", TextFiles.DEFAULT_MAX_BYTES, false) }
+        assertEquals("utf-8", notes.encoding)
+        assertTrue(notes.text.startsWith("# Notes"))
+        assertNotNull(notes.modifiedAt)
+        val latin1 = on { TextFiles.read(it, "media", "Docs/latin1.txt", TextFiles.DEFAULT_MAX_BYTES, false) }
+        assertEquals("windows-1252", latin1.encoding)
+        assertTrue(latin1.text, latin1.text.startsWith("Relatório de manutenção €"))
+        expect(ErrorCode.TOO_LARGE) { on { TextFiles.read(it, "media", "Docs/big.log", TextFiles.DEFAULT_MAX_BYTES, false) } }
+        val head = on { TextFiles.read(it, "media", "Docs/big.log", 1000, true) }
+        assertTrue(head.truncated)
+        assertEquals(1000, head.text.length)
+        assertEquals(6_000_000L, head.size)
+        expect(ErrorCode.NOT_TEXT) { on { TextFiles.read(it, "media", "Photos/big.bin", 4096, true) } }
+
+        // CRLF and the encoding survive a save; the new modified time is the next expected one.
+        val crlf = on { TextFiles.read(it, "media", "Docs/crlf.txt", TextFiles.DEFAULT_MAX_BYTES, false) }
+        assertEquals("line one\r\nline two\r\n", crlf.text)
+        Thread.sleep(20)
+        val saved = on { TextFiles.write(it, "media", "Docs/crlf.txt", "line one\r\nedited\r\n", "utf-8", "overwrite", crlf.modifiedAt) }
+        assertEquals("line one\r\nedited\r\n", on { TextFiles.read(it, "media", "Docs/crlf.txt", 1000, false) }.text)
+        assertFalse(saved.modifiedAt == crlf.modifiedAt)
+        val docs = on { SmbBrowser.list(it, "media", "Docs") }
+        assertTrue(docs.none { it.name.endsWith(".tmp") })
+        // The rename must not carry a temp file attribute over: the saved file stays visible.
+        assertFalse(docs.first { it.name == "crlf.txt" }.isHidden)
+        // Saving again with the old time is a conflict and writes nothing.
+        val conflict = runCatching {
+            on { TextFiles.write(it, "media", "Docs/crlf.txt", "x", "utf-8", "overwrite", crlf.modifiedAt) }
+        }.exceptionOrNull() as HoardSmbException
+        assertEquals(ErrorCode.CONFLICT, conflict.code)
+        assertEquals(saved.modifiedAt, conflict.data["modifiedAt"])
+        on { TextFiles.write(it, "media", "Docs/crlf.txt", "line one\r\nline two\r\n", "utf-8", "overwrite", saved.modifiedAt) }
+
+        // windows-1252 round trip and create-only mode.
+        val latin = on { TextFiles.read(it, "media", "Docs/latin1.txt", 1000, false) }
+        on { TextFiles.write(it, "media", "Docs/latin1.txt", latin.text, latin.encoding, "overwrite", latin.modifiedAt) }
+        assertEquals(latin.size, on { SmbBrowser.stat(it, "media", "Docs/latin1.txt") }.size)
+        val created = on { TextFiles.write(it, "media", "Docs/new.md", "", "utf-8", "create", null) }
+        assertEquals(0, created.size)
+        expect(ErrorCode.ALREADY_EXISTS) { on { TextFiles.write(it, "media", "Docs/new.md", "", "utf-8", "create", null) } }
+        on { SmbBrowser.delete(it, "media", "Docs/new.md", false) }
+        val gone = runCatching {
+            on { TextFiles.write(it, "media", "Docs/missing.md", "x", "utf-8", "overwrite", notes.modifiedAt) }
+        }.exceptionOrNull() as HoardSmbException
+        assertEquals(ErrorCode.CONFLICT, gone.code)
+        assertEquals(null, gone.data["modifiedAt"])
     }
 
     private fun sha(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }

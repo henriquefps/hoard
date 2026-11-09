@@ -25,6 +25,8 @@ import dev.hfps.hoard.smb.transfer.TransferStates
 import dev.hfps.hoard.smb.stream.StreamAddress
 import dev.hfps.hoard.smb.stream.StreamRequest
 import dev.hfps.hoard.smb.stream.Streamer
+import dev.hfps.hoard.smb.text.TextCodec
+import dev.hfps.hoard.smb.text.TextFiles
 import dev.hfps.hoard.smb.viewer.Opener
 import dev.hfps.hoard.smb.viewer.Thumbnailer
 import kotlinx.coroutines.CoroutineScope
@@ -114,7 +116,7 @@ class HoardSmbPlugin : Plugin() {
         }
         if (error.code == ErrorCode.UNKNOWN) Log.w(TAG, "${call.methodName} failed", e)
         val data = JSObject()
-        error.data.forEach { (key, value) -> data.put(key, value) }
+        error.data.forEach { (key, value) -> data.put(key, value ?: JSONObject.NULL) }
         call.reject(error.message ?: error.code.name, error.code.name, null, if (error.data.isEmpty()) null else data)
     }
 
@@ -519,6 +521,39 @@ class HoardSmbPlugin : Plugin() {
             put("width", thumb.width)
             put("height", thumb.height)
         }
+    }
+
+    // --- Text files (built-in viewer and editor) ------------------------------------------
+
+    @PluginMethod
+    fun readTextFile(call: PluginCall) = run(call) {
+        val share = call.requireString("share")
+        val path = call.requireString("path")
+        val maxBytes = call.getDouble("maxBytes")?.toLong()?.coerceIn(1, TextFiles.HARD_LIMIT.toLong())?.toInt()
+            ?: TextFiles.DEFAULT_MAX_BYTES
+        val truncate = call.getBoolean("truncate", false) ?: false
+        val read = onSession(call) { s, _ -> TextFiles.read(s, share, path, maxBytes, truncate) }
+        JSObject().apply {
+            put("text", read.text)
+            put("encoding", read.encoding)
+            put("size", read.size)
+            put("modifiedAt", read.modifiedAt ?: JSONObject.NULL)
+            put("truncated", read.truncated)
+        }
+    }
+
+    @PluginMethod
+    fun writeTextFile(call: PluginCall) = run(call) {
+        val share = call.requireString("share")
+        val path = call.requireString("path")
+        val text = call.getString("text") ?: smbFail(ErrorCode.UNKNOWN, "text is required")
+        val encoding = call.getString("encoding") ?: TextCodec.UTF8
+        if (encoding !in TextCodec.ENCODINGS) smbFail(ErrorCode.UNKNOWN, "Unknown text encoding: $encoding")
+        val mode = call.getString("mode") ?: "overwrite"
+        if (mode != "overwrite" && mode != "create") smbFail(ErrorCode.UNKNOWN, "mode must be overwrite or create")
+        val expected = call.getString("expectedModifiedAt")?.takeIf { it.isNotBlank() }
+        val entry = onSession(call) { s, _ -> TextFiles.write(s, share, path, text, encoding, mode, expected) }
+        JSObject().put("entry", entryJson(entry))
     }
 
     companion object {

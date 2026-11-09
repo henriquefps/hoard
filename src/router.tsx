@@ -1,4 +1,9 @@
-import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router"
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  lazyRouteComponent,
+} from "@tanstack/react-router"
 import { AppShell } from "@/components/AppShell"
 import { trackHistory } from "@/lib/historyTrail"
 import { NotFoundPage } from "@/routes/NotFoundPage"
@@ -50,6 +55,28 @@ const browseRoute = createRoute({
   }),
   component: BrowsePage,
 })
+export interface ViewSearch {
+  share?: string
+  /** The file, `/`-separated inside the share. */
+  path?: string
+  /** Open in edit mode (a new file). */
+  edit?: boolean
+}
+
+// The text viewer and editor (CodeMirror, the Markdown pipeline, Mermaid, KaTeX) is its own chunk.
+const viewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/view/$machineId",
+  validateSearch: (search: Record<string, unknown>): ViewSearch => ({
+    share: typeof search.share === "string" && search.share ? search.share : undefined,
+    path:
+      typeof search.path === "string" && search.path
+        ? search.path.replace(/^\/+|\/+$/g, "")
+        : undefined,
+    edit: search.edit === true || search.edit === "true" ? true : undefined,
+  }),
+  component: lazyRouteComponent(() => import("@/features/text/TextViewerPage"), "TextViewerPage"),
+})
 const transfersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/transfers",
@@ -67,6 +94,7 @@ const routeTree = rootRoute.addChildren([
   newMachineRoute,
   editMachineRoute,
   browseRoute,
+  viewRoute,
   transfersRoute,
   settingsRoute,
 ])

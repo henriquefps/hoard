@@ -30,6 +30,15 @@ from a WebView:
   the native transfer service; "open" downloads to the app cache and fires an `ACTION_VIEW` intent;
   thumbnails are cache files given to `<img>` through `Capacitor.convertFileSrc`. JS only sees
   metadata, progress events and URLs.
+- **One deliberate exception: small text files.** `readTextFile` / `writeTextFile` carry a text
+  file's contents as a JSON string, for the built-in text viewer and editor (2026-11-09, see
+  "Text files" below). The rule exists for multi-gigabyte media; a config file, a log or a Markdown
+  note is kilobytes, and an editor needs the text in the WebView anyway (CodeMirror edits a string;
+  round-tripping through a cache file and `fetch` would add a native file, a URL and a cleanup for
+  no gain, and saving would still need the text sent back). The exception is bounded: 5 MiB by
+  default (`TEXT_FILE_MAX_BYTES`, `TOO_LARGE` above it unless the caller asks for the first part
+  read-only), never more than 16 MiB natively, text only (`NOT_TEXT` for binary content). Images
+  inside Markdown still go through `thumbnail` (cache-file URLs), never base64.
 - The contract is one TypeScript file, `src/plugins/smb/definitions.ts`, with a typed error code
   on every rejection. A complete **in-memory mock** (`src/plugins/smb/web.ts`) implements the same
   interface so the UI is developed and tested in a desktop browser.
@@ -66,6 +75,30 @@ kill the session for every other call): cancellation is cooperative between chun
 | `streamFile`, `openWebPage` | Streams through a proxy-FD content provider or the loopback web server, with their own connection and a `dataSync` foreground service: see [ADR 0004](0004-streaming-and-local-web-server.md).                                                                                                                                                                                                                                                                                                                                                                                        |
 | `thumbnail`                 | JPEG under `cache/thumbs/` (150 MB, LRU). Small JPEG thumbnails use the EXIF thumbnail from the first 128 KiB; other images are downloaded (≤ 64 MiB) and decoded with subsampling (ImageDecoder on Android 9+, BitmapFactory + EXIF rotation before). Videos are never downloaded: `MediaMetadataRetriever` reads them through a random-access SMB `MediaDataSource`. `src` is `bridge.localUrl + "/_capacitor_file_" + path` (what `convertFileSrc` produces). At most 3 run at once.                                                                                               |
 
+**Text files** (`text/TextCodec.kt`, `text/TextFiles.kt`, 2026-11-09):
+
+- **Encoding detection** (same rules as `src/lib/text/codec.ts`, both unit tested): a byte order
+  mark wins (UTF-8, UTF-16 LE/BE); a NUL byte without one means binary (`NOT_TEXT`); valid UTF-8 is
+  `utf-8`; anything else is `windows-1252`, decoded losslessly (the five bytes Windows leaves
+  undefined map to the C1 controls) so a Latin-1 file saves back byte for byte. Saving uses the
+  encoding the file was read with; the UI falls back to UTF-8 (and says so) when windows-1252
+  cannot hold a newly typed character. Line endings are not touched natively: the UI detects
+  LF/CRLF/CR and re-applies it on save (CodeMirror works with `\n`).
+- **`truncate`** reads `maxBytes + 1` bytes so the cut can step back to a character boundary.
+- **Atomic save**: check the remote last write time against `expectedModifiedAt` (`CONFLICT`
+  with `data.modifiedAt`, null when the file is gone), write a dot-named `.<name>.hoard-<id>.tmp` (no HIDDEN attribute: attributes travel with the rename) in
+  the same folder (FILE_CREATE, no sharing), check again, then rename it over the target
+  (`FileRenameInformation` with ReplaceIfExists). A dropped connection leaves at worst the temp
+  file, never half a document. If the share refuses creating files, or the target is held open
+  without delete sharing (rename → ACCESS_DENIED), it falls back to overwriting in place. The
+  returned entry is read after every handle is closed, because servers update the last write
+  time on close and that value is the next `expectedModifiedAt`. Known limits: the conflict check
+  and the rename are not one atomic step (a save landing in between is overwritten); servers that
+  report no modified time cannot detect conflicts; the replaced file takes the temp file's
+  attributes and ACL (a file's custom ACL is not copied).
+- `mode: "create"` writes a new file with FILE_CREATE (`ALREADY_EXISTS` when taken): new text
+  file from the browser, and "save as a copy" in the conflict dialog.
+
 **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` (network callback, WorkManager constraint),
 `CHANGE_WIFI_MULTICAST_STATE` (mDNS while discovering), `FOREGROUND_SERVICE` +
 `FOREGROUND_SERVICE_DATA_SYNC` (transfers), `POST_NOTIFICATIONS` (asked once, at the first
@@ -89,7 +122,7 @@ Keystore), srvsvc shares, browse, image and video thumbnails, NSD discovery, ope
 and a WorkManager download into a SAF folder. Signing: `bun run android:release` (see README).
 
 **Testing.** `./gradlew testDebugUnitTest` runs the pure logic tests (error mapping, paths, conflict
-names, failover, throttling, resume rules, srvsvc encoding). Two opt-in tests need a network and are
+names, failover, throttling, resume rules, srvsvc encoding, text encodings). Two opt-in tests need a network and are
 skipped by default: `SmbSmokeTest` (`HOARD_SMOKE_HOSTS=host:port,...` reads each server GUID with
 an unauthenticated NEGOTIATE) and `SmbIntegrationTest` (`HOARD_SMOKE_SMB=host:port:user:pass`
 against the disposable Samba server in `docs/testing/samba/`).

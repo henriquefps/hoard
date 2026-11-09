@@ -186,7 +186,10 @@
       "CANCELLED": "Cancelado",
       "PERMISSION_REVOKED": "Acesso à pasta perdido",
       "NO_APP": "Nenhum app para abrir",
-      "UNKNOWN": "Algo deu errado"
+      "UNKNOWN": "Algo deu errado",
+      "TOO_LARGE": "Grande demais",
+      "NOT_TEXT": "Não é texto",
+      "CONFLICT": "Alterado em outro lugar"
     }
   },
   "errors": {
@@ -239,7 +242,19 @@
       "body": "Tente de novo daqui a pouco."
     },
     "editCredentials": "Editar credenciais",
-    "reviewMachine": "Revisar máquina"
+    "reviewMachine": "Revisar máquina",
+    "TOO_LARGE": {
+      "title": "Arquivo grande demais",
+      "body": "É maior do que o visualizador integrado carrega."
+    },
+    "NOT_TEXT": {
+      "title": "Não é um arquivo de texto",
+      "body": "Ele contém dados binários."
+    },
+    "CONFLICT": {
+      "title": "Alterado no servidor",
+      "body": "Alguém salvou este arquivo depois que você o abriu."
+    }
   },
   "browse": {
     "shares": "Compartilhamentos",
@@ -334,7 +349,13 @@
       "AUTH_FAILED": "O login falhou ao abrir",
       "GUID_MISMATCH": "Outro servidor respondeu neste endereço",
       "UNKNOWN": "Não foi possível abrir o arquivo"
-    }
+    },
+    "newTextFile": "Novo arquivo de texto",
+    "fileName": "Nome do arquivo",
+    "newTextFileDefault": "sem-titulo.md",
+    "fileCreated": "{{name}} criado",
+    "newMenu": "Novo",
+    "openInViewer": "Abrir no Hoard"
   },
   "fileKind": {
     "folder": "Pasta",
@@ -487,5 +508,89 @@
     "title": "Página não encontrada",
     "body": "Esta página não existe.",
     "home": "Ir para o início"
+  },
+  "text": {
+    "toolbar": "Arquivo de texto",
+    "viewMode": "Visualização",
+    "layouts": {
+      "editor": "Editor",
+      "split": "Lado a lado",
+      "preview": "Prévia",
+      "table": "Tabela",
+      "source": "Código"
+    },
+    "preview": "Documento renderizado",
+    "editorLabel": "Conteúdo de {{name}}",
+    "edit": "Editar",
+    "save": "Salvar",
+    "done": "Concluir",
+    "reload": "Recarregar",
+    "openWith": "Abrir com outro app",
+    "find": "Buscar no arquivo",
+    "noMatches": "Nada encontrado",
+    "matchOf": "{{current}} de {{count}}",
+    "previousMatch": "Resultado anterior",
+    "nextMatch": "Próximo resultado",
+    "matchCase": "Diferenciar maiúsculas",
+    "closeFind": "Fechar busca",
+    "replaceWith": "Substituir por",
+    "replace": "Substituir",
+    "replaceAll": "Substituir tudo",
+    "wrap": "Quebrar linhas",
+    "fontSize": "Tamanho do texto",
+    "fontSizeValue": "{{size}} px",
+    "smaller": "Menor",
+    "larger": "Maior",
+    "resetSize": "Tamanho padrão",
+    "pretty": "Formatado",
+    "formatJson": "Formatar JSON",
+    "jsonInvalid": "Isto não é um JSON válido",
+    "lines_one": "{{formatted}} linha",
+    "lines_other": "{{formatted}} linhas",
+    "encodings": {
+      "utf-8": "UTF-8",
+      "utf-8-bom": "UTF-8 com BOM",
+      "utf-16le": "UTF-16 LE",
+      "utf-16be": "UTF-16 BE",
+      "windows-1252": "Windows-1252"
+    },
+    "lineEndings": {
+      "lf": "LF",
+      "crlf": "CRLF",
+      "cr": "CR"
+    },
+    "readOnly": "Somente leitura",
+    "unsaved": "Não salvo",
+    "saved": "{{name}} salvo",
+    "savedAsCopy": "Salvo como {{name}}",
+    "saveFailed": "Não foi possível salvar {{name}}",
+    "savedAsUtf8": "Salvo em UTF-8: {{encoding}} não comporta alguns dos novos caracteres",
+    "truncatedNotice": "Mostrando os primeiros {{shown}} de {{size}}, somente leitura.",
+    "tooLargeTitle": "Grande demais para abrir aqui",
+    "tooLargeBody": "Este arquivo tem {{size}}; o visualizador abre arquivos de até {{limit}}. Carregue o início em modo leitura ou abra com outro app.",
+    "loadFirstPart": "Carregar os primeiros {{limit}}",
+    "notTextTitle": "Não é um arquivo de texto",
+    "notTextBody": "Ele contém dados binários. Abra com outro app.",
+    "emptyFile": "Este arquivo está vazio.",
+    "csvTruncated": "Mostrando as primeiras {{count}} linhas. Use Código para ver o resto.",
+    "copyCode": "Copiar código",
+    "copied": "Copiado",
+    "copyFailed": "Não foi possível copiar o código",
+    "mermaidError": "Não foi possível desenhar este diagrama",
+    "mermaidRendering": "Desenhando o diagrama…",
+    "mermaidLabel": "Diagrama",
+    "conflictTitle": "{{name}} mudou no servidor",
+    "conflictBody": "Alguém salvou o arquivo depois que você o abriu (em {{date}}). Escolha qual versão manter.",
+    "deletedTitle": "{{name}} não existe mais no servidor",
+    "deletedBody": "Foi apagado ou movido depois que você o abriu. Salve seu texto de novo ou como cópia.",
+    "reloadTheirs": "Recarregar a versão deles",
+    "overwrite": "Sobrescrever com a minha",
+    "saveCopy": "Salvar a minha como cópia",
+    "saveAgain": "Salvar de novo",
+    "unsavedTitle": "Salvar as alterações em {{name}}?",
+    "unsavedBody": "Suas alterações ainda não foram salvas.",
+    "unsavedLeaveBody": "Você está saindo do arquivo com alterações ainda não salvas.",
+    "keepEditing": "Continuar editando",
+    "discard": "Descartar"
   }
 }

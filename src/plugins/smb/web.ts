@@ -22,6 +22,8 @@ import type {
   PathOptions,
   ProbeOptions,
   ProbeResult,
+  ReadTextFileOptions,
+  ReadTextFileResult,
   ReleaseDestinationFolderOptions,
   RenameOptions,
   SessionRef,
@@ -37,9 +39,19 @@ import type {
   ThumbnailResult,
   TransferProgressEvent,
   TransferRef,
+  WriteTextFileOptions,
+  WriteTextFileResult,
 } from "./definitions"
-import { smbErrorCode as smbErrorCodeOf, TERMINAL_TRANSFER_STATES } from "./definitions"
+import {
+  smbErrorCode as smbErrorCodeOf,
+  TERMINAL_TRANSFER_STATES,
+  TEXT_FILE_HARD_LIMIT,
+  TEXT_FILE_MAX_BYTES,
+} from "./definitions"
 import { detectAddressKind } from "@/lib/addressKind"
+import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
+import { isTextFile } from "@/lib/text/textFiles"
+import { GENERATED_TEXT } from "./mockText"
 import {
   DEMO_PASSWORDS,
   MOCK_ROUTES,
@@ -148,6 +160,13 @@ function toEntry(node: MockFile, path: string): SmbEntry {
     modifiedAt: node.modifiedAt ?? null,
     isHidden: Boolean(node.hidden) || node.name.startsWith("."),
   }
+}
+
+/** Now, but always after `previous` (a save must change the modified time, even within 1 ms). */
+function laterThan(previous: string | undefined): string {
+  const now = Date.now()
+  const before = previous ? Date.parse(previous) : 0
+  return new Date(Math.max(now, before + 1)).toISOString()
 }
 
 /** Deterministic hue from a string, for fake thumbnails. */
@@ -766,6 +785,115 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     return [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")
   }
 
+  // --- Text files ---------------------------------------------------------------------------
+
+  /** Files someone else edits right after they are opened (the "conflict" demo), by node. */
+  private readonly editedBySomeoneElse = new WeakSet<MockFile>()
+
+  /** The node's bytes: real content, generated content, or a stand-in for files without any. */
+  private contentOf(node: MockFile): Uint8Array {
+    if (node.bytes) return node.bytes
+    if (node.text !== undefined) return new TextEncoder().encode(node.text)
+    if (node.generated) {
+      node.bytes = new TextEncoder().encode(GENERATED_TEXT[node.generated]())
+      node.size = node.bytes.length
+      return node.bytes
+    }
+    // A listing-only file: text-like names get a short stand-in, anything else looks binary.
+    if (!isTextFile(node.name)) return new Uint8Array([0, 1, 2, 3])
+    return new TextEncoder().encode(`${node.name}\n\n(Sample content from the web mock.)\n`)
+  }
+
+  async readTextFile({
+    sessionId,
+    share,
+    path,
+    maxBytes = TEXT_FILE_MAX_BYTES,
+    truncate = false,
+  }: ReadTextFileOptions): Promise<ReadTextFileResult> {
+    const { session, node } = this.resolve(sessionId, share, path)
+    if (node.children) throw fail("UNKNOWN", `${path} is a folder`)
+    const limit = Math.max(1, Math.min(maxBytes, TEXT_FILE_HARD_LIMIT))
+    // Files with content report their real size; listing-only ones their listed size.
+    const hasContent = Boolean(node.bytes || node.text !== undefined || node.generated)
+    const bytes = hasContent || (node.size ?? 0) <= limit ? this.contentOf(node) : null
+    const size = bytes && hasContent ? bytes.length : (node.size ?? 0)
+    if (size > limit && !truncate) {
+      throw fail("TOO_LARGE", `${node.name} is ${size} bytes (limit ${limit})`, { size })
+    }
+    await this.wait(
+      session.latencyMs * 2 + (Math.min(size, limit) / mockSpeedFor(session.latencyMs)) * 1000
+    )
+    const decoded = decodeTextPrefix(bytes ?? new Uint8Array(0), limit)
+    if (!decoded) throw fail("NOT_TEXT", `${node.name} is not a text file`)
+    const result: ReadTextFileResult = {
+      text: decoded.text,
+      encoding: decoded.encoding,
+      size,
+      modifiedAt: node.modifiedAt ?? null,
+      truncated: size > limit,
+    }
+    if (node.name.includes("conflict") && !this.editedBySomeoneElse.has(node)) {
+      // Simulates a colleague saving the file a few seconds after it was first opened: the next
+      // save conflicts.
+      this.editedBySomeoneElse.add(node)
+      setTimeout(
+        () => {
+          node.text = `${new TextDecoder().decode(this.contentOf(node))}\nA line added by someone else.\n`
+          node.bytes = undefined
+          node.size = new TextEncoder().encode(node.text).length
+          node.modifiedAt = laterThan(node.modifiedAt)
+        },
+        this.latencyScale === 0 ? 0 : 3000
+      )
+    }
+    return result
+  }
+
+  async writeTextFile({
+    sessionId,
+    share,
+    path,
+    text,
+    encoding = "utf-8",
+    mode = "overwrite",
+    expectedModifiedAt,
+  }: WriteTextFileOptions): Promise<WriteTextFileResult> {
+    const segments = splitPath(path)
+    const name = segments.at(-1) ?? ""
+    if (!isValidMockName(name)) throw fail("UNKNOWN", `Invalid file name: '${name}'`)
+    const folderPath = segments.slice(0, -1).join("/")
+    const { session, node: folder } = this.resolve(sessionId, share, folderPath)
+    if (!folder.children) throw fail("NOT_FOUND", `${folderPath} is not a folder`)
+    if (folder.denied) throw fail("ACCESS_DENIED", `No access to ${folder.name}`)
+    const shareInfo = this.shareOf(session, share)
+    if (shareInfo.readOnly) throw fail("ACCESS_DENIED", `${share} is read-only for this account`)
+    const existing = folder.children.find((child) => child.name === name)
+    if (existing?.children) throw fail("ALREADY_EXISTS", `${name} is a folder`)
+    if (mode === "create" && existing) throw fail("ALREADY_EXISTS", `${name} already exists`)
+    if (mode === "overwrite" && expectedModifiedAt) {
+      const current = existing?.modifiedAt ?? null
+      if (current !== expectedModifiedAt) {
+        throw fail("CONFLICT", `${name} changed on the server since it was opened`, {
+          modifiedAt: existing ? current : null,
+        })
+      }
+    }
+    if (!canEncode(text, encoding)) {
+      throw fail("UNKNOWN", `${encoding} cannot hold every character of the text`)
+    }
+    const bytes = encodeText(text, encoding)
+    await this.wait(session.latencyMs * 3 + (bytes.length / mockSpeedFor(session.latencyMs)) * 1000)
+    const target: MockFile = existing ?? { name }
+    target.bytes = bytes
+    target.text = undefined
+    target.generated = undefined
+    target.size = bytes.length
+    target.modifiedAt = laterThan(existing?.modifiedAt)
+    if (!existing) folder.children.push(target)
+    return { entry: toEntry(target, segments.join("/")) }
+  }
+
   async thumbnail({ sessionId, share, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {
     const { session, node } = this.resolve(sessionId, share, path)
     if (node.children || !THUMBNAIL_EXTENSIONS.has(extension(node.name))) {
@@ -786,6 +914,19 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       `</svg>`
     return { src: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`, width, height }
   }
+}
+
+/** Valid SMB file name (same rule as the native `SmbPaths.requireValidName`). */
+function isValidMockName(name: string) {
+  return (
+    name.trim() === name &&
+    name !== "" &&
+    name !== "." &&
+    name !== ".." &&
+    !/[\\/:*?"<>|]/.test(name) &&
+    ![...name].some((c) => c.charCodeAt(0) < 32) &&
+    !name.endsWith(".")
+  )
 }
 
 /** `photo.jpg` → `photo (1).jpg`, like Android's DocumentsProvider does on a name clash. */
