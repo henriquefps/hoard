@@ -602,5 +602,14 @@
     "unsavedLeaveBody": "You are leaving the file with changes that are not saved yet.",
     "keepEditing": "Keep editing",
     "discard": "Discard"
+  },
+  "access": {
+    "readOnly": "Read-only",
+    "shareReadOnly": "This share is read-only for {{user}}.",
+    "folderReadOnly": "This folder is read-only for {{user}}.",
+    "shareReadOnlyAnonymous": "This share is read-only for this account.",
+    "folderReadOnlyAnonymous": "This folder is read-only for this account.",
+    "fileReadOnly": "Read-only: {{user}} can open this file but not change it on the server.",
+    "fileReadOnlyAnonymous": "Read-only: this account can open this file but not change it on the server."
   }
 }

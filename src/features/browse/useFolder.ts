@@ -3,11 +3,12 @@ import type { MachineWithAddresses } from "@/db/types"
 import { RouteError, type AddressAttempt } from "@/features/route/engine"
 import { useRouteEngine } from "@/features/route/RouteProvider"
 import { HoardSmb } from "@/plugins/smb"
-import type { HoardSmbErrorCode, SmbEntry, SmbShare } from "@/plugins/smb/definitions"
+import type { HoardSmbErrorCode, SmbAccess, SmbEntry, SmbShare } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
 
 export type FolderData =
-  { kind: "shares"; shares: SmbShare[] } | { kind: "entries"; entries: SmbEntry[] }
+  | { kind: "shares"; shares: SmbShare[] }
+  | { kind: "entries"; entries: SmbEntry[]; access?: SmbAccess }
 
 export interface FolderState {
   data?: FolderData
@@ -64,7 +65,7 @@ export function useFolder(
     try {
       const data: FolderData = await engine.withSession(current, async (sessionId) =>
         share
-          ? { kind: "entries", entries: (await HoardSmb.list({ sessionId, share, path })).entries }
+          ? { kind: "entries", ...(await HoardSmb.list({ sessionId, share, path })) }
           : { kind: "shares", shares: (await HoardSmb.listShares({ sessionId })).shares }
       )
       if (id !== request.current) return

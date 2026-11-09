@@ -9,6 +9,7 @@ import com.hierynomus.smbj.share.PipelinedFileReader
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.HoardSmbException
 import dev.hfps.hoard.smb.IsoTime
+import dev.hfps.hoard.smb.SmbAccess
 import dev.hfps.hoard.smb.SmbBrowser
 import dev.hfps.hoard.smb.SmbEntry
 import dev.hfps.hoard.smb.SmbErrors
@@ -27,6 +28,8 @@ data class TextRead(
     val size: Long,
     val modifiedAt: String?,
     val truncated: Boolean,
+    /** The account's access to the file (share and file level combined); null when unknown. */
+    val access: SmbAccess? = null,
 )
 
 /**
@@ -42,7 +45,9 @@ object TextFiles {
         val clean = SmbPaths.normalize(path)
         if (clean.isEmpty()) smbFail(ErrorCode.UNKNOWN, "Cannot read a folder as text")
         val limit = maxBytes.coerceIn(1, HARD_LIMIT)
-        RemoteFiles.openRead(session, share, clean).use { remote ->
+        val (file, mask) = RemoteFiles.openReadWithAccess(session, share, clean)
+        val access = SmbAccess.combine(SmbBrowser.shareAccessOrNull(session, share), SmbAccess.fromMask(mask))
+        file.use { remote ->
             val info = RemoteFiles.info(remote)
             if (info.isDirectory) smbFail(ErrorCode.UNKNOWN, "Cannot read a folder as text")
             if (info.size > limit && !truncate) {
@@ -60,7 +65,7 @@ object TextFiles {
             val bytes = out.toByteArray()
             val decoded = (if (truncated) TextCodec.decodePrefix(bytes, limit) else TextCodec.decode(bytes))
                 ?: smbFail(ErrorCode.NOT_TEXT, "${SmbPaths.name(clean)} is not a text file")
-            return TextRead(decoded.text, decoded.encoding, info.size, IsoTime.fromSmbMillis(info.modifiedMillis), truncated)
+            return TextRead(decoded.text, decoded.encoding, info.size, IsoTime.fromSmbMillis(info.modifiedMillis), truncated, access)
         }
     }
 

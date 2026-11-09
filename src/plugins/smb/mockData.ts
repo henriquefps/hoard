@@ -45,6 +45,11 @@ export interface MockFile {
   children?: MockFile[]
   /** Folder content the account cannot read (`ACCESS_DENIED`). */
   denied?: boolean
+  /**
+   * The account may read but not change this folder or file (filesystem permissions or an ACL on
+   * a writable share). Inherited by everything inside a folder.
+   */
+  readOnly?: boolean
   /** File content for `readTextFile` (UTF-8). */
   text?: string
   /** Raw file content (other encodings, binary); wins over `text`. */
@@ -58,7 +63,7 @@ export interface MockShare {
   comment?: string
   hidden?: boolean
   denied?: boolean
-  /** The account may read but not write (`writeTextFile` rejects `ACCESS_DENIED`). */
+  /** The account may read but not write (`listShares` reports `access: "read"`; writes reject `ACCESS_DENIED`). */
   readOnly?: boolean
   /** Served but left out of `listShares` (Samba `browseable = no`): opened only by name. */
   unlisted?: boolean
@@ -277,8 +282,31 @@ export const MOCK_SERVERS = {
               file("android-studio-2026.1-linux.tar.gz", 1.3 * GiB, 14),
               file("archive.zip", 220 * MiB, 40),
             ]),
+            dir(
+              "Archive",
+              [
+                textFile(
+                  "2025 review.md",
+                  "# 2025 review\n\nThis folder belongs to root: you can read it but not change it.\n",
+                  200
+                ),
+                dir("Old projects", [file("site-2019.zip", 48 * MiB, 900)]),
+              ],
+              { readOnly: true }
+            ),
             file(".bashrc", 3 * KiB, 400, { hidden: true }),
           ]),
+        ],
+      },
+      {
+        name: "raiz",
+        comment: "The whole disk",
+        readOnly: true,
+        root: [
+          dir("etc", [textFile("hostname", "cachyos-fps\n", 30)]),
+          dir("home", [dir("henrique", [])]),
+          dir("srv", [dir("media", [])]),
+          textFile("README.txt", "Read-only view of the whole disk.\n", 60),
         ],
       },
       { name: "IPC$", hidden: true, root: [] },

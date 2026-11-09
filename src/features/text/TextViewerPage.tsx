@@ -10,6 +10,7 @@ import {
   DownloadSimpleIcon,
   FileXIcon,
   FloppyDiskIcon,
+  LockSimpleIcon,
   MagnifyingGlassIcon,
   MinusIcon,
   PencilSimpleIcon,
@@ -56,6 +57,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useLiveQuery } from "@/db/DbProvider"
 import { getMachine } from "@/db/queries"
 import type { MachineWithAddresses } from "@/db/types"
+import { accountName, isReadOnly } from "@/features/browse/access"
+import { ReadOnlyBadge } from "@/features/browse/ReadOnlyBadge"
 import { invalidateFolder } from "@/features/browse/useFolder"
 import { useRouteEngine } from "@/features/route/RouteProvider"
 import { DownloadDialog } from "@/features/transfers/DownloadDialog"
@@ -223,12 +226,17 @@ function TextFileScreen({
     if (!doc) {
       if (big) setView("source")
       if (longestLine(data.text) > WRAP_LINE_LIMIT) setWrapOverride(false)
-      if (data.truncated) setEditing(false)
+      if (data.truncated || isReadOnly(data.access)) setEditing(false)
     }
   }
   const prose = isProse(name)
   const wrap = wrapOverride ?? (prose ? prefs.wrap : prefs.wrapCode)
-  const readOnly = Boolean(doc?.data.truncated)
+  const truncated = Boolean(doc?.data.truncated)
+  // The server says this account may read but not change the file (share, folder or file ACL).
+  // Saving stays guarded by the server too: access can change while the file is open.
+  const serverReadOnly = isReadOnly(doc?.data.access)
+  const readOnly = truncated || serverReadOnly
+  const user = accountName(machine.username, machine.domain)
 
   // The editor's baseline (what the server has) after every mount of a loaded document.
   useEffect(() => {
@@ -514,6 +522,10 @@ function TextFileScreen({
     return () => clearTimeout(timer)
   }, [hash, showRendered, doc])
 
+  const fileReadOnlyNote = user
+    ? t("access.fileReadOnly", { user })
+    : t("access.fileReadOnlyAnonymous")
+
   // --- Header ---
   const meta = doc && (
     <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.8125rem] text-muted-foreground tabular-nums">
@@ -534,10 +546,14 @@ function TextFileScreen({
           </span>
         </>
       )}
-      {readOnly && (
-        <Badge variant="outline" className="ml-1">
-          {t("text.readOnly")}
-        </Badge>
+      {serverReadOnly ? (
+        <ReadOnlyBadge className="ml-1" />
+      ) : (
+        truncated && (
+          <Badge variant="outline" className="ml-1">
+            {t("text.readOnly")}
+          </Badge>
+        )
       )}
       {dirty && (
         <Badge variant="outline" className="ml-1 border-warning/50 text-warning">
@@ -564,8 +580,14 @@ function TextFileScreen({
           </Button>
         </>
       ) : (
-        !readOnly && (
-          <Button variant="outline" onClick={() => setEditing(true)}>
+        !truncated && (
+          // Read-only on the server: Edit stays visible but disabled; the notice explains why.
+          <Button
+            variant="outline"
+            onClick={() => setEditing(true)}
+            disabled={serverReadOnly}
+            aria-description={serverReadOnly ? fileReadOnlyNote : undefined}
+          >
             <PencilSimpleIcon data-icon="inline-start" />
             {t("text.edit")}
           </Button>
@@ -607,7 +629,7 @@ function TextFileScreen({
           </DropdownMenuItem>
           <DropdownMenuItem
             disabled={dirty}
-            onSelect={() => void file.load({ truncate: readOnly })}
+            onSelect={() => void file.load({ truncate: truncated })}
           >
             <ArrowsClockwiseIcon />
             {t("text.reload")}
@@ -743,7 +765,13 @@ function TextFileScreen({
               onClose={() => setFindOpen(false)}
             />
           )}
-          {readOnly && (
+          {serverReadOnly && (
+            <Alert className="rounded-none border-x-0 border-t-0" data-testid="read-only-note">
+              <LockSimpleIcon aria-hidden />
+              <AlertDescription>{fileReadOnlyNote}</AlertDescription>
+            </Alert>
+          )}
+          {truncated && (
             <Alert className="rounded-none border-x-0 border-t-0">
               <AlertDescription>
                 {t("text.truncatedNotice", {

@@ -9,6 +9,7 @@ import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.share.Directory
 import com.hierynomus.smbj.share.DiskShare
+import com.hierynomus.smbj.share.HoardOpens
 import java.util.EnumSet
 import java.util.Locale
 import java.util.UUID
@@ -27,6 +28,12 @@ fun interface Cancellation {
     }
 }
 
+/** Contract `SmbShare`: a listed share and the account's access to it (null: unknown). */
+data class ShareListing(val info: ShareInfo, val access: SmbAccess?)
+
+/** Contract `ListResult`: a folder's entries and the account's access to the folder. */
+data class FolderListing(val entries: List<SmbEntry>, val access: SmbAccess?)
+
 /** Contract `SmbEntry` as a Kotlin value (converted to JSObject by the plugin). */
 data class SmbEntry(
     val name: String,
@@ -40,12 +47,16 @@ data class SmbEntry(
 /** An open session in the registry, with its connected disk shares. */
 class SmbSession(val id: String, val machineId: String, val handle: SmbHandle) {
     private val shares = ConcurrentHashMap<String, DiskShare>()
+    private val locks = ConcurrentHashMap<String, Any>()
 
-    /** Tree-connect to a disk share once and reuse it (reconnects if the server dropped the tree). */
+    /**
+     * Tree-connect to a disk share once and reuse it (reconnects if the server dropped the tree).
+     * Locked per share name, so `listShares` can connect several shares at once.
+     */
     fun share(name: String): DiskShare {
         val key = name.lowercase(Locale.ROOT)
         shares[key]?.takeIf { it.isConnected }?.let { return it }
-        synchronized(this) {
+        synchronized(locks.computeIfAbsent(key) { Any() }) {
             shares[key]?.takeIf { it.isConnected }?.let { return it }
             val share = handle.session.connectShare(name) as? DiskShare
                 ?: smbFail(ErrorCode.NOT_FOUND, "$name is not a disk share")
@@ -53,6 +64,9 @@ class SmbSession(val id: String, val machineId: String, val handle: SmbHandle) {
             return share
         }
     }
+
+    /** The share's access from its TREE_CONNECT response's MaximalAccess (null: no usable answer). */
+    fun shareAccess(name: String): SmbAccess? = SmbAccess.fromMask(share(name).treeConnect.maximalAccess)
 
     fun close() {
         // Polite TREE_DISCONNECT/LOGOFF only while the connection still works; otherwise each one
@@ -160,18 +174,28 @@ object SmbBrowser {
      * entries (every share showed the same folder), and so did any path both shares have. A plain
      * CREATE without a lease context plus QUERY_DIRECTORY has no such cache.
      */
-    fun listDirectory(share: DiskShare, smbPath: String): List<FileIdBothDirectoryInformation> {
-        val entry = share.open(
+    fun listDirectory(share: DiskShare, smbPath: String): List<FileIdBothDirectoryInformation> =
+        listDirectoryWithAccess(share, smbPath).first
+
+    /**
+     * [listDirectory] plus the folder's maximal access for this account, asked for on the same
+     * CREATE with the "MxAc" create context (`HoardOpens`), so per-folder ACLs (Windows NTFS,
+     * macOS, POSIX permissions on Samba) show up without an extra round trip. The mask is null when
+     * the server does not answer the context.
+     */
+    fun listDirectoryWithAccess(share: DiskShare, smbPath: String): Pair<List<FileIdBothDirectoryInformation>, Long?> {
+        val opened = HoardOpens.openWithMaximalAccess(
+            share,
             smbPath,
             EnumSet.of(AccessMask.FILE_LIST_DIRECTORY, AccessMask.FILE_READ_ATTRIBUTES, AccessMask.FILE_READ_EA),
-            null,
             SMB2ShareAccess.ALL,
             SMB2CreateDisposition.FILE_OPEN,
             EnumSet.of(SMB2CreateOptions.FILE_DIRECTORY_FILE),
         )
-        return entry.use {
-            (it as? Directory ?: smbFail(ErrorCode.NOT_FOUND, "Not a folder: $smbPath"))
+        return opened.entry.use {
+            val listing = (it as? Directory ?: smbFail(ErrorCode.NOT_FOUND, "Not a folder: $smbPath"))
                 .list(FileIdBothDirectoryInformation::class.java)
+            listing to SmbAccess.parseMaximalAccessResponse(opened.maximalAccessData)
         }
     }
 
@@ -180,10 +204,60 @@ object SmbBrowser {
             .filter { it.isDisk && it.name.isNotEmpty() && !it.name.equals("IPC$", ignoreCase = true) }
             .sortedBy { it.name.lowercase(Locale.ROOT) }
 
-    fun list(session: SmbSession, shareName: String, path: String): List<SmbEntry> {
+    /** At most this many TREE_CONNECTs in flight while `listShares` asks every share's access. */
+    const val ACCESS_PARALLELISM = 4
+
+    /** `listShares` waits this long in total for the access answers; slower shares stay unknown. */
+    const val ACCESS_DEADLINE_MS = 4_000L
+
+    /** At most this many shares get an access check (a server with hundreds stays fast). */
+    const val ACCESS_MAX_SHARES = 64
+
+    private val accessPool = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "hoard-smb-access").apply { isDaemon = true }
+    }
+
+    /**
+     * The shares plus each one's access, from a TREE_CONNECT per share (bounded, in parallel). The
+     * trees stay connected in the session, so opening a share afterwards costs nothing extra. A
+     * share that fails or does not answer before [ACCESS_DEADLINE_MS] is listed with a null access;
+     * it never fails the whole list.
+     */
+    fun listSharesWithAccess(session: SmbSession): List<ShareListing> {
+        val shares = listShares(session)
+        val gate = java.util.concurrent.Semaphore(ACCESS_PARALLELISM)
+        val futures = shares.take(ACCESS_MAX_SHARES).associate { info ->
+            info.name to accessPool.submit<SmbAccess?> {
+                gate.acquire()
+                try {
+                    if (!session.handle.isAlive) null else runCatching { session.shareAccess(info.name) }.getOrNull()
+                } finally {
+                    gate.release()
+                }
+            }
+        }
+        val deadline = System.nanoTime() + ACCESS_DEADLINE_MS * 1_000_000
+        return shares.map { info ->
+            val access = futures[info.name]?.let { future ->
+                val left = deadline - System.nanoTime()
+                runCatching { future.get(left.coerceAtLeast(0), java.util.concurrent.TimeUnit.NANOSECONDS) }.getOrNull()
+            }
+            ShareListing(info, access)
+        }
+    }
+
+    /** The share's access, null when it cannot be told (never fails the caller). */
+    fun shareAccessOrNull(session: SmbSession, shareName: String): SmbAccess? =
+        runCatching { session.shareAccess(shareName) }.getOrNull()
+
+    fun list(session: SmbSession, shareName: String, path: String): List<SmbEntry> =
+        listWithAccess(session, shareName, path).entries
+
+    fun listWithAccess(session: SmbSession, shareName: String, path: String): FolderListing {
         val clean = SmbPaths.normalize(path)
         val share = session.share(shareName)
-        return listDirectory(share, SmbPaths.toSmb(clean))
+        val (listing, mask) = listDirectoryWithAccess(share, SmbPaths.toSmb(clean))
+        val entries = listing
             .asSequence()
             .filter { it.fileName != "." && it.fileName != ".." }
             .map {
@@ -196,6 +270,8 @@ object SmbBrowser {
                 )
             }
             .toList()
+        val access = SmbAccess.combine(shareAccessOrNull(session, shareName), SmbAccess.fromMask(mask))
+        return FolderListing(entries, access)
     }
 
     fun stat(session: SmbSession, shareName: String, path: String): SmbEntry {

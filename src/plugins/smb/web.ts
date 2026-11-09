@@ -349,20 +349,31 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     return share
   }
 
-  /** Resolve a path to its node (the share root is a synthetic folder). */
+  /**
+   * Resolve a path to its node (the share root is a synthetic folder). `readOnly` is true when the
+   * share or any folder on the way (or the node itself) is read-only for the account.
+   */
   private resolve(sessionId: string, shareName: string, path: string) {
     const session = this.session(sessionId)
     const share = this.shareOf(session, shareName)
     let node: MockFile = { name: share.name, children: share.root }
     let parent: MockFile | null = null
+    let readOnly = Boolean(share.readOnly)
+    let parentReadOnly = readOnly
     for (const segment of splitPath(path)) {
       if (node.denied) throw fail("ACCESS_DENIED", `No access to ${node.name}`)
       const next = node.children?.find((child) => child.name === segment)
       if (!next) throw fail("NOT_FOUND", `${path} not found`)
       parent = node
+      parentReadOnly = readOnly
       node = next
+      readOnly ||= Boolean(next.readOnly)
     }
-    return { session, node, parent, path: splitPath(path).join("/") }
+    return { session, node, parent, path: splitPath(path).join("/"), readOnly, parentReadOnly }
+  }
+
+  private static readOnlyError(name: string) {
+    return fail("ACCESS_DENIED", `${name} is read-only for this account`)
   }
 
   async listShares({ sessionId }: SessionRef): Promise<ListSharesResult> {
@@ -375,16 +386,23 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
           name: share.name,
           comment: share.comment,
           isHidden: share.name.endsWith("$"),
+          // Like the native side: denied shares cannot be tree-connected, so their access is unknown.
+          ...(share.denied
+            ? {}
+            : { access: share.readOnly ? ("read" as const) : ("readWrite" as const) }),
         })),
     }
   }
 
   async list({ sessionId, share, path }: PathOptions): Promise<ListResult> {
-    const { session, node, path: clean } = this.resolve(sessionId, share, path)
+    const { session, node, path: clean, readOnly } = this.resolve(sessionId, share, path)
     if (!node.children) throw fail("NOT_FOUND", `${path} is not a folder`)
     if (node.denied) throw fail("ACCESS_DENIED", `No access to ${node.name}`)
     await this.wait(session.latencyMs * 2 + Math.min(node.children.length, 400) / 4)
-    return { entries: node.children.map((child) => toEntry(child, joinPath(clean, child.name))) }
+    return {
+      entries: node.children.map((child) => toEntry(child, joinPath(clean, child.name))),
+      access: readOnly ? "read" : "readWrite",
+    }
   }
 
   async stat({ sessionId, share, path }: PathOptions): Promise<StatResult> {
@@ -394,8 +412,9 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   }
 
   async createFolder({ sessionId, share, path, name }: CreateFolderOptions): Promise<StatResult> {
-    const { session, node, path: clean } = this.resolve(sessionId, share, path)
+    const { session, node, path: clean, readOnly } = this.resolve(sessionId, share, path)
     if (!node.children) throw fail("NOT_FOUND", `${path} is not a folder`)
+    if (readOnly) throw HoardSmbWeb.readOnlyError(node.name)
     if (node.children.some((child) => child.name === name)) {
       throw fail("ALREADY_EXISTS", `${name} already exists`)
     }
@@ -406,8 +425,16 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   }
 
   async rename({ sessionId, share, path, newName }: RenameOptions): Promise<StatResult> {
-    const { session, node, parent, path: clean } = this.resolve(sessionId, share, path)
+    const {
+      session,
+      node,
+      parent,
+      path: clean,
+      readOnly,
+      parentReadOnly,
+    } = this.resolve(sessionId, share, path)
     if (!parent) throw fail("ACCESS_DENIED", "Cannot rename the share root")
+    if (readOnly || parentReadOnly) throw HoardSmbWeb.readOnlyError(node.name)
     if (parent.children?.some((child) => child.name === newName)) {
       throw fail("ALREADY_EXISTS", `${newName} already exists`)
     }
@@ -418,8 +445,9 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   }
 
   async delete({ sessionId, share, path, recursive }: DeleteOptions): Promise<void> {
-    const { session, node, parent } = this.resolve(sessionId, share, path)
+    const { session, node, parent, readOnly, parentReadOnly } = this.resolve(sessionId, share, path)
     if (!parent?.children) throw fail("ACCESS_DENIED", "Cannot delete the share root")
+    if (readOnly || parentReadOnly) throw HoardSmbWeb.readOnlyError(node.name)
     if (node.children?.length && !recursive)
       throw fail("ACCESS_DENIED", `${node.name} is not empty`)
     await this.wait(session.latencyMs * 2)
@@ -811,7 +839,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     maxBytes = TEXT_FILE_MAX_BYTES,
     truncate = false,
   }: ReadTextFileOptions): Promise<ReadTextFileResult> {
-    const { session, node } = this.resolve(sessionId, share, path)
+    const { session, node, readOnly } = this.resolve(sessionId, share, path)
     if (node.children) throw fail("UNKNOWN", `${path} is a folder`)
     const limit = Math.max(1, Math.min(maxBytes, TEXT_FILE_HARD_LIMIT))
     // Files with content report their real size; listing-only ones their listed size.
@@ -832,6 +860,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       size,
       modifiedAt: node.modifiedAt ?? null,
       truncated: size > limit,
+      access: readOnly ? "read" : "readWrite",
     }
     if (node.name.includes("conflict") && !this.editedBySomeoneElse.has(node)) {
       // Simulates a colleague saving the file a few seconds after it was first opened: the next
@@ -863,12 +892,11 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     const name = segments.at(-1) ?? ""
     if (!isValidMockName(name)) throw fail("UNKNOWN", `Invalid file name: '${name}'`)
     const folderPath = segments.slice(0, -1).join("/")
-    const { session, node: folder } = this.resolve(sessionId, share, folderPath)
+    const { session, node: folder, readOnly } = this.resolve(sessionId, share, folderPath)
     if (!folder.children) throw fail("NOT_FOUND", `${folderPath} is not a folder`)
     if (folder.denied) throw fail("ACCESS_DENIED", `No access to ${folder.name}`)
-    const shareInfo = this.shareOf(session, share)
-    if (shareInfo.readOnly) throw fail("ACCESS_DENIED", `${share} is read-only for this account`)
     const existing = folder.children.find((child) => child.name === name)
+    if (readOnly || existing?.readOnly) throw HoardSmbWeb.readOnlyError(existing?.name ?? share)
     if (existing?.children) throw fail("ALREADY_EXISTS", `${name} is a folder`)
     if (mode === "create" && existing) throw fail("ALREADY_EXISTS", `${name} already exists`)
     if (mode === "overwrite" && expectedModifiedAt) {
