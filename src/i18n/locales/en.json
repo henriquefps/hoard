@@ -300,6 +300,7 @@
     "nameInvalid": "Names can't be empty or contain \\ / : * ? \" < > |",
     "nameTaken": "Something with this name already exists here.",
     "download": "Download",
+    "openWith": "Open with…",
     "copyPath": "Copy path",
     "pathCopied": "Path copied",
     "copyFailed": "Could not copy the path",
@@ -330,6 +331,8 @@
       "NO_SPACE": "Not enough space to open it",
       "UNREACHABLE": "Lost the connection while opening",
       "TIMEOUT": "Lost the connection while opening",
+      "AUTH_FAILED": "Sign-in failed while opening",
+      "GUID_MISMATCH": "Another server answered on this address",
       "UNKNOWN": "Could not open the file"
     }
   },

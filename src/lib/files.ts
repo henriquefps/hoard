@@ -91,6 +91,34 @@ export const THUMBNAIL_EXTENSIONS = new Set([
 export const hasThumbnail = (entry: Pick<SmbEntry, "name" | "isDirectory">) =>
   !entry.isDirectory && THUMBNAIL_EXTENSIONS.has(extensionOf(entry.name))
 
+// --- Opening ---------------------------------------------------------------------------------
+
+/** Files from this size on are streamed rather than downloaded to the cache before opening. */
+export const STREAM_FROM_BYTES = 32 * 1024 * 1024
+
+/**
+ * How a tap opens a file:
+ *  - `web`: `.html`/`.htm` → `openWebPage` (its folder served locally, so relative CSS/JS/images load);
+ *  - `stream`: video, audio and anything from {@link STREAM_FROM_BYTES} → `streamFile` (the other
+ *    app reads it on demand and can seek; nothing is downloaded first);
+ *  - `cache`: small files → `openFile` (downloaded to the cache, then opened). Viewers of small
+ *    documents and images often read the whole file several times or expect a real file, and a
+ *    cached copy reopens instantly.
+ * `withChooser` ("Open with…") never picks `web`: the user wants another app for the file itself.
+ */
+export type OpenStrategy = "web" | "stream" | "cache"
+
+export function openStrategy(
+  entry: Pick<SmbEntry, "name" | "size" | "isDirectory">,
+  withChooser = false
+): OpenStrategy {
+  const ext = extensionOf(entry.name)
+  if (!withChooser && (ext === "html" || ext === "htm")) return "web"
+  const kind = fileKind(entry)
+  if (kind === "video" || kind === "audio") return "stream"
+  return entry.size >= STREAM_FROM_BYTES ? "stream" : "cache"
+}
+
 // --- Filter, search, sort ---------------------------------------------------------------------
 
 export const FILTERS = [

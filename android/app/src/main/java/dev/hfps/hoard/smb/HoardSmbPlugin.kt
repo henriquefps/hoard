@@ -22,6 +22,9 @@ import dev.hfps.hoard.smb.transfer.TransferManager
 import dev.hfps.hoard.smb.transfer.TransferNotifications
 import dev.hfps.hoard.smb.transfer.TransferProgress
 import dev.hfps.hoard.smb.transfer.TransferStates
+import dev.hfps.hoard.smb.stream.StreamAddress
+import dev.hfps.hoard.smb.stream.StreamRequest
+import dev.hfps.hoard.smb.stream.Streamer
 import dev.hfps.hoard.smb.viewer.Opener
 import dev.hfps.hoard.smb.viewer.Thumbnailer
 import kotlinx.coroutines.CoroutineScope
@@ -57,6 +60,7 @@ class HoardSmbPlugin : Plugin() {
     private lateinit var transfers: TransferManager
     private lateinit var opener: Opener
     private lateinit var thumbnailer: Thumbnailer
+    private lateinit var streamer: Streamer
     private var networkMonitor: NetworkMonitor? = null
     private val thumbnailSlots = Semaphore(3)
     private var openJob: Job? = null
@@ -73,6 +77,7 @@ class HoardSmbPlugin : Plugin() {
         transfers = TransferManager.get(context)
         opener = Opener(context)
         thumbnailer = Thumbnailer(context)
+        streamer = Streamer(context, credentials)
         TransferNotifications.ensureChannels(context)
         transfers.addListener(transferListener)
         scope.launch { runCatching { transfers.reconcile() } }
@@ -339,18 +344,24 @@ class HoardSmbPlugin : Plugin() {
 
     // --- Transfers ------------------------------------------------------------------------
 
+    /**
+     * Ask once per app run for the notification permission (Android 13+) before work that runs as
+     * a foreground service (transfers, streams). Returns true when a prompt is showing; [callback]
+     * then continues the call whatever the answer: without it the work runs, just without a
+     * visible notification.
+     */
+    private fun askForNotifications(call: PluginCall, callback: String): Boolean {
+        if (Build.VERSION.SDK_INT < 33 || askedForNotifications || activity == null) return false
+        val state = getPermissionState(NOTIFICATIONS)
+        if (state != PermissionState.PROMPT && state != PermissionState.PROMPT_WITH_RATIONALE) return false
+        askedForNotifications = true
+        requestPermissionForAlias(NOTIFICATIONS, call, callback)
+        return true
+    }
+
     @PluginMethod
     fun startDownload(call: PluginCall) {
-        // Ask once per app run for the notification permission (Android 13+); the transfer starts
-        // whatever the answer: without it the job runs, just without a visible notification.
-        if (Build.VERSION.SDK_INT >= 33 && !askedForNotifications && activity != null) {
-            val state = getPermissionState(NOTIFICATIONS)
-            if (state == PermissionState.PROMPT || state == PermissionState.PROMPT_WITH_RATIONALE) {
-                askedForNotifications = true
-                requestPermissionForAlias(NOTIFICATIONS, call, "onNotificationPermission")
-                return
-            }
-        }
+        if (askForNotifications(call, "onNotificationPermission")) return
         doStartDownload(call)
     }
 
@@ -416,9 +427,82 @@ class HoardSmbPlugin : Plugin() {
             val path = call.requireString("path")
             val file = onSession(call) { s, cancel -> opener.fetch(s, share, path, cancel) }
             val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the file from")
-            withContext(Dispatchers.Main) { opener.view(activity, file, call.getString("mimeType")) }
+            val chooser = call.getBoolean("chooser", false) ?: false
+            withContext(Dispatchers.Main) { opener.view(activity, file, call.getString("mimeType"), chooser) }
             null
         }
+    }
+
+    // --- Streaming and the local web server -------------------------------------------------
+
+    /** The `StreamSourceOptions` part of a call (own connection: machine, addresses, GUID, share, path). */
+    private fun streamRequest(call: PluginCall): StreamRequest {
+        val addresses = call.getArray("addresses")?.toList<JSONObject>().orEmpty().map {
+            val (host, port) = Net.requireValidAddress(it.optString("host"), if (it.has("port")) it.optInt("port") else null)
+            StreamAddress(host, port)
+        }
+        if (addresses.isEmpty()) smbFail(ErrorCode.UNKNOWN, "addresses is required")
+        return StreamRequest(
+            machineId = call.requireString("machineId"),
+            addresses = addresses,
+            expectedServerGuid = call.getString("expectedServerGuid")?.takeIf { it.isNotBlank() },
+            share = call.requireString("share"),
+            path = call.requireString("path"),
+        )
+    }
+
+    @PluginMethod
+    fun streamFile(call: PluginCall) {
+        if (askForNotifications(call, "onStreamPermission")) return
+        doStreamFile(call)
+    }
+
+    @PermissionCallback
+    private fun onStreamPermission(call: PluginCall) = doStreamFile(call)
+
+    private fun doStreamFile(call: PluginCall) {
+        openJob?.cancel(CancellationException("Superseded by a newer open"))
+        openJob = run(call) {
+            val request = streamRequest(call)
+            val transport = call.getString("transport") ?: "content"
+            if (transport != "content" && transport != "http") smbFail(ErrorCode.UNKNOWN, "transport must be content or http")
+            val prepared = withContext(Dispatchers.IO) { streamer.prepareFile(request, call.getString("mimeType"), transport) }
+            val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the file from")
+            withContext(Dispatchers.Main) { streamer.launchFile(activity, prepared, call.getBoolean("chooser", false) ?: false) }
+            JSObject().apply {
+                put("uri", prepared.uri.toString())
+                put("size", prepared.entry.size)
+                put("mimeType", prepared.entry.mimeType)
+            }
+        }
+    }
+
+    @PluginMethod
+    fun openWebPage(call: PluginCall) {
+        if (askForNotifications(call, "onWebPagePermission")) return
+        doOpenWebPage(call)
+    }
+
+    @PermissionCallback
+    private fun onWebPagePermission(call: PluginCall) = doOpenWebPage(call)
+
+    private fun doOpenWebPage(call: PluginCall) {
+        openJob?.cancel(CancellationException("Superseded by a newer open"))
+        openJob = run(call) {
+            val request = streamRequest(call)
+            val target = call.getString("target") ?: "viewer"
+            if (target != "viewer" && target != "browser") smbFail(ErrorCode.UNKNOWN, "target must be viewer or browser")
+            val prepared = withContext(Dispatchers.IO) { streamer.prepareWebPage(request) }
+            val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the page from")
+            withContext(Dispatchers.Main) { streamer.launchWebPage(activity, prepared, target == "browser") }
+            JSObject().put("url", prepared.uri.toString())
+        }
+    }
+
+    @PluginMethod
+    fun stopStreams(call: PluginCall) = run(call) {
+        streamer.stopAll()
+        null
     }
 
     @PluginMethod

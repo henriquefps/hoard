@@ -13,7 +13,7 @@ import { getMachine, listTransfers } from "@/db/queries"
 import type { MachineWithAddresses, TransferRecord } from "@/db/types"
 import { HoardSmb } from "@/plugins/smb"
 import { TERMINAL_TRANSFER_STATES, type ConflictPolicy } from "@/plugins/smb/definitions"
-import { orderForTransfer, RouteError } from "@/features/route/engine"
+import { nativeRoute } from "@/features/route/engine"
 import { useRouteEngine } from "@/features/route/RouteProvider"
 import { type DownloadFile, type LiveTransfer, TransferService } from "./service"
 
@@ -79,23 +79,7 @@ export function useTransferActions() {
   const db = useDb()
 
   return useMemo(() => {
-    /** Addresses with the route in use first, and the GUID (connecting first if not pinned yet). */
-    async function routeFor(machine: MachineWithAddresses) {
-      let guid = machine.server_guid ?? engine.knownGuid(machine.id)
-      if (!guid) {
-        await engine.session(machine)
-        guid = engine.knownGuid(machine.id)
-      }
-      if (!guid) throw new RouteError(engine.getState(machine.id))
-      const active = engine.activeRoute(machine.id)
-      return {
-        expectedServerGuid: guid,
-        addresses: orderForTransfer(machine.addresses, active).map((a) => ({
-          host: a.host,
-          port: a.port,
-        })),
-      }
-    }
+    const routeFor = (machine: MachineWithAddresses) => nativeRoute(engine, machine)
     return {
       async download(
         machine: MachineWithAddresses,

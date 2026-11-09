@@ -11,4 +11,20 @@
     <string name="transfer_cancel">Cancelar</string>
     <string name="transfer_completed">Baixado · %1$s</string>
     <string name="transfer_failed">Falha no download: %1$s</string>
+    <!-- Streaming e servidor web local (StreamService, WebViewerActivity). -->
+    <string name="stream_channel">Streaming</string>
+    <string name="stream_channel_description">Arquivos que o Hoard está servindo a outros apps agora</string>
+    <string name="stream_title">Transmitindo do Hoard</string>
+    <string name="stream_idle">Pronto</string>
+    <plurals name="stream_count">
+        <item quantity="one">%d arquivo ou página</item>
+        <item quantity="many">%d arquivos ou páginas</item>
+        <item quantity="other">%d arquivos ou páginas</item>
+    </plurals>
+    <string name="stream_stop">Parar</string>
+    <string name="web_viewer_open_in_browser">Abrir no navegador</string>
+    <string name="web_viewer_reload">Recarregar</string>
+    <string name="web_viewer_close">Fechar</string>
+    <string name="web_viewer_no_browser">Nenhum navegador instalado</string>
+    <string name="web_viewer_expired">Esta página não está mais sendo servida. Abra de novo pelo Hoard.</string>
 </resources>

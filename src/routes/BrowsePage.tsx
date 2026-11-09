@@ -1,4 +1,5 @@
 import {
+  ArrowSquareOutIcon,
   CheckSquareIcon,
   CopyIcon,
   DotsThreeVerticalIcon,
@@ -54,6 +55,7 @@ import type { MachineWithAddresses } from "@/db/types"
 import { BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
 import { FileRow } from "@/features/browse/FileRow"
 import { invalidateFolder, useFolder } from "@/features/browse/useFolder"
+import { nativeRoute } from "@/features/route/engine"
 import { useMachineRoute, useRouteEngine } from "@/features/route/RouteProvider"
 import { RouteStatus } from "@/features/route/RouteStatus"
 import { useSetting } from "@/features/settings/settings"
@@ -64,6 +66,7 @@ import {
   DEFAULT_SORT,
   type FileFilter,
   isValidName,
+  openStrategy,
   parentPath,
   type SortOrder,
   splitPath,
@@ -432,7 +435,12 @@ function FolderView({
     await folder.refresh()
   }
 
-  async function open(entry: SmbEntry) {
+  /**
+   * Tap: pages open in the web viewer with their folder served locally, media and large files
+   * stream to the chosen app, small files are cached then opened. "Open with…" (`withChooser`)
+   * always shows the system chooser.
+   */
+  async function open(entry: SmbEntry, withChooser = false) {
     if (entry.isDirectory) {
       void navigate({
         to: "/browse/$machineId",
@@ -444,7 +452,21 @@ function FolderView({
     if (opening) return
     setOpening(entry.path)
     try {
-      await run((sessionId) => HoardSmb.openFile({ sessionId, share, path: entry.path }))
+      const strategy = openStrategy(entry, withChooser)
+      if (strategy === "cache") {
+        await run((sessionId) =>
+          HoardSmb.openFile({ sessionId, share, path: entry.path, chooser: withChooser })
+        )
+      } else {
+        const source = {
+          machineId: machine.id,
+          share,
+          path: entry.path,
+          ...(await nativeRoute(engine, machine)),
+        }
+        if (strategy === "web") await HoardSmb.openWebPage(source)
+        else await HoardSmb.streamFile({ ...source, chooser: withChooser })
+      }
     } catch (error) {
       const code = smbErrorCode(error)
       if (code !== "CANCELLED") {
@@ -502,6 +524,12 @@ function FolderView({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-48">
+        {!entry.isDirectory && (
+          <DropdownMenuItem onSelect={() => void open(entry, true)}>
+            <ArrowSquareOutIcon />
+            {t("browse.openWith")}
+          </DropdownMenuItem>
+        )}
         {!entry.isDirectory && (
           <DropdownMenuItem onSelect={() => download([entry])}>
             <DownloadSimpleIcon />

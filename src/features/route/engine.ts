@@ -391,3 +391,27 @@ export function orderForTransfer<T extends EngineAddress>(
   if (index <= 0) return [...addresses]
   return [addresses[index], ...addresses.slice(0, index), ...addresses.slice(index + 1)]
 }
+
+/**
+ * What native needs to open its own connection (`startDownload`, `streamFile`, `openWebPage`): the
+ * pinned GUID (connecting first when it is not pinned yet) and the addresses, route in use first.
+ */
+export async function nativeRoute(
+  engine: Pick<RouteEngine, "knownGuid" | "session" | "getState" | "activeRoute">,
+  machine: EngineMachine
+): Promise<{ expectedServerGuid: string; addresses: { host: string; port?: number }[] }> {
+  let guid = machine.server_guid ?? engine.knownGuid(machine.id)
+  if (!guid) {
+    await engine.session(machine)
+    guid = engine.knownGuid(machine.id)
+  }
+  if (!guid) throw new RouteError(engine.getState(machine.id))
+  const active = engine.activeRoute(machine.id)
+  return {
+    expectedServerGuid: guid,
+    addresses: orderForTransfer(machine.addresses, active).map((a) => ({
+      host: a.host,
+      ...(a.port == null ? {} : { port: a.port }),
+    })),
+  }
+}

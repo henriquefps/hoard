@@ -197,6 +197,12 @@ export const MOCK_SERVERS = {
               file("Contrato de locação 2026.pdf", 840 * KiB, 60),
               file("Budget 2026.xlsx", 92 * KiB, 5),
               file("notes.md", 4 * KiB, 0),
+              dir("Site", [
+                file("index.html", 6 * KiB, 2),
+                dir("css", [file("site.css", 3 * KiB, 2)]),
+                dir("js", [file("app.js", 2 * KiB, 2)]),
+                dir("img", [file("logo.png", 24 * KiB, 2)]),
+              ]),
               file("Résumé — Henrique.docx", 64 * KiB, 90),
             ]),
             dir("Downloads", [
