@@ -913,7 +913,6 @@
       "destinationHelp": "Any folder on this phone, a USB drive, an SD card or a machine.",
       "chooseDestination": "Choose a folder",
       "change": "Change",
-      "lastUsed": "Last used for this source",
       "files": "Files of each shot",
       "files_both": "RAW and JPEG",
       "files_raw": "RAW only",
@@ -927,14 +926,9 @@
       "folder_new": "Into a new folder",
       "folder_none": "Straight into the destination",
       "subfolderName": "Folder name",
-      "noFolders": "No folders here.",
-      "readOnly": "This folder is read-only.",
       "useFolder": "Use this folder",
       "start_one": "Copy {{count}} file",
-      "start_other": "Copy {{count}} files",
-      "queued_one": "{{count}} file queued. Progress is in Transfers.",
-      "queued_other": "{{count}} files queued. Progress is in Transfers.",
-      "unavailable": "Copying between locations arrives with the new transfer engine. Your picks and the destination are saved."
+      "start_other": "Copy {{count}} files"
     },
     "delete": {
       "menu_one": "Delete {{count}} reject…",

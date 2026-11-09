@@ -1,8 +1,8 @@
 # ADR 0008: Photo culling mode (RAW, JPEG and RAW+JPEG pairs on any location)
 
 - **Date**: 2026-11-09
-- **Status**: Accepted (1.5.0). The final copy step waits for the transfer engine of phase 2a
-  (see "Finish").
+- **Status**: Accepted (1.5.0). Copying picks runs on the transfer engine of
+  [ADR 0007](0007-transfers-any-location.md).
 
 ## Context
 
@@ -119,16 +119,19 @@ Every call after `cullOpen` passes `location` again: an SMB session can be repla
 
 ## Finish
 
-- **Copy picks to…**: a dialog with the destination (any location: phone storage, USB drives and SD
-  cards, favorites, machines and their shares, with "new folder"), which files of a pick (RAW and
-  JPEG / RAW only / JPEG only; a pick without the chosen kind is copied with what it has, and the
-  dialog says how many), and the folder (a folder named like the source, a new one, or straight in).
-  The **last destination and options are remembered per source location** (`cull_destinations`).
-  Planning is pure (`planCopy`, `copyTargetPath`). **The copy itself goes through one adapter,
-  `copyPicks(items, destination, options)` (`copyPicks.ts`)**, which phase 2a's transfer engine
-  implements: culling does not get a copy engine of its own. Until 2a is merged the adapter answers
-  `unavailable`, the dialog says so and keeps the choices. The destination browser in the dialog is
-  interim; 2a's destination sheet replaces it.
+- **Copy picks to…**: a dialog with the destination (the transfer engine's `DestinationPicker`:
+  recent destinations, phone storage, USB drives and SD cards, favorites, machines and their
+  shares, folders Android grants, "new folder", and what to do when a file exists), which files of
+  a pick (RAW and JPEG / RAW only / JPEG only; a pick without the chosen kind is copied with what it
+  has, and the dialog says how many), and the folder (a folder named like the source, a new one, or
+  straight in; a folder Android grants takes the files straight in). The **last destination,
+  options and conflict choice are remembered per source location** (`cull_destinations`), and the
+  picker opens there. Planning is pure (`planCopy`, `copyTargetPath`). The copy is **one batch job
+  of the transfer engine** through `useCopyPicks()` (`copyPicks.ts`, over `useStartTransfer`): its
+  progress, resume, "View" toast, recent destinations and the conflict question ("Keep both /
+  Replace / Skip, do the same for the others") are the engine's; culling has no copy code. The
+  engine creates the folders it copies, not the folder it copies into, so the adapter creates the
+  target subfolder first (`createFolder`, `ALREADY_EXISTS` is fine).
 - **Delete rejects**: a confirmation with the shot and file counts, the size and where ("on SanDisk
   USB drive", "on cachyos-fps", "on this phone"), that a pair deletes both files, and that it is
   **permanent** (SMB shares and USB drives have no trash). Files are deleted one by one; the first
@@ -183,6 +186,12 @@ under the link.
   entering local and SMB folders, paging with prefetch, 100% on pairs and RAW-only shots, compare,
   decisions surviving an app restart, delete rejects on a local folder (both files of each pair
   deleted) and on an SMB folder whose files the server cannot delete (refused, files intact).
+- Copy picks end to end on the emulator (5 picks from a phone folder: 3 pairs, 1 RAW-only, 1
+  JPEG-only): RAW and JPEG into `Pictures/<folder>` on the phone (8 files), RAW only into the
+  virtual SD card (4 ARW + the JPEG-only pick as fallback), JPEG only into a new folder on a Samba
+  share (4 JPG + the RAW-only pick as fallback), and the same copy again with "Ask me": the engine's
+  conflict question came up, "Skip, do the same for the other 7" left the 8 files untouched. The
+  last destination reopened in the picker each time.
 - Found and fixed while testing: overlapping decision saves could collide (the SQLite adapters
   treat concurrent transactions as nested); culling writes are now serialized.
 
@@ -192,7 +201,6 @@ under the link.
   numbers above come from the slow emulator link.
 - USB drives and SD cards on real hardware; SAF-only volumes (`DescriptorSource` has no test and
   was not exercised: the emulator runs were on phone storage by path).
-- The copy step end to end (waits for phase 2a's engine).
 - Jank was judged by eye on the emulator and by the timings above; no frame-time trace on a phone.
 
 ## Consequences

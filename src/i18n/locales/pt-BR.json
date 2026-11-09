@@ -913,7 +913,6 @@
       "destinationHelp": "Qualquer pasta deste celular, de um pendrive, de um cartão SD ou de uma máquina.",
       "chooseDestination": "Escolher uma pasta",
       "change": "Alterar",
-      "lastUsed": "Último usado para esta origem",
       "files": "Arquivos de cada foto",
       "files_both": "RAW e JPEG",
       "files_raw": "Só RAW",
@@ -927,14 +926,9 @@
       "folder_new": "Numa pasta nova",
       "folder_none": "Direto no destino",
       "subfolderName": "Nome da pasta",
-      "noFolders": "Nenhuma pasta aqui.",
-      "readOnly": "Esta pasta é somente leitura.",
       "useFolder": "Usar esta pasta",
       "start_one": "Copiar {{count}} arquivo",
-      "start_other": "Copiar {{count}} arquivos",
-      "queued_one": "{{count}} arquivo na fila. O progresso fica em Transferências.",
-      "queued_other": "{{count}} arquivos na fila. O progresso fica em Transferências.",
-      "unavailable": "Copiar entre locais chega com o novo motor de transferências. Suas escolhas e o destino foram salvos."
+      "start_other": "Copiar {{count}} arquivos"
     },
     "delete": {
       "menu_one": "Apagar {{count}} descartada…",
