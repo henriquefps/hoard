@@ -79,8 +79,14 @@ export function fileKind(entry: Pick<SmbEntry, "name" | "isDirectory">): FileKin
   return BY_EXTENSION.get(extensionOf(entry.name)) ?? "other"
 }
 
-/** Image types the native side can thumbnail (videos too natively, but the mock only does images). */
-export const THUMBNAIL_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "heic", "bmp"])
+/**
+ * Types `HoardSmb.thumbnail` handles: images, and videos (a frame read natively through a
+ * random-access SMB source). Keep in step with `Thumbnailer.kt` (IMAGE_ / VIDEO_EXTENSIONS).
+ */
+export const THUMBNAIL_EXTENSIONS = new Set([
+  ...["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif"],
+  ...["mp4", "m4v", "mov", "3gp", "mkv", "webm"],
+])
 
 export const hasThumbnail = (entry: Pick<SmbEntry, "name" | "isDirectory">) =>
   !entry.isDirectory && THUMBNAIL_EXTENSIONS.has(extensionOf(entry.name))

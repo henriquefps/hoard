@@ -252,7 +252,7 @@ class TransferWorker(context: Context, params: WorkerParameters) : CoroutineWork
             // Stored in the field right away, so a failure later in this attempt cannot leak it.
             val output = this@TransferWorker.output ?: run {
                 if (!job.started) {
-                    manager.destinations.availableBytes(Uri.parse(job.destTreeUri))?.let { free ->
+                    manager.destinations.availableBytes(Uri.parse(job.destTreeUri), destUri)?.let { free ->
                         val needed = total - job.resumeFromBytes
                         if (free in 0 until needed) throw Fatal(ErrorCode.NO_SPACE, "Not enough space for ${job.destName}")
                     }
@@ -278,7 +278,7 @@ class TransferWorker(context: Context, params: WorkerParameters) : CoroutineWork
             TransferNotifications.update(applicationContext, started, null)
             throttle.mark(SystemClock.elapsedRealtime(), start)
 
-            val reader = PipelinedFileReader(remote, start, total, depth = PIPELINE_DEPTH)
+            val reader = PipelinedFileReader(remote, start, total, depth = PIPELINE_DEPTH, timeoutMs = STALL_TIMEOUT_MS)
             while (output.position < total) {
                 if (Thread.interrupted()) throw InterruptedException()
                 val chunk = reader.next() ?: break
@@ -354,6 +354,14 @@ class TransferWorker(context: Context, params: WorkerParameters) : CoroutineWork
         private const val TAG = "HoardSmb"
         private const val CONNECT_TIMEOUT_MS = 10_000L
         private const val PIPELINE_DEPTH = 4
+
+        /**
+         * A READ that has not answered in this long means the route died silently (Wi-Fi gone, VPN
+         * down: no FIN ever arrives), so fail over instead of waiting for smbj's 30 s timeout. At
+         * 1 MiB per READ this still allows links down to ~70 KB/s; a false alarm only costs a
+         * reconnect, since the job resumes at the exact byte written.
+         */
+        private const val STALL_TIMEOUT_MS = 15_000L
         private const val PERSIST_INTERVAL_MS = 2_000L
         private const val NOTIFICATION_INTERVAL_MS = 1_000L
     }

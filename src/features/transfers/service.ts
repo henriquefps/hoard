@@ -247,12 +247,13 @@ export class TransferService {
     await setTransferDestination(this.db, id, result.destName, result.destUri)
   }
 
-  private async markFailed(id: string, size: number, error: unknown) {
+  /** Fail a row whose native job could not start; `bytesDone` keeps a retry's resume offset. */
+  private async markFailed(id: string, size: number, error: unknown, bytesDone = 0) {
     this.live.delete(id)
     this.emit()
     await applyTransferProgress(this.db, {
       transferId: id,
-      bytesDone: 0,
+      bytesDone,
       totalBytes: size,
       state: "failed",
       error: {
@@ -297,7 +298,8 @@ export class TransferService {
         row.dest_name
       )
     } catch (error) {
-      await this.markFailed(row.id, row.size, error)
+      // Keep the offset already on disk so the next retry still resumes from it.
+      await this.markFailed(row.id, row.size, error, row.bytes_done)
       throw error
     }
   }

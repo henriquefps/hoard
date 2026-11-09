@@ -6,6 +6,14 @@ An SMB file client for Android. Save your **machines** once, each with every add
 
 Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; on Android the native Kotlin plugin (smbj, Storage Access Framework, WorkManager transfers) implements the same contract ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
 
+On Android (1.0.0, real app against a Samba server):
+
+| Home                                             | Browser with thumbnails                                             | Machine, every address tested                                      | Transfers, dark                                                         |
+| ------------------------------------------------ | ------------------------------------------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| ![Home](docs/screenshots/android/home-light.png) | ![Thumbnails](docs/screenshots/android/browse-thumbnails-light.png) | ![Addresses](docs/screenshots/android/machine-addresses-light.png) | ![Transfers drawer](docs/screenshots/android/transfers-drawer-dark.png) |
+
+More in [`docs/screenshots/android/`](docs/screenshots/android/). The browser build (in-memory mock):
+
 | Phone, light                                                   | Phone, dark                                                           | Desktop                                                              |
 | -------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | ![Home](docs/screenshots/home-phone-light.png)                 | ![Browser with thumbnails](docs/screenshots/browse-phone-dark.png)    | ![Machines](docs/screenshots/machines-desktop-light.png)             |
@@ -40,6 +48,7 @@ bun run build        # type-check + production bundle in dist/
 bun run android:sync     # build + cap sync android
 bun run android:debug    # sync + ./gradlew assembleDebug → android/app/build/outputs/apk/debug/app-debug.apk
 bun run android:install  # debug build + adb install on the connected phone
+bun run android:release  # sync + signed, R8-minified release APK → android/app/build/outputs/apk/release/app-release.apk
 ```
 
 Android builds need the Android SDK (`~/Library/Android/sdk`) and JDK 21; the scripts use Android Studio's bundled JBR (`/Applications/Android Studio.app/Contents/jbr/Contents/Home`).
@@ -48,8 +57,16 @@ Native plugin tests (JVM) and the release build, from `android/` with that `JAVA
 
 ```sh
 ./gradlew testDebugUnitTest   # pure-logic tests; network tests are opt-in, see ADR 0001
-./gradlew assembleRelease     # R8-minified release APK (unsigned)
+./gradlew assembleRelease     # R8-minified release APK, unsigned unless the signing variables are set
 ```
+
+**Release signing.** The release keystore (RSA 4096, alias `hoard`) is never in the repo: it lives in the
+local `skv` vault, group `hoard` (`HOARD_KEYSTORE` as a file,
+`HOARD_KEYSTORE_PASSWORD`, `HOARD_KEY_ALIAS`, `HOARD_KEY_PASSWORD`). `bun run android:release` runs Gradle under
+`skv run hoard`, and `android/app/build.gradle` signs only when those variables are present; without them
+Gradle warns and builds `app-release-unsigned.apk`. Check a build with
+`apksigner verify --print-certs android/app/build/outputs/apk/release/app-release.apk`. The keystore must be kept:
+updates to an installed app only install when signed with the same key.
 
 In the browser, data lives in a sql.js database saved to `localStorage`; run `localStorage.removeItem("hoard.devdb")` in the console to reseed the demo machines.
 

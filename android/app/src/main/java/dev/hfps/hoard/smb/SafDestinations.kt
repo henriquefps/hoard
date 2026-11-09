@@ -172,10 +172,14 @@ class SafDestinations(context: Context) {
     }
 
     /**
-     * Free bytes on the volume holding [treeUri], when the provider reports it (external storage
-     * does, through its roots); null when unknown.
+     * Free bytes on the volume holding [treeUri], or null when unknown. Providers that let us read
+     * their roots report it there; otherwise (external storage only answers that query to holders of
+     * MANAGE_DOCUMENTS) ask the file system of [documentUri], a document we created in the tree.
      */
-    fun availableBytes(treeUri: Uri): Long? = try {
+    fun availableBytes(treeUri: Uri, documentUri: Uri? = null): Long? =
+        fromRoots(treeUri) ?: documentUri?.let(::fromFileSystem)
+
+    private fun fromRoots(treeUri: Uri): Long? = try {
         val authority = treeUri.authority ?: return null
         val rootId = DocumentsContract.getTreeDocumentId(treeUri).substringBefore(':')
         resolver.query(
@@ -190,6 +194,15 @@ class SafDestinations(context: Context) {
                 if (cursor.getString(0) == rootId && !cursor.isNull(1)) result = cursor.getLong(1)
             }
             result
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun fromFileSystem(documentUri: Uri): Long? = try {
+        resolver.openFileDescriptor(documentUri, "r")?.use { pfd ->
+            val stat = android.system.Os.fstatvfs(pfd.fileDescriptor)
+            (stat.f_bavail * stat.f_frsize).takeIf { it > 0 }
         }
     } catch (_: Exception) {
         null

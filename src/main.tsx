@@ -6,11 +6,13 @@ import { DbProvider } from "@/db/DbProvider"
 import { RouteProvider } from "@/features/route/RouteProvider"
 import { TransfersProvider } from "@/features/transfers/TransfersProvider"
 import "@/i18n"
+import { syncSystemBars } from "@/lib/theme/systemBars"
 import { initTheme } from "@/lib/theme/theme"
 import { router } from "@/router"
 import "./index.css"
 
 initTheme()
+syncSystemBars()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

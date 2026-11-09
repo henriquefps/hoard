@@ -89,7 +89,11 @@ const joinPath = (folder: string, name: string) => (folder ? `${folder}/${name}`
 
 const extension = (name: string) => name.slice(name.lastIndexOf(".") + 1).toLowerCase()
 
-const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "heic", "bmp"])
+/** What `thumbnail` accepts, like the native Thumbnailer: images and videos. */
+const THUMBNAIL_EXTENSIONS = new Set([
+  ...["jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif"],
+  ...["mp4", "m4v", "mov", "3gp", "mkv", "webm"],
+])
 
 const DESTINATIONS_KEY = "hoard.mock.destinations"
 
@@ -663,8 +667,8 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
 
   async thumbnail({ sessionId, share, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {
     const { session, node } = this.resolve(sessionId, share, path)
-    if (node.children || !IMAGE_EXTENSIONS.has(extension(node.name))) {
-      throw fail("UNKNOWN", "Thumbnails are only available for images")
+    if (node.children || !THUMBNAIL_EXTENSIONS.has(extension(node.name))) {
+      throw fail("UNKNOWN", "Thumbnails are only available for images and videos")
     }
     await this.wait(session.latencyMs * 3 + 40)
     const hue = hueOf(path)

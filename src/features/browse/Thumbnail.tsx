@@ -1,3 +1,4 @@
+import { PlayIcon } from "@phosphor-icons/react"
 import { useEffect, useRef, useState } from "react"
 import { FileIcon } from "@/components/FileIcon"
 import type { MachineWithAddresses } from "@/db/types"
@@ -89,6 +90,14 @@ export function Thumbnail({
       ) : (
         <FileIcon kind={kind} />
       )}
+      {src && kind === "video" ? (
+        <span
+          aria-hidden
+          className="absolute right-0.5 bottom-0.5 inline-flex size-4 items-center justify-center rounded-full bg-foreground/70 text-background [&_svg]:size-2.5"
+        >
+          <PlayIcon weight="fill" />
+        </span>
+      ) : null}
     </span>
   )
 }

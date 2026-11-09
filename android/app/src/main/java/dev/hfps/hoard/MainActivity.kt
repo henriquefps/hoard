@@ -8,6 +8,7 @@ class MainActivity : BridgeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // Local plugins must be registered before super.onCreate creates the bridge.
         registerPlugin(HoardSmbPlugin::class.java)
+        registerPlugin(SystemUiPlugin::class.java)
         super.onCreate(savedInstanceState)
     }
 }

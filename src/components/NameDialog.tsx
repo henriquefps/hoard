@@ -57,14 +57,14 @@ export function NameDialog({
     }
   }
 
+  // Select the name (without its extension for a file rename). The dialog's own auto-focus calls
+  // select() on the input right after focusing it, so the range is set once more after any focus
+  // that lands before the user types.
   useEffect(() => {
     if (!open) return
     const timer = setTimeout(() => {
-      const input = inputRef.current
-      if (!input) return
-      input.focus()
-      const dot = initialValue.lastIndexOf(".")
-      input.setSelectionRange(0, selectBaseName && dot > 0 ? dot : initialValue.length)
+      inputRef.current?.focus()
+      selectName(inputRef.current, initialValue, selectBaseName)
     }, 50)
     return () => clearTimeout(timer)
   }, [open, initialValue, selectBaseName])
@@ -108,6 +108,11 @@ export function NameDialog({
                 id="name-dialog-input"
                 ref={inputRef}
                 value={value}
+                onFocus={() =>
+                  requestAnimationFrame(() =>
+                    selectName(inputRef.current, initialValue, selectBaseName)
+                  )
+                }
                 onChange={(e) => {
                   setValue(e.target.value)
                   setError(null)
@@ -133,4 +138,11 @@ export function NameDialog({
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
+}
+
+/** Select the whole name, or only the part before the extension; untouched once edited. */
+function selectName(input: HTMLInputElement | null, initialValue: string, baseOnly: boolean) {
+  if (!input || input.value !== initialValue) return
+  const dot = initialValue.lastIndexOf(".")
+  input.setSelectionRange(0, baseOnly && dot > 0 ? dot : initialValue.length)
 }

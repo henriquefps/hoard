@@ -9,7 +9,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -17,8 +17,30 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Release signing reads the keystore from the environment, never from the repo. The values live in
+    // the skv vault (group "hoard"): `bun run android:release` runs Gradle under `skv run hoard`, which
+    // exports HOARD_KEYSTORE (path of a temp copy of the .jks), HOARD_KEYSTORE_PASSWORD, HOARD_KEY_ALIAS
+    // and HOARD_KEY_PASSWORD. Without them the release APK is built unsigned (CI, contributors).
+    def releaseKeystore = System.getenv('HOARD_KEYSTORE')
+    def releaseSigning = releaseKeystore && file(releaseKeystore).exists() &&
+        System.getenv('HOARD_KEYSTORE_PASSWORD') && System.getenv('HOARD_KEY_ALIAS')
+    signingConfigs {
+        if (releaseSigning) {
+            release {
+                storeFile file(releaseKeystore)
+                storePassword System.getenv('HOARD_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('HOARD_KEY_ALIAS')
+                keyPassword System.getenv('HOARD_KEY_PASSWORD') ?: System.getenv('HOARD_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+    if (!releaseSigning && gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
+        logger.warn('Hoard: HOARD_KEYSTORE / HOARD_KEYSTORE_PASSWORD / HOARD_KEY_ALIAS not set: the release APK will be UNSIGNED. ' +
+            'Use `bun run android:release` (skv run hoard) for a signed build.')
+    }
     buildTypes {
         release {
+            if (releaseSigning) signingConfig signingConfigs.release
             // R8 shrinks smbj's Bouncy Castle dependency (several MB); keep rules in proguard-rules.pro.
             minifyEnabled true
             shrinkResources true

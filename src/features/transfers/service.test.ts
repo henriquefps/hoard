@@ -120,6 +120,30 @@ describe("TransferService", () => {
     expect(await listTransfers(db)).toHaveLength(1)
   })
 
+  it("keeps the resume offset when a retry fails to start", async () => {
+    const id = await createTransfer(db, {
+      machineId: CACHY,
+      share: "media",
+      remotePath: "Movies/x.mkv",
+      destTreeUri: dest,
+      destName: "x.mkv",
+      size: 100,
+    })
+    await db.run("UPDATE transfers SET state = 'failed', bytes_done = 40 WHERE id = ?", [id])
+    const [row] = await listTransfers(db)
+    vi.spyOn(smb, "startDownload").mockRejectedValueOnce(
+      Object.assign(new Error("revoked"), { code: "PERMISSION_REVOKED" })
+    )
+    await expect(
+      service.retry(row, { addresses: [{ host: "192.168.1.155" }], expectedServerGuid: GUID })
+    ).rejects.toThrow("revoked")
+    expect((await listTransfers(db))[0]).toMatchObject({
+      state: "failed",
+      bytes_done: 40,
+      error_code: "PERMISSION_REVOKED",
+    })
+  })
+
   it("reconcile fails rows native no longer knows and keeps fresh ones", async () => {
     const old = await createTransfer(db, {
       machineId: CACHY,
