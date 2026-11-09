@@ -54,7 +54,9 @@ class SmbSession(val id: String, val machineId: String, val handle: SmbHandle) {
     }
 
     fun close() {
-        shares.values.forEach { runCatching { it.close() } }
+        // Polite TREE_DISCONNECT/LOGOFF only while the connection still works; otherwise each one
+        // would just wait out the request timeout.
+        if (handle.isAlive) shares.values.forEach { runCatching { it.close() } }
         shares.clear()
         handle.close()
     }
@@ -81,8 +83,18 @@ class SmbSessions {
         return session
     }
 
+    /**
+     * Forget a session and close it in the background. On a dead link TREE_DISCONNECT and LOGOFF
+     * each wait for smbj's request timeout; doing that inline turned one failed call into 90 s
+     * before the UI could reconnect over another route.
+     */
     fun remove(sessionId: String) {
-        sessions.remove(sessionId)?.close()
+        val session = sessions.remove(sessionId) ?: return
+        closer.execute { session.close() }
+    }
+
+    private val closer = java.util.concurrent.Executors.newCachedThreadPool { runnable ->
+        Thread(runnable, "hoard-smb-close").apply { isDaemon = true }
     }
 
     fun closeAll() {

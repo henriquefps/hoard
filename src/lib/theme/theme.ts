@@ -95,5 +95,8 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener)
 }
 
+/** Called after every theme or palette change. */
+export const subscribeTheme = subscribe
+
 export const useTheme = () => useSyncExternalStore(subscribe, getTheme, getTheme)
 export const usePalette = () => useSyncExternalStore(subscribe, getPalette, getPalette)

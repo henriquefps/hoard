@@ -65,6 +65,8 @@ describe("files", () => {
     expect(fileKind(entry("Photos", { isDirectory: true }))).toBe("folder")
     expect(hasThumbnail(entry("cover.jpg"))).toBe(true)
     expect(hasThumbnail(entry("cover.jpg", { isDirectory: true }))).toBe(false)
+    expect(hasThumbnail(entry("Spirited Away.mkv"))).toBe(true)
+    expect(hasThumbnail(entry("notes.md"))).toBe(false)
   })
 
   const listing = [

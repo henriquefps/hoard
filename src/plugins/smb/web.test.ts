@@ -113,7 +113,7 @@ describe("HoardSmbWeb", () => {
     ).toBe("NOT_FOUND")
   })
 
-  it("returns an <img>-ready thumbnail for images only", async () => {
+  it("returns an <img>-ready thumbnail for images and videos only", async () => {
     const { sessionId } = await connectCachy()
     const thumb = await smb.thumbnail({
       sessionId,
@@ -123,6 +123,10 @@ describe("HoardSmbWeb", () => {
     })
     expect(thumb.src.startsWith("data:image/svg+xml")).toBe(true)
     expect(Math.max(thumb.width, thumb.height)).toBe(96)
+    const movies = await smb.list({ sessionId, share: "media", path: "Movies" })
+    const movie = movies.entries.find((e) => !e.isDirectory && /\.(mkv|mp4)$/.test(e.name))!
+    const frame = await smb.thumbnail({ sessionId, share: "media", path: movie.path, maxSize: 96 })
+    expect(frame.src.startsWith("data:image/svg+xml")).toBe(true)
     expect(
       smbErrorCode(
         await smb

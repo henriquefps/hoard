@@ -492,7 +492,10 @@ export interface HoardSmbPlugin {
    */
   openFile(options: OpenFileOptions): Promise<void>
 
-  /** Thumbnail for an image (and, natively, video) file. Rejects `UNKNOWN` for unsupported types. */
+  /**
+   * Thumbnail for an image or a video file (natively a frame read with MediaMetadataRetriever, the
+   * video is never downloaded whole). Rejects `UNKNOWN` for other types.
+   */
   thumbnail(options: ThumbnailOptions): Promise<ThumbnailResult>
 
   // --- Events -------------------------------------------------------------------------------

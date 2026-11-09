@@ -33,7 +33,8 @@ class SmbHandle(
     val isAlive: Boolean get() = connection.isConnected
 
     override fun close() {
-        runCatching { session.close() }
+        // LOGOFF only on a live connection; on a dead one it would wait out the request timeout.
+        if (isAlive) runCatching { session.close() }
         runCatching { connection.close(true) }
         runCatching { client.close() }
     }
@@ -46,8 +47,12 @@ class SmbHandle(
  */
 object SmbConnector {
 
-    /** Per-request timeout once connected (directory listings, reads, RPC). */
-    const val OPERATION_TIMEOUT_MS = 30_000L
+    /**
+     * Per-request timeout once connected (directory listings, reads, RPC). A server that stays
+     * silent this long is treated as gone, so the app reconnects over another route; 20 s still
+     * covers a NAS spinning its disks up.
+     */
+    const val OPERATION_TIMEOUT_MS = 20_000L
 
     /** Read size per SMB2 READ; servers cap it to their MaxReadSize. */
     const val READ_BUFFER_SIZE = 1 shl 20

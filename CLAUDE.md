@@ -6,8 +6,16 @@ SMB file client for Android (Capacitor 8 + React). Read `README.md` and `docs/ad
 
 - `bun run dev` (browser, web mock), `bun run lint`, `bun run typecheck`, `bun run test`, `bun run build`.
 - `bun run android:debug` builds the APK (`android/app/build/outputs/apk/debug/app-debug.apk`);
-  it sets `JAVA_HOME` to Android Studio's JBR (no system JDK on this Mac). Over SSH Apple/Android
-  signing is not available; nothing is signed yet.
+  it sets `JAVA_HOME` to Android Studio's JBR (no system JDK on this Mac). A fresh worktree needs
+  `android/local.properties` (git-ignored) with `sdk.dir=/Users/<you>/Library/Android/sdk`.
+- `bun run android:release` builds the signed release APK
+  (`android/app/build/outputs/apk/release/app-release.apk`) under `skv run hoard`: the keystore and
+  its passwords live only in the skv group `hoard` (never copy the .jks into the repo or print the
+  passwords). Without those variables Gradle builds `app-release-unsigned.apk` and warns.
+- With a phone plugged in, target the emulator explicitly (`adb -s emulator-5554`, or
+  `ANDROID_SERIAL`); never install test builds on the owner's phone.
+- End-to-end testing against a real Samba: see `docs/testing/release-1.0.0.md` (container, routes
+  through a killable throttled TCP proxy, driving the WebView over CDP in debug builds).
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules
