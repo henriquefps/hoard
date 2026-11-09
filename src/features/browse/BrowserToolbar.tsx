@@ -45,6 +45,7 @@ import {
 } from "@/lib/files"
 import { cn } from "@/lib/utils"
 import { TABLE_COLUMNS } from "./FileRow"
+import { ReadOnlyMenuNote } from "./ReadOnlyBadge"
 
 /**
  * Search, filter, sort and folder actions. Never wraps on desktop: the filter is a ToggleGroup
@@ -59,6 +60,7 @@ export function BrowserToolbar({
   onSort,
   onNewFolder,
   onNewTextFile,
+  readOnlyReason,
   onRefresh,
   refreshing,
   disabled,
@@ -71,6 +73,8 @@ export function BrowserToolbar({
   onSort: (sort: SortOrder) => void
   onNewFolder: () => void
   onNewTextFile: () => void
+  /** Set in a read-only folder: the New items stay visible, disabled, with this explanation. */
+  readOnlyReason?: string
   onRefresh: () => void
   refreshing: boolean
   disabled: boolean
@@ -197,14 +201,20 @@ export function BrowserToolbar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-48">
-            <DropdownMenuItem onSelect={onNewFolder}>
+            <DropdownMenuItem onSelect={onNewFolder} disabled={Boolean(readOnlyReason)}>
               <FolderPlusIcon />
               {t("browse.newFolder")}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onNewTextFile}>
+            <DropdownMenuItem onSelect={onNewTextFile} disabled={Boolean(readOnlyReason)}>
               <FilePlusIcon />
               {t("browse.newTextFile")}
             </DropdownMenuItem>
+            {readOnlyReason && (
+              <>
+                <DropdownMenuSeparator />
+                <ReadOnlyMenuNote reason={readOnlyReason} />
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
         <Button

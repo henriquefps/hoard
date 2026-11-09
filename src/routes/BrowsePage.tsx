@@ -64,7 +64,9 @@ import {
 } from "@/db/queries"
 import type { MachineWithAddresses } from "@/db/types"
 import { BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
+import { accountName, isReadOnly, readOnlyReasonKey } from "@/features/browse/access"
 import { FileRow } from "@/features/browse/FileRow"
+import { ReadOnlyBadge, ReadOnlyMenuNote } from "@/features/browse/ReadOnlyBadge"
 import { invalidateFolder, useFolder } from "@/features/browse/useFolder"
 import { nativeRoute } from "@/features/route/engine"
 import { useMachineRoute, useRouteEngine } from "@/features/route/RouteProvider"
@@ -89,7 +91,7 @@ import { goUp } from "@/lib/historyTrail"
 import { isTextFile, opensInViewer } from "@/lib/text/textFiles"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
-import type { SmbEntry, SmbShare } from "@/plugins/smb/definitions"
+import type { SmbAccess, SmbEntry, SmbShare } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
 
 // The sort the user picked lasts for the session, across folders (the default is a setting).
@@ -104,6 +106,12 @@ export function BrowsePage() {
   const route = useMachineRoute(machine)
   const segments = splitPath(path)
   const title = segments.at(-1) ?? share ?? machine?.name ?? ""
+  // The open folder's access, reported by FolderView once listed (keyed so a stale answer from
+  // the previous folder never shows on the next one).
+  const folderKey = share ? `${share}/${path}` : ""
+  const [access, setAccess] = useState<{ key: string; access?: SmbAccess }>({ key: "" })
+  const readOnly = share !== undefined && access.key === folderKey && isReadOnly(access.access)
+  const readOnlyReason = useReadOnlyReason(machine, path)
 
   if (machine === null) {
     return (
@@ -121,19 +129,41 @@ export function BrowsePage() {
       fill
       title={title}
       breadcrumbs={browseTrail(t, { id: machineId, name: machine?.name }, share, path)}
-      meta={<RouteStatus state={route} className="max-w-full" />}
+      meta={
+        readOnly ? (
+          <span className="flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <RouteStatus state={route} className="max-w-full" />
+            <ReadOnlyBadge title={readOnlyReason} />
+          </span>
+        ) : (
+          <RouteStatus state={route} className="max-w-full" />
+        )
+      }
       actions={machine && <HeaderActions machine={machine} share={share} path={path} />}
     >
       {machine === undefined ? (
         <ListSkeleton className="-mt-4 md:-mt-6" />
       ) : share ? (
         // Keyed by folder: search, filter and selection start fresh in every folder.
-        <FolderView key={`${share}/${path}`} machine={machine} share={share} path={path} />
+        <FolderView
+          key={folderKey}
+          machine={machine}
+          share={share}
+          path={path}
+          onAccess={(value) => setAccess({ key: folderKey, access: value })}
+        />
       ) : (
         <SharesView machine={machine} />
       )}
     </Page>
   )
+}
+
+/** "This folder is read-only for henrique." for the folder at `path` (the share root says "share"). */
+function useReadOnlyReason(machine: MachineWithAddresses | null | undefined, path: string) {
+  const { t } = useTranslation()
+  const user = accountName(machine?.username, machine?.domain)
+  return t(readOnlyReasonKey(path, user !== null), { user })
 }
 
 function HeaderActions({
@@ -341,6 +371,8 @@ function ShareRow({
   const db = useDb()
   const engine = useRouteEngine()
   const subtitle = share.comment ?? (manual ? t("browse.addedByName") : undefined)
+  const readOnly = isReadOnly(share.access)
+  const reason = useReadOnlyReason(machine, "")
   return (
     <li className="relative flex min-h-16 items-center gap-3 border-b px-4 py-2 transition-colors hover:bg-muted/50 md:px-6">
       <span
@@ -355,8 +387,11 @@ function ShareRow({
         search={{ share: share.name }}
         className="flex min-w-0 flex-1 flex-col gap-0.5 outline-none after:absolute after:inset-0 focus-visible:after:bg-muted/50"
       >
-        <span className="line-clamp-2 text-[0.9375rem] font-medium [overflow-wrap:anywhere]">
-          {share.name}
+        <span className="flex min-w-0 items-start gap-2">
+          <span className="line-clamp-2 min-w-0 text-[0.9375rem] font-medium [overflow-wrap:anywhere]">
+            {share.name}
+          </span>
+          {readOnly && <ReadOnlyBadge title={reason} className="mt-0.5" />}
         </span>
         {subtitle && (
           <span className="truncate text-[0.8125rem] text-muted-foreground" title={subtitle}>
@@ -440,10 +475,13 @@ function FolderView({
   machine,
   share,
   path,
+  onAccess,
 }: {
   machine: MachineWithAddresses
   share: string
   path: string
+  /** Called with the folder's access whenever a listing arrives (for the header badge). */
+  onAccess: (access: SmbAccess | undefined) => void
 }) {
   const { t, i18n } = useTranslation()
   const db = useDb()
@@ -451,6 +489,18 @@ function FolderView({
   const navigate = useNavigate()
   const engine = useRouteEngine()
   const folder = useFolder(machine, share, path)
+  // Write actions stay visible but disabled where the server said this account may only read; a
+  // write the server refuses anyway (access changed) still shows its error.
+  const access = folder.data?.kind === "entries" ? folder.data.access : undefined
+  const readOnly = isReadOnly(access)
+  const readOnlyReason = useReadOnlyReason(machine, path)
+  const onAccessRef = useRef(onAccess)
+  useEffect(() => {
+    onAccessRef.current = onAccess
+  })
+  useEffect(() => {
+    if (folder.data) onAccessRef.current(access)
+  }, [folder.data, access])
   const [showHidden] = useSetting("showHiddenFiles")
   const [defaultSort] = useSetting("defaultSort")
   const [sort, setSortState] = useState<SortOrder | null>(sessionSort)
@@ -673,7 +723,7 @@ function FolderView({
           <CopyIcon />
           {t("browse.copyPath")}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setDialog({ kind: "rename", entry })}>
+        <DropdownMenuItem disabled={readOnly} onSelect={() => setDialog({ kind: "rename", entry })}>
           <PencilSimpleIcon />
           {t("browse.rename")}
         </DropdownMenuItem>
@@ -689,11 +739,13 @@ function FolderView({
         <DropdownMenuSeparator />
         <DropdownMenuItem
           variant="destructive"
+          disabled={readOnly}
           onSelect={() => setDialog({ kind: "delete", entries: [entry] })}
         >
           <TrashIcon />
           {t("common.delete")}
         </DropdownMenuItem>
+        {readOnly && <ReadOnlyMenuNote reason={readOnlyReason} />}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -723,14 +775,22 @@ function FolderView({
             <FolderPlusIcon />
           </EmptyMedia>
           <EmptyTitle>{t("browse.emptyTitle")}</EmptyTitle>
-          <EmptyDescription>{t("browse.emptyBody")}</EmptyDescription>
+          <EmptyDescription>{readOnly ? readOnlyReason : t("browse.emptyBody")}</EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="flex-row flex-wrap justify-center">
-          <Button variant="outline" onClick={() => setDialog({ kind: "newFolder" })}>
+          <Button
+            variant="outline"
+            disabled={readOnly}
+            onClick={() => setDialog({ kind: "newFolder" })}
+          >
             <FolderPlusIcon data-icon="inline-start" />
             {t("browse.newFolder")}
           </Button>
-          <Button variant="outline" onClick={() => setDialog({ kind: "newTextFile" })}>
+          <Button
+            variant="outline"
+            disabled={readOnly}
+            onClick={() => setDialog({ kind: "newTextFile" })}
+          >
             <FilePlusIcon data-icon="inline-start" />
             {t("browse.newTextFile")}
           </Button>
@@ -831,6 +891,7 @@ function FolderView({
           onDelete={() =>
             selectedEntries.length && setDialog({ kind: "delete", entries: selectedEntries })
           }
+          readOnlyReason={readOnly ? readOnlyReason : undefined}
         />
       ) : (
         <BrowserToolbar
@@ -842,6 +903,7 @@ function FolderView({
           onSort={setSort}
           onNewFolder={() => setDialog({ kind: "newFolder" })}
           onNewTextFile={() => setDialog({ kind: "newTextFile" })}
+          readOnlyReason={readOnly ? readOnlyReason : undefined}
           onRefresh={() => void refresh()}
           refreshing={folder.loading && Boolean(entries)}
           disabled={!entries}
@@ -983,6 +1045,7 @@ function SelectionBar({
   onSelectAll,
   onDownload,
   onDelete,
+  readOnlyReason,
 }: {
   count: number
   size: string
@@ -990,6 +1053,8 @@ function SelectionBar({
   onSelectAll: () => void
   onDownload: () => void
   onDelete: () => void
+  /** Set in a read-only folder: Delete stays visible, disabled, with this as its explanation. */
+  readOnlyReason?: string
 }) {
   const { t } = useTranslation()
   return (
@@ -1012,15 +1077,19 @@ function SelectionBar({
         <DownloadSimpleIcon data-icon="inline-start" />
         <span className="max-@md:sr-only">{t("browse.download")}</span>
       </Button>
-      <Button
-        variant="destructive"
-        size="icon"
-        onClick={onDelete}
-        disabled={count === 0}
-        aria-label={t("common.delete")}
-      >
-        <TrashIcon />
-      </Button>
+      {/* A disabled button gets no pointer events: the wrapper carries the explanation. */}
+      <span title={readOnlyReason} className="inline-flex">
+        <Button
+          variant="destructive"
+          size="icon"
+          onClick={onDelete}
+          disabled={count === 0 || Boolean(readOnlyReason)}
+          aria-label={t("common.delete")}
+          aria-description={readOnlyReason}
+        >
+          <TrashIcon />
+        </Button>
+      </span>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="@md:hidden" aria-label={t("common.more")}>

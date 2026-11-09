@@ -602,5 +602,14 @@
     "unsavedLeaveBody": "Você está saindo do arquivo com alterações ainda não salvas.",
     "keepEditing": "Continuar editando",
     "discard": "Descartar"
+  },
+  "access": {
+    "readOnly": "Somente leitura",
+    "shareReadOnly": "Este compartilhamento é somente leitura para {{user}}.",
+    "folderReadOnly": "Esta pasta é somente leitura para {{user}}.",
+    "shareReadOnlyAnonymous": "Este compartilhamento é somente leitura para esta conta.",
+    "folderReadOnlyAnonymous": "Esta pasta é somente leitura para esta conta.",
+    "fileReadOnly": "Somente leitura: {{user}} pode abrir este arquivo, mas não alterá-lo no servidor.",
+    "fileReadOnlyAnonymous": "Somente leitura: esta conta pode abrir este arquivo, mas não alterá-lo no servidor."
   }
 }

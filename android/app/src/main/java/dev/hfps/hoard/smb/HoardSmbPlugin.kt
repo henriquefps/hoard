@@ -252,13 +252,14 @@ class HoardSmbPlugin : Plugin() {
 
     @PluginMethod
     fun listShares(call: PluginCall) = run(call) {
-        val shares = onSession(call) { s, _ -> SmbBrowser.listShares(s) }
+        val shares = onSession(call) { s, _ -> SmbBrowser.listSharesWithAccess(s) }
         val list = JSArray()
-        shares.forEach { share ->
+        shares.forEach { (share, access) ->
             list.put(JSObject().apply {
                 put("name", share.name)
                 share.remark?.let { put("comment", it) }
                 put("isHidden", share.isHidden)
+                access?.let { put("access", it.json) }
             })
         }
         JSObject().put("shares", list)
@@ -268,10 +269,10 @@ class HoardSmbPlugin : Plugin() {
     fun list(call: PluginCall) = run(call) {
         val share = call.requireString("share")
         val path = call.getString("path").orEmpty()
-        val entries = onSession(call) { s, _ -> SmbBrowser.list(s, share, path) }
+        val folder = onSession(call) { s, _ -> SmbBrowser.listWithAccess(s, share, path) }
         val list = JSArray()
-        entries.forEach { list.put(entryJson(it)) }
-        JSObject().put("entries", list)
+        folder.entries.forEach { list.put(entryJson(it)) }
+        JSObject().put("entries", list).apply { folder.access?.let { put("access", it.json) } }
     }
 
     @PluginMethod
@@ -539,6 +540,7 @@ class HoardSmbPlugin : Plugin() {
             put("size", read.size)
             put("modifiedAt", read.modifiedAt ?: JSONObject.NULL)
             put("truncated", read.truncated)
+            read.access?.let { put("access", it.json) }
         }
     }
 

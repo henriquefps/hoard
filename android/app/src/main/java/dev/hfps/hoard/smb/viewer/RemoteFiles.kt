@@ -7,7 +7,9 @@ import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.share.File as SmbFile
 import com.hierynomus.smbj.share.PipelinedFileReader
+import com.hierynomus.smbj.share.HoardOpens
 import dev.hfps.hoard.smb.Cancellation
+import dev.hfps.hoard.smb.SmbAccess
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.SmbSession
@@ -33,6 +35,23 @@ object RemoteFiles {
             SMB2CreateDisposition.FILE_OPEN,
             EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
         )
+
+    /** [openRead] with the file's maximal access ("MxAc"; null when the server does not answer). */
+    fun openReadWithAccess(session: SmbSession, share: String, path: String): Pair<SmbFile, Long?> {
+        val opened = HoardOpens.openWithMaximalAccess(
+            session.share(share),
+            SmbPaths.toSmb(path),
+            EnumSet.of(AccessMask.FILE_READ_DATA, AccessMask.FILE_READ_ATTRIBUTES),
+            EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ, SMB2ShareAccess.FILE_SHARE_WRITE, SMB2ShareAccess.FILE_SHARE_DELETE),
+            SMB2CreateDisposition.FILE_OPEN,
+            EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
+        )
+        val file = opened.entry as? SmbFile ?: run {
+            opened.entry.closeSilently()
+            smbFail(ErrorCode.UNKNOWN, "Not a file: $path")
+        }
+        return file to SmbAccess.parseMaximalAccessResponse(opened.maximalAccessData)
+    }
 
     fun info(file: SmbFile): RemoteFileInfo {
         val all = file.fileInformation

@@ -75,6 +75,24 @@ kill the session for every other call): cancellation is cooperative between chun
 | `streamFile`, `openWebPage` | Streams through a proxy-FD content provider or the loopback web server, with their own connection and a `dataSync` foreground service: see [ADR 0004](0004-streaming-and-local-web-server.md).                                                                                                                                                                                                                                                                                                                                                                                        |
 | `thumbnail`                 | JPEG under `cache/thumbs/` (150 MB, LRU). Small JPEG thumbnails use the EXIF thumbnail from the first 128 KiB; other images are downloaded (≤ 64 MiB) and decoded with subsampling (ImageDecoder on Android 9+, BitmapFactory + EXIF rotation before). Videos are never downloaded: `MediaMetadataRetriever` reads them through a random-access SMB `MediaDataSource`. `src` is `bridge.localUrl + "/_capacitor_file_" + path` (what `convertFileSrc` produces). At most 3 run at once.                                                                                               |
 
+**Read-only shares and folders** (`SmbAccess.kt`, 2026-11-09, 1.2.0): `listShares`, `list` and
+`readTextFile` report the account's `access` (`read` / `readWrite`) from the server's own answer,
+never from a guess. Share level: the TREE_CONNECT response's MaximalAccess (smbj keeps it on
+`TreeConnect.getMaximalAccess`); `listShares` connects every listed share for it, 4 at a time,
+at most 64 shares and 4 s in total, and a share that fails or is slow is listed without `access`.
+Folder and file level: the SMB2_CREATE_QUERY_MAXIMAL_ACCESS_REQUEST ("MxAc") create context on the
+CREATE Hoard already sends to list the folder or read the file. smbj 0.15 can serialize create
+contexts and parse them from responses, but only a package-private `Share.createFile` sends them,
+so `com/hierynomus/smbj/share/HoardOpens.kt` (Hoard's single file in smbj's package) calls it and
+wraps the handle in smbj's own `Directory` / `File`; signing, encryption and timeouts are smbj's,
+and no lease context is ever sent (the directory-lease cache stays out of the way). The decision
+counts FILE_WRITE_DATA/ADD_FILE, FILE_APPEND_DATA/ADD_SUBDIRECTORY, FILE_DELETE_CHILD,
+GENERIC_WRITE and GENERIC_ALL as write rights and ignores DELETE, WRITE_DAC, WRITE_OWNER and the
+attribute/EA writes, because Samba keeps those in the maximal access of a `read only = yes` share;
+a share-level `read` wins over a folder's answer. Measured per server type in
+[docs/testing/read-only.md](../testing/read-only.md). The UI treats unknown access as writable
+and the server's ACCESS_DENIED stays the final word.
+
 **Text files** (`text/TextCodec.kt`, `text/TextFiles.kt`, 2026-11-09):
 
 - **Encoding detection** (same rules as `src/lib/text/codec.ts`, both unit tested): a byte order

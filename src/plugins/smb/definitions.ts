@@ -121,6 +121,21 @@ export interface SmbEntry {
   isHidden: boolean
 }
 
+/**
+ * What the connected account may do in a share, folder or file, as the server itself answered it
+ * (never a guess from names or from a failed write):
+ *  - share level: the TREE_CONNECT response's `MaximalAccess`;
+ *  - folder / file level: the SMB2_CREATE_QUERY_MAXIMAL_ACCESS ("MxAc") create context on the open
+ *    Hoard already does to list the folder or read the file, so per-folder ACLs and filesystem
+ *    permissions count. A share-level `read` always wins.
+ *
+ * `readWrite` when the mask grants FILE_WRITE_DATA/ADD_FILE, FILE_APPEND_DATA/ADD_SUBDIRECTORY,
+ * FILE_DELETE_CHILD, GENERIC_WRITE or GENERIC_ALL; `read` otherwise. Absent (undefined) when the
+ * server gave no usable answer, which the UI treats as writable. It is a hint, not a permission:
+ * writes still fail with `ACCESS_DENIED` when the server refuses them (access can change).
+ */
+export type SmbAccess = "read" | "readWrite"
+
 /** A disk share on a server (IPC$/printer shares are filtered out natively). */
 export interface SmbShare {
   /** Share name used in every later call (`media`, `homes`, `Public`). */
@@ -129,6 +144,11 @@ export interface SmbShare {
   comment?: string
   /** Hidden administrative share (name ends with `$`). */
   isHidden: boolean
+  /**
+   * The account's access to the share root (TREE_CONNECT MaximalAccess). Undefined when the share
+   * could not be connected in time or the server did not say: `listShares` never fails for it.
+   */
+  access?: SmbAccess
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -225,6 +245,8 @@ export interface PathOptions extends SessionRef {
 export interface ListResult {
   /** Folder contents, unsorted (the UI sorts). `.` and `..` are never included. */
   entries: SmbEntry[]
+  /** The account's access to this folder (share and folder level combined); undefined when unknown. */
+  access?: SmbAccess
 }
 
 export interface StatResult {
@@ -481,6 +503,8 @@ export interface ReadTextFileResult {
   modifiedAt: IsoDateTime | null
   /** Only the first `maxBytes` bytes were read (`truncate: true` on a bigger file). */
   truncated: boolean
+  /** The account's access to the file (share and file level combined); undefined when unknown. */
+  access?: SmbAccess
 }
 
 export interface WriteTextFileOptions extends PathOptions {
@@ -575,7 +599,11 @@ export interface HoardSmbPlugin {
 
   // --- Browsing -----------------------------------------------------------------------------
 
-  /** Disk shares visible to the account. */
+  /**
+   * Disk shares visible to the account, each with its `access` when known (one TREE_CONNECT per
+   * share, a few at a time, bounded to a few seconds in total; a share that fails or is slow comes
+   * back without `access`, never failing the list).
+   */
   listShares(options: SessionRef): Promise<ListSharesResult>
 
   /** Contents of a folder. Rejects `NOT_FOUND` / `ACCESS_DENIED`. */

@@ -74,7 +74,7 @@ describe("HoardSmbWeb", () => {
   it("lists shares (no IPC$), folders, and maps errors", async () => {
     const { sessionId } = await connectCachy()
     const { shares } = await smb.listShares({ sessionId })
-    expect(shares.map((s) => s.name)).toEqual(["media", "photos", "homes"])
+    expect(shares.map((s) => s.name)).toEqual(["media", "photos", "homes", "raiz"])
     // An unlisted share is left out of the listing but opens by name (any letter case).
     expect(
       (await smb.list({ sessionId, share: "pasta pública", path: "" })).entries.map((e) => e.name)
@@ -115,6 +115,83 @@ describe("HoardSmbWeb", () => {
     expect(
       smbErrorCode(await smb.stat({ sessionId, share: "media", path: "Renamed" }).catch((e) => e))
     ).toBe("NOT_FOUND")
+  })
+
+  it("reports share and folder access, and refuses writes where it is read-only", async () => {
+    const { sessionId } = await connectCachy()
+    const { shares } = await smb.listShares({ sessionId })
+    expect(Object.fromEntries(shares.map((s) => [s.name, s.access]))).toEqual({
+      media: "readWrite",
+      photos: "readWrite",
+      homes: "readWrite",
+      raiz: "read",
+    })
+    const nas = await smb.connect({ machineId: "demo-nas-sala", host: "192.168.1.20" })
+    const nasShares = (await smb.listShares({ sessionId: nas.sessionId })).shares
+    // A share the account cannot open has no access answer at all.
+    expect(nasShares.find((s) => s.name === "admin")?.access).toBeUndefined()
+    expect(nasShares.find((s) => s.name === "Public")?.access).toBe("read")
+
+    expect((await smb.list({ sessionId, share: "media", path: "" })).access).toBe("readWrite")
+    expect((await smb.list({ sessionId, share: "raiz", path: "etc" })).access).toBe("read")
+    // A read-only folder on a writable share, and everything inside it.
+    expect((await smb.list({ sessionId, share: "homes", path: "henrique" })).access).toBe(
+      "readWrite"
+    )
+    expect((await smb.list({ sessionId, share: "homes", path: "henrique/Archive" })).access).toBe(
+      "read"
+    )
+    expect(
+      (await smb.list({ sessionId, share: "homes", path: "henrique/Archive/Old projects" })).access
+    ).toBe("read")
+    const review = "henrique/Archive/2025 review.md"
+    expect((await smb.readTextFile({ sessionId, share: "homes", path: review })).access).toBe(
+      "read"
+    )
+    expect(
+      (await smb.readTextFile({ sessionId, share: "homes", path: "henrique/Documents/notes.md" }))
+        .access
+    ).toBe("readWrite")
+
+    const code = (promise: Promise<unknown>) => promise.then(() => "OK", smbErrorCode)
+    expect(await code(smb.createFolder({ sessionId, share: "raiz", path: "", name: "x" }))).toBe(
+      "ACCESS_DENIED"
+    )
+    expect(
+      await code(
+        smb.createFolder({ sessionId, share: "homes", path: "henrique/Archive", name: "x" })
+      )
+    ).toBe("ACCESS_DENIED")
+    expect(
+      await code(smb.rename({ sessionId, share: "homes", path: review, newName: "renamed.md" }))
+    ).toBe("ACCESS_DENIED")
+    // The read-only folder itself cannot be renamed or deleted from its writable parent either.
+    expect(
+      await code(
+        smb.delete({ sessionId, share: "homes", path: "henrique/Archive", recursive: true })
+      )
+    ).toBe("ACCESS_DENIED")
+    expect(await code(smb.delete({ sessionId, share: "raiz", path: "README.txt" }))).toBe(
+      "ACCESS_DENIED"
+    )
+    expect(
+      await code(smb.writeTextFile({ sessionId, share: "homes", path: review, text: "x" }))
+    ).toBe("ACCESS_DENIED")
+    expect(
+      await code(
+        smb.writeTextFile({
+          sessionId,
+          share: "homes",
+          path: "henrique/Archive/new.txt",
+          text: "",
+          mode: "create",
+        })
+      )
+    ).toBe("ACCESS_DENIED")
+    // Writable places still work next to them.
+    expect(
+      await code(smb.createFolder({ sessionId, share: "homes", path: "henrique", name: "Fresh" }))
+    ).toBe("OK")
   })
 
   it("returns an <img>-ready thumbnail for images and videos only", async () => {
