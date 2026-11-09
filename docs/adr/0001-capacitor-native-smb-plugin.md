@@ -93,6 +93,24 @@ a share-level `read` wins over a folder's answer. Measured per server type in
 [docs/testing/read-only.md](../testing/read-only.md). The UI treats unknown access as writable
 and the server's ACCESS_DENIED stays the final word.
 
+**macOS read-only shares** (2026-11-09, 1.2.1): macOS File Sharing answers full access at tree
+level and POSIX-only rights in MxAc even on a share marked read-only, so 1.2.0 called folders
+inside `Macintosh HD` (read-only: 1) writable. Two more answers from the server, no writes:
+
+- Share level: `listShares` asks NetrShareEnum for level 502 (falling back to level 1 when the
+  server refuses or faults) and evaluates each share's security descriptor (`ShareSecurity.kt`)
+  only when every ACE names Everyone or the null SID, so the answer holds for any account. macOS
+  grants Everyone `0x00120089` on a read-only share; Samba sends no descriptor to non-admins and
+  Windows usually refuses level 502 to them (both: unknown, the tree answer stays).
+- Folder and file level: the CREATE that lists the folder (or reads the text file) also asks for
+  FILE_ADD_FILE (FILE_WRITE_DATA on a file). Granted: writable, at no extra cost. Refused with
+  ACCESS_DENIED / MEDIA_WRITE_PROTECTED: read-only, and the CREATE is sent again without it (one
+  extra round trip, only on read-only items; a folder found read-only is remembered per session
+  for 60 s so listing it again costs nothing). The handle is only read from and closed; `stat`
+  of the folders and files is identical before and after on macOS and on Samba (on a real
+  filesystem; inside a container whose `/srv` is the image's overlayfs, granted write opens
+  bumped ctime once, an overlay effect).
+
 **Text files** (`text/TextCodec.kt`, `text/TextFiles.kt`, 2026-11-09):
 
 - **Encoding detection** (same rules as `src/lib/text/codec.ts`, both unit tested): a byte order

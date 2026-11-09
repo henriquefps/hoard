@@ -7,6 +7,7 @@ import com.hierynomus.msfscc.fileinformation.FileIdBothDirectoryInformation
 import com.hierynomus.mssmb2.SMB2CreateDisposition
 import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
+import com.hierynomus.mssmb2.SMBApiException
 import com.hierynomus.smbj.share.Directory
 import com.hierynomus.smbj.share.DiskShare
 import com.hierynomus.smbj.share.HoardOpens
@@ -67,6 +68,9 @@ class SmbSession(val id: String, val machineId: String, val handle: SmbHandle) {
 
     /** The share's access from its TREE_CONNECT response's MaximalAccess (null: no usable answer). */
     fun shareAccess(name: String): SmbAccess? = SmbAccess.fromMask(share(name).treeConnect.maximalAccess)
+
+    /** Folders found read-only moments ago (`ReadOnlyHints`), so listing them again costs nothing extra. */
+    val readOnlyHints = ReadOnlyHints()
 
     fun close() {
         // Polite TREE_DISCONNECT/LOGOFF only while the connection still works; otherwise each one
@@ -139,6 +143,49 @@ class SmbSessions {
     }
 }
 
+/**
+ * A CREATE that also asks for one write right (FILE_ADD_FILE on a folder, FILE_WRITE_DATA on a
+ * file), so the server tells whether the account may write there without anything being written:
+ * the handle is used for reading and closed, never for SET_INFO or WRITE. Checked against macOS
+ * and Samba (`stat` of the folder or file identical before and after, docs/testing/read-only.md).
+ *
+ * Refused with ACCESS_DENIED or MEDIA_WRITE_PROTECTED: the CREATE is sent again without the write
+ * right (one extra round trip, only on read-only items) and the probe says DENIED. Any other
+ * refusal (sharing violation, …) retries the same way but says nothing about access. A missing
+ * item fails at once, as before.
+ */
+object AccessProbe {
+
+    class Result(val opened: HoardOpens.Opened, val probe: WriteProbe?)
+
+    fun open(
+        share: DiskShare,
+        smbPath: String,
+        readMask: Set<AccessMask>,
+        writeRight: AccessMask?,
+        shareAccess: Set<SMB2ShareAccess>,
+        createOptions: Set<SMB2CreateOptions>,
+    ): Result {
+        fun create(mask: Set<AccessMask>) = HoardOpens.openWithMaximalAccess(
+            share,
+            smbPath,
+            mask,
+            shareAccess,
+            SMB2CreateDisposition.FILE_OPEN,
+            createOptions,
+        )
+        if (writeRight == null) return Result(create(readMask), null)
+        val withWrite = EnumSet.copyOf(readMask).apply { add(writeRight) }
+        return try {
+            Result(create(withWrite), WriteProbe.GRANTED)
+        } catch (e: SMBApiException) {
+            val status = e.statusCode and 0xFFFFFFFFL
+            if (SmbErrors.codeForStatus(status) == ErrorCode.NOT_FOUND) throw e
+            Result(create(readMask), if (WriteProbe.isDenial(status)) WriteProbe.DENIED else null)
+        }
+    }
+}
+
 /** Folder operations on a session (list, stat, createFolder, rename, delete, listShares). */
 object SmbBrowser {
 
@@ -175,27 +222,35 @@ object SmbBrowser {
      * CREATE without a lease context plus QUERY_DIRECTORY has no such cache.
      */
     fun listDirectory(share: DiskShare, smbPath: String): List<FileIdBothDirectoryInformation> =
-        listDirectoryWithAccess(share, smbPath).first
+        listDirectoryWithAccess(share, smbPath, probeWrite = false).entries
+
+    /** A folder's raw entries, its "MxAc" mask (null: no answer) and the write probe's answer. */
+    class DirectoryAccess(
+        val entries: List<FileIdBothDirectoryInformation>,
+        val mask: Long?,
+        val probe: WriteProbe?,
+    )
 
     /**
-     * [listDirectory] plus the folder's maximal access for this account, asked for on the same
-     * CREATE with the "MxAc" create context (`HoardOpens`), so per-folder ACLs (Windows NTFS,
-     * macOS, POSIX permissions on Samba) show up without an extra round trip. The mask is null when
-     * the server does not answer the context.
+     * [listDirectory] plus the folder's access for this account, asked for on the same CREATE:
+     * the "MxAc" create context (`HoardOpens`), so per-folder ACLs (Windows NTFS, macOS, POSIX
+     * permissions on Samba) show up, and, with [probeWrite], FILE_ADD_FILE (`AccessProbe`), so a
+     * share macOS marks read-only shows up too. Free on writable folders; one extra CREATE on
+     * read-only ones.
      */
-    fun listDirectoryWithAccess(share: DiskShare, smbPath: String): Pair<List<FileIdBothDirectoryInformation>, Long?> {
-        val opened = HoardOpens.openWithMaximalAccess(
+    fun listDirectoryWithAccess(share: DiskShare, smbPath: String, probeWrite: Boolean): DirectoryAccess {
+        val result = AccessProbe.open(
             share,
             smbPath,
             EnumSet.of(AccessMask.FILE_LIST_DIRECTORY, AccessMask.FILE_READ_ATTRIBUTES, AccessMask.FILE_READ_EA),
+            if (probeWrite) AccessMask.FILE_ADD_FILE else null,
             SMB2ShareAccess.ALL,
-            SMB2CreateDisposition.FILE_OPEN,
             EnumSet.of(SMB2CreateOptions.FILE_DIRECTORY_FILE),
         )
-        return opened.entry.use {
+        return result.opened.entry.use {
             val listing = (it as? Directory ?: smbFail(ErrorCode.NOT_FOUND, "Not a folder: $smbPath"))
                 .list(FileIdBothDirectoryInformation::class.java)
-            listing to SmbAccess.parseMaximalAccessResponse(opened.maximalAccessData)
+            DirectoryAccess(listing, SmbAccess.parseMaximalAccessResponse(result.opened.maximalAccessData), result.probe)
         }
     }
 
@@ -218,10 +273,11 @@ object SmbBrowser {
     }
 
     /**
-     * The shares plus each one's access, from a TREE_CONNECT per share (bounded, in parallel). The
-     * trees stay connected in the session, so opening a share afterwards costs nothing extra. A
-     * share that fails or does not answer before [ACCESS_DEADLINE_MS] is listed with a null access;
-     * it never fails the whole list.
+     * The shares plus each one's access, from a TREE_CONNECT per share (bounded, in parallel) and
+     * the share's security descriptor when the server sent one (`ShareSecurity`: macOS shares
+     * marked read-only). The trees stay connected in the session, so opening a share afterwards
+     * costs nothing extra. A share that fails or does not answer before [ACCESS_DEADLINE_MS] keeps
+     * only the descriptor's answer (often null); it never fails the whole list.
      */
     fun listSharesWithAccess(session: SmbSession): List<ShareListing> {
         val shares = listShares(session)
@@ -242,7 +298,7 @@ object SmbBrowser {
                 val left = deadline - System.nanoTime()
                 runCatching { future.get(left.coerceAtLeast(0), java.util.concurrent.TimeUnit.NANOSECONDS) }.getOrNull()
             }
-            ShareListing(info, access)
+            ShareListing(info, SmbAccess.both(access, info.everyoneAccess))
         }
     }
 
@@ -256,8 +312,11 @@ object SmbBrowser {
     fun listWithAccess(session: SmbSession, shareName: String, path: String): FolderListing {
         val clean = SmbPaths.normalize(path)
         val share = session.share(shareName)
-        val (listing, mask) = listDirectoryWithAccess(share, SmbPaths.toSmb(clean))
-        val entries = listing
+        // Found read-only moments ago: skip the write right (it would only be refused again) and
+        // keep the answer; MxAc alone would call a macOS read-only share writable.
+        val knownReadOnly = session.readOnlyHints.isReadOnly(shareName, clean)
+        val folder = listDirectoryWithAccess(share, SmbPaths.toSmb(clean), probeWrite = !knownReadOnly)
+        val entries = folder.entries
             .asSequence()
             .filter { it.fileName != "." && it.fileName != ".." }
             .map {
@@ -270,7 +329,9 @@ object SmbBrowser {
                 )
             }
             .toList()
-        val access = SmbAccess.combine(shareAccessOrNull(session, shareName), SmbAccess.fromMask(mask))
+        val probe = if (knownReadOnly) WriteProbe.DENIED else folder.probe
+        val access = SmbAccess.decide(shareAccessOrNull(session, shareName), folder.mask, probe)
+        session.readOnlyHints.remember(shareName, clean, access)
         return FolderListing(entries, access)
     }
 
