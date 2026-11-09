@@ -10,11 +10,16 @@ import org.junit.Test
 
 /**
  * Opt-in probe for read-only detection (docs/testing/read-only.md): prints every share's
- * TREE_CONNECT MaximalAccess and every top-level folder's "MxAc" answer with the decision Hoard
- * makes, so the rule can be checked against a real server.
+ * TREE_CONNECT MaximalAccess and security-descriptor answer, and every top-level folder's "MxAc"
+ * answer and write-probe answer (a CREATE asking for FILE_ADD_FILE, closed unused) with the
+ * decision Hoard makes, so the rule can be checked against a real server.
  *
  *     HOARD_SMOKE_ACCESS=127.0.0.1:14458 HOARD_SMOKE_USER=hoard HOARD_SMOKE_PASSWORD=hoardpass \
- *       [HOARD_ACCESS_WRITE_PROBE=1] ./gradlew testDebugUnitTest --tests '*SmbAccessProbeTest*'
+ *       [HOARD_ACCESS_PATHS='share|a/b;share|c'] [HOARD_ACCESS_WRITE_PROBE=1] \
+ *       ./gradlew testDebugUnitTest --rerun --tests '*SmbAccessProbeTest*'
+ *
+ * `HOARD_ACCESS_PATHS` adds deeper folders to check (and files: `share|path/file.txt`, checked
+ * through `readTextFile`).
  *
  * Without `HOARD_ACCESS_WRITE_PROBE` it never writes (safe against a real server, e.g. a Mac).
  * With it (disposable test servers only), it also creates and deletes a folder in every listed
@@ -73,7 +78,10 @@ class SmbAccessProbeTest {
         val mismatches = mutableListOf<String>()
         for ((info, access) in shares) {
             val treeMask = runCatching { SmbAccess.toLong(session.share(info.name).treeConnect.maximalAccess) }.getOrNull()
-            println("share '${info.name}': tree MaximalAccess=${hex(treeMask)} -> ${access?.json ?: "unknown"}")
+            println(
+                "share '${info.name}': tree MaximalAccess=${hex(treeMask)} descriptor=${info.everyoneAccess?.json ?: "unknown"}" +
+                    " -> ${access?.json ?: "unknown"}",
+            )
             val folders = runCatching {
                 val root = SmbBrowser.listWithAccess(session, info.name, "")
                 listOf("" to root) + root.entries.filter { it.isDirectory && !it.name.startsWith(".") }.take(8).map { dir ->
@@ -88,7 +96,7 @@ class SmbAccessProbeTest {
             }
             for ((path, listing) in folders) {
                 if (listing == null) continue
-                val (_, mask) = SmbBrowser.listDirectoryWithAccess(session.share(info.name), SmbPaths.toSmb(path))
+                val raw = SmbBrowser.listDirectoryWithAccess(session.share(info.name), SmbPaths.toSmb(path), probeWrite = true)
                 val actual = canWrite(session, info.name, path)
                 val verdict = when (actual) {
                     null -> ""
@@ -97,12 +105,24 @@ class SmbAccessProbeTest {
                         mismatches += "${info.name}/$path detected=${listing.access?.json} actual=$actual"
                     }
                 }
-                println("    '/$path': MxAc=${hex(mask)} -> ${listing.access?.json ?: "unknown"}$verdict")
+                println("    '/$path': MxAc=${hex(raw.mask)} probe=${raw.probe ?: "none"} -> ${listing.access?.json ?: "unknown"}$verdict")
             }
             // Files: readTextFile's access (MxAc on the file open), for the first small file at the root.
             folders.firstOrNull()?.second?.entries?.firstOrNull { !it.isDirectory && it.size in 1..65_536 }?.let { file ->
                 val read = runCatching { TextFiles.read(session, info.name, file.path, 65_536, true) }.getOrNull()
                 println("    file '${file.path}': readTextFile access=${read?.access?.json ?: "unknown/not text"}")
+            }
+        }
+        for (spec in System.getenv("HOARD_ACCESS_PATHS").orEmpty().split(";").filter { it.contains('|') }) {
+            val share = spec.substringBefore('|')
+            val path = spec.substringAfter('|')
+            val folder = runCatching { SmbBrowser.listWithAccess(session, share, path) }
+            if (folder.isSuccess) {
+                val raw = SmbBrowser.listDirectoryWithAccess(session.share(share), SmbPaths.toSmb(path), probeWrite = true)
+                println("path '$share/$path': MxAc=${hex(raw.mask)} probe=${raw.probe ?: "none"} -> ${folder.getOrThrow().access?.json ?: "unknown"}")
+            } else {
+                val read = runCatching { TextFiles.read(session, share, path, 65_536, true) }
+                println("path '$share/$path': " + read.fold({ "file, readTextFile access=${it.access?.json ?: "unknown"}" }, { SmbErrors.map(it).code.toString() }))
             }
         }
         assertEquals("detected access disagrees with the server: $mismatches", emptyList<String>(), mismatches)

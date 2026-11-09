@@ -73,4 +73,65 @@ class SmbAccessTest {
         val high = byteArrayOf(0, 0, 0, 0, 0, 0, 0, 0x80.toByte())
         assertEquals(0x80000000L, SmbAccess.parseMaximalAccessResponse(high))
     }
+
+    @Test
+    fun `a refused write probe makes a writable MxAc answer read-only (macOS read-only share)`() {
+        // macOS: tree and MxAc say full access, but the CREATE asking for FILE_ADD_FILE is refused.
+        assertEquals(SmbAccess.READ, SmbAccess.decide(SmbAccess.READ_WRITE, 0x001F01FFL, WriteProbe.DENIED))
+        assertEquals(SmbAccess.READ, SmbAccess.decide(null, null, WriteProbe.DENIED))
+    }
+
+    @Test
+    fun `a granted write probe is writable, but a read-only share still wins`() {
+        assertEquals(SmbAccess.READ_WRITE, SmbAccess.decide(SmbAccess.READ_WRITE, 0x001F01FFL, WriteProbe.GRANTED))
+        assertEquals(SmbAccess.READ_WRITE, SmbAccess.decide(null, null, WriteProbe.GRANTED)) // no MxAc answer
+        assertEquals(SmbAccess.READ, SmbAccess.decide(SmbAccess.READ, 0x001F01FFL, WriteProbe.GRANTED))
+    }
+
+    @Test
+    fun `without a probe answer MxAc decides as before`() {
+        assertEquals(SmbAccess.READ_WRITE, SmbAccess.decide(SmbAccess.READ_WRITE, 0x001F01FFL, null))
+        assertEquals(SmbAccess.READ, SmbAccess.decide(SmbAccess.READ_WRITE, 0x001200A9L, null)) // POSIX 755, not owner
+        assertEquals(SmbAccess.READ, SmbAccess.decide(SmbAccess.READ, 0x001F01FFL, null)) // Samba read only = yes
+        assertEquals(SmbAccess.READ_WRITE, SmbAccess.decide(null, 0x001F01FFL, null))
+        assertNull(SmbAccess.decide(null, null, null))
+    }
+
+    @Test
+    fun `share level answers combine with read winning`() {
+        assertEquals(SmbAccess.READ, SmbAccess.both(SmbAccess.READ_WRITE, SmbAccess.READ)) // macOS read-only share
+        assertEquals(SmbAccess.READ, SmbAccess.both(SmbAccess.READ, null)) // Samba read only = yes
+        assertEquals(SmbAccess.READ_WRITE, SmbAccess.both(SmbAccess.READ_WRITE, SmbAccess.READ_WRITE))
+        assertEquals(SmbAccess.READ_WRITE, SmbAccess.both(null, SmbAccess.READ_WRITE))
+        assertNull(SmbAccess.both(null, null))
+    }
+
+    @Test
+    fun `only access denied and write protected count as a refused write`() {
+        assertEquals(true, WriteProbe.isDenial(0xC0000022L)) // STATUS_ACCESS_DENIED
+        assertEquals(true, WriteProbe.isDenial(0xC00000A2L)) // STATUS_MEDIA_WRITE_PROTECTED
+        assertEquals(false, WriteProbe.isDenial(0xC0000043L)) // STATUS_SHARING_VIOLATION
+        assertEquals(false, WriteProbe.isDenial(0xC0000034L)) // STATUS_OBJECT_NAME_NOT_FOUND
+    }
+
+    @Test
+    fun `read-only hints last a minute per share and path, writable answers clear them`() {
+        var now = 0L
+        val hints = ReadOnlyHints(ttlMs = 60_000, maxEntries = 3, nowNanos = { now })
+        hints.remember("Macintosh HD", "Applications", SmbAccess.READ)
+        assertEquals(true, hints.isReadOnly("macintosh hd", "Applications")) // share names ignore case
+        assertEquals(false, hints.isReadOnly("Macintosh HD", "applications")) // paths do not
+        assertEquals(false, hints.isReadOnly("StorageExtension", "Applications"))
+        now += 59_000_000_000L
+        assertEquals(true, hints.isReadOnly("Macintosh HD", "Applications"))
+        now += 2_000_000_000L
+        assertEquals(false, hints.isReadOnly("Macintosh HD", "Applications")) // expired
+        hints.remember("rw", "open", SmbAccess.READ)
+        hints.remember("rw", "open", SmbAccess.READ_WRITE)
+        assertEquals(false, hints.isReadOnly("rw", "open"))
+        hints.remember("rw", "x", null)
+        assertEquals(false, hints.isReadOnly("rw", "x"))
+        listOf("a", "b", "c", "d").forEach { hints.remember("rw", it, SmbAccess.READ) } // bounded
+        assertEquals(true, hints.isReadOnly("rw", "d"))
+    }
 }

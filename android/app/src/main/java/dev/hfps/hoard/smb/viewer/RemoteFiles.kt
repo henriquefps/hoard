@@ -7,12 +7,13 @@ import com.hierynomus.mssmb2.SMB2CreateOptions
 import com.hierynomus.mssmb2.SMB2ShareAccess
 import com.hierynomus.smbj.share.File as SmbFile
 import com.hierynomus.smbj.share.PipelinedFileReader
-import com.hierynomus.smbj.share.HoardOpens
+import dev.hfps.hoard.smb.AccessProbe
 import dev.hfps.hoard.smb.Cancellation
 import dev.hfps.hoard.smb.SmbAccess
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.SmbSession
+import dev.hfps.hoard.smb.WriteProbe
 import dev.hfps.hoard.smb.smbFail
 import java.io.File
 import java.io.FileOutputStream
@@ -36,21 +37,29 @@ object RemoteFiles {
             EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
         )
 
-    /** [openRead] with the file's maximal access ("MxAc"; null when the server does not answer). */
-    fun openReadWithAccess(session: SmbSession, share: String, path: String): Pair<SmbFile, Long?> {
-        val opened = HoardOpens.openWithMaximalAccess(
+    /** A file opened for reading, its "MxAc" mask (null: no answer) and the write probe's answer. */
+    class OpenedWithAccess(val file: SmbFile, val mask: Long?, val probe: WriteProbe?)
+
+    /**
+     * [openRead] with the file's access: maximal access ("MxAc") plus a FILE_WRITE_DATA probe on
+     * the same CREATE (`AccessProbe`; the handle is only read from), so a file on a share macOS
+     * marks read-only is not offered for editing.
+     */
+    fun openReadWithAccess(session: SmbSession, share: String, path: String): OpenedWithAccess {
+        val result = AccessProbe.open(
             session.share(share),
             SmbPaths.toSmb(path),
             EnumSet.of(AccessMask.FILE_READ_DATA, AccessMask.FILE_READ_ATTRIBUTES),
+            AccessMask.FILE_WRITE_DATA,
             EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ, SMB2ShareAccess.FILE_SHARE_WRITE, SMB2ShareAccess.FILE_SHARE_DELETE),
-            SMB2CreateDisposition.FILE_OPEN,
             EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE),
         )
+        val opened = result.opened
         val file = opened.entry as? SmbFile ?: run {
             opened.entry.closeSilently()
             smbFail(ErrorCode.UNKNOWN, "Not a file: $path")
         }
-        return file to SmbAccess.parseMaximalAccessResponse(opened.maximalAccessData)
+        return OpenedWithAccess(file, SmbAccess.parseMaximalAccessResponse(opened.maximalAccessData), result.probe)
     }
 
     fun info(file: SmbFile): RemoteFileInfo {

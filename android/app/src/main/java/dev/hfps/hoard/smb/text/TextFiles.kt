@@ -45,8 +45,9 @@ object TextFiles {
         val clean = SmbPaths.normalize(path)
         if (clean.isEmpty()) smbFail(ErrorCode.UNKNOWN, "Cannot read a folder as text")
         val limit = maxBytes.coerceIn(1, HARD_LIMIT)
-        val (file, mask) = RemoteFiles.openReadWithAccess(session, share, clean)
-        val access = SmbAccess.combine(SmbBrowser.shareAccessOrNull(session, share), SmbAccess.fromMask(mask))
+        val opened = RemoteFiles.openReadWithAccess(session, share, clean)
+        val file = opened.file
+        val access = SmbAccess.decide(SmbBrowser.shareAccessOrNull(session, share), opened.mask, opened.probe)
         file.use { remote ->
             val info = RemoteFiles.info(remote)
             if (info.isDirectory) smbFail(ErrorCode.UNKNOWN, "Cannot read a folder as text")

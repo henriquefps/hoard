@@ -1,11 +1,18 @@
 package dev.hfps.hoard.smb
 
 import com.hierynomus.msdtyp.AccessMask
+import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Whether the account may change a share, folder or file, decided from the server's own answer:
- * the `MaximalAccess` of TREE_CONNECT (share level) or of the SMB2_CREATE_QUERY_MAXIMAL_ACCESS
- * create context ("MxAc", folder or file level). Contract `SmbAccess`.
+ * Whether the account may change a share, folder or file, decided from the server's own answers:
+ * the `MaximalAccess` of TREE_CONNECT and the share's security descriptor (share level), the
+ * SMB2_CREATE_QUERY_MAXIMAL_ACCESS create context ("MxAc", folder or file level) and a write probe
+ * (the listing / viewer CREATE also asks for a write right). Contract `SmbAccess`.
+ *
+ * The probe exists for macOS File Sharing: a share marked read-only there still answers full
+ * access at tree level and POSIX-only rights in MxAc, but refuses any CREATE that asks for a write
+ * right (docs/testing/read-only.md).
  */
 enum class SmbAccess(val json: String) {
     READ("read"),
@@ -60,6 +67,26 @@ enum class SmbAccess(val json: String) {
             else -> item ?: share
         }
 
+        /**
+         * A folder or file: the write probe's answer when it gave one (a refused write right is
+         * read-only whatever MxAc claims, a granted one is writable), otherwise MxAc; then combined
+         * with the share level.
+         */
+        fun decide(share: SmbAccess?, mask: Long?, probe: WriteProbe?): SmbAccess? {
+            val item = when (probe) {
+                WriteProbe.DENIED -> READ
+                WriteProbe.GRANTED -> READ_WRITE
+                null -> fromMask(mask)
+            }
+            return combine(share, item)
+        }
+
+        /** Two share-level answers (TREE_CONNECT and the share's security descriptor): `read` wins. */
+        fun both(a: SmbAccess?, b: SmbAccess?): SmbAccess? = when {
+            a == READ || b == READ -> READ
+            else -> a ?: b
+        }
+
         /** The MaximalAccess of an "MxAc" response context: QueryStatus (u32) then the mask (u32). */
         fun parseMaximalAccessResponse(data: ByteArray?): Long? {
             if (data == null || data.size < 8) return null
@@ -69,5 +96,55 @@ enum class SmbAccess(val json: String) {
                 ((data[offset + 3].toLong() and 0xFF) shl 24)
             return if (u32(0) == 0L) u32(4) else null
         }
+    }
+}
+
+/** Outcome of asking for a write right on the CREATE of a folder or file (never writes anything). */
+enum class WriteProbe {
+    GRANTED,
+    DENIED,
+    ;
+
+    companion object {
+        private const val STATUS_ACCESS_DENIED = 0xC0000022L
+        private const val STATUS_MEDIA_WRITE_PROTECTED = 0xC00000A2L
+
+        /** NTSTATUS values that mean "no write here"; anything else says nothing about access. */
+        fun isDenial(status: Long): Boolean =
+            status == STATUS_ACCESS_DENIED || status == STATUS_MEDIA_WRITE_PROTECTED
+    }
+}
+
+/**
+ * Folders of one session found read-only recently (key: lower-case share + path). Listing one
+ * again within [ttlMs] skips the write right that would only be refused (one round trip saved)
+ * and keeps the read-only answer: MxAc alone would call a macOS read-only share writable. A
+ * folder found writable is forgotten at once (its probe costs nothing).
+ */
+class ReadOnlyHints(
+    private val ttlMs: Long = 60_000L,
+    private val maxEntries: Int = 2_000,
+    private val nowNanos: () -> Long = System::nanoTime,
+) {
+    private val hints = ConcurrentHashMap<String, Long>()
+
+    private fun key(share: String, path: String) = share.lowercase(Locale.ROOT) + "\u0000" + path
+
+    fun isReadOnly(share: String, path: String): Boolean {
+        val key = key(share, path)
+        val at = hints[key] ?: return false
+        if (nowNanos() - at < ttlMs * 1_000_000) return true
+        hints.remove(key, at)
+        return false
+    }
+
+    fun remember(share: String, path: String, access: SmbAccess?) {
+        val key = key(share, path)
+        if (access != SmbAccess.READ) {
+            hints.remove(key)
+            return
+        }
+        if (hints.size >= maxEntries) hints.clear()
+        hints[key] = nowNanos()
     }
 }

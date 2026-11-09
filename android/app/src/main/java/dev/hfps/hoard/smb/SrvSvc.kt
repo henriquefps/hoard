@@ -10,8 +10,17 @@ import com.hierynomus.smbj.share.PipeShare
 import java.io.ByteArrayOutputStream
 import java.util.EnumSet
 
-/** One row of NetrShareEnum level 1 (SHARE_INFO_1). */
-data class ShareInfo(val name: String, val type: Long, val remark: String?) {
+/**
+ * One row of NetrShareEnum (SHARE_INFO_1, or SHARE_INFO_502 when the server allows it).
+ * [everyoneAccess] is what the level-502 security descriptor grants every account
+ * (`ShareSecurity`), null when unknown.
+ */
+data class ShareInfo(
+    val name: String,
+    val type: Long,
+    val remark: String?,
+    val everyoneAccess: SmbAccess? = null,
+) {
     /** STYPE_DISKTREE in the low bits (not a printer, device or IPC). */
     val isDisk: Boolean get() = (type and 0x0FFFFFFFL) == 0L
     val isHidden: Boolean get() = name.endsWith("$")
@@ -19,7 +28,7 @@ data class ShareInfo(val name: String, val type: Long, val remark: String?) {
 
 /**
  * Minimal MS-SRVS client: DCE/RPC (connection-oriented, NDR 32-bit) over the `\PIPE\srvsvc` named
- * pipe, just enough for NetrShareEnum level 1. Written here instead of pulling the rapid7 dcerpc
+ * pipe, just enough for NetrShareEnum levels 1 and 502. Written here instead of pulling the rapid7 dcerpc
  * library, which drags in Guava + commons and was built against an older smbj.
  */
 object SrvSvc {
@@ -57,7 +66,17 @@ object SrvSvc {
             )
             pipe.use {
                 call(pipe, encodeBind(callId = 1)).let(::checkBindAck)
-                val response = call(pipe, encodeRequest(callId = 2, OPNUM_NETR_SHARE_ENUM, encodeShareEnum(serverName)))
+                // Level 502 adds each share's security descriptor (macOS marks read-only shares
+                // only there). Servers may refuse it to non-admins (Windows) or send no
+                // descriptor (Samba): then level 1, on the same pipe.
+                val detailed = try {
+                    val response = call(pipe, encodeRequest(callId = 2, OPNUM_NETR_SHARE_ENUM, encodeShareEnum(serverName, 502)))
+                    decodeShareEnum(responseStub(response))
+                } catch (e: HoardSmbException) {
+                    null
+                }
+                if (detailed != null) return detailed
+                val response = call(pipe, encodeRequest(callId = 3, OPNUM_NETR_SHARE_ENUM, encodeShareEnum(serverName, 1)))
                 return decodeShareEnum(responseStub(response))
             }
         } finally {
@@ -165,14 +184,15 @@ object SrvSvc {
         return stub.toByteArray()
     }
 
-    /** NetrShareEnum(ServerName, InfoStruct{Level 1, empty container}, MAXDWORD, ResumeHandle=0). */
-    internal fun encodeShareEnum(serverName: String): ByteArray {
+    /** NetrShareEnum(ServerName, InfoStruct{Level 1 or 502, empty container}, MAXDWORD, ResumeHandle=0). */
+    internal fun encodeShareEnum(serverName: String, level: Int = 1): ByteArray {
+        require(level == 1 || level == 502)
         val out = Le()
         out.u32(0x00020000) // ServerName: unique pointer referent
         out.conformantString("\\\\" + serverName)
-        out.u32(1) // InfoStruct.Level
-        out.u32(1) // union switch
-        out.u32(0x00020004) // pointer to SHARE_INFO_1_CONTAINER
+        out.u32(level.toLong()) // InfoStruct.Level
+        out.u32(level.toLong()) // union switch
+        out.u32(0x00020004) // pointer to SHARE_INFO_1_CONTAINER / SHARE_INFO_502_CONTAINER
         out.u32(0) // EntriesRead
         out.u32(0) // Buffer (null)
         out.u32(0xFFFFFFFFL) // PreferedMaximumLength
@@ -185,7 +205,7 @@ object SrvSvc {
         val input = NdrReader(stub)
         val level = input.u32()
         input.u32() // switch
-        if (level != 1L) smbFail(ErrorCode.UNKNOWN, "Unexpected share info level $level")
+        if (level != 1L && level != 502L) smbFail(ErrorCode.UNKNOWN, "Unexpected share info level $level")
         val containerRef = input.u32()
         if (containerRef == 0L) return emptyList()
         val count = input.u32().toInt()
@@ -194,11 +214,25 @@ object SrvSvc {
         if (bufferRef != 0L && count > 0) {
             val maxCount = input.u32().toInt()
             if (maxCount < count) smbFail(ErrorCode.UNKNOWN, "Malformed share array")
-            val rows = (0 until maxCount).map { Triple(input.u32(), input.u32(), input.u32()) }
-            for ((nameRef, type, remarkRef) in rows.take(count)) {
-                val name = if (nameRef != 0L) input.conformantString() else ""
-                val remark = if (remarkRef != 0L) input.conformantString() else null
-                shares += ShareInfo(name, type, remark?.takeIf { it.isNotBlank() })
+            if (level == 1L) {
+                val rows = (0 until maxCount).map { Triple(input.u32(), input.u32(), input.u32()) }
+                for ((nameRef, type, remarkRef) in rows.take(count)) {
+                    val name = if (nameRef != 0L) input.conformantString() else ""
+                    val remark = if (remarkRef != 0L) input.conformantString() else null
+                    shares += ShareInfo(name, type, remark?.takeIf { it.isNotBlank() })
+                }
+            } else {
+                // SHARE_INFO_502: netname*, type, remark*, permissions, max_uses, current_uses,
+                // path*, passwd*, reserved (descriptor length), security_descriptor*.
+                val rows = (0 until maxCount).map { LongArray(10) { input.u32() } }
+                for (row in rows.take(count)) {
+                    val name = if (row[0] != 0L) input.conformantString() else ""
+                    val remark = if (row[2] != 0L) input.conformantString() else null
+                    if (row[6] != 0L) input.conformantString() // path
+                    if (row[7] != 0L) input.conformantString() // passwd
+                    val sd = if (row[9] != 0L) input.conformantBytes() else null
+                    shares += ShareInfo(name, row[1], remark?.takeIf { it.isNotBlank() }, ShareSecurity.accessForEveryone(sd))
+                }
             }
         }
         input.u32() // TotalEntries
@@ -260,6 +294,13 @@ object SrvSvc {
             align4()
             if (offset + 4 > bytes.size) smbFail(ErrorCode.UNKNOWN, "Truncated RPC response")
             return u32(bytes, offset).also { offset += 4 }
+        }
+
+        /** Conformant byte array (`[size_is(n)] unsigned char*`): max count, then the bytes. */
+        fun conformantBytes(): ByteArray {
+            val count = u32().toInt()
+            if (count < 0 || offset + count > bytes.size) smbFail(ErrorCode.UNKNOWN, "Truncated RPC byte array")
+            return bytes.copyOfRange(offset, offset + count).also { offset += count }
         }
 
         fun conformantString(): String {
