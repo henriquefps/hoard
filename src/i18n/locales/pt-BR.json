@@ -1,0 +1,96 @@
+{
+  "app": {
+    "name": "Hoard",
+    "tagline": "Cliente de arquivos SMB"
+  },
+  "nav": {
+    "home": "Início",
+    "machines": "Máquinas",
+    "favorites": "Favoritos",
+    "transfers": "Transferências",
+    "settings": "Configurações",
+    "main": "Navegação",
+    "openMenu": "Abrir menu",
+    "noFavorites": "As pastas fixadas aparecem aqui."
+  },
+  "common": {
+    "back": "Voltar",
+    "backTo": "Voltar para {{name}}",
+    "comingSoon": "Em breve",
+    "more": "Mais ações",
+    "edit": "Editar",
+    "browse": "Navegar"
+  },
+  "home": {
+    "favorites": "Favoritos",
+    "machines": "Máquinas",
+    "favoritesEmptyTitle": "Nenhum favorito ainda",
+    "favoritesEmptyBody": "Fixe uma pasta enquanto navega e ela aparece aqui, acessível de onde você estiver."
+  },
+  "machines": {
+    "title": "Máquinas",
+    "description": "Computadores e NAS que você acessa por SMB.",
+    "add": "Adicionar máquina",
+    "new": "Nova máquina",
+    "edit": "Editar máquina",
+    "emptyTitle": "Nenhuma máquina ainda",
+    "emptyBody": "Cadastre uma máquina uma vez com todos os endereços dela: rede local, Tailscale ou um nome de host.",
+    "addressCount_one": "{{count}} endereço",
+    "addressCount_other": "{{count}} endereços",
+    "formPlaceholderTitle": "Formulário da máquina",
+    "formPlaceholderBody": "Nome, credenciais e a lista ordenada de endereços ficam aqui.",
+    "notFound": "Esta máquina não existe mais."
+  },
+  "addressKind": {
+    "local": "Local",
+    "tailscale": "Tailscale",
+    "other": "Outro"
+  },
+  "browse": {
+    "shares": "Compartilhamentos",
+    "placeholderTitle": "Navegador de arquivos",
+    "placeholderBody": "Os compartilhamentos, pastas e arquivos desta máquina aparecem aqui."
+  },
+  "transfers": {
+    "title": "Transferências",
+    "description": "Cópias das suas máquinas para este celular.",
+    "emptyTitle": "Nenhuma transferência",
+    "emptyBody": "Os arquivos que você copiar para o celular aparecem aqui com o progresso."
+  },
+  "settings": {
+    "title": "Configurações",
+    "appearance": "Aparência",
+    "theme": "Tema",
+    "palette": "Cor",
+    "language": "Idioma",
+    "about": "Sobre",
+    "aboutBody": "Hoard é software livre e de código aberto (AGPL-3.0-or-later).",
+    "demoData": "Demonstração no navegador: os dados vêm de uma rede SMB simulada."
+  },
+  "theme": {
+    "label": "Tema",
+    "light": "Claro",
+    "dark": "Escuro",
+    "system": "Sistema",
+    "palette": "Paleta",
+    "palettes": {
+      "blue": "Azul",
+      "olive": "Oliva",
+      "violet": "Violeta",
+      "rose": "Rosa",
+      "graphite": "Grafite"
+    }
+  },
+  "language": {
+    "en": "English",
+    "pt-BR": "Português (Brasil)"
+  },
+  "backButton": {
+    "exitHint": "Toque em voltar de novo para sair"
+  },
+  "notFound": {
+    "title": "Página não encontrada",
+    "body": "Esta página não existe.",
+    "home": "Ir para o início"
+  }
+}
