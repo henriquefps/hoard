@@ -4,7 +4,7 @@
 
 An SMB file client for Android. Save your **machines** once, each with every address it answers on (local network IP, Tailscale IP or MagicDNS name), and Hoard picks the one that is reachable right now. Browse shares and folders, pin favorite folders, and copy files to the phone's storage.
 
-Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; the native Kotlin plugin is being written against the same contract.
+Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; on Android the native Kotlin plugin (smbj, Storage Access Framework, WorkManager transfers) implements the same contract ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
 
 | Phone, light                                                   | Phone, dark                                                           | Desktop                                                              |
 | -------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -44,6 +44,13 @@ bun run android:install  # debug build + adb install on the connected phone
 
 Android builds need the Android SDK (`~/Library/Android/sdk`) and JDK 21; the scripts use Android Studio's bundled JBR (`/Applications/Android Studio.app/Contents/jbr/Contents/Home`).
 
+Native plugin tests (JVM) and the release build, from `android/` with that `JAVA_HOME`:
+
+```sh
+./gradlew testDebugUnitTest   # pure-logic tests; network tests are opt-in, see ADR 0001
+./gradlew assembleRelease     # R8-minified release APK (unsigned)
+```
+
 In the browser, data lives in a sql.js database saved to `localStorage`; run `localStorage.removeItem("hoard.devdb")` in the console to reseed the demo machines.
 
 ## Project layout
@@ -63,6 +70,8 @@ src/
   routes/             one component per route (router.tsx wires them)
   i18n/               i18next setup, locales/en.json, locales/pt-BR.json
 android/              Capacitor Android project; app/src/main/java/dev/hfps/hoard/smb/ is the native plugin
+                      (sessions, srvsvc, credentials, NSD, SAF; transfer/ = WorkManager jobs; viewer/ = open + thumbnails)
+docs/testing/samba/   disposable Samba server for the opt-in native integration test
 docs/adr/             architecture decisions
 ```
 

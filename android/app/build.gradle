@@ -19,8 +19,36 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // R8 shrinks smbj's Bouncy Castle dependency (several MB); keep rules in proguard-rules.pro.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    packaging {
+        resources {
+            // Duplicate / irrelevant metadata from smbj, Bouncy Castle, mbassador and slf4j.
+            excludes += [
+                'META-INF/DEPENDENCIES',
+                'META-INF/LICENSE*',
+                'META-INF/NOTICE*',
+                'META-INF/*.md',
+                'META-INF/versions/9/OSGI-INF/MANIFEST.MF',
+                'META-INF/versions/*/module-info.class',
+                'module-info.class',
+            ]
+        }
+    }
+    testOptions {
+        unitTests {
+            // android.* stubs return defaults instead of throwing in JVM unit tests (pure logic only).
+            returnDefaultValues = true
+            all {
+                // The opt-in GUID smoke test (SmbSmokeTest) reads its targets from this variable.
+                environment 'HOARD_SMOKE_HOSTS', System.getenv('HOARD_SMOKE_HOSTS') ?: ''
+                environment 'HOARD_SMOKE_SMB', System.getenv('HOARD_SMOKE_SMB') ?: ''
+                testLogging { events 'passed', 'skipped', 'failed'; showStandardStreams = true }
+            }
         }
     }
 }
@@ -41,7 +69,19 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+
+    // Native HoardSmb plugin (dev.hfps.hoard.smb): SMB2/3, coroutines, background transfers.
+    implementation "com.hierynomus:smbj:$smbjVersion"
+    implementation "org.slf4j:slf4j-nop:$slf4jVersion"
+    implementation "androidx.core:core-ktx:$androidxCoreVersion"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
+    implementation "androidx.work:work-runtime-ktx:$workVersion"
+    implementation "androidx.exifinterface:exifinterface:$exifInterfaceVersion"
+
     testImplementation "junit:junit:$junitVersion"
+    testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion"
+    // Real org.json for JVM tests (android.jar only has stubs).
+    testImplementation "org.json:json:20250517"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')

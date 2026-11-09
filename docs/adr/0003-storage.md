@@ -54,8 +54,9 @@ Theme, palette and language are per-device conveniences in `localStorage`, as in
 
 ## Consequences
 
-- A database export or backup never contains secrets; restoring onto a new phone asks for passwords
-  again (Keystore keys do not migrate).
+- No secret ever reaches a backup. The app opts out of Android backup and device-to-device
+  transfer entirely (`allowBackup="false"` plus `data_extraction_rules.xml`): the Keystore key would
+  not migrate anyway, and SAF grants do not survive a move. A new phone starts empty.
 - The transfers table mirrors native jobs. After the app was killed the UI reconciles it with
   `HoardSmb.getTransfers()` and then `acknowledgeTransfers`.
 - The web build ships the sql.js WebAssembly file (about 650 KB) in `dist/`; Android loads it only on

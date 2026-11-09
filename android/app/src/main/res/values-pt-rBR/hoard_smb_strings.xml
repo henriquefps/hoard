@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="transfer_channel_progress">Transferências</string>
+    <string name="transfer_channel_progress_description">Downloads em andamento</string>
+    <string name="transfer_channel_results">Transferências concluídas</string>
+    <string name="transfer_channel_results_description">Downloads concluídos ou com falha</string>
+    <string name="transfer_waiting">Aguardando…</string>
+    <string name="transfer_reconnecting">Reconectando…</string>
+    <string name="transfer_progress">%1$s de %2$s</string>
+    <string name="transfer_progress_speed">%1$s de %2$s · %3$s/s</string>
+    <string name="transfer_cancel">Cancelar</string>
+    <string name="transfer_completed">Baixado · %1$s</string>
+    <string name="transfer_failed">Falha no download: %1$s</string>
+</resources>
