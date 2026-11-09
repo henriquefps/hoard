@@ -13,6 +13,7 @@ import { MachineFormPage } from "@/routes/MachineFormPage"
 import { BrowsePage } from "@/routes/BrowsePage"
 import { TransfersPage } from "@/routes/TransfersPage"
 import { SettingsPage } from "@/routes/SettingsPage"
+import { StorageAccessPage } from "@/routes/StorageAccessPage"
 
 const rootRoute = createRootRoute({ component: AppShell, notFoundComponent: NotFoundPage })
 
@@ -37,7 +38,7 @@ export const editMachineRoute = createRoute({
 })
 
 export interface BrowseSearch {
-  /** Share name; absent = the machine's share list. */
+  /** SMB only: share name; absent = the machine's share list. */
   share?: string
   /** Folder inside the share, `/`-separated without a leading slash; absent = share root. */
   path?: string
@@ -45,7 +46,8 @@ export interface BrowseSearch {
 
 const browseRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/browse/$machineId",
+  // $locationId: a machine id, `device` (the phone's storage) or `vol-<uuid>` (USB drive, SD card).
+  path: "/browse/$locationId",
   validateSearch: (search: Record<string, unknown>): BrowseSearch => ({
     share: typeof search.share === "string" && search.share ? search.share : undefined,
     path:
@@ -66,7 +68,7 @@ export interface ViewSearch {
 // The text viewer and editor (CodeMirror, the Markdown pipeline, Mermaid, KaTeX) is its own chunk.
 const viewRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/view/$machineId",
+  path: "/view/$locationId",
   validateSearch: (search: Record<string, unknown>): ViewSearch => ({
     share: typeof search.share === "string" && search.share ? search.share : undefined,
     path:
@@ -82,6 +84,11 @@ const transfersRoute = createRoute({
   path: "/transfers",
   component: TransfersPage,
 })
+const storageAccessRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/storage-access",
+  component: StorageAccessPage,
+})
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -96,6 +103,7 @@ const routeTree = rootRoute.addChildren([
   browseRoute,
   viewRoute,
   transfersRoute,
+  storageAccessRoute,
   settingsRoute,
 ])
 

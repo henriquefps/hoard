@@ -138,7 +138,9 @@ inside `Macintosh HD` (read-only: 1) writable. Two more answers from the server,
 **Permissions:** `INTERNET`, `ACCESS_NETWORK_STATE` (network callback, WorkManager constraint),
 `CHANGE_WIFI_MULTICAST_STATE` (mDNS while discovering), `FOREGROUND_SERVICE` +
 `FOREGROUND_SERVICE_DATA_SYNC` (transfers), `POST_NOTIFICATIONS` (asked once, at the first
-download; transfers run without it). `NEARBY_WIFI_DEVICES` is not needed: it guards Wi-Fi scanning,
+download; transfers run without it). Since 1.3.0, `MANAGE_EXTERNAL_STORAGE` (all files access) and, on Android 10 and older,
+`READ/WRITE_EXTERNAL_STORAGE`, for the phone's storage and removable volumes ([ADR 0005](0005-locations.md)).
+`NEARBY_WIFI_DEVICES` is not needed: it guards Wi-Fi scanning,
 Wi-Fi Direct and Aware, not NSD. Android 17 is expected to gate local-network access behind a new
 permission for apps that target it; revisit when the target SDK moves past 36.
 

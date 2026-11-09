@@ -5,7 +5,10 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.core.content.FileProvider
+import dev.hfps.hoard.smb.location.LocalFile
+import dev.hfps.hoard.smb.stream.MimeTypes
 import dev.hfps.hoard.smb.Cancellation
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.SafDestinations
@@ -45,19 +48,30 @@ class Opener(private val context: Context) {
     }
 
     /** Fire ACTION_VIEW (or the "Open with" chooser); NO_APP when nothing on the phone handles the type. */
-    fun view(activity: Activity, file: File, mimeType: String?, chooser: Boolean = false) {
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        val type = mimeType?.takeIf { it.isNotBlank() } ?: SafDestinations.mimeTypeFor(file.name)
+    fun view(activity: Activity, file: File, mimeType: String?, chooser: Boolean = false) =
+        view(activity, uriFor(file), file.name, mimeType, chooser)
+
+    /** The FileProvider URI of a file in the cache or on local storage (`file_paths.xml`). */
+    fun uriFor(file: File): Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+
+    /**
+     * A local location's file, shared in place (nothing is copied): its FileProvider URI when read
+     * by path, its SAF document URI otherwise (Hoard's persisted grant is passed on read-only).
+     */
+    fun localUri(file: LocalFile): Uri = file.file?.let(::uriFor) ?: file.documentUri!!
+
+    fun view(activity: Activity, uri: Uri, name: String, mimeType: String?, chooser: Boolean = false) {
+        val type = mimeType?.takeIf { it.isNotBlank() } ?: MimeTypes.forIntent(name) ?: SafDestinations.mimeTypeFor(name)
         val intent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, type)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val handlers = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
-        if (handlers.isEmpty()) smbFail(ErrorCode.NO_APP, "No app can open ${file.name} ($type)")
+        if (handlers.isEmpty()) smbFail(ErrorCode.NO_APP, "No app can open $name ($type)")
         try {
             // Several handlers and no default → the system shows its chooser ("Just once" / "Always").
             activity.startActivity(if (chooser) Intent.createChooser(intent, null) else intent)
         } catch (e: ActivityNotFoundException) {
-            smbFail(ErrorCode.NO_APP, "No app can open ${file.name} ($type)")
+            smbFail(ErrorCode.NO_APP, "No app can open $name ($type)")
         }
     }
 

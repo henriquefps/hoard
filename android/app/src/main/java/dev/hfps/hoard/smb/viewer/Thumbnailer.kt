@@ -14,6 +14,8 @@ import dev.hfps.hoard.smb.Cancellation
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.SmbSession
+import dev.hfps.hoard.smb.location.LocalFile
+import dev.hfps.hoard.smb.location.LocalFs
 import dev.hfps.hoard.smb.smbFail
 import java.io.ByteArrayInputStream
 import java.io.File
@@ -34,7 +36,7 @@ data class Thumbnail(val file: File, val width: Int, val height: Int)
  * - Videos are never downloaded: MediaMetadataRetriever reads the container through a
  *   [MediaDataSource] that does random-access SMB reads (moov atom, then one frame).
  */
-class Thumbnailer(context: Context) {
+class Thumbnailer(private val context: Context) {
 
     private val root = File(context.cacheDir, "thumbs")
     private var writesSinceTrim = 0
@@ -62,6 +64,72 @@ class Thumbnailer(context: Context) {
             } ?: smbFail(ErrorCode.UNKNOWN, "Could not decode ${SmbPaths.name(clean)}")
             return save(fit(bitmap, size), target)
         }
+    }
+
+    /**
+     * A local location's file (phone storage, USB drive, SD card): decoded in place, never copied.
+     * Same cache directory and rules; keyed by location + path + size + modified time.
+     */
+    fun thumbnail(fs: LocalFs, path: String, maxSize: Int): Thumbnail {
+        val clean = SmbPaths.normalize(path)
+        val ext = SmbPaths.extension(clean)
+        val isImage = ext in IMAGE_EXTENSIONS
+        val isVideo = ext in VIDEO_EXTENSIONS
+        if (clean.isEmpty() || (!isImage && !isVideo)) {
+            smbFail(ErrorCode.UNKNOWN, "Thumbnails are only available for images and videos")
+        }
+        val size = maxSize.coerceIn(16, 2048)
+        val file = fs.file(clean)
+        if (file.isDirectory) smbFail(ErrorCode.UNKNOWN, "Thumbnails are only available for files")
+        val key = RemoteFiles.key(fs.cacheId, clean, size, file.size, file.modifiedMillis)
+        val target = File(root, "$key.jpg")
+        cached(target)?.let { return it }
+        val bitmap = when {
+            isVideo -> videoFrame(size) { retriever ->
+                if (file.file != null) retriever.setDataSource(file.file.path) else retriever.setDataSource(context, file.documentUri)
+            }
+            else -> localImage(fs, file, ext, size)
+        } ?: smbFail(ErrorCode.UNKNOWN, "Could not decode ${file.name}")
+        return save(fit(bitmap, size), target)
+    }
+
+    private fun localImage(fs: LocalFs, file: LocalFile, ext: String, size: Int): Bitmap? {
+        if ((ext == "jpg" || ext == "jpeg") && size <= EXIF_THUMB_MAX_REQUEST) {
+            runCatching {
+                val exif = if (file.file != null) ExifInterface(file.file) else fs.openInput(file).use { ExifInterface(it) }
+                val thumb = exif.thumbnailBitmap
+                if (exif.hasThumbnail() && thumb != null) {
+                    if (max(thumb.width, thumb.height) >= size * 3 / 4) return rotate(thumb, exif.rotationDegrees, exif.isFlipped)
+                    thumb.recycle()
+                }
+            }
+        }
+        if (file.size > MAX_LOCAL_IMAGE_BYTES) smbFail(ErrorCode.UNKNOWN, "Image too large for a thumbnail")
+        file.file?.let { return decodeFile(it, size) }
+        val uri = file.documentUri ?: return null
+        if (Build.VERSION.SDK_INT >= 28) {
+            runCatching {
+                return ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+                    val longest = max(info.size.width, info.size.height)
+                    if (longest > size) {
+                        val scale = size.toFloat() / longest
+                        decoder.setTargetSize(
+                            (info.size.width * scale).roundToInt().coerceAtLeast(1),
+                            (info.size.height * scale).roundToInt().coerceAtLeast(1),
+                        )
+                    }
+                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        fs.openInput(file).use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (max(bounds.outWidth, bounds.outHeight) / (sample * 2) >= size) sample *= 2
+        val bitmap = fs.openInput(file).use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) } ?: return null
+        val exif = runCatching { fs.openInput(file).use { ExifInterface(it) } }.getOrNull()
+        return rotate(bitmap, exif?.rotationDegrees ?: 0, exif?.isFlipped ?: false)
     }
 
     private fun cached(target: File): Thumbnail? {
@@ -163,10 +231,13 @@ class Thumbnailer(context: Context) {
 
     // --- Videos ---------------------------------------------------------------------------
 
-    private fun videoFrame(remote: SmbFile, length: Long, size: Int): Bitmap? {
+    private fun videoFrame(remote: SmbFile, length: Long, size: Int): Bitmap? =
+        videoFrame(size) { it.setDataSource(SmbMediaDataSource(remote, length)) }
+
+    private fun videoFrame(size: Int, source: (MediaMetadataRetriever) -> Unit): Bitmap? {
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(SmbMediaDataSource(remote, length))
+            source(retriever)
             val durationUs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.times(1000)
             // A frame a little in (skips black/fade-in first frames), capped for short clips.
             val atUs = durationUs?.let { (it / 10).coerceAtMost(3_000_000) } ?: 0
@@ -226,6 +297,8 @@ class Thumbnailer(context: Context) {
         val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif")
         val VIDEO_EXTENSIONS = setOf("mp4", "m4v", "mov", "3gp", "mkv", "webm")
         private const val MAX_IMAGE_BYTES = 64L * 1024 * 1024
+        /** Local images decode in place (no download), so the cap only guards against absurd files. */
+        private const val MAX_LOCAL_IMAGE_BYTES = 512L * 1024 * 1024
         private const val EXIF_HEAD_BYTES = 128 * 1024
         private const val EXIF_THUMB_MAX_REQUEST = 200
         private const val JPEG_QUALITY = 82

@@ -13,6 +13,8 @@ export interface Settings {
   lastDestination: string | null
   probeTimeoutMs: number
   onboarded: boolean
+  /** The all files access screen was shown once (granted or "Not now"); ADR 0005. */
+  storageIntroSeen: boolean
 }
 
 export const CONFLICT_POLICIES: ConflictPolicy[] = ["rename", "overwrite", "skip"]
@@ -25,6 +27,7 @@ export const SETTING_DEFAULTS: Settings = {
   lastDestination: null,
   probeTimeoutMs: 1500,
   onboarded: false,
+  storageIntroSeen: false,
 }
 
 const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
@@ -34,6 +37,7 @@ const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
   lastDestination: (v) => v === null || typeof v === "string",
   probeTimeoutMs: (v) => typeof v === "number" && v >= 200 && v <= 30_000,
   onboarded: (v) => typeof v === "boolean",
+  storageIntroSeen: (v) => typeof v === "boolean",
 }
 
 export async function readSetting<K extends keyof Settings>(

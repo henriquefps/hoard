@@ -2,9 +2,15 @@
 
 # Hoard
 
-An SMB file client for Android. Save your **machines** once, each with every address it answers on (local network IP, Tailscale IP or MagicDNS name), and Hoard picks the one that is reachable right now. Browse shares and folders, pin favorite folders, and copy files to the phone's storage.
+A file manager for Android: the phone's own storage, USB drives and SD cards, and the shared folders of your computers over SMB. Save your **machines** once, each with every address it answers on (local network IP, Tailscale IP or MagicDNS name), and Hoard picks the one that is reachable right now. Browse shares and folders, pin favorite folders, and copy files to the phone's storage.
 
 Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; on Android the native Kotlin plugin (smbj, Storage Access Framework, WorkManager transfers) implements the same contract ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
+
+On Android (1.3.0, emulator): phone storage, a removable drive, favorites and machines; the first-run permission screen; the drive-connected notice; internal storage with thumbnails.
+
+| Home                                                                            | All files access                                                       | Drive connected                                                                | Internal storage                                                                   |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| ![Home](docs/screenshots/android/locations/home-phone-drive-machines-light.png) | ![Permission](docs/screenshots/android/locations/permission-light.png) | ![Notice](docs/screenshots/android/locations/drive-connected-notice-light.png) | ![Camera](docs/screenshots/android/locations/browse-internal-thumbnails-light.png) |
 
 On Android (1.0.0, real app against a Samba server):
 
@@ -24,6 +30,7 @@ More in [`docs/screenshots/`](docs/screenshots/) (every screen at 412×915 and 1
 
 ## Features
 
+- **Locations** ([ADR 0005](docs/adr/0005-locations.md)): the phone's internal storage and every USB drive or SD card are browsed like SMB shares, with the same features (sort, filter, search, thumbnails, multi-select, text editor, streaming to other apps, web viewer, favorites). The home screen lists **This phone** first (used/free bar per volume); drives appear and disappear live, with a "USB drive connected · Open" notice. Needs Android's **All files access** (explained on first launch, a Settings switch; Hoard is sideloaded, see the ADR for the Play Store implication); without it SMB keeps working and a drive can still be opened folder by folder through the system picker. `Android/data` and `Android/obb` are shown as not accessible (Android 11+). Ejecting happens in Android's storage settings (apps cannot eject). Copying between any locations is the next phase.
 - **Machines** with an ordered list of addresses (drag handle or Move up/down buttons, optional port). The address kind (local, Tailscale, other) is detected live from the host and local addresses sort first. New machines are prefilled from SMB servers found on the network (mDNS). **Test connection** tries every address and reports reachability, latency, sign-in and whether it is the same server. Passwords go only to the Android Keystore (`setCredentials`); on edit an empty password keeps the saved one.
 - **Automatic route detection** ([ADR 0002](docs/adr/0002-machines-addresses-route-detection.md), `src/features/route/engine.ts`): every address is probed in parallel, the first reachable one in priority order wins as soon as that is certain, then Hoard connects with the pinned **server GUID**. An address answered by another server (`GUID_MISMATCH`) is skipped like an unreachable one; the GUID is pinned on the first connect and can be cleared ("Re-pin"). Sessions are reused and reopened when they expire; routes are rechecked when the app resumes and when the network changes. **The route in use is always visible** ("Local · 192.168.1.155 · 8 ms") on the home screen, the machine list, the sidebar and the browser header.
 - **Browser**: shares, folders and files with a breadcrumb trail, Android back goes up a folder (or leaves selection mode first). Sort (name, size, date; folders first), filter by kind, search inside the folder, hidden files on demand. Card rows on phones, a table on desktop, virtualized for folders with thousands of entries. Image **thumbnails** load lazily for visible rows (4 at a time, cached). Tap to open: videos, music and large files **stream** to the app you pick (VLC starts at once and can seek, nothing is downloaded first), `.html` pages open in a built-in viewer with their folder served by a local web server so relative CSS/JS/images load (and "Open in browser" hands them to Chrome), small files are cached then opened ([ADR 0004](docs/adr/0004-streaming-and-local-web-server.md)); "Open with…" always shows the chooser; row menu or long press for download, rename, delete (recursive for folders, confirmed), copy path, add to favorites; multi-select for batch download and delete. Every error code has its own state and next step (wrong password → edit credentials, different server → explanation, unreachable → retry with the routes tried).
@@ -77,7 +84,9 @@ In the browser, data lives in a sql.js database saved to `localStorage`; run `lo
 ```
 src/
   plugins/smb/        HoardSmb plugin: definitions.ts (the contract), index.ts (registerPlugin),
-                      web.ts + mockData.ts (in-memory mock used by the browser and the tests)
+                      web.ts + mockData.ts + mockLocal.ts (in-memory mock used by the browser and the tests)
+  features/locations/ location ids, BrowseLocation (one place for SMB / device / volume calls),
+                      volumes provider + notices, phone storage cards, location error states
   db/                 Db interface, Capacitor and sql.js adapters, migrations, queries, demo seed
   lib/                addressKind, pickRoute, files (kinds, sort, filter), format, taskQueue, theme,
                       text/ (encodings, line endings, Markdown link resolution, CSV)
@@ -92,7 +101,8 @@ src/
   i18n/               i18next setup, locales/en.json, locales/pt-BR.json
 android/              Capacitor Android project; app/src/main/java/dev/hfps/hoard/smb/ is the native plugin
                       (sessions, srvsvc, credentials, NSD, SAF; transfer/ = WorkManager jobs; viewer/ = open + thumbnails;
-                      stream/ = streaming provider, local web server, web viewer)
+                      stream/ = streaming provider, local web server, web viewer; location/ = HoardFs with
+                      SMB, path and SAF implementations, volumes, volume events)
 docs/testing/samba/   disposable Samba server for the opt-in native integration test
 docs/adr/             architecture decisions
 ```

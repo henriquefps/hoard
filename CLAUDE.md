@@ -1,6 +1,7 @@
 # Hoard: notes for agents
 
-SMB file client for Android (Capacitor 8 + React). Read `README.md` and `docs/adr/` first.
+File manager for Android (Capacitor 8 + React): SMB shares, the phone's storage, USB drives and SD
+cards, all as _locations_ (ADR 0005). Read `README.md` and `docs/adr/` first.
 
 ## Commands
 
@@ -34,6 +35,12 @@ SMB file client for Android (Capacitor 8 + React). Read `README.md` and `docs/ad
   the same PR: `definitions.ts`, the web mock (`web.ts` + `mockData.ts`, with tests in
   `web.test.ts`) and the Kotlin plugin (`android/app/src/main/java/dev/hfps/hoard/smb/`, including
   `ErrorCode.kt`). Every rejection carries a `HoardSmbErrorCode` in `error.code`.
+- **Locations** (ADR 0005): file calls take a `location` (`LocationRef`); pages work through
+  `BrowseLocation.run` (`src/features/locations/useBrowseLocation.ts`), never with a raw
+  `sessionId`. Route ids: machine id, `device`, `vol-<uuid>`. Native file operations go through
+  `HoardFs` (`smb/location/`: `SmbFs`, `PathFs`, `SafFs`).
+- Emulator volumes: `adb shell sm set-virtual-disk true` + `sm partition disk:7,432 public` (pull
+  it out with `false`); see `docs/testing/locations.md`.
 - **Bytes never cross the bridge**: transfers, open and thumbnails work with native files and URLs.
 - **Passwords never go to SQLite or JS storage**: only `HoardSmb.setCredentials` (Android Keystore).
 - **Schema changes** append a migration to `src/db/migrations.ts` (never edit a released one) and

@@ -43,6 +43,8 @@ data class SmbEntry(
     val size: Long,
     val modifiedAt: String?,
     val isHidden: Boolean,
+    /** Local locations: Android/data or Android/obb on Android 11+ (listed, not openable). */
+    val restricted: Boolean = false,
 )
 
 /** An open session in the registry, with its connected disk shares. */

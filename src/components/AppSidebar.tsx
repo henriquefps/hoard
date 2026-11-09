@@ -26,6 +26,9 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import { locationIdOfVolume } from "@/features/locations/ids"
+import { VolumeIcon } from "@/features/locations/VolumeIcon"
+import { useVolumes } from "@/features/locations/volumesContext"
 import { useMachineRoute } from "@/features/route/RouteProvider"
 import { overallProgress } from "@/features/transfers/TransfersViews"
 import { useTransfers } from "@/features/transfers/TransfersProvider"
@@ -49,6 +52,7 @@ export function AppSidebar() {
   })
   const favorites = useLiveQuery(listFavorites)
   const machines = useLiveQuery(listMachines)
+  const { volumes } = useVolumes()
   const transfers = useTransfers()
   const active = overallProgress(transfers)?.count ?? 0
   const close = () => isMobile && setOpenMobile(false)
@@ -96,6 +100,71 @@ export function AppSidebar() {
         </SidebarGroup>
 
         <SidebarGroup>
+          <SidebarGroupLabel>{t("locations.thisPhone")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {(volumes ?? []).map((volume) => {
+                const id = locationIdOfVolume(volume)
+                const label = volume.primary ? t("locations.internal") : volume.label
+                return (
+                  <SidebarMenuItem key={id}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={pathname === `/browse/${id}` && !search.path}
+                    >
+                      <Link
+                        to="/browse/$locationId"
+                        params={{ locationId: id }}
+                        onClick={close}
+                        title={label}
+                      >
+                        <VolumeIcon kind={volume.kind} />
+                        <span className="truncate">{label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>{t("nav.favorites")}</SidebarGroupLabel>
+          <SidebarGroupContent>
+            {favorites && favorites.length === 0 && (
+              <p className="px-2 text-sm text-muted-foreground">{t("nav.noFavorites")}</p>
+            )}
+            <SidebarMenu>
+              {favorites?.map((favorite) => {
+                const active =
+                  pathname === `/browse/${favorite.location_id}` &&
+                  (search.share ?? "") === favorite.share &&
+                  (search.path ?? "") === favorite.path
+                return (
+                  <SidebarMenuItem key={favorite.id}>
+                    <SidebarMenuButton asChild isActive={active}>
+                      <Link
+                        to="/browse/$locationId"
+                        params={{ locationId: favorite.location_id }}
+                        search={{
+                          share: favorite.share || undefined,
+                          path: favorite.path || undefined,
+                        }}
+                        onClick={close}
+                        title={favorite.label}
+                      >
+                        <FolderSimpleStarIcon />
+                        <span className="truncate">{favorite.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                )
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarGroup>
           <SidebarGroupLabel>{t("nav.machines")}</SidebarGroupLabel>
           <SidebarGroupAction asChild title={t("machines.add")}>
             <Link to="/machines/new" onClick={close} aria-label={t("machines.add")}>
@@ -115,39 +184,6 @@ export function AppSidebar() {
                   onNavigate={close}
                 />
               ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>{t("nav.favorites")}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            {favorites && favorites.length === 0 && (
-              <p className="px-2 text-sm text-muted-foreground">{t("nav.noFavorites")}</p>
-            )}
-            <SidebarMenu>
-              {favorites?.map((favorite) => {
-                const active =
-                  pathname === `/browse/${favorite.machine_id}` &&
-                  search.share === favorite.share &&
-                  (search.path ?? "") === favorite.path
-                return (
-                  <SidebarMenuItem key={favorite.id}>
-                    <SidebarMenuButton asChild isActive={active}>
-                      <Link
-                        to="/browse/$machineId"
-                        params={{ machineId: favorite.machine_id }}
-                        search={{ share: favorite.share, path: favorite.path || undefined }}
-                        onClick={close}
-                        title={favorite.label}
-                      >
-                        <FolderSimpleStarIcon />
-                        <span className="truncate">{favorite.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                )
-              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -178,8 +214,8 @@ function SidebarMachine({
     <SidebarMenuItem>
       <SidebarMenuButton asChild isActive={active} className="h-auto min-h-8 py-1.5">
         <Link
-          to="/browse/$machineId"
-          params={{ machineId: machine.id }}
+          to="/browse/$locationId"
+          params={{ locationId: machine.id }}
           onClick={onNavigate}
           title={`${machine.name} · ${status}`}
         >

@@ -1,8 +1,7 @@
 import { PlayIcon } from "@phosphor-icons/react"
 import { useEffect, useRef, useState } from "react"
 import { FileIcon } from "@/components/FileIcon"
-import type { MachineWithAddresses } from "@/db/types"
-import { useRouteEngine } from "@/features/route/RouteProvider"
+import type { BrowseLocation } from "@/features/locations/useBrowseLocation"
 import { type FileKind, hasThumbnail } from "@/lib/files"
 import { TaskQueue } from "@/lib/taskQueue"
 import { cn } from "@/lib/utils"
@@ -18,27 +17,24 @@ const SIZE = 96
  * Observer, then the shared queue). Falls back to the kind icon while loading or when it fails.
  */
 export function Thumbnail({
-  machine,
-  share,
+  location,
   entry,
   kind,
   className,
 }: {
-  machine: MachineWithAddresses
-  share: string
+  location: BrowseLocation
   entry: SmbEntry
   kind: FileKind
   className?: string
 }) {
-  const engine = useRouteEngine()
   const wanted = hasThumbnail(entry)
-  const key = `${machine.id}|${share}|${entry.path}|${entry.modifiedAt ?? ""}|${SIZE}`
+  const key = `${location.cacheKey}|${entry.path}|${entry.modifiedAt ?? ""}|${entry.size}|${SIZE}`
   const [loaded, setLoaded] = useState<{ key: string; src: string | undefined }>()
   const src = loaded?.key === key ? loaded.src : wanted ? queue.peek(key) : undefined
   const ref = useRef<HTMLSpanElement>(null)
-  const machineRef = useRef(machine)
+  const locationRef = useRef(location)
   useEffect(() => {
-    machineRef.current = machine
+    locationRef.current = location
   })
 
   useEffect(() => {
@@ -56,9 +52,9 @@ export function Thumbnail({
           .get(
             key,
             () =>
-              engine
-                .withSession(machineRef.current, (sessionId) =>
-                  HoardSmb.thumbnail({ sessionId, share, path: entry.path, maxSize: SIZE })
+              locationRef.current
+                .run((loc) =>
+                  HoardSmb.thumbnail({ location: loc, path: entry.path, maxSize: SIZE })
                 )
                 .then((result) => result.src),
             controller.signal
@@ -75,7 +71,7 @@ export function Thumbnail({
       observer.disconnect()
       controller.abort()
     }
-  }, [engine, key, share, entry.path, wanted])
+  }, [key, entry.path, wanted])
 
   return (
     <span ref={ref} className={cn("relative inline-flex size-10 shrink-0", className)}>

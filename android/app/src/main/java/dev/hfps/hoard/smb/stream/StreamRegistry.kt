@@ -26,7 +26,7 @@ enum class StreamKind {
 class StreamEntry(
     val token: String,
     val kind: StreamKind,
-    val source: SmbSource,
+    val source: StreamSource,
     /** Share-relative path of the file, or of the served folder. */
     val path: String,
     /** File name (FILE) or the opened page's name (FOLDER), for the notification. */

@@ -2,4 +2,12 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- HoardSmb.openFile: files downloaded to cache/open/ are shared with the viewing app. -->
     <cache-path name="open" path="open/" />
+    <!--
+      Locations (ADR 0005): files on the phone's storage, USB drives and SD cards are shared in place
+      (one-off read grant per opened file, never a listing). The primary storage first; removable
+      volumes live under /storage/<uuid> (and /mnt/media_rw on some older phones).
+    -->
+    <external-path name="device" path="." />
+    <root-path name="storage" path="storage/" />
+    <root-path name="media" path="mnt/" />
 </paths>

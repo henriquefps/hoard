@@ -36,7 +36,7 @@ async function insertMachines(db: Db, machines: readonly SeedMachine[]) {
       machine.id
     )
     for (const favorite of machine.favorites) {
-      await addFavorite(db, { machineId: machine.id, ...favorite })
+      await addFavorite(db, { locationId: machine.id, machineId: machine.id, ...favorite })
     }
   }
 }

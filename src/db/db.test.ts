@@ -34,8 +34,8 @@ async function freshDb(): Promise<Db> {
 
 describe("migrations", () => {
   it("plans every migration for a new database and none at the latest version", () => {
-    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2])
-    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2])
+    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3])
+    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3])
     expect(pendingMigrations(LATEST_VERSION)).toEqual([])
   })
 
@@ -59,6 +59,67 @@ describe("migrations", () => {
         "manual_shares",
       ])
     )
+  })
+
+  it("v3 keeps every v2 favorite as an SMB location favorite and adds local ones", async () => {
+    // A database as 1.2.x left it: version 2, two favorites on one machine.
+    const db = sqljsDb(new SQL.Database())
+    await db.execute("PRAGMA foreign_keys = ON")
+    for (const migration of pendingMigrations(0).filter((m) => m.version <= 2)) {
+      await db.execute(migration.sql)
+      await db.execute(`PRAGMA user_version = ${migration.version}`)
+    }
+    await db.run("INSERT INTO machines (id, name) VALUES ('m1', 'cachyos-fps')")
+    await db.run(
+      "INSERT INTO favorites (id, machine_id, share, path, label, sort_order, created_at) VALUES ('f1', 'm1', 'media', 'Movies', 'Films', 1, '2026-01-01T00:00:00.000Z'), ('f2', 'm1', 'media', '', 'media', 0, '2026-01-02T00:00:00.000Z')"
+    )
+    await migrate(db)
+    const rows = await listFavorites(db)
+    expect(rows.map((f) => [f.id, f.location_id, f.machine_id, f.share, f.path, f.label])).toEqual([
+      ["f2", "m1", "m1", "media", "", "media"],
+      ["f1", "m1", "m1", "media", "Movies", "Films"],
+    ])
+    // Local favorites: no machine; the same folder twice is one favorite.
+    const usb = await addFavorite(db, {
+      locationId: "vol-1A2B-3C4D",
+      machineId: null,
+      share: "",
+      path: "DCIM/100MSDCF",
+      label: "100MSDCF",
+    })
+    await addFavorite(db, {
+      locationId: "vol-1A2B-3C4D",
+      machineId: null,
+      share: "",
+      path: "DCIM/100MSDCF",
+      label: "Sony",
+    })
+    await addFavorite(db, {
+      locationId: "device",
+      machineId: null,
+      share: "",
+      path: "DCIM",
+      label: "DCIM",
+    })
+    expect((await listFavorites(db)).find((f) => f.id === usb)?.label).toBe("Sony")
+    expect((await listFavorites(db)).length).toBe(4)
+    // A local location id with a machine, or an SMB one without, is refused.
+    await expect(
+      db.run(
+        "INSERT INTO favorites (id, location_id, machine_id, share, path, label) VALUES ('x', 'device', 'm1', '', 'a', 'a')"
+      )
+    ).rejects.toThrow()
+    await expect(
+      db.run(
+        "INSERT INTO favorites (id, location_id, machine_id, share, path, label) VALUES ('y', 'm1', NULL, 'media', 'a', 'a')"
+      )
+    ).rejects.toThrow()
+    // Deleting the machine removes only its favorites.
+    await deleteMachine(db, "m1")
+    expect((await listFavorites(db)).map((f) => f.location_id).sort()).toEqual([
+      "device",
+      "vol-1A2B-3C4D",
+    ])
   })
 
   it("has no column that could hold a password", async () => {
@@ -125,12 +186,14 @@ describe("queries", () => {
   it("dedupes favorites and cascades machine deletion", async () => {
     const id = await saveMachine(db, { name: "m", username: "u", addresses: [] })
     const f1 = await addFavorite(db, {
+      locationId: id,
       machineId: id,
       share: "media",
       path: "Movies",
       label: "Movies",
     })
     const f2 = await addFavorite(db, {
+      locationId: id,
       machineId: id,
       share: "media",
       path: "Movies",

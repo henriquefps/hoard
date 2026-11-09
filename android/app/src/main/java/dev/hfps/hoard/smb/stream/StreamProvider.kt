@@ -64,7 +64,7 @@ class StreamProvider : ContentProvider() {
     private fun openProxy(entry: StreamEntry): ParcelFileDescriptor {
         val storage = context!!.getSystemService(StorageManager::class.java)
         val thread = HandlerThread("hoard-stream-fd").apply { start() }
-        val reader = RemoteReader(entry.source, entry.path, entry.size, entry.fetched)
+        val reader = entry.source.reader(entry.path, entry.size, entry.fetched)
         entry.openFds.incrementAndGet()
         entry.touch()
         try {
@@ -84,7 +84,7 @@ class StreamProvider : ContentProvider() {
     @RequiresApi(Build.VERSION_CODES.O)
     private class Callback(
         private val entry: StreamEntry,
-        private val reader: RemoteReader,
+        private val reader: StreamReader,
         private val thread: HandlerThread,
     ) : ProxyFileDescriptorCallback() {
 

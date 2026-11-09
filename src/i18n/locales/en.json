@@ -189,7 +189,9 @@
       "UNKNOWN": "Something went wrong",
       "TOO_LARGE": "Too large",
       "NOT_TEXT": "Not text",
-      "CONFLICT": "Changed elsewhere"
+      "CONFLICT": "Changed elsewhere",
+      "STORAGE_PERMISSION": "No access to the phone's files",
+      "UNAVAILABLE": "Drive not available"
     }
   },
   "errors": {
@@ -254,6 +256,14 @@
     "CONFLICT": {
       "title": "Changed on the server",
       "body": "Someone saved this file after you opened it."
+    },
+    "STORAGE_PERMISSION": {
+      "title": "No access to this phone's files",
+      "body": "Allow all files access to browse it."
+    },
+    "UNAVAILABLE": {
+      "title": "The drive is not available",
+      "body": "It was unplugged or ejected. Connect it again and retry."
     }
   },
   "browse": {
@@ -348,7 +358,9 @@
       "TIMEOUT": "Lost the connection while opening",
       "AUTH_FAILED": "Sign-in failed while opening",
       "GUID_MISMATCH": "Another server answered on this address",
-      "UNKNOWN": "Could not open the file"
+      "UNKNOWN": "Could not open the file",
+      "STORAGE_PERMISSION": "Allow all files access to open it",
+      "UNAVAILABLE": "The drive was disconnected"
     },
     "newTextFile": "New text file",
     "fileName": "File name",
@@ -365,7 +377,8 @@
     "addedByName": "Added by name",
     "removeShare": "Remove from list",
     "shareRemoved": "{{name}} removed from the list",
-    "openShareByNameTitle": "Open share by name"
+    "openShareByNameTitle": "Open share by name",
+    "restrictedShort": "Not accessible"
   },
   "fileKind": {
     "folder": "Folder",
@@ -491,7 +504,15 @@
       "offline": "Offline"
     },
     "worstCase": "Worst-case data",
-    "worstCaseHint": "Adds 18 machines with very long, unicode and one-letter names, a folder with 5,000 entries, a 1.4 TB file and a transfer that fails mid-way."
+    "worstCaseHint": "Adds 18 machines with very long, unicode and one-letter names, a folder with 5,000 entries, a 1.4 TB file and a transfer that fails mid-way.",
+    "storage": "Phone storage",
+    "storageAccess": "All files access",
+    "storageGranted": "Allowed: Hoard can browse the phone, USB drives and SD cards.",
+    "storageDenied": "Off: only your machines and drives you pick one by one.",
+    "storageManage": "Change",
+    "volumes": "Simulated drives",
+    "volumesHint": "Plug in or pull out the mock USB drive and SD card; the home screen and notices follow live.",
+    "mockStorageAccess": "Simulated all files access"
   },
   "theme": {
     "label": "Theme",
@@ -610,6 +631,78 @@
     "shareReadOnlyAnonymous": "This share is read-only for this account.",
     "folderReadOnlyAnonymous": "This folder is read-only for this account.",
     "fileReadOnly": "Read-only: {{user}} can open this file but not change it on the server.",
-    "fileReadOnlyAnonymous": "Read-only: this account can open this file but not change it on the server."
+    "fileReadOnlyAnonymous": "Read-only: this account can open this file but not change it on the server.",
+    "driveReadOnly": "This drive is read-only.",
+    "localFolderReadOnly": "Android does not let apps change this folder.",
+    "localFileReadOnly": "Read-only: this file is on a read-only drive or folder."
+  },
+  "locations": {
+    "thisPhone": "This phone",
+    "internal": "Internal storage",
+    "drive": "Drive",
+    "disconnectedDrive": "Drive not connected",
+    "connectHint": "Plug in a USB drive or an SD card reader and it shows up here.",
+    "accessCardTitle": "Allow access to this phone's files",
+    "accessCardBody": "Needed to browse the internal storage, USB drives and SD cards. Machines work without it.",
+    "accessCardAction": "Allow access",
+    "state": {
+      "checking": "Checking…",
+      "ejecting": "Ejecting…",
+      "unmounted": "Not mounted",
+      "unmountable": "Can't read this drive's format"
+    },
+    "readOnlyDrive": "Read-only",
+    "freeOf": "{{free}} free of {{total}}",
+    "free": "{{free}} free",
+    "usedPercent": "{{percent}}% used",
+    "actionsFor": "Actions for {{name}}",
+    "ejectInSettings": "Eject in Android settings",
+    "storageSettings": "Storage settings",
+    "notConnected": "Not connected",
+    "unplugged": "{{name}} was disconnected",
+    "usbConnected": "USB drive connected",
+    "sdConnected": "SD card connected",
+    "driveConnected": "Drive connected",
+    "open": "Open",
+    "backHome": "Back to home",
+    "goUp": "Go up a folder",
+    "permission": {
+      "title": "Hoard can't see this phone's files yet",
+      "body": "Allow all files access to browse the internal storage. Your machines keep working without it.",
+      "volumeBody": "Allow all files access, or give Hoard a folder on this drive (DCIM, for example) through Android's folder picker. Android does not let apps pick a whole drive.",
+      "allow": "Allow all files access",
+      "allowRuntime": "Allow storage access",
+      "picker": "Choose a folder on this drive"
+    },
+    "unavailable": {
+      "title": "{{name}} is not available",
+      "body": "It was unplugged or ejected, or Android is still checking it. Connect it again and retry."
+    },
+    "restricted": {
+      "title": "Android keeps this folder private",
+      "body": "Since Android 11, Android/data and Android/obb belong to each app. No file manager can open them, even with all files access."
+    }
+  },
+  "storageAccess": {
+    "pageTitle": "Phone storage",
+    "title": "Let Hoard browse this phone",
+    "body": "Hoard is a file manager: besides your computers, it opens the phone's own storage, USB drives and SD cards. Android calls this \"All files access\".",
+    "point1Title": "Your folders, as they are",
+    "point1Body": "DCIM, Download, Documents and every other folder, with thumbnails, search and the text editor.",
+    "point2Title": "USB drives and SD cards",
+    "point2Body": "Plug in a camera card reader or a USB stick and open it right away.",
+    "point3Title": "Only what you ask for",
+    "point3Body": "Hoard reads or changes files only when you tap. Nothing is uploaded anywhere.",
+    "step1": "Tap Open settings.",
+    "step2": "Turn on \"Allow access to manage all files\" for Hoard.",
+    "step3": "Come back with the back button.",
+    "stepRuntime": "Tap Allow storage access and accept Android's question.",
+    "openSettings": "Open settings",
+    "allowRuntime": "Allow storage access",
+    "notNow": "Not now",
+    "smbNote": "Without it, your SMB machines work as before; USB drives can still be opened one at a time through Android's folder picker.",
+    "grantedTitle": "All set",
+    "grantedBody": "Hoard can browse this phone's storage, USB drives and SD cards.",
+    "continue": "Continue"
   }
 }

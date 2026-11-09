@@ -16,7 +16,9 @@ enum class ErrorCode {
     UNKNOWN,
     TOO_LARGE,
     NOT_TEXT,
-    CONFLICT;
+    CONFLICT,
+    STORAGE_PERMISSION,
+    UNAVAILABLE;
 
     companion object {
         fun fromName(name: String?): ErrorCode = entries.firstOrNull { it.name == name } ?: UNKNOWN

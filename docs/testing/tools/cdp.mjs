@@ -5,7 +5,11 @@ const adb = `${process.env.HOME}/Library/Android/sdk/platform-tools/adb -s ${pro
 const pid = execSync(`${adb} shell pidof dev.hfps.hoard`).toString().trim().split(/\s+/)[0]
 execSync(`${adb} forward tcp:9333 localabstract:webview_devtools_remote_${pid}`)
 const pages = await (await fetch("http://127.0.0.1:9333/json")).json()
-const page = pages.find((p) => p.type === "page") ?? pages[0]
+// The app's own WebView (https://localhost), not the web viewer's pages.
+const page =
+  pages.find((p) => p.type === "page" && p.url.startsWith("https://localhost")) ??
+  pages.find((p) => p.type === "page") ??
+  pages[0]
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 await new Promise((r) => (ws.onopen = r))
 const expr = process.argv[2]

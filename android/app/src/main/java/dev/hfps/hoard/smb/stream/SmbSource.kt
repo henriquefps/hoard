@@ -25,6 +25,31 @@ import java.util.EnumSet
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * What a stream token or a served folder reads from: an SMB share ([SmbSource], its own
+ * connection) or a local location (`location.LocalStreamSource`). Thread-safe; one
+ * [StreamReader] per file descriptor or HTTP response.
+ */
+interface StreamSource : Closeable {
+    /** Name of the source's root for the directory index (the share, the volume). */
+    val label: String
+
+    /** Metadata of [path], or null when it does not exist. Folders included. */
+    fun stat(path: String): RemoteFileInfo?
+
+    /** Names in folder [path] (`isDirectory` per entry). */
+    fun list(path: String): List<Pair<String, Boolean>>
+
+    /** Random-access reads of the file at [path] ([size] bytes); [fetched] counts bytes read from storage. */
+    fun reader(path: String, size: Long, fetched: AtomicLong): StreamReader
+}
+
+/** Random-access reads of one file. Not thread-safe: one per FD or per HTTP response. */
+interface StreamReader : Closeable {
+    /** Up to [length] bytes at [offset] into [out] at [outOffset]; fewer only at the end, 0 past it. */
+    fun read(offset: Long, length: Int, out: ByteArray, outOffset: Int = 0): Int
+}
+
 /** One address of the machine, in priority order (the route in use first). */
 data class StreamAddress(val host: String, val port: Int)
 
@@ -42,7 +67,11 @@ class SmbSource(
     private val expectedServerGuid: String?,
     val share: String,
     private val credentials: (String) -> SmbCredentials?,
-) : Closeable {
+) : StreamSource {
+
+    override val label: String get() = share
+
+    override fun reader(path: String, size: Long, fetched: AtomicLong): StreamReader = RemoteReader(this, path, size, fetched)
 
     private var handle: SmbHandle? = null
     private var diskShare: DiskShare? = null
@@ -127,7 +156,7 @@ class SmbSource(
     }
 
     /** Metadata of [path], or null when it does not exist. Folders included. */
-    fun stat(path: String): RemoteFileInfo? = try {
+    override fun stat(path: String): RemoteFileInfo? = try {
         val info = share().getFileInformation(SmbPaths.toSmb(path))
         RemoteFileInfo(
             size = info.standardInformation.endOfFile,
@@ -139,7 +168,7 @@ class SmbSource(
     }
 
     /** Names in folder [path] (`isDirectory` per entry), for the optional directory index. */
-    fun list(path: String): List<Pair<String, Boolean>> =
+    override fun list(path: String): List<Pair<String, Boolean>> =
         share().list(SmbPaths.toSmb(path))
             .filter { it.fileName != "." && it.fileName != ".." }
             .map { it.fileName to ((it.fileAttributes and DIRECTORY_ATTRIBUTE) != 0L) }
@@ -185,7 +214,7 @@ class RemoteReader(
     val size: Long,
     /** Adds every byte fetched from the server (read-ahead included): the stream statistics. */
     private val fetched: AtomicLong = AtomicLong(),
-) : Closeable {
+) : StreamReader {
 
     private var file: SmbFile? = null
     private var generation = -1
@@ -202,7 +231,7 @@ class RemoteReader(
      * Read up to [length] bytes at [offset] into [out] at [outOffset]. Returns the count (fewer only
      * at the end of the file; 0 at or past the end).
      */
-    fun read(offset: Long, length: Int, out: ByteArray, outOffset: Int = 0): Int {
+    override fun read(offset: Long, length: Int, out: ByteArray, outOffset: Int): Int {
         if (offset >= size || length <= 0) return 0
         val wanted = minOf(length.toLong(), size - offset).toInt()
         var done = 0

@@ -6,6 +6,7 @@ import {
   GithubLogoIcon,
   ScalesIcon,
 } from "@phosphor-icons/react"
+import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -30,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useDb } from "@/db/DbProvider"
+import { useVolumes } from "@/features/locations/volumesContext"
 import { Section } from "@/features/machines/actions"
 import { useRouteEngine } from "@/features/route/RouteProvider"
 import {
@@ -211,6 +213,8 @@ export function SettingsPage() {
           </FieldGroup>
         </Section>
 
+        <StorageSettings />
+
         <Section title={t("settings.downloads")}>
           <FieldGroup>
             <Field>
@@ -345,9 +349,88 @@ function Destinations() {
   )
 }
 
+/** All files access: its state and the way to change it (ADR 0005). */
+function StorageSettings() {
+  const { t } = useTranslation()
+  const { access } = useVolumes()
+  return (
+    <Section title={t("settings.storage")}>
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldLabel>{t("settings.storageAccess")}</FieldLabel>
+          <FieldDescription>
+            {access === undefined ? (
+              <Skeleton className="h-4 w-48" />
+            ) : access.granted ? (
+              t("settings.storageGranted")
+            ) : (
+              t("settings.storageDenied")
+            )}
+          </FieldDescription>
+        </FieldContent>
+        {access?.granted ? (
+          <Button variant="outline" onClick={() => void HoardSmb.openStorageSettings()}>
+            {t("locations.storageSettings")}
+          </Button>
+        ) : (
+          <Button variant="outline" asChild>
+            <Link to="/storage-access">{t("settings.storageManage")}</Link>
+          </Button>
+        )}
+      </Field>
+    </Section>
+  )
+}
+
 type MockControls = {
   simulateNetwork: (network: "home" | "away" | "offline") => Promise<void> | void
   simulatedNetwork?: "home" | "away" | "offline"
+  simulateVolume: (uuid: string, attached: boolean) => void
+  simulateStorageAccess: (granted: boolean) => void
+  simulatedVolumes: { uuid: string; label: string; attached: boolean }[]
+}
+
+/** Browser build: plug the mock drives in and out, flip all files access. */
+function MockStorageTools() {
+  const { t } = useTranslation()
+  const { access } = useVolumes()
+  const mock = HoardSmb as unknown as MockControls
+  const [drives, setDrives] = useState(() => mock.simulatedVolumes ?? [])
+  return (
+    <>
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldLabel htmlFor="mock-storage-access">{t("settings.mockStorageAccess")}</FieldLabel>
+        </FieldContent>
+        <Switch
+          id="mock-storage-access"
+          checked={access?.granted ?? false}
+          onCheckedChange={(checked) => mock.simulateStorageAccess(checked)}
+        />
+      </Field>
+      <Field>
+        <FieldLabel>{t("settings.volumes")}</FieldLabel>
+        <div className="flex flex-col gap-2">
+          {drives.map((drive) => (
+            <Field key={drive.uuid} orientation="horizontal">
+              <FieldLabel htmlFor={`mock-${drive.uuid}`} className="font-normal">
+                {drive.label}
+              </FieldLabel>
+              <Switch
+                id={`mock-${drive.uuid}`}
+                checked={drive.attached}
+                onCheckedChange={(checked) => {
+                  mock.simulateVolume(drive.uuid, checked)
+                  setDrives(mock.simulatedVolumes)
+                }}
+              />
+            </Field>
+          ))}
+        </div>
+        <FieldDescription>{t("settings.volumesHint")}</FieldDescription>
+      </Field>
+    </>
+  )
 }
 
 /** Browser build only: simulated network and the worst-case data set (break-ui pass). */
@@ -389,6 +472,7 @@ function DeveloperTools() {
           </ToggleGroup>
           <FieldDescription>{t("settings.networkHint")}</FieldDescription>
         </Field>
+        <MockStorageTools />
         <Field orientation="horizontal">
           <FieldContent>
             <FieldLabel htmlFor="worst-case">{t("settings.worstCase")}</FieldLabel>

@@ -189,7 +189,9 @@
       "UNKNOWN": "Algo deu errado",
       "TOO_LARGE": "Grande demais",
       "NOT_TEXT": "Não é texto",
-      "CONFLICT": "Alterado em outro lugar"
+      "CONFLICT": "Alterado em outro lugar",
+      "STORAGE_PERMISSION": "Sem acesso aos arquivos do telefone",
+      "UNAVAILABLE": "Unidade indisponível"
     }
   },
   "errors": {
@@ -254,6 +256,14 @@
     "CONFLICT": {
       "title": "Alterado no servidor",
       "body": "Alguém salvou este arquivo depois que você o abriu."
+    },
+    "STORAGE_PERMISSION": {
+      "title": "Sem acesso aos arquivos deste telefone",
+      "body": "Permita o acesso a todos os arquivos para navegar."
+    },
+    "UNAVAILABLE": {
+      "title": "A unidade não está disponível",
+      "body": "Foi desconectada ou ejetada. Conecte de novo e tente outra vez."
     }
   },
   "browse": {
@@ -348,7 +358,9 @@
       "TIMEOUT": "A conexão caiu ao abrir",
       "AUTH_FAILED": "O login falhou ao abrir",
       "GUID_MISMATCH": "Outro servidor respondeu neste endereço",
-      "UNKNOWN": "Não foi possível abrir o arquivo"
+      "UNKNOWN": "Não foi possível abrir o arquivo",
+      "STORAGE_PERMISSION": "Permita o acesso a todos os arquivos para abrir",
+      "UNAVAILABLE": "A unidade foi desconectada"
     },
     "newTextFile": "Novo arquivo de texto",
     "fileName": "Nome do arquivo",
@@ -365,7 +377,8 @@
     "addedByName": "Adicionado pelo nome",
     "removeShare": "Remover da lista",
     "shareRemoved": "{{name}} removido da lista",
-    "openShareByNameTitle": "Abrir compartilhamento pelo nome"
+    "openShareByNameTitle": "Abrir compartilhamento pelo nome",
+    "restrictedShort": "Sem acesso"
   },
   "fileKind": {
     "folder": "Pasta",
@@ -491,7 +504,15 @@
       "offline": "Sem rede"
     },
     "worstCase": "Dados de pior caso",
-    "worstCaseHint": "Adiciona 18 máquinas com nomes muito longos, em outros alfabetos e de uma letra, uma pasta com 5.000 itens, um arquivo de 1,4 TB e uma transferência que falha no meio."
+    "worstCaseHint": "Adiciona 18 máquinas com nomes muito longos, em outros alfabetos e de uma letra, uma pasta com 5.000 itens, um arquivo de 1,4 TB e uma transferência que falha no meio.",
+    "storage": "Armazenamento do telefone",
+    "storageAccess": "Acesso a todos os arquivos",
+    "storageGranted": "Permitido: o Hoard navega no telefone, em pendrives e cartões SD.",
+    "storageDenied": "Desligado: só suas máquinas e unidades escolhidas uma a uma.",
+    "storageManage": "Alterar",
+    "volumes": "Unidades simuladas",
+    "volumesHint": "Conecte ou remova o pendrive e o cartão SD simulados; a tela inicial e os avisos acompanham ao vivo.",
+    "mockStorageAccess": "Acesso a todos os arquivos simulado"
   },
   "theme": {
     "label": "Tema",
@@ -610,6 +631,78 @@
     "shareReadOnlyAnonymous": "Este compartilhamento é somente leitura para esta conta.",
     "folderReadOnlyAnonymous": "Esta pasta é somente leitura para esta conta.",
     "fileReadOnly": "Somente leitura: {{user}} pode abrir este arquivo, mas não alterá-lo no servidor.",
-    "fileReadOnlyAnonymous": "Somente leitura: esta conta pode abrir este arquivo, mas não alterá-lo no servidor."
+    "fileReadOnlyAnonymous": "Somente leitura: esta conta pode abrir este arquivo, mas não alterá-lo no servidor.",
+    "driveReadOnly": "Esta unidade é somente leitura.",
+    "localFolderReadOnly": "O Android não deixa apps alterarem esta pasta.",
+    "localFileReadOnly": "Somente leitura: este arquivo está numa unidade ou pasta somente leitura."
+  },
+  "locations": {
+    "thisPhone": "Este telefone",
+    "internal": "Armazenamento interno",
+    "drive": "Unidade",
+    "disconnectedDrive": "Unidade não conectada",
+    "connectHint": "Conecte um pendrive ou um leitor de cartão SD e ele aparece aqui.",
+    "accessCardTitle": "Permitir acesso aos arquivos deste telefone",
+    "accessCardBody": "Necessário para navegar no armazenamento interno, pendrives e cartões SD. As máquinas funcionam sem isso.",
+    "accessCardAction": "Permitir acesso",
+    "state": {
+      "checking": "Verificando…",
+      "ejecting": "Ejetando…",
+      "unmounted": "Não montado",
+      "unmountable": "Formato desta unidade não é suportado"
+    },
+    "readOnlyDrive": "Somente leitura",
+    "freeOf": "{{free}} livres de {{total}}",
+    "free": "{{free}} livres",
+    "usedPercent": "{{percent}}% usado",
+    "actionsFor": "Ações de {{name}}",
+    "ejectInSettings": "Ejetar nas configurações do Android",
+    "storageSettings": "Configurações de armazenamento",
+    "notConnected": "Não conectado",
+    "unplugged": "{{name}} foi desconectado",
+    "usbConnected": "Pendrive conectado",
+    "sdConnected": "Cartão SD conectado",
+    "driveConnected": "Unidade conectada",
+    "open": "Abrir",
+    "backHome": "Voltar ao início",
+    "goUp": "Subir uma pasta",
+    "permission": {
+      "title": "O Hoard ainda não vê os arquivos deste telefone",
+      "body": "Permita o acesso a todos os arquivos para navegar no armazenamento interno. Suas máquinas continuam funcionando sem isso.",
+      "volumeBody": "Permita o acesso a todos os arquivos ou dê ao Hoard uma pasta desta unidade (DCIM, por exemplo) pelo seletor de pastas do Android. O Android não deixa apps escolherem a unidade inteira.",
+      "allow": "Permitir acesso a todos os arquivos",
+      "allowRuntime": "Permitir acesso ao armazenamento",
+      "picker": "Escolher uma pasta desta unidade"
+    },
+    "unavailable": {
+      "title": "{{name}} não está disponível",
+      "body": "Foi desconectado ou ejetado, ou o Android ainda está verificando. Conecte de novo e tente outra vez."
+    },
+    "restricted": {
+      "title": "O Android mantém esta pasta privada",
+      "body": "Desde o Android 11, Android/data e Android/obb pertencem a cada app. Nenhum gerenciador de arquivos consegue abri-las, nem com acesso a todos os arquivos."
+    }
+  },
+  "storageAccess": {
+    "pageTitle": "Armazenamento do telefone",
+    "title": "Deixe o Hoard navegar neste telefone",
+    "body": "O Hoard é um gerenciador de arquivos: além dos seus computadores, ele abre o armazenamento do próprio telefone, pendrives e cartões SD. O Android chama isso de \"Acesso a todos os arquivos\".",
+    "point1Title": "Suas pastas, do jeito que estão",
+    "point1Body": "DCIM, Download, Documentos e todas as outras pastas, com miniaturas, busca e o editor de texto.",
+    "point2Title": "Pendrives e cartões SD",
+    "point2Body": "Conecte um leitor de cartão da câmera ou um pendrive e abra na hora.",
+    "point3Title": "Só o que você pedir",
+    "point3Body": "O Hoard só lê ou altera arquivos quando você toca. Nada é enviado para lugar nenhum.",
+    "step1": "Toque em Abrir configurações.",
+    "step2": "Ative \"Permitir acesso para gerenciar todos os arquivos\" para o Hoard.",
+    "step3": "Volte com o botão voltar.",
+    "stepRuntime": "Toque em Permitir acesso ao armazenamento e aceite a pergunta do Android.",
+    "openSettings": "Abrir configurações",
+    "allowRuntime": "Permitir acesso ao armazenamento",
+    "notNow": "Agora não",
+    "smbNote": "Sem isso, suas máquinas SMB funcionam como antes; pendrives ainda podem ser abertos um por vez pelo seletor de pastas do Android.",
+    "grantedTitle": "Tudo pronto",
+    "grantedBody": "O Hoard pode navegar no armazenamento deste telefone, em pendrives e em cartões SD.",
+    "continue": "Continuar"
   }
 }

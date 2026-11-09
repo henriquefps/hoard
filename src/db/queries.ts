@@ -149,15 +149,24 @@ export async function listFavorites(db: Db, machineId?: string): Promise<Favorit
     : db.query<FavoriteRecord>("SELECT * FROM favorites ORDER BY sort_order, created_at")
 }
 
-/** Pins a folder; pinning the same machine + share + path again just renames it. Returns the id. */
+/**
+ * Pins a folder in any location; pinning the same location + share + path again just renames it.
+ * `machineId` is the machine for SMB (equal to `locationId`), null for local locations. Returns the id.
+ */
 export async function addFavorite(
   db: Db,
-  favorite: { machineId: string; share: string; path: string; label: string }
+  favorite: {
+    locationId: string
+    machineId: string | null
+    share: string
+    path: string
+    label: string
+  }
 ): Promise<string> {
   return db.transaction(async () => {
     const [existing] = await db.query<FavoriteRecord>(
-      "SELECT * FROM favorites WHERE machine_id = ? AND share = ? AND path = ?",
-      [favorite.machineId, favorite.share, favorite.path]
+      "SELECT * FROM favorites WHERE location_id = ? AND share = ? AND path = ?",
+      [favorite.locationId, favorite.share, favorite.path]
     )
     if (existing) {
       await db.run("UPDATE favorites SET label = ? WHERE id = ?", [favorite.label, existing.id])
@@ -168,8 +177,16 @@ export async function addFavorite(
       "SELECT COALESCE(MAX(sort_order) + 1, 0) AS next FROM favorites"
     )
     await db.run(
-      "INSERT INTO favorites (id, machine_id, share, path, label, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-      [id, favorite.machineId, favorite.share, favorite.path, favorite.label, next]
+      "INSERT INTO favorites (id, location_id, machine_id, share, path, label, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [
+        id,
+        favorite.locationId,
+        favorite.machineId,
+        favorite.share,
+        favorite.path,
+        favorite.label,
+        next,
+      ]
     )
     return id
   })
@@ -194,13 +211,13 @@ export async function reorderFavorites(db: Db, ids: string[]): Promise<void> {
 
 export async function findFavorite(
   db: Db,
-  machineId: string,
+  locationId: string,
   share: string,
   path: string
 ): Promise<FavoriteRecord | null> {
   const [row] = await db.query<FavoriteRecord>(
-    "SELECT * FROM favorites WHERE machine_id = ? AND share = ? AND path = ?",
-    [machineId, share, path]
+    "SELECT * FROM favorites WHERE location_id = ? AND share = ? AND path = ?",
+    [locationId, share, path]
   )
   return row ?? null
 }
