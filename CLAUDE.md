@@ -16,6 +16,9 @@ SMB file client for Android (Capacitor 8 + React). Read `README.md` and `docs/ad
   `ANDROID_SERIAL`); never install test builds on the owner's phone.
 - End-to-end testing against a real Samba: see `docs/testing/release-1.0.0.md` (container, routes
   through a killable throttled TCP proxy, driving the WebView over CDP in debug builds).
+- Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/app/src/main/cpp`): see
+  `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
+  `HOARD_ARW_DIR` JVM tests. Real photos are private: never commit them, use copies.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules

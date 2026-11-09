@@ -112,6 +112,7 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
+apply from: 'image-native.gradle'
 
 try {
     def servicesJSON = file('google-services.json')
