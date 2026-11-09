@@ -355,7 +355,17 @@
     "newTextFileDefault": "untitled.md",
     "fileCreated": "Created {{name}}",
     "newMenu": "New",
-    "openInViewer": "Open in Hoard"
+    "openInViewer": "Open in Hoard",
+    "openShareByName": "Open share by name…",
+    "openShareByNameBody": "For a shared folder this machine does not list. Hoard remembers it here once it opens.",
+    "shareName": "Share name",
+    "open": "Open",
+    "shareNameInvalid": "Enter a share name without \\ or /.",
+    "shareNotFound": "This machine has no share by that name, or does not let this account open it.",
+    "addedByName": "Added by name",
+    "removeShare": "Remove from list",
+    "shareRemoved": "{{name}} removed from the list",
+    "openShareByNameTitle": "Open share by name"
   },
   "fileKind": {
     "folder": "Folder",

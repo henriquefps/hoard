@@ -72,3 +72,38 @@ In the app (debug build, emulator, Mac at `10.0.2.2`): `henriquefps`, `Macintosh
 `StorageExtension` each show their own folders on one session.
 
 ![Macintosh HD in Hoard](shares-macos/emu-Macintosh_HD.png)
+
+## Follow-up: the Public folder share never appears
+
+The Mac also shares the user's Public folder (`sharing -l`: `smb shared: 1`, `guest access: 1`),
+but Hoard listed only `henriquefps`, `Macintosh HD` and `StorageExtension`.
+
+- **Not our decoding.** The raw NetrShareEnum reply (captured from `SrvSvc`, level 1, 300 bytes,
+  status 0, `TotalEntries` 4) holds exactly `IPC$`, `Macintosh HD`, `StorageExtension` and
+  `henriquefps`. `smbutil view //<user>@127.0.0.1` (macOS's own client) lists the same 4.
+- **macOS refuses it to this account.** TREE_CONNECT by exact name fails with
+  `STATUS_BAD_NETWORK_NAME` (NFC, NFD, lower case and `Public` all tried). The share point's access
+  group (`dscl . -read "/SharePoints/<name>" sharepoint_group_id` →
+  `com.apple.sharepoint.group.1`) has **no members**, and smbd neither lists nor serves a share to
+  an account outside that group. Guest access does not help, because the Mac's guest account is
+  off (`smbutil view -G` → authentication error).
+- **Fix on the Mac**: System Settings → General → Sharing → File Sharing → ⓘ → select the folder
+  → Users: add the account. From a terminal:
+  `sudo dseditgroup -o edit -a <user> -t user com.apple.sharepoint.group.1`. Then it is listed like
+  the others.
+- **In Hoard**: the shares screen has **Open share by name…** for shares a server serves but does
+  not list (Samba `browseable = no`, servers that deny enumeration). It opens the share's root to
+  check it exists, remembers it per machine (`manual_shares`, migration 2) and shows it with
+  "Added by name" until the server lists it itself. "Remove from list" forgets it. For the Mac case
+  above, it reports that the machine has no such share or this account may not open it.
+
+![Shares with one added by name (web mock)](shares-macos/open-share-by-name.png)
+
+### Other opens and the lease cache
+
+Only `DiskShare.list` and `DiskShare.openDirectory` go through smbj's `LeaseManager` (checked in the
+0.15.0 bytecode: no other class calls `getByPath`, `leaseKeyForPath` or builds a lease create
+context). `stat` (`getFileInformation`), reads (`openRead`), rename, mkdir and delete use plain
+CREATEs without a lease context, so they cannot collide across shares. On the Mac, statting and
+reading the first bytes of the same paths in all three shares on one connection (`.DS_Store`,
+`Library`, `Applications`, `Library/.localized`) matched a fresh connection every time.

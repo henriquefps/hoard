@@ -73,6 +73,18 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // Shares opened by name that the server does not list (NetShareEnum leaves them out).
+    version: 2,
+    sql: `
+      CREATE TABLE manual_shares (
+        machine_id TEXT NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+        name TEXT NOT NULL COLLATE NOCASE,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (machine_id, name)
+      );
+    `,
+  },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.at(-1)?.version ?? 0

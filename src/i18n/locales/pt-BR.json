@@ -355,7 +355,17 @@
     "newTextFileDefault": "sem-titulo.md",
     "fileCreated": "{{name}} criado",
     "newMenu": "Novo",
-    "openInViewer": "Abrir no Hoard"
+    "openInViewer": "Abrir no Hoard",
+    "openShareByName": "Abrir compartilhamento pelo nome…",
+    "openShareByNameBody": "Para uma pasta compartilhada que esta máquina não lista. O Hoard a guarda aqui depois que ela abrir.",
+    "shareName": "Nome do compartilhamento",
+    "open": "Abrir",
+    "shareNameInvalid": "Digite um nome de compartilhamento sem \\ ou /.",
+    "shareNotFound": "Esta máquina não tem um compartilhamento com esse nome, ou não deixa esta conta abri-lo.",
+    "addedByName": "Adicionado pelo nome",
+    "removeShare": "Remover da lista",
+    "shareRemoved": "{{name}} removido da lista",
+    "openShareByNameTitle": "Abrir compartilhamento pelo nome"
   },
   "fileKind": {
     "folder": "Pasta",

@@ -26,7 +26,7 @@ Every screen goes through one small query interface, `Db` (`src/db/db.ts`: `quer
   directly over jeep-sqlite (which wraps it in a web component plus IndexedDB) because it is less
   machinery and also runs in Node for the tests.
 
-Schema (v1), ids are TEXT UUIDs created by the app and shared with the native plugin:
+Schema (v2), ids are TEXT UUIDs created by the app and shared with the native plugin:
 
 | Table               | Columns                                                                                                                                                          |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,6 +35,7 @@ Schema (v1), ids are TEXT UUIDs created by the app and shared with the native pl
 | `favorites`         | id, machine_id → machines (cascade), share, path (`""` = root), label, sort_order, created_at; unique (machine_id, share, path)                                  |
 | `transfers`         | id, machine_id → machines (cascade), share, remote_path, dest_tree_uri, dest_name, dest_uri, size, bytes_done, state, error_code, error, created_at, finished_at |
 | `settings`          | key, value (JSON)                                                                                                                                                |
+| `manual_shares`     | machine_id → machines (cascade), name (`COLLATE NOCASE`), created_at; primary key (machine_id, name). v2: shares opened by name that the server does not list    |
 
 Known `settings` keys (no migration needed, the table is key/value; validated with defaults in
 `src/features/settings/settings.ts`): `showHiddenFiles`, `defaultSort` (`{ key, direction }`),

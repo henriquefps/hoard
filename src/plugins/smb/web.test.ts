@@ -75,6 +75,10 @@ describe("HoardSmbWeb", () => {
     const { sessionId } = await connectCachy()
     const { shares } = await smb.listShares({ sessionId })
     expect(shares.map((s) => s.name)).toEqual(["media", "photos", "homes"])
+    // An unlisted share is left out of the listing but opens by name (any letter case).
+    expect(
+      (await smb.list({ sessionId, share: "pasta pública", path: "" })).entries.map((e) => e.name)
+    ).toEqual(["Leia-me.txt"])
     const { entries } = await smb.list({ sessionId, share: "media", path: "Movies" })
     expect(entries.find((e) => e.name.startsWith("Blade"))?.size).toBeGreaterThan(8 * 1024 ** 3)
     expect(entries.every((e) => e.path.startsWith("Movies/"))).toBe(true)
