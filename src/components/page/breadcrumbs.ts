@@ -69,3 +69,21 @@ export function browseTrail(
   })
   return trail
 }
+
+/** Machines › <Machine> › <share> › folder… › <file>: the folder trail, then the file. */
+export function viewTrail(
+  t: TFunction,
+  machine: { id: string; name: string | undefined },
+  share: string,
+  path: string
+): Crumb[] {
+  const segments = path.split("/").filter(Boolean)
+  const folder = browseTrail(t, machine, share, segments.slice(0, -1).join("/"))
+  const current = folder[folder.length - 1]
+  current.link = {
+    to: "/browse/$machineId",
+    params: { machineId: machine.id },
+    search: { share, path: segments.slice(0, -1).join("/") || undefined },
+  }
+  return [...folder, { label: segments.at(-1) }]
+}

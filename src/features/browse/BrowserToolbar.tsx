@@ -2,6 +2,7 @@ import {
   ArrowDownIcon,
   ArrowsClockwiseIcon,
   ArrowUpIcon,
+  FilePlusIcon,
   FolderPlusIcon,
   MagnifyingGlassIcon,
   SortAscendingIcon,
@@ -13,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -56,6 +58,7 @@ export function BrowserToolbar({
   sort,
   onSort,
   onNewFolder,
+  onNewTextFile,
   onRefresh,
   refreshing,
   disabled,
@@ -67,6 +70,7 @@ export function BrowserToolbar({
   sort: SortOrder
   onSort: (sort: SortOrder) => void
   onNewFolder: () => void
+  onNewTextFile: () => void
   onRefresh: () => void
   refreshing: boolean
   disabled: boolean
@@ -180,16 +184,29 @@ export function BrowserToolbar({
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={onNewFolder}
-          aria-label={t("browse.newFolder")}
-          title={t("browse.newFolder")}
-          disabled={disabled}
-        >
-          <FolderPlusIcon />
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={t("browse.newMenu")}
+              title={t("browse.newMenu")}
+              disabled={disabled}
+            >
+              <FolderPlusIcon />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-48">
+            <DropdownMenuItem onSelect={onNewFolder}>
+              <FolderPlusIcon />
+              {t("browse.newFolder")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onNewTextFile}>
+              <FilePlusIcon />
+              {t("browse.newTextFile")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           variant="outline"
           size="icon"

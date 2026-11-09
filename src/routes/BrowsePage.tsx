@@ -1,10 +1,12 @@
 import {
-  ArrowSquareOutIcon,
   CheckSquareIcon,
   CopyIcon,
   DotsThreeVerticalIcon,
+  ArrowSquareOutIcon,
   DownloadSimpleIcon,
   EyeIcon,
+  FilePlusIcon,
+  FileTextIcon,
   FolderPlusIcon,
   HardDriveIcon,
   PencilSimpleIcon,
@@ -75,6 +77,7 @@ import {
 } from "@/lib/files"
 import { formatBytes, formatNumber } from "@/lib/format"
 import { goUp } from "@/lib/historyTrail"
+import { isTextFile, opensInViewer } from "@/lib/text/textFiles"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
 import type { SmbEntry, SmbShare } from "@/plugins/smb/definitions"
@@ -325,6 +328,7 @@ function ShareRow({ machine, share }: { machine: MachineWithAddresses; share: Sm
 
 type Dialog =
   | { kind: "newFolder" }
+  | { kind: "newTextFile" }
   | { kind: "rename"; entry: SmbEntry }
   | { kind: "delete"; entries: SmbEntry[] }
   | { kind: "download"; files: DownloadFile[]; folders: number }
@@ -435,8 +439,16 @@ function FolderView({
     await folder.refresh()
   }
 
+  function view(entry: SmbEntry, edit?: boolean) {
+    void navigate({
+      to: "/view/$machineId",
+      params: { machineId: machine.id },
+      search: { share, path: entry.path, edit },
+    })
+  }
+
   /**
-   * Tap: pages open in the web viewer with their folder served locally, media and large files
+   * Tap: text files open in the built-in viewer, pages open in the web viewer with their folder served locally, media and large files
    * stream to the chosen app, small files are cached then opened. "Open with…" (`withChooser`)
    * always shows the system chooser.
    */
@@ -447,6 +459,11 @@ function FolderView({
         params: { machineId: machine.id },
         search: { share, path: entry.path },
       })
+      return
+    }
+    // Text files up to the viewer's limit open in Hoard; "Open with…" in the row menu.
+    if (!withChooser && opensInViewer(entry)) {
+      view(entry)
       return
     }
     if (opening) return
@@ -524,6 +541,14 @@ function FolderView({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-48">
+        {!entry.isDirectory && isTextFile(entry.name) && (
+          <>
+            <DropdownMenuItem onSelect={() => view(entry)}>
+              <FileTextIcon />
+              {t("browse.openInViewer")}
+            </DropdownMenuItem>
+          </>
+        )}
         {!entry.isDirectory && (
           <DropdownMenuItem onSelect={() => void open(entry, true)}>
             <ArrowSquareOutIcon />
@@ -598,10 +623,14 @@ function FolderView({
           <EmptyTitle>{t("browse.emptyTitle")}</EmptyTitle>
           <EmptyDescription>{t("browse.emptyBody")}</EmptyDescription>
         </EmptyHeader>
-        <EmptyContent>
+        <EmptyContent className="flex-row flex-wrap justify-center">
           <Button variant="outline" onClick={() => setDialog({ kind: "newFolder" })}>
             <FolderPlusIcon data-icon="inline-start" />
             {t("browse.newFolder")}
+          </Button>
+          <Button variant="outline" onClick={() => setDialog({ kind: "newTextFile" })}>
+            <FilePlusIcon data-icon="inline-start" />
+            {t("browse.newTextFile")}
           </Button>
         </EmptyContent>
       </Empty>
@@ -710,6 +739,7 @@ function FolderView({
           sort={effectiveSort}
           onSort={setSort}
           onNewFolder={() => setDialog({ kind: "newFolder" })}
+          onNewTextFile={() => setDialog({ kind: "newTextFile" })}
           onRefresh={() => void refresh()}
           refreshing={folder.loading && Boolean(entries)}
           disabled={!entries}
@@ -744,6 +774,39 @@ function FolderView({
           }
           await refresh()
           toast.success(t("browse.folderCreated", { name }))
+        }}
+      />
+      <NameDialog
+        open={dialog?.kind === "newTextFile"}
+        onOpenChange={(o) => !o && setDialog(null)}
+        title={t("browse.newTextFile")}
+        label={t("browse.fileName")}
+        initialValue={t("browse.newTextFileDefault")}
+        submitLabel={t("common.create")}
+        selectBaseName
+        validate={validateName()}
+        onSubmit={async (name) => {
+          const clean = name.trim()
+          let created: SmbEntry
+          try {
+            const result = await run((sessionId) =>
+              HoardSmb.writeTextFile({
+                sessionId,
+                share,
+                path: path ? `${path}/${clean}` : clean,
+                text: "",
+                mode: "create",
+              })
+            )
+            created = result.entry
+          } catch (error) {
+            throw new Error(t(`errors.${smbErrorCode(error)}.title`, t("errors.UNKNOWN.title")), {
+              cause: error,
+            })
+          }
+          invalidateFolder(machine.id, share, path)
+          toast.success(t("browse.fileCreated", { name: clean }))
+          view(created, true)
         }}
       />
       <NameDialog

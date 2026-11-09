@@ -186,7 +186,10 @@
       "CANCELLED": "Cancelled",
       "PERMISSION_REVOKED": "Folder access lost",
       "NO_APP": "No app to open it",
-      "UNKNOWN": "Something went wrong"
+      "UNKNOWN": "Something went wrong",
+      "TOO_LARGE": "Too large",
+      "NOT_TEXT": "Not text",
+      "CONFLICT": "Changed elsewhere"
     }
   },
   "errors": {
@@ -239,7 +242,19 @@
       "body": "Try again in a moment."
     },
     "editCredentials": "Edit credentials",
-    "reviewMachine": "Review machine"
+    "reviewMachine": "Review machine",
+    "TOO_LARGE": {
+      "title": "File too large",
+      "body": "It is bigger than the built-in viewer loads."
+    },
+    "NOT_TEXT": {
+      "title": "Not a text file",
+      "body": "It holds binary data."
+    },
+    "CONFLICT": {
+      "title": "Changed on the server",
+      "body": "Someone saved this file after you opened it."
+    }
   },
   "browse": {
     "shares": "Shares",
@@ -334,7 +349,13 @@
       "AUTH_FAILED": "Sign-in failed while opening",
       "GUID_MISMATCH": "Another server answered on this address",
       "UNKNOWN": "Could not open the file"
-    }
+    },
+    "newTextFile": "New text file",
+    "fileName": "File name",
+    "newTextFileDefault": "untitled.md",
+    "fileCreated": "Created {{name}}",
+    "newMenu": "New",
+    "openInViewer": "Open in Hoard"
   },
   "fileKind": {
     "folder": "Folder",
@@ -487,5 +508,89 @@
     "title": "Page not found",
     "body": "This page does not exist.",
     "home": "Go home"
+  },
+  "text": {
+    "toolbar": "Text file",
+    "viewMode": "View",
+    "layouts": {
+      "editor": "Editor",
+      "split": "Split",
+      "preview": "Preview",
+      "table": "Table",
+      "source": "Source"
+    },
+    "preview": "Rendered document",
+    "editorLabel": "Contents of {{name}}",
+    "edit": "Edit",
+    "save": "Save",
+    "done": "Done",
+    "reload": "Reload",
+    "openWith": "Open with another app",
+    "find": "Find in file",
+    "noMatches": "No matches",
+    "matchOf": "{{current}} of {{count}}",
+    "previousMatch": "Previous match",
+    "nextMatch": "Next match",
+    "matchCase": "Match case",
+    "closeFind": "Close find",
+    "replaceWith": "Replace with",
+    "replace": "Replace",
+    "replaceAll": "Replace all",
+    "wrap": "Wrap lines",
+    "fontSize": "Text size",
+    "fontSizeValue": "{{size}} px",
+    "smaller": "Smaller",
+    "larger": "Larger",
+    "resetSize": "Default size",
+    "pretty": "Pretty",
+    "formatJson": "Format JSON",
+    "jsonInvalid": "This is not valid JSON",
+    "lines_one": "{{formatted}} line",
+    "lines_other": "{{formatted}} lines",
+    "encodings": {
+      "utf-8": "UTF-8",
+      "utf-8-bom": "UTF-8 with BOM",
+      "utf-16le": "UTF-16 LE",
+      "utf-16be": "UTF-16 BE",
+      "windows-1252": "Windows-1252"
+    },
+    "lineEndings": {
+      "lf": "LF",
+      "crlf": "CRLF",
+      "cr": "CR"
+    },
+    "readOnly": "Read-only",
+    "unsaved": "Unsaved",
+    "saved": "Saved {{name}}",
+    "savedAsCopy": "Saved as {{name}}",
+    "saveFailed": "Could not save {{name}}",
+    "savedAsUtf8": "Saved as UTF-8: {{encoding}} cannot hold some of the new characters",
+    "truncatedNotice": "Showing the first {{shown}} of {{size}}, read-only.",
+    "tooLargeTitle": "Too large to open here",
+    "tooLargeBody": "This file is {{size}}; the viewer opens files up to {{limit}}. Load the first part read-only, or open it with another app.",
+    "loadFirstPart": "Load the first {{limit}}",
+    "notTextTitle": "Not a text file",
+    "notTextBody": "It holds binary data. Open it with another app instead.",
+    "emptyFile": "This file is empty.",
+    "csvTruncated": "Showing the first {{count}} rows. Switch to Source for the rest.",
+    "copyCode": "Copy code",
+    "copied": "Copied",
+    "copyFailed": "Could not copy the code",
+    "mermaidError": "This diagram could not be drawn",
+    "mermaidRendering": "Drawing the diagram…",
+    "mermaidLabel": "Diagram",
+    "conflictTitle": "{{name}} changed on the server",
+    "conflictBody": "Someone saved it after you opened it (on {{date}}). Choose which version to keep.",
+    "deletedTitle": "{{name}} is gone from the server",
+    "deletedBody": "It was deleted or moved after you opened it. Save your text again, or as a copy.",
+    "reloadTheirs": "Reload theirs",
+    "overwrite": "Overwrite with mine",
+    "saveCopy": "Save mine as a copy",
+    "saveAgain": "Save again",
+    "unsavedTitle": "Save changes to {{name}}?",
+    "unsavedBody": "Your changes are not saved yet.",
+    "unsavedLeaveBody": "You are leaving the file with changes that are not saved yet.",
+    "keepEditing": "Keep editing",
+    "discard": "Discard"
   }
 }

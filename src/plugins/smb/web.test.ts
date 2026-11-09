@@ -331,3 +331,164 @@ describe("HoardSmbWeb", () => {
     })
   })
 })
+
+describe("HoardSmbWeb text files", () => {
+  const read = async (path: string, extra: { maxBytes?: number; truncate?: boolean } = {}) => {
+    const { sessionId } = await connectCachy()
+    return smb.readTextFile({ sessionId, share: "homes", path, ...extra })
+  }
+  const project = (name: string) => `henrique/Projects/hoard/${name}`
+
+  it("reads text with its encoding, size and modified time", async () => {
+    const notes = await read("henrique/Documents/notes.md")
+    expect(notes.text.startsWith("# Notes")).toBe(true)
+    expect(notes).toMatchObject({ encoding: "utf-8", truncated: false })
+    expect(notes.size).toBe(new TextEncoder().encode(notes.text).length)
+    expect(notes.modifiedAt).toMatch(/^2026-/)
+    expect((await read(project("latin1-relatorio.txt"))).encoding).toBe("windows-1252")
+    expect((await read(project("latin1-relatorio.txt"))).text).toContain(
+      "Relatório de manutenção — €"
+    )
+    expect((await read(project("utf16-notes.txt"))).encoding).toBe("utf-16le")
+    expect((await read(project("windows-crlf.txt"))).text).toContain("\r\n")
+    expect((await read(project("empty.txt"))).text).toBe("")
+  })
+
+  it("rejects binary files and files above the limit, or reads their first part", async () => {
+    expect(smbErrorCode(await read(project("firmware.txt")).catch((e) => e))).toBe("NOT_TEXT")
+    const tooLarge = await read(project("server-12mb.log")).catch((e) => e)
+    expect(smbErrorCode(tooLarge)).toBe("TOO_LARGE")
+    expect(tooLarge.data.size).toBeGreaterThan(12 * 1024 * 1024 - 100)
+    const head = await read(project("server-12mb.log"), { maxBytes: 1000, truncate: true })
+    expect(head.truncated).toBe(true)
+    expect(head.text.length).toBeLessThanOrEqual(1000)
+    expect(head.size).toBe(tooLarge.data.size)
+    const big = await read(project("100k-lines.log"))
+    expect(big.text.split("\n").length).toBe(100_001)
+  })
+
+  it("writes with conflict detection, create-only mode and the original encoding", async () => {
+    const { sessionId } = await connectCachy()
+    const path = project("windows-crlf.txt")
+    const before = await smb.readTextFile({ sessionId, share: "homes", path })
+    const saved = await smb.writeTextFile({
+      sessionId,
+      share: "homes",
+      path,
+      text: "new\r\ntext\r\n",
+      expectedModifiedAt: before.modifiedAt,
+    })
+    expect(saved.entry.modifiedAt).not.toBe(before.modifiedAt)
+    expect((await smb.readTextFile({ sessionId, share: "homes", path })).text).toBe(
+      "new\r\ntext\r\n"
+    )
+    // A second save with the old modified time is a conflict and changes nothing.
+    const conflict = await smb
+      .writeTextFile({
+        sessionId,
+        share: "homes",
+        path,
+        text: "x",
+        expectedModifiedAt: before.modifiedAt,
+      })
+      .catch((e) => e)
+    expect(smbErrorCode(conflict)).toBe("CONFLICT")
+    expect(conflict.data.modifiedAt).toBe(saved.entry.modifiedAt)
+    // Overwrite without a check always works.
+    await smb.writeTextFile({ sessionId, share: "homes", path, text: "forced" })
+    expect((await smb.readTextFile({ sessionId, share: "homes", path })).text).toBe("forced")
+
+    const latin = project("latin1-relatorio.txt")
+    const original = await smb.readTextFile({ sessionId, share: "homes", path: latin })
+    await smb.writeTextFile({
+      sessionId,
+      share: "homes",
+      path: latin,
+      text: original.text + "ç",
+      encoding: original.encoding,
+      expectedModifiedAt: original.modifiedAt,
+    })
+    expect(await smb.readTextFile({ sessionId, share: "homes", path: latin })).toMatchObject({
+      encoding: "windows-1252",
+      text: original.text + "ç",
+    })
+    const unencodable = await smb
+      .writeTextFile({
+        sessionId,
+        share: "homes",
+        path: latin,
+        text: "日本",
+        encoding: "windows-1252",
+      })
+      .catch((e) => e)
+    expect(smbErrorCode(unencodable)).toBe("UNKNOWN")
+
+    const created = await smb.writeTextFile({
+      sessionId,
+      share: "homes",
+      path: project("new.md"),
+      text: "",
+      mode: "create",
+    })
+    expect(created.entry).toMatchObject({ name: "new.md", size: 0, isDirectory: false })
+    const taken = await smb
+      .writeTextFile({
+        sessionId,
+        share: "homes",
+        path: project("new.md"),
+        text: "",
+        mode: "create",
+      })
+      .catch((e) => e)
+    expect(smbErrorCode(taken)).toBe("ALREADY_EXISTS")
+    const gone = await smb
+      .writeTextFile({
+        sessionId,
+        share: "homes",
+        path: project("missing.md"),
+        text: "",
+        expectedModifiedAt: "2026-01-01T00:00:00.000Z",
+      })
+      .catch((e) => e)
+    expect(smbErrorCode(gone)).toBe("CONFLICT")
+    expect(gone.data.modifiedAt).toBeNull()
+  })
+
+  it("simulates someone else editing the conflict demo file, and read-only shares", async () => {
+    const { sessionId } = await connectCachy()
+    const path = "henrique/Documents/shared-with-conflict.md"
+    const opened = await smb.readTextFile({ sessionId, share: "homes", path })
+    await new Promise((resolve) => setTimeout(resolve, 0)) // the colleague saves
+    const error = await smb
+      .writeTextFile({
+        sessionId,
+        share: "homes",
+        path,
+        text: "mine",
+        expectedModifiedAt: opened.modifiedAt,
+      })
+      .catch((e) => e)
+    expect(smbErrorCode(error)).toBe("CONFLICT")
+    const reloaded = await smb.readTextFile({ sessionId, share: "homes", path })
+    expect(reloaded.text).toContain("someone else")
+    await smb.writeTextFile({
+      sessionId,
+      share: "homes",
+      path,
+      text: "mine",
+      expectedModifiedAt: reloaded.modifiedAt,
+    })
+
+    const nas = await smb.connect({ machineId: "demo-nas-sala", host: "192.168.1.20" })
+    const readme = await smb.readTextFile({
+      sessionId: nas.sessionId,
+      share: "Public",
+      path: "README.txt",
+    })
+    expect(readme.text).toContain("Read-only")
+    const denied = await smb
+      .writeTextFile({ sessionId: nas.sessionId, share: "Public", path: "README.txt", text: "x" })
+      .catch((e) => e)
+    expect(smbErrorCode(denied)).toBe("ACCESS_DENIED")
+  })
+})

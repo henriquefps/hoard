@@ -11,10 +11,31 @@
  *  - office-pc: local address unreachable (other network), reached through a public name; it rejects
  *    the demo password (AUTH_FAILED) until the user saves the password "office".
  *  - 192.168.0.10 is somebody else's server: answers on 445 with a different GUID (GUID_MISMATCH).
+ *  - homes/henrique/Documents and Projects/hoard: text files for the built-in viewer and editor
+ *    (Markdown with every extension, code, CSV, CRLF, windows-1252, UTF-16, a binary ".txt", a file
+ *    someone else edits right after you open it ("conflict"), 100,000 lines, one huge line, a 12 MB
+ *    log). NAS-SALA's Public share is read-only.
  *  - lab (worst-case pass, seeded from Settings → Developer in the browser only): a folder with 5,000
  *    entries, unicode and very long names, a 1.4 TiB image, zero-byte files, missing dates, an empty
  *    share, a transfer that fails mid-way with no address left ("broken"), and 20 machines.
  */
+
+import {
+  CONFIG_YAML,
+  DATA_CSV,
+  DEPLOY_SH,
+  GENERATED_SIZES,
+  type GeneratedTextKey,
+  HOARD_README,
+  LATIN1_BYTES,
+  MAIN_KT,
+  NOTES_MD,
+  PACKAGE_JSON,
+  TODO_MD,
+  UTF16_BYTES,
+  WINDOWS_TXT,
+  BINARY_BYTES,
+} from "./mockText"
 
 export interface MockFile {
   name: string
@@ -24,6 +45,12 @@ export interface MockFile {
   children?: MockFile[]
   /** Folder content the account cannot read (`ACCESS_DENIED`). */
   denied?: boolean
+  /** File content for `readTextFile` (UTF-8). */
+  text?: string
+  /** Raw file content (other encodings, binary); wins over `text`. */
+  bytes?: Uint8Array
+  /** Content generated on first read (worst-case files). */
+  generated?: GeneratedTextKey
 }
 
 export interface MockShare {
@@ -31,6 +58,8 @@ export interface MockShare {
   comment?: string
   hidden?: boolean
   denied?: boolean
+  /** The account may read but not write (`writeTextFile` rejects `ACCESS_DENIED`). */
+  readOnly?: boolean
   root: MockFile[]
 }
 
@@ -91,6 +120,18 @@ const photos = (prefix: string, count: number, startDay: number): MockFile[] =>
   )
 
 const TiB = 1024 * GiB
+
+const utf8Length = (text: string) => new TextEncoder().encode(text).length
+
+/** A file with text content (size from the content). */
+const textFile = (name: string, text: string, daysAgo = 2, extra: Partial<MockFile> = {}) =>
+  file(name, utf8Length(text), daysAgo, { text, ...extra })
+
+const bytesFile = (name: string, bytes: Uint8Array, daysAgo = 2) =>
+  file(name, bytes.length, daysAgo, { bytes })
+
+const generatedFile = (name: string, generated: GeneratedTextKey, daysAgo = 1) =>
+  file(name, GENERATED_SIZES[generated], daysAgo, { generated })
 
 /** Plausible worst-case names (break-ui pass): long, unicode, RTL, emoji, one letter, dots. */
 const WORST_NAMES = [
@@ -196,7 +237,14 @@ export const MOCK_SERVERS = {
             dir("Documents", [
               file("Contrato de locação 2026.pdf", 840 * KiB, 60),
               file("Budget 2026.xlsx", 92 * KiB, 5),
-              file("notes.md", 4 * KiB, 0),
+              textFile("notes.md", NOTES_MD, 0),
+              textFile("todo.md", TODO_MD, 1),
+              textFile(
+                "shared-with-conflict.md",
+                "# Shared notes\n\nSomeone else edits this file right after you open it.\n",
+                3
+              ),
+              dir("img", [file("network.png", 180 * KiB, 30)]),
               dir("Site", [
                 file("index.html", 6 * KiB, 2),
                 dir("css", [file("site.css", 3 * KiB, 2)]),
@@ -204,6 +252,24 @@ export const MOCK_SERVERS = {
                 dir("img", [file("logo.png", 24 * KiB, 2)]),
               ]),
               file("Résumé — Henrique.docx", 64 * KiB, 90),
+            ]),
+            dir("Projects", [
+              dir("hoard", [
+                textFile("README.md", HOARD_README, 4),
+                textFile("package.json", PACKAGE_JSON, 4),
+                textFile("MainActivity.kt", MAIN_KT, 6),
+                textFile("deploy.sh", DEPLOY_SH, 9),
+                textFile("docker-compose.yml", CONFIG_YAML, 12),
+                textFile("backups.csv", DATA_CSV, 2),
+                textFile("windows-crlf.txt", WINDOWS_TXT, 20),
+                bytesFile("latin1-relatorio.txt", LATIN1_BYTES, 40),
+                bytesFile("utf16-notes.txt", UTF16_BYTES, 41),
+                bytesFile("firmware.txt", BINARY_BYTES, 42),
+                textFile("empty.txt", "", 1),
+                generatedFile("100k-lines.log", "hundredThousandLines"),
+                generatedFile("minified.json", "oneHugeLine"),
+                generatedFile("server-12mb.log", "bigLog"),
+              ]),
             ]),
             dir("Downloads", [
               file("android-studio-2026.1-linux.tar.gz", 1.3 * GiB, 14),
@@ -233,7 +299,11 @@ export const MOCK_SERVERS = {
       {
         name: "Public",
         comment: "Shared with everyone",
-        root: [dir("Wallpapers", photos("wall", 9, 100)), file("README.txt", 1 * KiB, 300)],
+        readOnly: true,
+        root: [
+          dir("Wallpapers", photos("wall", 9, 100)),
+          textFile("README.txt", "Public share of the NAS. Read-only for this account.\n", 300),
+        ],
       },
       { name: "admin", comment: "Administrators only", denied: true, root: [] },
     ],

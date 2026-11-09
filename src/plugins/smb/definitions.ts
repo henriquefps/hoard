@@ -9,7 +9,8 @@
  * Ground rules (ADR 0001 / 0002 / 0003):
  *  - File bytes never cross the JS bridge. Transfers stream SMB → SAF natively; thumbnails and opened
  *    files come back as cache-file URLs, never as base64; streams and served pages are URIs/URLs
- *    another app (or a native WebView) reads natively.
+ *    another app (or a native WebView) reads natively. The one exception is small text files
+ *    (`readTextFile` / `writeTextFile`, bounded by `maxBytes`) for the built-in text editor.
  *  - Passwords are write-only from JS: `setCredentials` stores them in the Android Keystore and no
  *    method ever returns one. `connect` and `startDownload` read them natively by `machineId`.
  *  - A machine is pinned by its SMB server GUID. Once the app knows it, every call that connects
@@ -52,6 +53,15 @@ export const HOARD_SMB_ERROR_CODES = [
   "NO_APP",
   /** Anything else; `message` has the details. Also returned by the not-yet-implemented native stub. */
   "UNKNOWN",
+  /** `readTextFile`: the file is bigger than `maxBytes` (`data.size` has its size); retry with `truncate`. */
+  "TOO_LARGE",
+  /** `readTextFile`: the file looks binary (NUL bytes without a UTF-16 byte order mark). */
+  "NOT_TEXT",
+  /**
+   * `writeTextFile`: the remote file changed (or was deleted) since it was read: its modified time
+   * is not `expectedModifiedAt`. `data.modifiedAt` has the current one (null when it is gone).
+   */
+  "CONFLICT",
 ] as const
 
 export type HoardSmbErrorCode = (typeof HOARD_SMB_ERROR_CODES)[number]
@@ -421,6 +431,80 @@ export interface OpenWebPageResult {
   url: string
 }
 
+// --- Text files (the built-in viewer and editor) ---------------------------------------------
+
+/**
+ * How a text file's bytes were decoded, and how `writeTextFile` encodes them again:
+ *  - `utf-8`: valid UTF-8 without a byte order mark (also every pure ASCII file),
+ *  - `utf-8-bom`: UTF-8 starting with EF BB BF (kept on save),
+ *  - `utf-16le` / `utf-16be`: only detected from their byte order mark (kept on save),
+ *  - `windows-1252`: the fallback for anything that is not valid UTF-8. It is ISO-8859-1 with
+ *    printable characters in 0x80–0x9F (what browsers decode for "iso-8859-1"); the five bytes
+ *    Windows leaves undefined map to the C1 controls, so every byte round-trips unchanged.
+ */
+export type TextEncoding = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "windows-1252"
+
+export const TEXT_ENCODINGS: readonly TextEncoding[] = [
+  "utf-8",
+  "utf-8-bom",
+  "utf-16le",
+  "utf-16be",
+  "windows-1252",
+]
+
+/** Default `maxBytes` of `readTextFile`: larger files reject `TOO_LARGE` unless `truncate`. */
+export const TEXT_FILE_MAX_BYTES = 5 * 1024 * 1024
+
+/** Natively `maxBytes` is clamped to this: text crosses the bridge as one JSON string. */
+export const TEXT_FILE_HARD_LIMIT = 16 * 1024 * 1024
+
+export interface ReadTextFileOptions extends PathOptions {
+  /** Refuse (`TOO_LARGE`) files bigger than this; default {@link TEXT_FILE_MAX_BYTES}. */
+  maxBytes?: number
+  /**
+   * Instead of rejecting a file bigger than `maxBytes`, return its first `maxBytes` bytes
+   * (cut at a character boundary) with `truncated: true`. The UI shows that read-only.
+   */
+  truncate?: boolean
+}
+
+export interface ReadTextFileResult {
+  /** The decoded text, line endings untouched (`\r\n` stays `\r\n`), without the byte order mark. */
+  text: string
+  encoding: TextEncoding
+  /** Size of the whole remote file in bytes (also when `truncated`). */
+  size: number
+  /**
+   * The remote last write time when it was read; pass it back as `expectedModifiedAt` to save.
+   * Null when the server does not report one (then conflicts cannot be detected).
+   */
+  modifiedAt: IsoDateTime | null
+  /** Only the first `maxBytes` bytes were read (`truncate: true` on a bigger file). */
+  truncated: boolean
+}
+
+export interface WriteTextFileOptions extends PathOptions {
+  text: string
+  /** Encode as this; default `utf-8`. Rejects `UNKNOWN` if `windows-1252` cannot hold a character. */
+  encoding?: TextEncoding
+  /**
+   * `overwrite` (default) replaces the file at `path` (creating it if missing); `create` makes a
+   * new file and rejects `ALREADY_EXISTS` if the name is taken (new file, save as copy).
+   */
+  mode?: "overwrite" | "create"
+  /**
+   * With `overwrite`: the `modifiedAt` the text was read at. If the remote file now has another
+   * modified time, or is gone, nothing is written and the call rejects `CONFLICT`. Omit (or null)
+   * to overwrite unconditionally ("Overwrite" in the conflict dialog).
+   */
+  expectedModifiedAt?: IsoDateTime | null
+}
+
+export interface WriteTextFileResult {
+  /** The file after the write: its new `modifiedAt` is the next `expectedModifiedAt`. */
+  entry: SmbEntry
+}
+
 // ---------------------------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------------------------
@@ -582,6 +666,24 @@ export interface HoardSmbPlugin {
    * video is never downloaded whole). Rejects `UNKNOWN` for other types.
    */
   thumbnail(options: ThumbnailOptions): Promise<ThumbnailResult>
+
+  // --- Text files ---------------------------------------------------------------------------
+
+  /**
+   * Read a small text file into a string for the built-in viewer and editor: the one deliberate
+   * exception to "bytes never cross the bridge" (ADR 0001), bounded by `maxBytes`. The encoding
+   * is detected natively (UTF-8 / UTF-16 byte order marks, valid UTF-8, else windows-1252).
+   * Rejects `TOO_LARGE` (with `data.size`), `NOT_TEXT`, `NOT_FOUND`, `ACCESS_DENIED`.
+   */
+  readTextFile(options: ReadTextFileOptions): Promise<ReadTextFileResult>
+
+  /**
+   * Save text to `path`. Natively it is written to a hidden temporary file in the same folder and
+   * renamed over the target only when complete, so a dropped connection never leaves half a file;
+   * shares that refuse new files fall back to overwriting in place. Rejects `CONFLICT` (see
+   * `expectedModifiedAt`), `ALREADY_EXISTS` (`mode: "create"`), `ACCESS_DENIED`, `NO_SPACE`.
+   */
+  writeTextFile(options: WriteTextFileOptions): Promise<WriteTextFileResult>
 
   // --- Events -------------------------------------------------------------------------------
 

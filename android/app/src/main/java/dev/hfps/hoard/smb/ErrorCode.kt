@@ -13,7 +13,10 @@ enum class ErrorCode {
     CANCELLED,
     PERMISSION_REVOKED,
     NO_APP,
-    UNKNOWN;
+    UNKNOWN,
+    TOO_LARGE,
+    NOT_TEXT,
+    CONFLICT;
 
     companion object {
         fun fromName(name: String?): ErrorCode = entries.firstOrNull { it.name == name } ?: UNKNOWN
