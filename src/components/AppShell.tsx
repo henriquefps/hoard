@@ -6,6 +6,9 @@ import { useAndroidBackButton } from "@/hooks/useAndroidBackButton"
 import { useTheme } from "@/lib/theme/theme"
 import { TransfersIndicator } from "@/features/transfers/TransfersIndicator"
 import { TransfersDrawer } from "@/features/transfers/TransfersViews"
+import { ClipboardBar } from "@/features/transfers/ClipboardBar"
+import { TransferConflicts } from "@/features/transfers/ConflictDialog"
+import { IncomingShareWatcher } from "@/features/transfers/IncomingShareWatcher"
 import { VolumeNotices } from "@/features/locations/VolumeNotices"
 import { AppLogo } from "./AppLogo"
 import { AppSidebar } from "./AppSidebar"
@@ -35,10 +38,13 @@ export function AppShell() {
           <AppSidebar />
           <SidebarInset className="min-h-0 min-w-0 overflow-y-auto overscroll-contain bg-card max-md:mx-2 max-md:mb-[max(0.5rem,env(safe-area-inset-bottom))] max-md:rounded-xl max-md:border max-md:shadow-xs md:peer-data-[variant=inset]:mt-0 md:peer-data-[variant=inset]:border md:peer-data-[variant=inset]:shadow-xs">
             <Outlet />
+            <ClipboardBar />
           </SidebarInset>
         </div>
       </SidebarProvider>
       <TransfersDrawer />
+      <TransferConflicts />
+      <IncomingShareWatcher />
       <VolumeNotices />
       <Toaster
         theme={theme}

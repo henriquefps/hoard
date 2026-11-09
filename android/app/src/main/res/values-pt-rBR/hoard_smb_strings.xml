@@ -1,16 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="transfer_channel_progress">Transferências</string>
-    <string name="transfer_channel_progress_description">Downloads em andamento</string>
+    <string name="transfer_channel_progress_description">Cópias e movimentações em andamento</string>
     <string name="transfer_channel_results">Transferências concluídas</string>
-    <string name="transfer_channel_results_description">Downloads concluídos ou com falha</string>
+    <string name="transfer_channel_results_description">Cópias e movimentações concluídas ou com falha</string>
     <string name="transfer_waiting">Aguardando…</string>
     <string name="transfer_reconnecting">Reconectando…</string>
     <string name="transfer_progress">%1$s de %2$s</string>
     <string name="transfer_progress_speed">%1$s de %2$s · %3$s/s</string>
     <string name="transfer_cancel">Cancelar</string>
-    <string name="transfer_completed">Baixado · %1$s</string>
-    <string name="transfer_failed">Falha no download: %1$s</string>
+    <string name="transfer_completed">Concluído · %1$s</string>
+    <string name="transfer_scanning">Contando arquivos…</string>
+    <string name="transfer_conflict_title">Alguns arquivos já existem</string>
+    <string name="transfer_conflict_text">Abra o Hoard para escolher o que fazer com %1$s</string>
+    <string name="transfer_items_progress">%1$d de %2$d arquivos · %3$s de %4$s</string>
+    <plurals name="transfer_files">
+        <item quantity="one">%d arquivo</item>
+        <item quantity="many">%d arquivos</item>
+        <item quantity="other">%d arquivos</item>
+    </plurals>
+    <string name="transfer_partly_failed">%1$d de %2$d falharam</string>
+    <string name="share_chooser_title">Compartilhar</string>
+    <string name="transfer_failed">Falhou: %1$s</string>
     <!-- Streaming e servidor web local (StreamService, WebViewerActivity). -->
     <string name="stream_channel">Streaming</string>
     <string name="stream_channel_description">Arquivos que o Hoard está servindo a outros apps agora</string>

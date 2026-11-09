@@ -2,7 +2,7 @@
  * The HoardSmb plugin contract: everything the app asks the native side to do. Despite the name
  * it covers every **location** files live in (ADR 0005): SMB shares, the phone's shared storage
  * and removable volumes (USB drives, SD cards). File operations take a {@link LocationRef}; the
- * SMB-only methods (probe, discover, credentials, connect, listShares, transfers) are unchanged.
+ * SMB-only methods (probe, discover, credentials, connect, listShares) take a machine or session.
  *
  * Three implementations must stay in lockstep (see CLAUDE.md, "plugin contract rule"):
  *  - this file (the types the UI is written against),
@@ -10,12 +10,12 @@
  *  - `android/app/src/main/java/dev/hfps/hoard/smb/HoardSmbPlugin.kt` (smbj + SAF).
  *
  * Ground rules (ADR 0001 / 0002 / 0003):
- *  - File bytes never cross the JS bridge. Transfers stream SMB → SAF natively; thumbnails and opened
+ *  - File bytes never cross the JS bridge. Transfers stream between locations natively; thumbnails and opened
  *    files come back as cache-file URLs, never as base64; streams and served pages are URIs/URLs
  *    another app (or a native WebView) reads natively. The one exception is small text files
  *    (`readTextFile` / `writeTextFile`, bounded by `maxBytes`) for the built-in text editor.
  *  - Passwords are write-only from JS: `setCredentials` stores them in the Android Keystore and no
- *    method ever returns one. `connect` and `startDownload` read them natively by `machineId`.
+ *    method ever returns one. `connect`, `startTransfer` and streams read them natively by `machineId`.
  *  - A machine is pinned by its SMB server GUID. Once the app knows it, every call that connects
  *    passes `expectedServerGuid`; the native side compares it right after NEGOTIATE (before
  *    SESSION_SETUP, so the password is never sent to a different server) and fails with
@@ -46,7 +46,7 @@ export const HOARD_SMB_ERROR_CODES = [
   "NOT_FOUND",
   /** Already exists (createFolder/rename onto an existing name, conflict = "skip" in a sync call). */
   "ALREADY_EXISTS",
-  /** The destination (SAF tree or cache) ran out of space. */
+  /** The destination ran out of space (`data.needed` / `data.free` from the pre-transfer check). */
   "NO_SPACE",
   /** Cancelled by `cancelTransfer`, by the user in a system picker, or by a newer call. */
   "CANCELLED",
@@ -388,9 +388,9 @@ export interface DeleteOptions extends PathOptions {
   recursive?: boolean
 }
 
-/** A folder on the phone the user granted with the Storage Access Framework (persisted). */
+/** A folder on the phone the user granted with the Storage Access Framework (persisted): a {@link TreeLocation}. */
 export interface DestinationFolder {
-  /** The `content://…/tree/…` URI; pass it as `destTreeUri`. */
+  /** The `content://…/tree/…` URI; a transfer destination as `{ kind: "tree", uri }`. */
   uri: string
   /** Display name of the folder (`Download`, `Movies/Hoard`). */
   name: string
@@ -403,93 +403,6 @@ export interface ListDestinationFoldersResult {
 
 export interface ReleaseDestinationFolderOptions {
   uri: string
-}
-
-/** What to do when `destName` already exists in the destination folder. */
-export type ConflictPolicy = "rename" | "overwrite" | "skip"
-
-/** Lifecycle of a native transfer job. */
-export type TransferState =
-  /** Accepted, waiting for a worker slot or for the network. */
-  | "queued"
-  /** Bytes are flowing. */
-  | "running"
-  /** Lost the connection; native is retrying (same address, then the next in the list). */
-  | "retrying"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  /** `conflict: "skip"` and the destination already existed: nothing was written. */
-  | "skipped"
-
-export const TERMINAL_TRANSFER_STATES: readonly TransferState[] = [
-  "completed",
-  "failed",
-  "cancelled",
-  "skipped",
-]
-
-export interface StartDownloadOptions {
-  /** `transfers.id` from the app database: the UI creates the row first, then starts the job. */
-  transferId: string
-  machineId: string
-  /**
-   * Addresses to try, in priority order (the currently reachable one first). Native retries a
-   * dropped connection on the same address, then fails over to the next, resuming at `bytesDone`.
-   */
-  addresses: SmbAddress[]
-  /** Pinned GUID; every address is checked against it before credentials are sent. */
-  expectedServerGuid: string
-  share: string
-  /** File path inside the share. Folders are a later addition (`isDirectory` rejects `UNKNOWN` for now). */
-  remotePath: string
-  /** SAF tree from `pickDestinationFolder` / `listDestinationFolders`. */
-  destTreeUri: string
-  /** File name to create in the tree; default the remote file name. */
-  destName?: string
-  conflict: ConflictPolicy
-  /**
-   * Resume a job the app knows was interrupted (from `getTransfers` or the DB): native appends from
-   * this offset if the partial destination file still has exactly this many bytes, else restarts at 0.
-   */
-  resumeFromBytes?: number
-}
-
-export interface StartDownloadResult {
-  transferId: string
-  /** Final file name in the destination (differs from `destName` after `conflict: "rename"`). */
-  destName: string
-  /** The created document's URI. */
-  destUri: string
-}
-
-export interface TransferRef {
-  transferId: string
-}
-
-/** A native job as the background service knows it. */
-export interface NativeTransfer {
-  transferId: string
-  machineId: string
-  share: string
-  remotePath: string
-  destTreeUri: string
-  destName: string
-  destUri?: string
-  totalBytes: number
-  bytesDone: number
-  state: TransferState
-  /** Set when `state` is `failed` (or while `retrying`, the last error). */
-  error?: { code: HoardSmbErrorCode; message: string }
-  /** Address currently used (or last used). */
-  activeHost?: string
-  startedAt: IsoDateTime
-  finishedAt?: IsoDateTime
-}
-
-export interface GetTransfersResult {
-  /** Jobs native still knows about: running, queued, and finished ones not yet acknowledged. */
-  transfers: NativeTransfer[]
 }
 
 export interface OpenFileOptions extends PathOptions {
@@ -517,7 +430,7 @@ export interface ThumbnailResult {
 // --- Streaming and the local web server ---------------------------------------------------------
 
 /**
- * An SMB share as a stream source. Like `startDownload`, native opens its **own** connection (not
+ * An SMB share as a stream source or transfer endpoint. Like a transfer, native opens its **own** connection (not
  * a `sessionId`): it outlives the UI's sessions and the WebView, and reconnects / fails over
  * across `addresses` while another app plays, re-checking the GUID before credentials.
  */
@@ -582,6 +495,216 @@ export interface OpenWebPageOptions extends StreamSourceOptions {
 export interface OpenWebPageResult {
   /** `http://127.0.0.1:<port>/<token>/<file name>`: the page's folder (and below) is served. */
   url: string
+}
+
+// --- Transfers (ADR 0007: any location → any location) ---------------------------------------
+
+/**
+ * What happens when a file already exists at the destination:
+ *  - `rename` keeps both (`photo (1).jpg`), `overwrite` replaces it (only after the new copy is
+ *    complete and verified), `skip` leaves it and counts the item as skipped;
+ *  - `ask` (start options only): the job scans, then stops in state `conflict` and reports how many
+ *    names clash; the UI asks once ("apply to all") and answers with `resolveTransferConflicts`.
+ * Folders that already exist are always merged; the policy applies to the files inside.
+ */
+export type ConflictPolicy = "rename" | "overwrite" | "skip"
+export type TransferConflict = ConflictPolicy | "ask"
+
+/** Lifecycle of a native transfer job (and of each of its items, except `scanning`/`conflict`). */
+export type TransferState =
+  /** Accepted, waiting for a worker slot or for the network. */
+  | "queued"
+  /** Listing source folders: totals (files, bytes) grow until the scan ends. */
+  | "scanning"
+  /** `conflict: "ask"` found names that exist: waiting for `resolveTransferConflicts`. */
+  | "conflict"
+  /** Bytes are flowing. */
+  | "running"
+  /** Lost the connection (or the drive); native is retrying (same address, then the next in the list). */
+  | "retrying"
+  | "completed"
+  /** At least one item failed (the others may have completed: `itemsDone`). */
+  | "failed"
+  | "cancelled"
+  /** Every item was skipped (`conflict: "skip"` and all names existed): nothing was written. */
+  | "skipped"
+
+export const TERMINAL_TRANSFER_STATES: readonly TransferState[] = [
+  "completed",
+  "failed",
+  "cancelled",
+  "skipped",
+]
+
+/** `copy` leaves the sources; `move` deletes each source only after its copy was verified. */
+export type TransferOp = "copy" | "move"
+
+/**
+ * A folder on the phone granted with the Storage Access Framework (`pickDestinationFolder`): a
+ * destination for phones without all files access. Paths inside it are relative to the tree root.
+ */
+export interface TreeLocation {
+  kind: "tree"
+  /** The `content://…/tree/…` URI from `pickDestinationFolder` / `listDestinationFolders`. */
+  uri: string
+}
+
+/**
+ * Files another app shared to Hoard (`ACTION_SEND` / `ACTION_SEND_MULTIPLE`), read natively through
+ * the ContentResolver. Source only; a source `path` is the item's `index` as a string.
+ */
+export interface IncomingLocation {
+  kind: "incoming"
+  shareId: string
+}
+
+/**
+ * Where a transfer reads or writes. Like streams, an SMB endpoint is **not** a session: native
+ * opens its own connection over `addresses` (failover in order, GUID checked before credentials),
+ * so jobs survive the UI's sessions, the WebView and a process restart.
+ */
+export type TransferLocation = SmbStreamLocation | LocalLocationRef | TreeLocation
+
+export type TransferSourceLocation = TransferLocation | IncomingLocation
+
+export interface TransferSource {
+  location: TransferSourceLocation
+  /** A file or a folder (copied recursively, with a scan step first). */
+  path: string
+}
+
+export interface TransferDestination {
+  location: TransferLocation
+  /** The folder the sources land in (`""` = the location's root). It must exist. */
+  path: string
+}
+
+export interface StartTransferOptions {
+  /** `transfers.id` from the app database: the UI records the row first, then starts the job. */
+  transferId: string
+  op: TransferOp
+  /** Files and folders, all from one location in practice (any mix is accepted). */
+  sources: TransferSource[]
+  destination: TransferDestination
+  conflict: TransferConflict
+  /**
+   * Run a job again under the same id (Retry): items already completed or skipped stay so; failed
+   * and cancelled ones run again, resuming partial files where the bytes on disk still match. When
+   * native no longer has the job, it scans again and treats an existing destination file of the
+   * same size as already copied.
+   */
+  resume?: boolean
+}
+
+export interface StartTransferResult {
+  transferId: string
+}
+
+export interface TransferRef {
+  transferId: string
+}
+
+/** One file (or folder to create) of a job. */
+export interface TransferItem {
+  /** Stable index inside the job. */
+  index: number
+  /** Path inside the source location (incoming: the item index). */
+  sourcePath: string
+  /** Path inside the destination location, after conflict renames. */
+  destPath: string
+  isDirectory: boolean
+  size: number
+  bytesDone: number
+  state: Exclude<TransferState, "scanning" | "conflict">
+  /** The destination name already existed (and what was decided, once decided). */
+  conflict?: ConflictPolicy | "ask"
+  error?: { code: HoardSmbErrorCode; message: string }
+}
+
+export interface GetTransferItemsOptions extends TransferRef {
+  /** Only items in these states (e.g. `["failed"]`); default all. */
+  states?: TransferItem["state"][]
+  /** Only items still waiting for a conflict answer. */
+  conflictsOnly?: boolean
+  offset?: number
+  /** Default 200, at most 1000. */
+  limit?: number
+}
+
+export interface GetTransferItemsResult {
+  items: TransferItem[]
+  /** Matching items in total (for paging). */
+  total: number
+}
+
+export interface ResolveTransferConflictsOptions extends TransferRef {
+  /** Answer for every item still asking. */
+  all?: ConflictPolicy
+  /** Per-item answers (`index` → policy); `all` covers the rest. */
+  items?: { index: number; policy: ConflictPolicy }[]
+}
+
+/** A native job as the background service knows it. */
+export interface NativeTransfer {
+  transferId: string
+  op: TransferOp
+  state: TransferState
+  /** Bytes of every file to write (grows while `scanning`). */
+  totalBytes: number
+  bytesDone: number
+  /** Files (folders are not counted). */
+  itemsTotal: number
+  itemsDone: number
+  itemsFailed: number
+  itemsSkipped: number
+  /** Names still waiting for an answer in state `conflict`. */
+  conflicts?: number
+  /** The file being copied now. */
+  currentName?: string
+  /** Set when `state` is `failed` (or while `retrying`, the last error). */
+  error?: { code: HoardSmbErrorCode; message: string }
+  /** Address currently used (or last used), on SMB endpoints. */
+  activeHost?: string
+  startedAt: IsoDateTime
+  finishedAt?: IsoDateTime
+}
+
+export interface GetTransfersResult {
+  /** Jobs native still reports: running, queued, and finished ones not yet acknowledged. */
+  transfers: NativeTransfer[]
+}
+
+// --- Share in and out --------------------------------------------------------------------------
+
+export interface ShareFilesOptions {
+  /** Where the files are (SMB: own connection, like `streamFile`). */
+  location: StreamLocation
+  /** Files (not folders) in that location. */
+  paths: string[]
+}
+
+/** One file another app shared to Hoard. */
+export interface SharedFile {
+  /** Its `path` in an {@link IncomingLocation}. */
+  index: number
+  name: string
+  /** -1 when the other app did not say. */
+  size: number
+  mimeType?: string
+}
+
+/** What another app shared (one `ACTION_SEND` / `ACTION_SEND_MULTIPLE`). */
+export interface SharedFiles {
+  shareId: string
+  files: SharedFile[]
+  /** Text shared without a file (a link, a note), when any. Not saved by transfers. */
+  text?: string
+  receivedAt: IsoDateTime
+}
+
+export interface GetSharedFilesResult {
+  /** The latest share not yet cleared, or null. */
+  shared: SharedFiles | null
 }
 
 // --- Text files (the built-in viewer and editor) ---------------------------------------------
@@ -664,15 +787,14 @@ export interface WriteTextFileResult {
 // Events
 // ---------------------------------------------------------------------------------------------
 
-/** Emitted on every state change and at most every 250 ms (and every 1% or 1 MiB) while running. */
-export interface TransferProgressEvent {
-  transferId: string
-  bytesDone: number
-  totalBytes: number
-  state: TransferState
-  error?: { code: HoardSmbErrorCode; message: string }
-  /** Host the bytes are coming from right now (changes on failover). */
-  activeHost?: string
+/**
+ * Emitted on every state change, on every finished item, and while running at most every 250 ms
+ * (when the job moved 1% or 1 MiB, or anything after 1 s). The same shape as {@link NativeTransfer}.
+ */
+export interface TransferProgressEvent extends Omit<
+  NativeTransfer,
+  "op" | "startedAt" | "finishedAt"
+> {
   /** Rolling average over the last few seconds, bytes per second. */
   bytesPerSecond?: number
 }
@@ -698,6 +820,7 @@ export interface NetworkChangedEvent {
 export type TransferProgressListener = (event: TransferProgressEvent) => void
 export type NetworkChangedListener = (event: NetworkChangedEvent) => void
 export type VolumesChangedListener = (event: VolumesChangedEvent) => void
+export type FilesSharedListener = (event: SharedFiles) => void
 
 // ---------------------------------------------------------------------------------------------
 // The plugin
@@ -814,28 +937,60 @@ export interface HoardSmbPlugin {
   /** Release a persisted permission. Idempotent. */
   releaseDestinationFolder(options: ReleaseDestinationFolderOptions): Promise<void>
 
-  // --- Transfers (foreground service, survive screen off and app kill) ---------------------
+  // --- Transfers (foreground service, survive screen off and app kill; ADR 0007) ------------
 
   /**
-   * Queue a download SMB → SAF in the native transfer service (with an ongoing notification).
-   * Resolves once the job is accepted and the destination file is created (so `destName` is
-   * final); progress then comes through `transferProgress`. Rejects synchronously-known failures
-   * (`PERMISSION_REVOKED`, `NO_SPACE` when the size is known up front, `ALREADY_EXISTS` is never
-   * thrown: `conflict` decides).
+   * Queue a copy or move from any locations to a folder in any location, in the native transfer
+   * service (WorkManager, `dataSync` foreground service, ongoing notification). Resolves once the
+   * job is persisted and queued; the worker then scans folders (`scanning`), checks free space
+   * (`NO_SPACE` with `data.needed` / `data.free`), asks about conflicts when `conflict: "ask"`
+   * (`conflict`), and copies item by item with progress through `transferProgress`. Each file is
+   * written under a temporary name, its size verified, its modified time kept where the
+   * destination allows it, then published under its name; a move deletes the source only after
+   * that. A move inside one location (same share, same volume) is a rename instead, never a copy.
+   * Rejects `UNKNOWN` for invalid input (no sources, a folder into itself, a running id).
    */
-  startDownload(options: StartDownloadOptions): Promise<StartDownloadResult>
+  startTransfer(options: StartTransferOptions): Promise<StartTransferResult>
 
-  /** Cancel a queued/running job; it ends in `cancelled` and its partial file is deleted. Idempotent. */
+  /** Answer the conflicts of a job in state `conflict`; it continues. Idempotent. */
+  resolveTransferConflicts(options: ResolveTransferConflictsOptions): Promise<void>
+
+  /**
+   * Cancel a queued/running job: unfinished items end `cancelled`, finished ones stay. The file in
+   * progress keeps its hidden partial file (`.<name>.hoardpart`) so Retry continues it. Idempotent.
+   */
   cancelTransfer(options: TransferRef): Promise<void>
 
   /**
-   * Every job native knows (also after the app was killed and restarted), so the UI can reconcile
-   * the `transfers` table with reality.
+   * Every job native reports (also after the app was killed and restarted), so the UI can
+   * reconcile the `transfers` table with reality.
    */
   getTransfers(): Promise<GetTransfersResult>
 
-  /** Forget finished jobs (`completed`/`failed`/`cancelled`/`skipped`) once the DB has them. */
+  /**
+   * The items of a job (per-file states and errors), while native still has it: running jobs and
+   * the last finished ones (kept for Retry even after `acknowledgeTransfers`). `NOT_FOUND` when gone.
+   */
+  getTransferItems(options: GetTransferItemsOptions): Promise<GetTransferItemsResult>
+
+  /** Stop reporting finished jobs in `getTransfers` once the DB has them (items stay for Retry). */
   acknowledgeTransfers(options: { transferIds: string[] }): Promise<void>
+
+  // --- Share in and out -------------------------------------------------------------------------
+
+  /**
+   * Hand files to another app with the system share sheet (`ACTION_SEND`, `ACTION_SEND_MULTIPLE`
+   * for several). Local files are shared in place (FileProvider or SAF URI); SMB files up to 16 MiB
+   * are cached first (the other app may read them later, in the background), larger ones stream
+   * through the proxy file descriptor provider like `streamFile`. Rejects `NO_APP`, `NOT_FOUND`.
+   */
+  shareFiles(options: ShareFilesOptions): Promise<void>
+
+  /** What another app shared to Hoard and the UI has not handled yet (also the launch intent). */
+  getSharedFiles(): Promise<GetSharedFilesResult>
+
+  /** Forget a share once handled (saved or dismissed). Running transfers keep reading it. */
+  clearSharedFiles(options: { shareId: string }): Promise<void>
 
   // --- Viewing ------------------------------------------------------------------------------
 
@@ -908,6 +1063,12 @@ export interface HoardSmbPlugin {
   addListener(
     eventName: "volumesChanged",
     listener: VolumesChangedListener
+  ): Promise<PluginListenerHandle>
+
+  /** Another app shared files to Hoard (Hoard was open or brought to the front). */
+  addListener(
+    eventName: "filesShared",
+    listener: FilesSharedListener
   ): Promise<PluginListenerHandle>
 
   /** Remove every listener this plugin registered. */

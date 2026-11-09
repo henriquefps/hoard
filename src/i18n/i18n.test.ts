@@ -70,10 +70,19 @@ describe("i18n", () => {
         `browse.directions.${k}.asc`,
         `browse.directions.${k}.desc`,
       ]),
-      ...["rename", "overwrite", "skip"].flatMap((c) => [`conflict.${c}`, `conflict.${c}Hint`]),
-      ...["queued", "running", "retrying", "completed", "failed", "cancelled", "skipped"].map(
-        (s) => `transfers.states.${s}`
-      ),
+      ...["ask", "rename", "overwrite", "skip"].flatMap((c) => [
+        `conflict.${c}`,
+        `conflict.${c}Hint`,
+      ]),
+      ...[
+        ...["queued", "scanning", "conflict", "running", "retrying", "completed", "failed"],
+        ...["cancelled", "skipped", "running_copy", "running_move"],
+      ].map((s) => `transfers.states.${s}`),
+      ...["copy", "move", "download", "upload"].map((i) => `transfer.title.${i}`),
+      ...["copy", "move"].map((op) => `transfer.clipboard.${op}`),
+      ...["Copy", "Move"].map((op) => `transfer.started${op}`),
+      ...["copyHere", "moveHere", "clipboard.copied", "clipboard.cut"].map((k) => `transfer.${k}`),
+      ...["retry", "retryFailed", "copiedTo", "movedTo"].map((k) => `transfers.${k}`),
       ...MACHINE_ICON_IDS.map((i) => `machines.icons.${i}`),
       ...MACHINE_COLORS.map((c) => `machines.colors.${c}`),
       ...["local", "tailscale", "other"].map((k) => `addressKind.${k}`),

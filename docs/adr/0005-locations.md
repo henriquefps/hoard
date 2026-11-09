@@ -159,7 +159,8 @@ this phase.
 
 ## What phases 2a and 2b build on
 
-- **2a (copy/move/upload, share-to/from):** a transfer becomes "location A + path → location B +
+- **2a (copy/move/upload, share-to/from)** — done in 1.4.0, see
+  [ADR 0007](0007-transfers-any-location.md). The plan was: a transfer becomes "location A + path → location B +
   path". The native side already has a `HoardFs` per location; it needs streaming read/write on it
   (open input/output, which `PathFs`/`SafFs` already do for text, and SMB's pipelined reader and
   writer) and the WorkManager job generalised from `SMB → SAF tree` to `HoardFs → HoardFs`, with

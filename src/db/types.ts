@@ -1,5 +1,10 @@
 import type { AddressKind } from "@/lib/addressKind"
-import type { HoardSmbErrorCode, TransferState } from "@/plugins/smb/definitions"
+import type {
+  HoardSmbErrorCode,
+  TransferConflict,
+  TransferOp,
+  TransferState,
+} from "@/plugins/smb/definitions"
 
 /** Row of `machines`. A machine owns its credentials (in the Keystore), shares and favorites. */
 export interface MachineRecord {
@@ -59,17 +64,35 @@ export interface ManualShareRecord {
   created_at: string
 }
 
-/** Row of `transfers`: the app's record of a native download job (same id). */
+/**
+ * Row of `transfers` (v4, ADR 0007): the app's record of a native job (same id). Locations use the
+ * favorites' ids (machine id, `device`, `vol-<uuid>`) plus `tree` (a SAF folder in
+ * `dest_tree_uri`) and `incoming` (files another app shared).
+ */
 export interface TransferRecord {
   id: string
-  machine_id: string
-  share: string
-  remote_path: string
-  dest_tree_uri: string
-  dest_name: string
-  dest_uri: string | null
+  op: TransferOp
+  source_location_id: string
+  /** Set when the source is a machine (deleting it deletes the row). */
+  source_machine_id: string | null
+  source_share: string
+  /** JSON array of the source paths (incoming: item indexes). */
+  source_paths: string
+  dest_location_id: string
+  dest_machine_id: string | null
+  dest_share: string
+  /** The destination folder. */
+  dest_path: string
+  dest_tree_uri: string | null
+  /** What the row shows: the single item's name, or the first source's. */
+  name: string
+  conflict: TransferConflict
   size: number
   bytes_done: number
+  items_total: number
+  items_done: number
+  items_failed: number
+  items_skipped: number
   state: TransferState
   error_code: HoardSmbErrorCode | null
   error: string | null
@@ -77,10 +100,22 @@ export interface TransferRecord {
   finished_at: string | null
 }
 
+/** A remembered destination folder ("Recent" in the destination picker). */
+export interface RecentDestination {
+  locationId: string
+  share?: string
+  path: string
+  /** Shown name (folder name, share, drive label). */
+  label: string
+  /** For `tree` destinations. */
+  treeUri?: string
+}
+
 /**
  * Known keys of `settings` (values are JSON strings):
  *  - `showHiddenFiles` boolean, `defaultSort` `{ key, direction }`, `defaultConflict` ConflictPolicy,
- *  - `lastDestination` the SAF tree URI used for the last download, `probeTimeoutMs` number,
+ *  - `lastDestination` (≤1.3, unused since 1.4), `recentDestinations` RecentDestination[] (the
+ *    destination picker's "Recent", newest first), `probeTimeoutMs` number,
  *  - `onboarded` boolean (first-launch hint dismissed), `demoSeeded` / `worstCaseSeeded` (browser),
  *  - `storageIntroSeen` boolean (the all files access screen was shown once, ADR 0005).
  */
@@ -90,6 +125,7 @@ export type SettingKey =
   | "defaultSort"
   | "defaultConflict"
   | "lastDestination"
+  | "recentDestinations"
   | "probeTimeoutMs"
   | "onboarded"
   | "storageIntroSeen"

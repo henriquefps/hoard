@@ -106,18 +106,50 @@ class TransferLogicTest {
     }
 
     @Test
-    fun `explicit resume only when the partial size matches exactly`() {
-        assertEquals(4096, ResumeRules.requested(4096, existingSize = 4096, totalBytes = 10_000))
-        assertEquals(0, ResumeRules.requested(4096, existingSize = 4000, totalBytes = 10_000))
-        assertEquals(0, ResumeRules.requested(4096, existingSize = null, totalBytes = null))
-        assertEquals(0, ResumeRules.requested(20_000, existingSize = 20_000, totalBytes = 10_000))
-        assertEquals(0, ResumeRules.requested(0, existingSize = 0, totalBytes = 10))
+    fun `local files resume after whatever the partial file holds`() {
+        assertEquals(7000, ResumeRules.offset(persisted = 4096, partSize = 7000, total = 10_000, sourceUnchanged = true, contiguous = true))
+        assertEquals(7000, ResumeRules.offset(persisted = 9000, partSize = 7000, total = 10_000, sourceUnchanged = true, contiguous = true))
+        assertEquals(0, ResumeRules.offset(persisted = 4096, partSize = null, total = 10_000, sourceUnchanged = true, contiguous = true))
+        assertEquals(0, ResumeRules.offset(persisted = 4096, partSize = 12_000, total = 10_000, sourceUnchanged = true, contiguous = true))
     }
 
     @Test
-    fun `internal restarts continue after what is on disk`() {
-        assertEquals(7000, ResumeRules.restart(7000, 10_000))
-        assertEquals(0, ResumeRules.restart(null, 10_000))
-        assertEquals(0, ResumeRules.restart(12_000, 10_000))
+    fun `SMB uploads resume at the persisted offset only while the server file still has it`() {
+        // Pipelined writes: bytes past the persisted offset may hide a hole.
+        assertEquals(4096, ResumeRules.offset(persisted = 4096, partSize = 7000, total = 10_000, sourceUnchanged = true, contiguous = false))
+        assertEquals(4096, ResumeRules.offset(persisted = 4096, partSize = 4096, total = 10_000, sourceUnchanged = true, contiguous = false))
+        assertEquals(0, ResumeRules.offset(persisted = 4096, partSize = 3000, total = 10_000, sourceUnchanged = true, contiguous = false))
+        assertEquals(0, ResumeRules.offset(persisted = 0, partSize = 7000, total = 10_000, sourceUnchanged = true, contiguous = false))
+    }
+
+    @Test
+    fun `a changed source always restarts`() {
+        assertEquals(0, ResumeRules.offset(persisted = 4096, partSize = 7000, total = 10_000, sourceUnchanged = false, contiguous = true))
+        assertEquals(0, ResumeRules.offset(persisted = 4096, partSize = 7000, total = 10_000, sourceUnchanged = false, contiguous = false))
+    }
+
+    @Test
+    fun `partial names are hidden, recognisable and fit 255 characters`() {
+        assertEquals(".photo.jpg.hoardpart", PartNames.of("photo.jpg"))
+        assertTrue(PartNames.isPart(PartNames.of("x")))
+        assertEquals(255, PartNames.of("a".repeat(300)).length)
+    }
+
+    @Test
+    fun `failure scopes`() {
+        assertEquals(FailureScope.Scope.RETRY, FailureScope.of(ErrorCode.UNREACHABLE, network = true))
+        assertEquals(FailureScope.Scope.ITEM, FailureScope.of(ErrorCode.UNKNOWN, network = false))
+        assertEquals(FailureScope.Scope.JOB, FailureScope.of(ErrorCode.NO_SPACE, network = true))
+        assertEquals(FailureScope.Scope.JOB, FailureScope.of(ErrorCode.UNAVAILABLE, network = false))
+        assertEquals(FailureScope.Scope.ITEM, FailureScope.of(ErrorCode.ACCESS_DENIED, network = true))
+        assertEquals(FailureScope.Scope.ITEM, FailureScope.of(ErrorCode.NOT_FOUND, network = true))
+    }
+
+    @Test
+    fun `paths`() {
+        assertTrue(TransferPaths.isSameOrInside("DCIM", "DCIM/Camera"))
+        assertTrue(TransferPaths.isSameOrInside("DCIM", "DCIM"))
+        assertFalse(TransferPaths.isSameOrInside("DCIM", "DCIMX"))
+        assertEquals("b/c/x", TransferPaths.rebase("a/x", "a", "b/c"))
     }
 }

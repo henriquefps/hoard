@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { TransferProgressEvent } from "./definitions"
-import { isHoardSmbError, smbErrorCode } from "./definitions"
+import type { LocationRef, TransferProgressEvent, TransferState } from "./definitions"
+import { isHoardSmbError, smbErrorCode, TERMINAL_TRANSFER_STATES } from "./definitions"
 import { MOCK_SERVERS } from "./mockData"
 import { HoardSmbWeb } from "./web"
 
@@ -316,81 +316,211 @@ describe("HoardSmbWeb", () => {
     ).toBe("UNKNOWN")
   })
 
-  it("runs a download with progress events, failing over when the connection drops", async () => {
-    vi.useFakeTimers()
-    try {
-      smb.latencyScale = 0
-      const folder = await smb.pickDestinationFolder()
-      const events: TransferProgressEvent[] = []
-      await smb.addListener("transferProgress", (e) => events.push(e))
-      await smb.startDownload({
-        transferId: "t1",
-        machineId: CACHY,
-        addresses: [{ host: "192.168.1.155" }, { host: "100.101.12.34" }],
-        expectedServerGuid: MOCK_SERVERS.cachy.guid,
-        share: "media",
-        remotePath: "Movies/flaky-network-test.mp4",
-        destTreeUri: folder.uri,
-        conflict: "rename",
-      })
-      for (let i = 0; i < 5000 && events.at(-1)?.state !== "completed"; i++)
-        await vi.advanceTimersByTimeAsync(10)
-      const states = [...new Set(events.map((e) => e.state))]
-      expect(states).toEqual(expect.arrayContaining(["queued", "running", "retrying", "completed"]))
-      expect(events.at(-1)?.activeHost).toBe("100.101.12.34")
-      expect(events.at(-1)?.bytesDone).toBe(events.at(-1)?.totalBytes)
-      const { transfers } = await smb.getTransfers()
-      expect(transfers[0]).toMatchObject({ transferId: "t1", state: "completed" })
-      await smb.acknowledgeTransfers({ transferIds: ["t1"] })
-      expect((await smb.getTransfers()).transfers).toEqual([])
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it("rejects PERMISSION_REVOKED for a folder that was never granted, and cancels", async () => {
-    const base = {
-      transferId: "t2",
+  describe("transfers (ADR 0007)", () => {
+    const nas = {
+      kind: "smb" as const,
       machineId: CACHY,
-      addresses: [{ host: "192.168.1.155" }],
+      addresses: [{ host: "192.168.1.155" }, { host: "100.101.12.34" }],
       expectedServerGuid: MOCK_SERVERS.cachy.guid,
       share: "media",
-      remotePath: "Movies/Spirited Away (2001).mkv",
-      conflict: "overwrite" as const,
     }
-    expect(
-      smbErrorCode(
-        await smb.startDownload({ ...base, destTreeUri: "content://nope" }).catch((e) => e)
-      )
-    ).toBe("PERMISSION_REVOKED")
-    const folder = await smb.pickDestinationFolder()
-    await smb.startDownload({ ...base, destTreeUri: folder.uri })
-    await smb.cancelTransfer({ transferId: "t2" })
-    expect((await smb.getTransfers()).transfers[0].state).toBe("cancelled")
-  })
+    const device = { kind: "device" as const }
+    const usb = { kind: "volume" as const, uuid: "1A2B-3C4D" }
 
-  it("fails a 'broken' transfer for good mid-way (no address left)", async () => {
-    const folder = await smb.pickDestinationFolder()
     const events: TransferProgressEvent[] = []
-    await smb.addListener("transferProgress", (e) => events.push(e))
-    await smb.startDownload({
-      transferId: "t3",
-      machineId: "worst-lab",
-      addresses: [{ host: "192.168.1.77" }],
-      expectedServerGuid: MOCK_SERVERS.lab.guid,
-      share: "Arquivo morto — 2019–2026 (não apagar)",
-      remotePath: "broken-transfer-demo.iso",
-      destTreeUri: folder.uri,
-      conflict: "overwrite",
-    })
-    for (let i = 0; i < 200 && events.at(-1)?.state !== "failed"; i++) {
-      await new Promise((r) => setTimeout(r, 2))
+    const settle = async (id: string, states: TransferState[] = [...TERMINAL_TRANSFER_STATES]) => {
+      for (let i = 0; i < 20_000; i++) {
+        const last = events.filter((e) => e.transferId === id).at(-1)
+        if (last && states.includes(last.state)) return last
+        await new Promise((r) => setTimeout(r, 0))
+      }
+      throw new Error(
+        `${id} did not settle: ${events.filter((e) => e.transferId === id).at(-1)?.state}`
+      )
     }
-    const last = events.at(-1)!
-    expect(last.state).toBe("failed")
-    expect(last.error?.code).toBe("UNREACHABLE")
-    expect(last.bytesDone).toBeGreaterThan(0)
-    expect(last.bytesDone).toBeLessThan(last.totalBytes)
+    const names = async (location: LocationRef, path: string) =>
+      (await smb.list({ location, path })).entries.map((e) => e.name)
+
+    beforeEach(async () => {
+      events.length = 0
+      smb.simulateStorageAccess(true)
+      await smb.addListener("transferProgress", (e) => events.push(e))
+    })
+
+    it("copies an SMB folder to the phone with a scan, progress and the files in place", async () => {
+      await smb.startTransfer({
+        transferId: "t1",
+        op: "copy",
+        sources: [{ location: nas, path: "Music" }],
+        destination: { location: device, path: "Download" },
+        conflict: "rename",
+      })
+      const last = await settle("t1")
+      expect(last.state).toBe("completed")
+      const states = [...new Set(events.map((e) => e.state))]
+      expect(states).toEqual(expect.arrayContaining(["queued", "scanning", "running", "completed"]))
+      expect(last.itemsTotal).toBeGreaterThan(0)
+      expect(last.itemsDone).toBe(last.itemsTotal)
+      expect(last.bytesDone).toBe(last.totalBytes)
+      expect(await names(device, "Download")).toContain("Music")
+      const { sessionId } = await connectCachy()
+      expect(await names({ kind: "smb", sessionId, share: "media" }, "")).toContain("Music")
+      expect((await smb.getTransfers()).transfers[0]).toMatchObject({
+        transferId: "t1",
+        op: "copy",
+      })
+      await smb.acknowledgeTransfers({ transferIds: ["t1"] })
+      expect((await smb.getTransfers()).transfers).toEqual([])
+      // Items stay for the transfers page (and Retry) after the acknowledgement.
+      expect((await smb.getTransferItems({ transferId: "t1" })).total).toBe(last.itemsTotal)
+    })
+
+    it("fails over when the connection drops mid-file and completes", async () => {
+      await smb.startTransfer({
+        transferId: "t2",
+        op: "copy",
+        sources: [{ location: nas, path: "Movies/flaky-network-test.mp4" }],
+        destination: { location: usb, path: "" },
+        conflict: "rename",
+      })
+      const last = await settle("t2")
+      expect(last.state).toBe("completed")
+      expect(events.some((e) => e.state === "retrying")).toBe(true)
+      expect(last.activeHost).toBe("100.101.12.34")
+    })
+
+    it("asks about existing names once, then continues with the answer", async () => {
+      const options = {
+        op: "copy" as const,
+        sources: [{ location: nas, path: "Movies/flaky-network-test.mp4" }],
+        destination: { location: usb, path: "" },
+      }
+      await smb.startTransfer({ ...options, transferId: "a1", conflict: "rename" })
+      await settle("a1")
+      await smb.startTransfer({ ...options, transferId: "a2", conflict: "ask" })
+      const waiting = await settle("a2", ["conflict"])
+      expect(waiting.conflicts).toBe(1)
+      const { items } = await smb.getTransferItems({ transferId: "a2", conflictsOnly: true })
+      expect(items.map((i) => i.destPath)).toEqual(["flaky-network-test.mp4"])
+      await smb.resolveTransferConflicts({ transferId: "a2", all: "rename" })
+      expect((await settle("a2")).state).toBe("completed")
+      expect(await names(usb, "")).toEqual(
+        expect.arrayContaining(["flaky-network-test.mp4", "flaky-network-test (1).mp4"])
+      )
+    })
+
+    it("moves inside the phone with one rename, and between locations deletes the sources", async () => {
+      await smb.createFolder({ location: device, path: "", name: "Moved" })
+      await smb.startTransfer({
+        transferId: "m1",
+        op: "move",
+        sources: [{ location: device, path: "Documents" }],
+        destination: { location: device, path: "Moved" },
+        conflict: "rename",
+      })
+      const local = await settle("m1")
+      expect(local.state).toBe("completed")
+      expect(local.itemsTotal).toBe(1)
+      expect(await names(device, "")).not.toContain("Documents")
+      expect(await names(device, "Moved")).toEqual(["Documents"])
+
+      await smb.startTransfer({
+        transferId: "m2",
+        op: "move",
+        sources: [{ location: device, path: "Moved/Documents" }],
+        destination: { location: usb, path: "" },
+        conflict: "rename",
+      })
+      expect((await settle("m2")).state).toBe("completed")
+      expect(await names(device, "Moved")).toEqual([])
+      expect(await names(usb, "")).toContain("Documents")
+    })
+
+    it("a 'broken' file fails mid-way; Retry resumes it", async () => {
+      const options = {
+        transferId: "b1",
+        op: "copy" as const,
+        sources: [
+          {
+            location: {
+              kind: "smb" as const,
+              machineId: "worst-lab",
+              addresses: [{ host: "192.168.1.77" }],
+              expectedServerGuid: MOCK_SERVERS.lab.guid,
+              share: "Arquivo morto — 2019–2026 (não apagar)",
+            },
+            path: "broken-transfer-demo.iso",
+          },
+        ],
+        destination: { location: device, path: "Download" },
+        conflict: "rename" as const,
+      }
+      await smb.startTransfer(options)
+      const failed = await settle("b1")
+      expect(failed.state).toBe("failed")
+      expect(failed.error?.code).toBe("UNREACHABLE")
+      expect(failed.itemsFailed).toBe(1)
+      const { items } = await smb.getTransferItems({ transferId: "b1", states: ["failed"] })
+      expect(items[0].bytesDone).toBeGreaterThan(0)
+      events.length = 0
+      await smb.startTransfer({ ...options, resume: true })
+      expect((await settle("b1")).state).toBe("completed")
+    })
+
+    it("saves files another app shared, and refuses a folder into itself", async () => {
+      const shared = smb.simulateIncomingShare([
+        { name: "IMG_0001.jpg", size: 3_000_000, mimeType: "image/jpeg" },
+        { name: "notes.pdf", size: 80_000 },
+      ])
+      expect((await smb.getSharedFiles()).shared?.shareId).toBe(shared.shareId)
+      await smb.startTransfer({
+        transferId: "s1",
+        op: "copy",
+        sources: shared.files.map((f) => ({
+          location: { kind: "incoming" as const, shareId: shared.shareId },
+          path: String(f.index),
+        })),
+        destination: { location: usb, path: "" },
+        conflict: "rename",
+      })
+      expect((await settle("s1")).state).toBe("completed")
+      expect(await names(usb, "")).toEqual(expect.arrayContaining(["IMG_0001.jpg", "notes.pdf"]))
+      await smb.clearSharedFiles({ shareId: shared.shareId })
+      expect((await smb.getSharedFiles()).shared).toBeNull()
+
+      const error = await smb
+        .startTransfer({
+          transferId: "s2",
+          op: "copy",
+          sources: [{ location: device, path: "DCIM" }],
+          destination: { location: device, path: "DCIM/Camera" },
+          conflict: "rename",
+        })
+        .catch((e: unknown) => e)
+      expect(smbErrorCode(error)).toBe("UNKNOWN")
+    })
+
+    it("cancels, and rejects a SAF folder that was never granted", async () => {
+      const error = await smb
+        .startTransfer({
+          transferId: "c0",
+          op: "copy",
+          sources: [{ location: nas, path: "Music" }],
+          destination: { location: { kind: "tree", uri: "content://nope" }, path: "" },
+          conflict: "rename",
+        })
+        .catch((e: unknown) => e)
+      expect(smbErrorCode(error)).toBe("PERMISSION_REVOKED")
+      await smb.startTransfer({
+        transferId: "c1",
+        op: "copy",
+        sources: [{ location: nas, path: "Movies" }],
+        destination: { location: device, path: "Download" },
+        conflict: "rename",
+      })
+      await smb.cancelTransfer({ transferId: "c1" })
+      expect((await smb.getTransfers()).transfers[0].state).toBe("cancelled")
+    })
   })
 
   it("lists the 5,000-entry worst-case folder", async () => {

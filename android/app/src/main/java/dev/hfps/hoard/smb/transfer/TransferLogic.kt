@@ -1,6 +1,5 @@
 package dev.hfps.hoard.smb.transfer
 
-import dev.hfps.hoard.smb.ConflictNames
 import dev.hfps.hoard.smb.ErrorCode
 
 /**
@@ -126,64 +125,74 @@ class SpeedMeter(private val windowMs: Long = 3_000) {
     fun reset() = samples.clear()
 }
 
-/** Where to (re)start writing. */
+/** Where to (re)start writing a file (ADR 0007, "Resume"). Pure (unit-tested). */
 object ResumeRules {
     /**
-     * `resumeFromBytes` from JS: append only if the partial file has exactly that many bytes (and
-     * it is not beyond the remote size); otherwise restart at 0.
+     * Offset to continue a file whose partial copy has [partSize] bytes (null: no partial file).
+     *  - The source changed since the bytes were written (size or modified time): restart at 0.
+     *  - [contiguous] endpoints (local files, SAF) write in order, so whatever the partial file
+     *    holds (up to the source size) is a correct prefix: continue after it.
+     *  - SMB writes are pipelined, so the server file may hold bytes past a hole after a crash:
+     *    only [persisted] (bytes acknowledged in order and saved) is trusted, and only while the
+     *    server file still has at least that many bytes ("append at the server size if it
+     *    matches"); the writer truncates to that offset before appending. Otherwise restart.
      */
-    fun requested(requested: Long, existingSize: Long?, totalBytes: Long?): Long =
-        if (requested > 0 && existingSize == requested && (totalBytes == null || requested <= totalBytes)) requested else 0
-
-    /**
-     * A job native restarts itself (worker rescheduled after the process died): whatever is in the
-     * file is a correct prefix (bytes are written in order), so continue after it.
-     */
-    fun restart(fileSize: Long?, totalBytes: Long): Long =
-        if (fileSize != null && fileSize in 0..totalBytes) fileSize else 0
+    fun offset(persisted: Long, partSize: Long?, total: Long, sourceUnchanged: Boolean, contiguous: Boolean): Long {
+        if (!sourceUnchanged || partSize == null || partSize <= 0 || total <= 0) return 0
+        if (contiguous) return if (partSize > total) 0 else partSize
+        return if (persisted in 1..minOf(partSize, total)) persisted else 0
+    }
 }
 
-/** What `startDownload` does with the destination folder. Pure (unit-tested). */
-object DestinationRules {
+/** Names of the partial files a copy writes before publishing (ADR 0007). Pure. */
+object PartNames {
+    private const val SUFFIX = ".hoardpart"
 
-    sealed interface Decision<out T> {
-        /**
-         * Retry/resume of a partial file (`resumeFromBytes > 0` and `destName` exists): reuse that
-         * document whatever the conflict policy. [fromBytes] > 0 appends, 0 truncates and restarts.
-         */
-        data class Resume<T>(val document: T, val fromBytes: Long) : Decision<T>
-
-        /** `conflict: "skip"` and the name is taken: nothing is written. */
-        data class Skip<T>(val document: T) : Decision<T>
-
-        /** `conflict: "overwrite"` and the name is taken: truncate that document. */
-        data class Overwrite<T>(val document: T) : Decision<T>
-
-        /** Create a new document (the name is free, or the next free `name (n).ext`). */
-        data class Create(val name: String) : Decision<Nothing>
+    /** `.photo.jpg.hoardpart`, cut so it stays within the 255-character limit of FAT/exFAT/SMB. */
+    fun of(name: String): String {
+        val room = 255 - 1 - SUFFIX.length
+        return "." + (if (name.length > room) name.take(room) else name) + SUFFIX
     }
 
-    fun <T> plan(
-        wanted: String,
-        conflict: String,
-        resumeFromBytes: Long,
-        children: List<T>,
-        nameOf: (T) -> String,
-        sizeOf: (T) -> Long,
-    ): Decision<T> {
-        val existing = children.firstOrNull { nameOf(it) == wanted }
-        if (existing != null && resumeFromBytes > 0) {
-            return Decision.Resume(existing, ResumeRules.requested(resumeFromBytes, sizeOf(existing), null))
-        }
-        if (existing != null) {
-            when (conflict) {
-                "skip" -> return Decision.Skip(existing)
-                "overwrite" -> return Decision.Overwrite(existing)
-            }
-        }
-        return Decision.Create(ConflictNames.firstFree(wanted, children.map(nameOf)))
-    }
+    fun isPart(name: String) = name.startsWith(".") && name.endsWith(SUFFIX)
+}
 
-    /** A transferId may be (re)started unless native still runs a job with that id. */
-    fun acceptsNew(existing: TransferJob?): Boolean = existing == null || existing.isTerminal
+/** Path helpers for planning (contract paths: `/`-separated, no leading slash). Pure. */
+object TransferPaths {
+    fun join(folder: String, name: String) = if (folder.isEmpty()) name else "$folder/$name"
+
+    fun parent(path: String): String = path.substringBeforeLast('/', "")
+
+    fun name(path: String): String = path.substringAfterLast('/')
+
+    /** [child] is [parent] or inside it. */
+    fun isSameOrInside(parent: String, child: String): Boolean =
+        parent.isEmpty() || child == parent || child.startsWith("$parent/")
+
+    /** Re-root [path] (inside [from]) under [to]. */
+    fun rebase(path: String, from: String, to: String): String =
+        if (path == from) to else join(to, path.removePrefix("$from/"))
+}
+
+/**
+ * What a failure means for a job (ADR 0007, "Errors"). Pure.
+ *  - [Scope.RETRY]: the route dropped (network endpoints only): reconnect, fail over, resume.
+ *  - [Scope.JOB]: nothing else can succeed now (no space, drive gone, access revoked, bad
+ *    password, cancelled): the job stops; the items left stay for Retry.
+ *  - [Scope.ITEM]: this file is the problem (gone, refused, invalid name): it fails, the job goes on.
+ */
+object FailureScope {
+    enum class Scope { RETRY, JOB, ITEM }
+
+    private val JOB = setOf(
+        ErrorCode.AUTH_FAILED, ErrorCode.NO_SPACE, ErrorCode.PERMISSION_REVOKED, ErrorCode.STORAGE_PERMISSION,
+        ErrorCode.UNAVAILABLE, ErrorCode.CANCELLED,
+    )
+    private val RETRY = setOf(ErrorCode.UNREACHABLE, ErrorCode.TIMEOUT, ErrorCode.GUID_MISMATCH, ErrorCode.UNKNOWN)
+
+    fun of(code: ErrorCode, network: Boolean): Scope = when {
+        code in JOB -> Scope.JOB
+        network && code in RETRY -> Scope.RETRY
+        else -> Scope.ITEM
+    }
 }

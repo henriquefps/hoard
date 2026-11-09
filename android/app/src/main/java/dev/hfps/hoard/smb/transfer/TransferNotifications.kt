@@ -15,9 +15,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.ForegroundInfo
 import dev.hfps.hoard.R
-import dev.hfps.hoard.smb.SafDestinations
 
-/** The ongoing transfer notification (foreground service) and the final "done/failed" one. */
+/** The ongoing transfer notification (foreground service), "files already exist", and the final "done/failed" one. */
 object TransferNotifications {
 
     private const val CHANNEL_PROGRESS = "transfers"
@@ -67,28 +66,48 @@ object TransferNotifications {
         return PendingIntent.getBroadcast(context, progressId(transferId), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    fun progress(context: Context, job: TransferJob, bytesPerSecond: Long?): Notification {
+    private fun title(context: Context, job: TransferJob): String {
+        val counts = job.counts()
+        return if (counts.total > 1) {
+            context.resources.getQuantityString(R.plurals.transfer_files, counts.total, counts.total)
+        } else {
+            job.displayName()
+        }
+    }
+
+    /** Upload when the bytes go to a server, download otherwise. */
+    private fun icon(job: TransferJob?, done: Boolean = false): Int = when {
+        job?.destination is Endpoint.Smb -> if (done) android.R.drawable.stat_sys_upload_done else android.R.drawable.stat_sys_upload
+        else -> if (done) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_sys_download
+    }
+
+    fun progress(context: Context, transferId: String, job: TransferJob?, bytesPerSecond: Long?): Notification {
         ensureChannels(context)
-        val text = when (job.state) {
-            TransferStates.QUEUED -> context.getString(R.string.transfer_waiting)
+        val counts = job?.counts()
+        val totalBytes = job?.totalBytes() ?: 0
+        val doneBytes = job?.bytesDone() ?: 0
+        val text = when (job?.state) {
+            null, TransferStates.QUEUED -> context.getString(R.string.transfer_waiting)
+            TransferStates.SCANNING -> context.getString(R.string.transfer_scanning)
             TransferStates.RETRYING -> context.getString(R.string.transfer_reconnecting)
             else -> {
-                val done = Formatter.formatShortFileSize(context, job.bytesDone)
-                val total = Formatter.formatShortFileSize(context, job.totalBytes)
-                if (bytesPerSecond != null && bytesPerSecond > 0) {
-                    context.getString(R.string.transfer_progress_speed, done, total, Formatter.formatShortFileSize(context, bytesPerSecond))
+                val done = Formatter.formatShortFileSize(context, doneBytes)
+                val total = Formatter.formatShortFileSize(context, totalBytes)
+                val base = if (counts != null && counts.total > 1) {
+                    context.getString(R.string.transfer_items_progress, counts.done + counts.skipped + counts.failed, counts.total, done, total)
                 } else {
                     context.getString(R.string.transfer_progress, done, total)
                 }
+                if (bytesPerSecond != null && bytesPerSecond > 0) "$base · ${Formatter.formatShortFileSize(context, bytesPerSecond)}/s" else base
             }
         }
-        val percent = if (job.totalBytes > 0) ((job.bytesDone * 100) / job.totalBytes).toInt() else 0
-        val indeterminate = job.state != TransferStates.RUNNING || job.totalBytes <= 0
+        val percent = if (totalBytes > 0) ((doneBytes * 100) / totalBytes).toInt() else 0
+        val indeterminate = job?.state != TransferStates.RUNNING || totalBytes <= 0
         return NotificationCompat.Builder(context, CHANNEL_PROGRESS)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(job.destName)
+            .setSmallIcon(icon(job))
+            .setContentTitle(job?.let { title(context, it) } ?: "Hoard")
             .setContentText(text)
-            .setSubText(job.activeHost)
+            .setSubText(job?.currentName?.takeIf { counts != null && counts.total > 1 } ?: job?.activeHost)
             .setProgress(100, percent, indeterminate)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -96,42 +115,61 @@ object TransferNotifications {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setContentIntent(openAppIntent(context))
-            .addAction(0, context.getString(R.string.transfer_cancel), cancelIntent(context, job.transferId))
+            .addAction(0, context.getString(R.string.transfer_cancel), cancelIntent(context, transferId))
             .build()
     }
 
-    fun foregroundInfo(context: Context, job: TransferJob, bytesPerSecond: Long?): ForegroundInfo {
-        val notification = progress(context, job, bytesPerSecond)
+    fun foregroundInfo(context: Context, transferId: String, job: TransferJob?, bytesPerSecond: Long?): ForegroundInfo {
+        val notification = progress(context, transferId, job, bytesPerSecond)
         return if (Build.VERSION.SDK_INT >= 29) {
-            ForegroundInfo(progressId(job.transferId), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            ForegroundInfo(progressId(transferId), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
-            ForegroundInfo(progressId(job.transferId), notification)
+            ForegroundInfo(progressId(transferId), notification)
         }
     }
 
     /** Update the ongoing notification in place (no-op without the notification permission). */
     fun update(context: Context, job: TransferJob, bytesPerSecond: Long?) {
-        notify(context, progressId(job.transferId), progress(context, job, bytesPerSecond))
+        notify(context, progressId(job.transferId), progress(context, job.transferId, job, bytesPerSecond))
     }
 
-    /** "Downloaded" (tap opens the file) or "Download failed"; nothing for cancel/skip. */
+    /** "Some files already exist": the job waits for the user's answer in the app. */
+    fun conflict(context: Context, job: TransferJob) {
+        ensureChannels(context)
+        NotificationManagerCompat.from(context).cancel(progressId(job.transferId))
+        val builder = NotificationCompat.Builder(context, CHANNEL_RESULT)
+            .setSmallIcon(android.R.drawable.stat_notify_more)
+            .setContentTitle(context.getString(R.string.transfer_conflict_title))
+            .setContentText(context.getString(R.string.transfer_conflict_text, title(context, job)))
+            .setAutoCancel(true)
+            .setContentIntent(openAppIntent(context))
+        notify(context, resultId(job.transferId), builder.build())
+    }
+
+    /** "Done" (tap opens a single file) or "Failed"; nothing for cancel/skip. */
     fun result(context: Context, job: TransferJob) {
         ensureChannels(context)
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(progressId(job.transferId))
+        val counts = job.counts()
         val builder = NotificationCompat.Builder(context, CHANNEL_RESULT)
-            .setContentTitle(job.destName)
+            .setContentTitle(title(context, job))
             .setAutoCancel(true)
             .setOnlyAlertOnce(true)
         when (job.state) {
             TransferStates.COMPLETED -> {
-                builder.setSmallIcon(android.R.drawable.stat_sys_download_done)
-                    .setContentText(context.getString(R.string.transfer_completed, Formatter.formatShortFileSize(context, job.totalBytes)))
-                    .setContentIntent(viewIntent(context, job) ?: openAppIntent(context))
+                builder.setSmallIcon(icon(job, done = true))
+                    .setContentText(context.getString(R.string.transfer_completed, Formatter.formatShortFileSize(context, job.totalBytes())))
+                    .setContentIntent(openAppIntent(context))
             }
             TransferStates.FAILED -> {
+                val reason = if (counts.total > 1 && counts.failed < counts.total) {
+                    context.getString(R.string.transfer_partly_failed, counts.failed, counts.total)
+                } else {
+                    job.errorMessage ?: job.errorCode?.name ?: ""
+                }
                 builder.setSmallIcon(android.R.drawable.stat_notify_error)
-                    .setContentText(context.getString(R.string.transfer_failed, job.errorMessage ?: job.errorCode?.name ?: ""))
+                    .setContentText(context.getString(R.string.transfer_failed, reason))
                     .setContentIntent(openAppIntent(context))
             }
             else -> return
@@ -143,15 +181,6 @@ object TransferNotifications {
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(progressId(transferId))
         manager.cancel(resultId(transferId))
-    }
-
-    private fun viewIntent(context: Context, job: TransferJob): PendingIntent? {
-        val uri = job.destUri?.let(Uri::parse) ?: return null
-        val view = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, SafDestinations.mimeTypeFor(job.destName))
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (view.resolveActivity(context.packageManager) == null) return null
-        return PendingIntent.getActivity(context, resultId(job.transferId), view, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
     @Suppress("MissingPermission")

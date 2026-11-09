@@ -14,6 +14,7 @@ import { BrowsePage } from "@/routes/BrowsePage"
 import { TransfersPage } from "@/routes/TransfersPage"
 import { SettingsPage } from "@/routes/SettingsPage"
 import { StorageAccessPage } from "@/routes/StorageAccessPage"
+import { SavePage } from "@/routes/SavePage"
 
 const rootRoute = createRootRoute({ component: AppShell, notFoundComponent: NotFoundPage })
 
@@ -89,6 +90,12 @@ const storageAccessRoute = createRoute({
   path: "/storage-access",
   component: StorageAccessPage,
 })
+// "Save to…": files another app shared to Hoard (ADR 0007).
+const saveRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/save",
+  component: SavePage,
+})
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -104,6 +111,7 @@ const routeTree = rootRoute.addChildren([
   viewRoute,
   transfersRoute,
   storageAccessRoute,
+  saveRoute,
   settingsRoute,
 ])
 

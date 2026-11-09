@@ -61,7 +61,7 @@ import { accountName, isReadOnly } from "@/features/browse/access"
 import { ReadOnlyBadge } from "@/features/browse/ReadOnlyBadge"
 import { invalidateFolder } from "@/features/browse/useFolder"
 import { useRouteEngine } from "@/features/route/RouteProvider"
-import { DownloadDialog } from "@/features/transfers/DownloadDialog"
+import { TransferToDialog } from "@/features/transfers/TransferToDialog"
 import { useBackHandler } from "@/hooks/useAndroidBackButton"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { hasThumbnail, parentPath, splitPath } from "@/lib/files"
@@ -719,7 +719,7 @@ function TextFileScreen({
               aria-label={t("text.pretty")}
             >
               <BracketsCurlyIcon />
-              <span className="max-@md:sr-only">{t("text.pretty")}</span>
+              <span className="@max-md:sr-only">{t("text.pretty")}</span>
             </Toggle>
           )}
           <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -879,13 +879,13 @@ function TextFileScreen({
           else blocker.reset?.()
         }}
       />
-      {download && doc && machine && (
-        <DownloadDialog
+      {download && doc && (
+        <TransferToDialog
           open
-          onOpenChange={(open) => !open && setDownload(false)}
-          machine={machine}
-          files={[{ share: share ?? "", path, name, size: doc.size }]}
-          skippedFolders={0}
+          onOpenChange={(open: boolean) => !open && setDownload(false)}
+          intent={isSmb ? "download" : "copy"}
+          source={{ locationId: loc.id, share: share ?? undefined }}
+          entries={[{ path, name, isDirectory: false, size: doc.size }]}
           onStarted={() => setDownload(false)}
         />
       )}

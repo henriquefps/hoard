@@ -53,7 +53,7 @@ import {
   useTheme,
 } from "@/lib/theme/theme"
 import { HoardSmb } from "@/plugins/smb"
-import type { ConflictPolicy, DestinationFolder } from "@/plugins/smb/definitions"
+import type { DestinationFolder, TransferConflict } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
 
 const REPOSITORY = "https://github.com/henriquefps/hoard"
@@ -221,7 +221,7 @@ export function SettingsPage() {
               <FieldLabel htmlFor="default-conflict">{t("settings.defaultConflict")}</FieldLabel>
               <Select
                 value={conflict ?? SETTING_DEFAULTS.defaultConflict}
-                onValueChange={(value) => void setConflict(value as ConflictPolicy)}
+                onValueChange={(value) => void setConflict(value as TransferConflict)}
               >
                 <SelectTrigger id="default-conflict" className="w-full sm:w-64">
                   <SelectValue />
@@ -280,7 +280,7 @@ export function SettingsPage() {
 function Destinations() {
   const { t } = useTranslation()
   const [folders, setFolders] = useState<DestinationFolder[]>()
-  const [lastDestination, setLastDestination] = useSetting("lastDestination")
+  const [recent, setRecent] = useSetting("recentDestinations")
   const reload = () =>
     HoardSmb.listDestinationFolders().then(
       ({ folders }) => setFolders(folders),
@@ -306,7 +306,7 @@ function Destinations() {
               />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-[0.9375rem] font-medium">{folder.name}</span>
-                {folder.uri === lastDestination && (
+                {recent?.[0]?.treeUri === folder.uri && (
                   <span className="text-[0.8125rem] text-muted-foreground">
                     {t("settings.lastUsed")}
                   </span>
@@ -316,7 +316,7 @@ function Destinations() {
                 variant="ghost"
                 onClick={async () => {
                   await HoardSmb.releaseDestinationFolder({ uri: folder.uri })
-                  if (folder.uri === lastDestination) await setLastDestination(null)
+                  await setRecent((recent ?? []).filter((d) => d.treeUri !== folder.uri))
                   await reload()
                   toast(t("settings.released", { name: folder.name }))
                 }}
@@ -388,6 +388,7 @@ type MockControls = {
   simulateVolume: (uuid: string, attached: boolean) => void
   simulateStorageAccess: (granted: boolean) => void
   simulatedVolumes: { uuid: string; label: string; attached: boolean }[]
+  simulateIncomingShare: (files: { name: string; size: number; mimeType?: string }[]) => unknown
 }
 
 /** Browser build: plug the mock drives in and out, flip all files access. */
@@ -395,7 +396,10 @@ function MockStorageTools() {
   const { t } = useTranslation()
   const { access } = useVolumes()
   const mock = HoardSmb as unknown as MockControls
-  const [drives, setDrives] = useState(() => mock.simulatedVolumes ?? [])
+  // Through Capacitor's proxy a getter may arrive as a method wrapper: only an array counts.
+  const [drives, setDrives] = useState(() =>
+    Array.isArray(mock.simulatedVolumes) ? mock.simulatedVolumes : []
+  )
   return (
     <>
       <Field orientation="horizontal">
@@ -473,6 +477,29 @@ function DeveloperTools() {
           <FieldDescription>{t("settings.networkHint")}</FieldDescription>
         </Field>
         <MockStorageTools />
+        <Field>
+          <FieldLabel>{t("settings.mockShare")}</FieldLabel>
+          <div>
+            <Button
+              variant="outline"
+              onClick={() =>
+                (HoardSmb as unknown as MockControls).simulateIncomingShare([
+                  { name: "IMG_20261109_101500.jpg", size: 3_481_220, mimeType: "image/jpeg" },
+                  { name: "IMG_20261109_101502.jpg", size: 3_102_904, mimeType: "image/jpeg" },
+                  {
+                    name: "Família — praia 2026 (versão final, não apagar).jpg",
+                    size: 5_912_330,
+                    mimeType: "image/jpeg",
+                  },
+                  { name: "boarding-pass.pdf", size: 182_004, mimeType: "application/pdf" },
+                ])
+              }
+            >
+              {t("settings.mockShareAction")}
+            </Button>
+          </div>
+          <FieldDescription>{t("settings.mockShareHint")}</FieldDescription>
+        </Field>
         <Field orientation="horizontal">
           <FieldContent>
             <FieldLabel htmlFor="worst-case">{t("settings.worstCase")}</FieldLabel>

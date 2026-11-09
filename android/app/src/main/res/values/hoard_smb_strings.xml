@@ -2,16 +2,26 @@
 <!-- Strings of the native HoardSmb plugin (transfer and streaming notifications, web viewer). Keep values-pt-rBR in sync. -->
 <resources>
     <string name="transfer_channel_progress">Transfers</string>
-    <string name="transfer_channel_progress_description">Downloads in progress</string>
+    <string name="transfer_channel_progress_description">Copies and moves in progress</string>
     <string name="transfer_channel_results">Finished transfers</string>
-    <string name="transfer_channel_results_description">Completed or failed downloads</string>
+    <string name="transfer_channel_results_description">Completed or failed copies and moves</string>
     <string name="transfer_waiting">Waiting…</string>
     <string name="transfer_reconnecting">Reconnecting…</string>
     <string name="transfer_progress">%1$s of %2$s</string>
     <string name="transfer_progress_speed">%1$s of %2$s · %3$s/s</string>
     <string name="transfer_cancel">Cancel</string>
-    <string name="transfer_completed">Downloaded · %1$s</string>
-    <string name="transfer_failed">Download failed: %1$s</string>
+    <string name="transfer_completed">Done · %1$s</string>
+    <string name="transfer_scanning">Counting files…</string>
+    <string name="transfer_conflict_title">Some files already exist</string>
+    <string name="transfer_conflict_text">Open Hoard to choose what happens to %1$s</string>
+    <string name="transfer_items_progress">%1$d of %2$d files · %3$s of %4$s</string>
+    <plurals name="transfer_files">
+        <item quantity="one">%d file</item>
+        <item quantity="other">%d files</item>
+    </plurals>
+    <string name="transfer_partly_failed">%1$d of %2$d failed</string>
+    <string name="share_chooser_title">Share</string>
+    <string name="transfer_failed">Failed: %1$s</string>
     <!-- Streaming and the local web server (StreamService, WebViewerActivity). -->
     <string name="stream_channel">Streaming</string>
     <string name="stream_channel_description">Files Hoard is serving to other apps right now</string>

@@ -1,7 +1,7 @@
 # Hoard: notes for agents
 
 File manager for Android (Capacitor 8 + React): SMB shares, the phone's storage, USB drives and SD
-cards, all as _locations_ (ADR 0005). Read `README.md` and `docs/adr/` first.
+cards, all as _locations_ (ADR 0005), with copy/move/share between any of them (ADR 0007). Read `README.md` and `docs/adr/` first.
 
 ## Commands
 
@@ -42,6 +42,10 @@ cards, all as _locations_ (ADR 0005). Read `README.md` and `docs/adr/` first.
 - Emulator volumes: `adb shell sm set-virtual-disk true` + `sm partition disk:7,432 public` (pull
   it out with `false`); see `docs/testing/locations.md`.
 - **Bytes never cross the bridge**: transfers, open and thumbnails work with native files and URLs.
+- **Transfers** (ADR 0007): every byte that moves between locations goes through one engine —
+  `useTransferActions().start(request)` in JS, `startTransfer` in the contract, `TransferRunner`
+  over `TransferFs` endpoints natively (`smb/transfer/`). Don't add a second copy path. Pure logic
+  is JVM-tested with the in-memory `MemoryFs` (`TransferRunnerTest`). Share in/out: `smb/share/`.
 - **Passwords never go to SQLite or JS storage**: only `HoardSmb.setCredentials` (Android Keystore).
 - **Schema changes** append a migration to `src/db/migrations.ts` (never edit a released one) and
   update `src/db/types.ts`, `docs/adr/0003-storage.md` and `src/db/db.test.ts`.
