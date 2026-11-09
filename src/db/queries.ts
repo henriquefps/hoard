@@ -5,6 +5,7 @@ import type { Db } from "./db"
 import type {
   FavoriteRecord,
   MachineAddressRecord,
+  ManualShareRecord,
   MachineRecord,
   MachineWithAddresses,
   SettingKey,
@@ -289,6 +290,28 @@ export async function clearFinishedTransfers(db: Db): Promise<number> {
     ...TERMINAL_TRANSFER_STATES,
   ])
   return changes
+}
+
+// --- Manual shares -------------------------------------------------------------------------
+
+/** Shares added by name for a machine (not listed by the server), by name. */
+export async function listManualShares(db: Db, machineId: string): Promise<ManualShareRecord[]> {
+  return db.query<ManualShareRecord>(
+    "SELECT * FROM manual_shares WHERE machine_id = ? ORDER BY name",
+    [machineId]
+  )
+}
+
+/** Remembers a share opened by name; adding it again (any letter case) keeps the first entry. */
+export async function addManualShare(db: Db, machineId: string, name: string): Promise<void> {
+  await db.run(
+    "INSERT INTO manual_shares (machine_id, name, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+    [machineId, name, now()]
+  )
+}
+
+export async function removeManualShare(db: Db, machineId: string, name: string): Promise<void> {
+  await db.run("DELETE FROM manual_shares WHERE machine_id = ? AND name = ?", [machineId, name])
 }
 
 // --- Settings ------------------------------------------------------------------------------

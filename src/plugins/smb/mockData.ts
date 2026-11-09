@@ -60,6 +60,8 @@ export interface MockShare {
   denied?: boolean
   /** The account may read but not write (`writeTextFile` rejects `ACCESS_DENIED`). */
   readOnly?: boolean
+  /** Served but left out of `listShares` (Samba `browseable = no`): opened only by name. */
+  unlisted?: boolean
   root: MockFile[]
 }
 
@@ -280,6 +282,11 @@ export const MOCK_SERVERS = {
         ],
       },
       { name: "IPC$", hidden: true, root: [] },
+      {
+        name: "Pasta Pública",
+        unlisted: true,
+        root: [file("Leia-me.txt", 2 * KiB, 30)],
+      },
     ],
   },
   nas: {

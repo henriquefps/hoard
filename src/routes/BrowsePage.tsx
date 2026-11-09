@@ -10,6 +10,7 @@ import {
   FolderPlusIcon,
   HardDriveIcon,
   PencilSimpleIcon,
+  PlusIcon,
   StarIcon,
   TrashIcon,
   XIcon,
@@ -52,7 +53,15 @@ import {
 } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useDb, useLiveQuery } from "@/db/DbProvider"
-import { addFavorite, findFavorite, getMachine, removeFavorite } from "@/db/queries"
+import {
+  addFavorite,
+  addManualShare,
+  findFavorite,
+  getMachine,
+  listManualShares,
+  removeFavorite,
+  removeManualShare,
+} from "@/db/queries"
 import type { MachineWithAddresses } from "@/db/types"
 import { BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
 import { FileRow } from "@/features/browse/FileRow"
@@ -200,15 +209,69 @@ function HeaderActions({
 
 function SharesView({ machine }: { machine: MachineWithAddresses }) {
   const { t } = useTranslation()
+  const db = useDb()
+  const navigate = useNavigate()
   const folder = useFolder(machine, undefined, "")
   const engine = useRouteEngine()
   const [showHidden] = useSetting("showHiddenFiles")
-  const shares =
-    folder.data?.kind === "shares"
-      ? folder.data.shares
-          .filter((s) => showHidden || !s.isHidden)
-          .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-      : undefined
+  const [askName, setAskName] = useState(false)
+  const manual = useLiveQuery((d) => listManualShares(d, machine.id), [machine.id])
+  const listed = folder.data?.kind === "shares" ? folder.data.shares : undefined
+  // Shares added by name show up next to the listed ones until the server lists them itself.
+  const shares = listed
+    ? [
+        ...listed.map((s) => ({ ...s, manual: false })),
+        ...(manual ?? [])
+          .filter((m) => !listed.some((s) => sameShare(s.name, m.name)))
+          .map((m) => ({ name: m.name, isHidden: false, manual: true })),
+      ]
+        .filter((s) => showHidden || !s.isHidden)
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+    : undefined
+
+  const openByName = (
+    <>
+      <Button variant="outline" onClick={() => setAskName(true)}>
+        <PlusIcon />
+        {t("browse.openShareByName")}
+      </Button>
+      <NameDialog
+        open={askName}
+        onOpenChange={setAskName}
+        title={t("browse.openShareByNameTitle")}
+        description={t("browse.openShareByNameBody")}
+        label={t("browse.shareName")}
+        initialValue=""
+        submitLabel={t("browse.open")}
+        validate={(value) => (isValidShareName(value) ? null : t("browse.shareNameInvalid"))}
+        onSubmit={async (value) => {
+          const name = value.trim()
+          try {
+            // Opening the root proves the share exists and this account may use it.
+            await engine.withSession(machine, (sessionId) =>
+              HoardSmb.list({ sessionId, share: name, path: "" })
+            )
+          } catch (error) {
+            const code = smbErrorCode(error)
+            throw new Error(
+              code === "NOT_FOUND"
+                ? t("browse.shareNotFound")
+                : t(`errors.${code}.title`, t("errors.UNKNOWN.title")),
+              { cause: error }
+            )
+          }
+          if (!listed?.some((s) => sameShare(s.name, name))) {
+            await addManualShare(db, machine.id, name)
+          }
+          void navigate({
+            to: "/browse/$machineId",
+            params: { machineId: machine.id },
+            search: { share: name },
+          })
+        }}
+      />
+    </>
+  )
 
   if (folder.error && !shares) {
     return (
@@ -235,6 +298,7 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
           <EmptyTitle>{t("browse.noSharesTitle")}</EmptyTitle>
           <EmptyDescription>{t("browse.noSharesBody")}</EmptyDescription>
         </EmptyHeader>
+        <EmptyContent>{openByName}</EmptyContent>
       </Empty>
     )
   }
@@ -243,17 +307,40 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
       <h2 className="px-4 pt-4 pb-2 eyebrow md:px-6">{t("browse.shares")}</h2>
       <ul className="border-t">
         {shares.map((s) => (
-          <ShareRow key={s.name} machine={machine} share={s} />
+          <ShareRow key={s.name} machine={machine} share={s} manual={s.manual} />
         ))}
       </ul>
+      <div className="px-4 py-4 md:px-6">{openByName}</div>
     </div>
   )
 }
 
-function ShareRow({ machine, share }: { machine: MachineWithAddresses; share: SmbShare }) {
+/** Share names compare case-insensitively (SMB servers treat them so). */
+const sameShare = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: "accent" }) === 0
+
+const isValidShareName = (value: string) => {
+  const name = value.trim()
+  return (
+    name.length > 0 &&
+    name.length <= 80 &&
+    ![...name].some((c) => c === "\\" || c === "/" || c.charCodeAt(0) < 32)
+  )
+}
+
+function ShareRow({
+  machine,
+  share,
+  manual,
+}: {
+  machine: MachineWithAddresses
+  share: SmbShare
+  manual: boolean
+}) {
   const { t } = useTranslation()
   const db = useDb()
   const engine = useRouteEngine()
+  const subtitle = share.comment ?? (manual ? t("browse.addedByName") : undefined)
   return (
     <li className="relative flex min-h-16 items-center gap-3 border-b px-4 py-2 transition-colors hover:bg-muted/50 md:px-6">
       <span
@@ -271,9 +358,9 @@ function ShareRow({ machine, share }: { machine: MachineWithAddresses; share: Sm
         <span className="line-clamp-2 text-[0.9375rem] font-medium [overflow-wrap:anywhere]">
           {share.name}
         </span>
-        {share.comment && (
-          <span className="truncate text-[0.8125rem] text-muted-foreground" title={share.comment}>
-            {share.comment}
+        {subtitle && (
+          <span className="truncate text-[0.8125rem] text-muted-foreground" title={subtitle}>
+            {subtitle}
           </span>
         )}
       </Link>
@@ -318,6 +405,21 @@ function ShareRow({ machine, share }: { machine: MachineWithAddresses; share: Sm
             <CopyIcon />
             {t("browse.copyPath")}
           </DropdownMenuItem>
+          {manual && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={async () => {
+                  await removeManualShare(db, machine.id, share.name)
+                  toast.success(t("browse.shareRemoved", { name: share.name }))
+                }}
+              >
+                <TrashIcon />
+                {t("browse.removeShare")}
+              </DropdownMenuItem>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </li>

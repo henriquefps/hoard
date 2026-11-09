@@ -4,6 +4,7 @@ import type { Db } from "./db"
 import { LATEST_VERSION, migrate, pendingMigrations } from "./migrations"
 import {
   addFavorite,
+  addManualShare,
   applyTransferProgress,
   clearFinishedTransfers,
   createTransfer,
@@ -12,7 +13,9 @@ import {
   getSetting,
   listFavorites,
   listMachines,
+  listManualShares,
   listTransfers,
+  removeManualShare,
   saveMachine,
   setServerGuid,
   setSetting,
@@ -31,7 +34,8 @@ async function freshDb(): Promise<Db> {
 
 describe("migrations", () => {
   it("plans every migration for a new database and none at the latest version", () => {
-    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1])
+    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2])
+    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2])
     expect(pendingMigrations(LATEST_VERSION)).toEqual([])
   })
 
@@ -52,6 +56,7 @@ describe("migrations", () => {
         "favorites",
         "transfers",
         "settings",
+        "manual_shares",
       ])
     )
   })
@@ -144,6 +149,24 @@ describe("queries", () => {
     await deleteMachine(db, id)
     expect(await listFavorites(db)).toEqual([])
     expect(await listTransfers(db)).toEqual([])
+  })
+
+  it("remembers shares added by name once per machine and cascades machine deletion", async () => {
+    const id = await saveMachine(db, { name: "m", username: "u", addresses: [] })
+    const other = await saveMachine(db, { name: "o", username: "u", addresses: [] })
+    await addManualShare(db, id, "Pasta Pública")
+    await addManualShare(db, id, "pasta pública") // same share, other case: kept once
+    await addManualShare(db, id, "hidden$")
+    await addManualShare(db, other, "hidden$")
+    expect((await listManualShares(db, id)).map((s) => s.name)).toEqual([
+      "hidden$",
+      "Pasta Pública",
+    ])
+    await removeManualShare(db, id, "HIDDEN$")
+    expect((await listManualShares(db, id)).map((s) => s.name)).toEqual(["Pasta Pública"])
+    await deleteMachine(db, id)
+    expect(await listManualShares(db, id)).toEqual([])
+    expect((await listManualShares(db, other)).map((s) => s.name)).toEqual(["hidden$"])
   })
 
   it("applies transfer progress and clears finished ones", async () => {

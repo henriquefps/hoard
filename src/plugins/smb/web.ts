@@ -370,7 +370,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     await this.wait(session.latencyMs * 2)
     return {
       shares: this.trees[session.serverKey].shares
-        .filter((share) => share.name !== "IPC$")
+        .filter((share) => share.name !== "IPC$" && !share.unlisted)
         .map((share) => ({
           name: share.name,
           comment: share.comment,

@@ -44,6 +44,14 @@ export interface FavoriteRecord {
   created_at: string
 }
 
+/** Row of `manual_shares`: a share added by name because the server does not list it. */
+export interface ManualShareRecord {
+  machine_id: string
+  /** Share name as the user typed it (unique per machine, case-insensitively). */
+  name: string
+  created_at: string
+}
+
 /** Row of `transfers`: the app's record of a native download job (same id). */
 export interface TransferRecord {
   id: string
