@@ -239,7 +239,7 @@ export function MachineFormPage({ machineId }: { machineId?: string }) {
       saved.current = true
       engine.forget(id)
       toast.success(isNew ? t("machines.form.created") : t("machines.form.saved"))
-      void navigate({ to: "/browse/$machineId", params: { machineId: id } })
+      void navigate({ to: "/browse/$locationId", params: { locationId: id } })
     } catch {
       toast.error(t("errors.UNKNOWN.title"))
     } finally {
@@ -562,7 +562,7 @@ export function MachineFormPage({ machineId }: { machineId?: string }) {
           onClick={() =>
             isNew
               ? navigate({ to: "/machines" })
-              : navigate({ to: "/browse/$machineId", params: { machineId: id } })
+              : navigate({ to: "/browse/$locationId", params: { locationId: id } })
           }
         >
           {t("common.cancel")}

@@ -2,7 +2,11 @@ package dev.hfps.hoard.smb
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.DocumentsContract
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.result.ActivityResult
 import com.getcapacitor.JSArray
@@ -24,7 +28,19 @@ import dev.hfps.hoard.smb.transfer.TransferProgress
 import dev.hfps.hoard.smb.transfer.TransferStates
 import dev.hfps.hoard.smb.stream.StreamAddress
 import dev.hfps.hoard.smb.stream.StreamRequest
+import dev.hfps.hoard.smb.stream.MimeTypes
 import dev.hfps.hoard.smb.stream.Streamer
+import dev.hfps.hoard.smb.location.HoardFs
+import dev.hfps.hoard.smb.location.LocalFile
+import dev.hfps.hoard.smb.location.LocalStreamSource
+import dev.hfps.hoard.smb.location.Location
+import dev.hfps.hoard.smb.location.SafVolumes
+import dev.hfps.hoard.smb.location.SmbFs
+import dev.hfps.hoard.smb.location.StorageAccess
+import dev.hfps.hoard.smb.location.VolumeInfo
+import dev.hfps.hoard.smb.location.VolumeMapping
+import dev.hfps.hoard.smb.location.VolumeMonitor
+import dev.hfps.hoard.smb.location.VolumeRegistry
 import dev.hfps.hoard.smb.text.TextCodec
 import dev.hfps.hoard.smb.text.TextFiles
 import dev.hfps.hoard.smb.viewer.Opener
@@ -47,11 +63,22 @@ import java.util.concurrent.CancellationException
  * foreground jobs (transfers) and NSD (discovery). Every method runs off the main thread and
  * rejects with a `HoardSmbErrorCode` in `error.code`.
  *
- * Events: `transferProgress`, `networkChanged`.
+ * Since 1.3.0 the file operations work on any location (ADR 0005): SMB shares through a session,
+ * the phone's storage and removable volumes through [HoardFs] ([PathFs] by path with all files
+ * access, [SafFs] through a volume's SAF tree).
+ *
+ * Events: `transferProgress`, `networkChanged`, `volumesChanged`.
  */
 @CapacitorPlugin(
     name = "HoardSmb",
-    permissions = [Permission(alias = HoardSmbPlugin.NOTIFICATIONS, strings = [Manifest.permission.POST_NOTIFICATIONS])],
+    permissions = [
+        Permission(alias = HoardSmbPlugin.NOTIFICATIONS, strings = [Manifest.permission.POST_NOTIFICATIONS]),
+        // Android 10 and older only; Android 11+ uses the "All files access" switch instead.
+        Permission(
+            alias = HoardSmbPlugin.STORAGE,
+            strings = [Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE],
+        ),
+    ],
 )
 class HoardSmbPlugin : Plugin() {
 
@@ -64,6 +91,8 @@ class HoardSmbPlugin : Plugin() {
     private lateinit var thumbnailer: Thumbnailer
     private lateinit var streamer: Streamer
     private var networkMonitor: NetworkMonitor? = null
+    private lateinit var volumes: VolumeRegistry
+    private var volumeMonitor: VolumeMonitor? = null
     private val thumbnailSlots = Semaphore(3)
     private var openJob: Job? = null
     private var askedForNotifications = false
@@ -86,10 +115,21 @@ class HoardSmbPlugin : Plugin() {
         networkMonitor = NetworkMonitor(context) { state ->
             notifyListeners("networkChanged", JSObject().put("transport", state.transport).put("vpn", state.vpn))
         }.also { it.start() }
+        volumes = VolumeRegistry(context)
+        volumeMonitor = VolumeMonitor(context) { change ->
+            scope.launch {
+                val event = JSObject().put("volumes", volumesJson())
+                change?.let {
+                    event.put("change", JSObject().put("uuid", it.uuid ?: JSONObject.NULL).put("state", it.state))
+                }
+                notifyListeners("volumesChanged", event)
+            }
+        }.also { it.start() }
     }
 
     override fun handleOnDestroy() {
         networkMonitor?.stop()
+        volumeMonitor?.stop()
         transfers.removeListener(transferListener)
         sessions.closeAll()
         scope.cancel()
@@ -131,14 +171,32 @@ class HoardSmbPlugin : Plugin() {
      * thread is interrupted mid-request, which would kill the session for every other call. Long
      * loops check [Cancellation.check] instead; each SMB request is bounded by smbj's own timeout.
      */
-    private suspend fun <T> onSession(call: PluginCall, block: (SmbSession, Cancellation) -> T): T {
-        val sessionId = call.getString("sessionId")
+    private suspend fun <T> onSession(call: PluginCall, block: (SmbSession, Cancellation) -> T): T =
+        onSession(call.getString("sessionId"), block)
+
+    private suspend fun <T> onSession(sessionId: String?, block: (SmbSession, Cancellation) -> T): T {
         return withContext(Dispatchers.IO) {
             val job = coroutineContext[Job]
             val cancellation = Cancellation { job?.isActive == false }
             sessions.use(sessionId) { block(it, cancellation) }
         }
     }
+
+    /** The call's `location` (contract `LocationRef`). */
+    private fun PluginCall.location(): Location = Location.parse(getObject("location"))
+
+    /**
+     * Run [block] on the location's [HoardFs]: an SMB share through its session (same rules as
+     * [onSession]), or a local location (`STORAGE_PERMISSION` / `UNAVAILABLE` when it cannot be read).
+     */
+    private suspend fun <T> withFs(call: PluginCall, block: (HoardFs, Cancellation) -> T): T =
+        when (val location = call.location()) {
+            is Location.Smb -> onSession(location.sessionId) { s, cancel -> block(SmbFs(s, location.share), cancel) }
+            is Location.Local -> withContext(Dispatchers.IO) {
+                val job = coroutineContext[Job]
+                block(volumes.fs(location), Cancellation { job?.isActive == false })
+            }
+        }
 
     private fun entryJson(entry: SmbEntry) = JSObject().apply {
         put("name", entry.name)
@@ -147,7 +205,27 @@ class HoardSmbPlugin : Plugin() {
         put("size", entry.size)
         put("modifiedAt", entry.modifiedAt ?: JSONObject.NULL)
         put("isHidden", entry.isHidden)
+        if (entry.restricted) put("restricted", true)
     }
+
+    private fun volumeJson(volume: VolumeInfo) = JSObject().apply {
+        put("uuid", volume.uuid ?: JSONObject.NULL)
+        put("label", volume.label)
+        put("primary", volume.primary)
+        put("removable", volume.removable)
+        put("kind", volume.kind)
+        put("state", volume.state)
+        volume.path?.let { put("path", it.path) }
+        volume.totalBytes?.let { put("totalBytes", it) }
+        volume.freeBytes?.let { put("freeBytes", it) }
+        volume.fileSystem?.let { put("fileSystem", it) }
+        put("access", volume.access)
+    }
+
+    private fun volumesJson() = JSArray().apply { volumes.list().forEach { put(volumeJson(it)) } }
+
+    private fun storageAccessJson() =
+        JSObject().put("granted", StorageAccess.granted(context)).put("mechanism", StorageAccess.mechanism())
 
     private fun errorJson(job: TransferJob): JSObject? {
         val code = job.errorCode ?: return null
@@ -267,9 +345,8 @@ class HoardSmbPlugin : Plugin() {
 
     @PluginMethod
     fun list(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.getString("path").orEmpty()
-        val folder = onSession(call) { s, _ -> SmbBrowser.listWithAccess(s, share, path) }
+        val folder = withFs(call) { fs, cancel -> fs.list(path, cancel) }
         val list = JSArray()
         folder.entries.forEach { list.put(entryJson(it)) }
         JSObject().put("entries", list).apply { folder.access?.let { put("access", it.json) } }
@@ -277,33 +354,133 @@ class HoardSmbPlugin : Plugin() {
 
     @PluginMethod
     fun stat(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.getString("path").orEmpty()
-        JSObject().put("entry", entryJson(onSession(call) { s, _ -> SmbBrowser.stat(s, share, path) }))
+        JSObject().put("entry", entryJson(withFs(call) { fs, _ -> fs.stat(path) }))
     }
 
     @PluginMethod
     fun createFolder(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.getString("path").orEmpty()
         val name = call.requireString("name")
-        JSObject().put("entry", entryJson(onSession(call) { s, _ -> SmbBrowser.createFolder(s, share, path, name) }))
+        JSObject().put("entry", entryJson(withFs(call) { fs, _ -> fs.createFolder(path, name) }))
     }
 
     @PluginMethod
     fun rename(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.getString("path").orEmpty()
         val newName = call.requireString("newName")
-        JSObject().put("entry", entryJson(onSession(call) { s, _ -> SmbBrowser.rename(s, share, path, newName) }))
+        JSObject().put("entry", entryJson(withFs(call) { fs, _ -> fs.rename(path, newName) }))
     }
 
     @PluginMethod
     fun delete(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.getString("path").orEmpty()
         val recursive = call.getBoolean("recursive", false) ?: false
-        onSession(call) { s, _ -> SmbBrowser.delete(s, share, path, recursive) }
+        withFs(call) { fs, cancel -> fs.delete(path, recursive, cancel) }
+        null
+    }
+
+    // --- Local storage (ADR 0005) -----------------------------------------------------------
+
+    @PluginMethod
+    fun getStorageAccess(call: PluginCall) = run(call) { storageAccessJson() }
+
+    @PluginMethod
+    fun requestStorageAccess(call: PluginCall) {
+        if (StorageAccess.granted(context)) {
+            call.resolve(storageAccessJson())
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val forApp = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:${context.packageName}"))
+            val intent = if (forApp.resolveActivity(context.packageManager) != null) forApp else Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+            try {
+                startActivityForResult(call, intent, "onStorageAccessResult")
+            } catch (e: Exception) {
+                reject(call, HoardSmbException(ErrorCode.UNKNOWN, "No settings screen for all files access: ${e.message}", e))
+            }
+        } else {
+            requestPermissionForAlias(STORAGE, call, "onStoragePermission")
+        }
+    }
+
+    @ActivityCallback
+    private fun onStorageAccessResult(call: PluginCall?, @Suppress("UNUSED_PARAMETER") result: ActivityResult) {
+        call ?: return
+        call.resolve(storageAccessJson())
+        notifyVolumesChanged()
+    }
+
+    @PermissionCallback
+    private fun onStoragePermission(call: PluginCall) {
+        call.resolve(storageAccessJson())
+        notifyVolumesChanged()
+    }
+
+    /** Access changed: every volume's `access` may have too. */
+    private fun notifyVolumesChanged() {
+        scope.launch { notifyListeners("volumesChanged", JSObject().put("volumes", volumesJson())) }
+    }
+
+    @PluginMethod
+    fun listVolumes(call: PluginCall) = run(call) { JSObject().put("volumes", volumesJson()) }
+
+    @PluginMethod
+    fun grantVolumeAccess(call: PluginCall) {
+        try {
+            val uuid = Location.requireUuid(call.getString("uuid"))
+            val info = volumes.find(uuid) ?: smbFail(ErrorCode.NOT_FOUND, "No volume $uuid")
+            if (!VolumeMapping.isReadable(info.state)) smbFail(ErrorCode.UNAVAILABLE, "${info.label} is not mounted", mapOf("state" to info.state))
+            val volume = volumes.storageVolume(uuid)
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && volume != null) {
+                volume.createOpenDocumentTreeIntent()
+            } else {
+                Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+            }
+            intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
+            )
+            startActivityForResult(call, intent, "onVolumeGranted")
+        } catch (e: Throwable) {
+            reject(call, e)
+        }
+    }
+
+    @ActivityCallback
+    private fun onVolumeGranted(call: PluginCall?, result: ActivityResult) {
+        call ?: return
+        val uri = result.data?.data
+        if (result.resultCode != Activity.RESULT_OK || uri == null) {
+            reject(call, HoardSmbException(ErrorCode.CANCELLED, "No folder was picked"))
+            return
+        }
+        run(call) {
+            val uuid = Location.requireUuid(call.getString("uuid"))
+            // Android 11+ refuses a volume's root here, so any folder on this volume is accepted.
+            val picked = SafVolumes.grantOf(runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull())
+            if (picked == null || !picked.first.equals(uuid, ignoreCase = true)) {
+                smbFail(ErrorCode.ACCESS_DENIED, "That folder is not on this drive")
+            }
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+            val info = volumes.find(uuid) ?: smbFail(ErrorCode.UNAVAILABLE, "The volume is gone")
+            notifyVolumesChanged()
+            volumeJson(info)
+        }
+    }
+
+    @PluginMethod
+    fun openStorageSettings(call: PluginCall) = run(call) {
+        val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity")
+        withContext(Dispatchers.Main) {
+            val candidates = listOf(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS), Intent(Settings.ACTION_SETTINGS))
+            val intent = candidates.firstOrNull { it.resolveActivity(context.packageManager) != null }
+                ?: smbFail(ErrorCode.NO_APP, "No settings app")
+            activity.startActivity(intent)
+        }
         null
     }
 
@@ -426,37 +603,59 @@ class HoardSmbPlugin : Plugin() {
         // A newer openFile supersedes the previous one (which rejects CANCELLED).
         openJob?.cancel(CancellationException("Superseded by a newer openFile"))
         openJob = run(call) {
-            val share = call.requireString("share")
             val path = call.requireString("path")
-            val file = onSession(call) { s, cancel -> opener.fetch(s, share, path, cancel) }
-            val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the file from")
             val chooser = call.getBoolean("chooser", false) ?: false
-            withContext(Dispatchers.Main) { opener.view(activity, file, call.getString("mimeType"), chooser) }
+            when (val location = call.location()) {
+                is Location.Smb -> {
+                    val file = onSession(location.sessionId) { s, cancel -> opener.fetch(s, location.share, path, cancel) }
+                    val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the file from")
+                    withContext(Dispatchers.Main) { opener.view(activity, file, call.getString("mimeType"), chooser) }
+                }
+                is Location.Local -> openLocal(location, path, call.getString("mimeType"), chooser)
+            }
             null
         }
     }
 
+    /**
+     * A local file opened in place (no copy): its FileProvider or SAF document URI to the app the
+     * user picks. Returns the file for `streamFile`'s answer.
+     */
+    private suspend fun openLocal(location: Location.Local, path: String, mimeType: String?, chooser: Boolean): LocalFile {
+        val file = withContext(Dispatchers.IO) { volumes.fs(location).file(path) }
+        if (file.isDirectory) smbFail(ErrorCode.UNKNOWN, "Cannot open a folder")
+        val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the file from")
+        withContext(Dispatchers.Main) { opener.view(activity, opener.localUri(file), file.name, mimeType, chooser) }
+        return file
+    }
+
     // --- Streaming and the local web server -------------------------------------------------
 
-    /** The `StreamSourceOptions` part of a call (own connection: machine, addresses, GUID, share, path). */
+    private fun isSmbSource(call: PluginCall) = call.getObject("location")?.optString("kind") == "smb"
+
+    /** The `StreamSourceOptions` of an SMB call (own connection: machine, addresses, GUID, share, path). */
     private fun streamRequest(call: PluginCall): StreamRequest {
-        val addresses = call.getArray("addresses")?.toList<JSONObject>().orEmpty().map {
+        val location = call.getObject("location") ?: smbFail(ErrorCode.UNKNOWN, "location is required")
+        val array = location.optJSONArray("addresses")
+        val addresses = (0 until (array?.length() ?: 0)).map { index ->
+            val it = array!!.getJSONObject(index)
             val (host, port) = Net.requireValidAddress(it.optString("host"), if (it.has("port")) it.optInt("port") else null)
             StreamAddress(host, port)
         }
-        if (addresses.isEmpty()) smbFail(ErrorCode.UNKNOWN, "addresses is required")
+        if (addresses.isEmpty()) smbFail(ErrorCode.UNKNOWN, "location.addresses is required")
         return StreamRequest(
-            machineId = call.requireString("machineId"),
+            machineId = location.optString("machineId").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "location.machineId is required"),
             addresses = addresses,
-            expectedServerGuid = call.getString("expectedServerGuid")?.takeIf { it.isNotBlank() },
-            share = call.requireString("share"),
+            expectedServerGuid = location.optString("expectedServerGuid").takeIf { it.isNotBlank() && it != "null" },
+            share = location.optString("share").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "location.share is required"),
             path = call.requireString("path"),
         )
     }
 
     @PluginMethod
     fun streamFile(call: PluginCall) {
-        if (askForNotifications(call, "onStreamPermission")) return
+        // Local files are handed over directly: no stream token, no foreground service.
+        if (isSmbSource(call) && askForNotifications(call, "onStreamPermission")) return
         doStreamFile(call)
     }
 
@@ -466,9 +665,18 @@ class HoardSmbPlugin : Plugin() {
     private fun doStreamFile(call: PluginCall) {
         openJob?.cancel(CancellationException("Superseded by a newer open"))
         openJob = run(call) {
-            val request = streamRequest(call)
             val transport = call.getString("transport") ?: "content"
             if (transport != "content" && transport != "http") smbFail(ErrorCode.UNKNOWN, "transport must be content or http")
+            if (!isSmbSource(call)) {
+                val location = call.location() as Location.Local
+                val file = openLocal(location, call.requireString("path"), call.getString("mimeType"), call.getBoolean("chooser", false) ?: false)
+                return@run JSObject().apply {
+                    put("uri", (file.file?.let(opener::uriFor) ?: file.documentUri).toString())
+                    put("size", file.size)
+                    put("mimeType", call.getString("mimeType") ?: MimeTypes.forIntent(file.name) ?: SafDestinations.mimeTypeFor(file.name))
+                }
+            }
+            val request = streamRequest(call)
             val prepared = withContext(Dispatchers.IO) { streamer.prepareFile(request, call.getString("mimeType"), transport) }
             val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the file from")
             withContext(Dispatchers.Main) { streamer.launchFile(activity, prepared, call.getBoolean("chooser", false) ?: false) }
@@ -492,10 +700,16 @@ class HoardSmbPlugin : Plugin() {
     private fun doOpenWebPage(call: PluginCall) {
         openJob?.cancel(CancellationException("Superseded by a newer open"))
         openJob = run(call) {
-            val request = streamRequest(call)
             val target = call.getString("target") ?: "viewer"
             if (target != "viewer" && target != "browser") smbFail(ErrorCode.UNKNOWN, "target must be viewer or browser")
-            val prepared = withContext(Dispatchers.IO) { streamer.prepareWebPage(request) }
+            val prepared = withContext(Dispatchers.IO) {
+                if (isSmbSource(call)) {
+                    streamer.prepareWebPage(streamRequest(call))
+                } else {
+                    val location = call.location() as Location.Local
+                    streamer.prepareWebPage(LocalStreamSource(context, volumes.fs(location)), call.requireString("path"))
+                }
+            }
             val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open the page from")
             withContext(Dispatchers.Main) { streamer.launchWebPage(activity, prepared, target == "browser") }
             JSObject().put("url", prepared.uri.toString())
@@ -510,11 +724,13 @@ class HoardSmbPlugin : Plugin() {
 
     @PluginMethod
     fun thumbnail(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.requireString("path")
         val maxSize = call.getInt("maxSize") ?: 96
         val thumb = thumbnailSlots.withPermit {
-            onSession(call) { s, cancel -> thumbnailer.thumbnail(s, share, path, maxSize, cancel) }
+            when (val location = call.location()) {
+                is Location.Smb -> onSession(location.sessionId) { s, cancel -> thumbnailer.thumbnail(s, location.share, path, maxSize, cancel) }
+                is Location.Local -> withContext(Dispatchers.IO) { thumbnailer.thumbnail(volumes.fs(location), path, maxSize) }
+            }
         }
         JSObject().apply {
             // What Capacitor.convertFileSrc produces: the WebView's local server + /_capacitor_file_.
@@ -528,12 +744,11 @@ class HoardSmbPlugin : Plugin() {
 
     @PluginMethod
     fun readTextFile(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.requireString("path")
         val maxBytes = call.getDouble("maxBytes")?.toLong()?.coerceIn(1, TextFiles.HARD_LIMIT.toLong())?.toInt()
             ?: TextFiles.DEFAULT_MAX_BYTES
         val truncate = call.getBoolean("truncate", false) ?: false
-        val read = onSession(call) { s, _ -> TextFiles.read(s, share, path, maxBytes, truncate) }
+        val read = withFs(call) { fs, _ -> fs.readText(path, maxBytes, truncate) }
         JSObject().apply {
             put("text", read.text)
             put("encoding", read.encoding)
@@ -546,7 +761,6 @@ class HoardSmbPlugin : Plugin() {
 
     @PluginMethod
     fun writeTextFile(call: PluginCall) = run(call) {
-        val share = call.requireString("share")
         val path = call.requireString("path")
         val text = call.getString("text") ?: smbFail(ErrorCode.UNKNOWN, "text is required")
         val encoding = call.getString("encoding") ?: TextCodec.UTF8
@@ -554,12 +768,13 @@ class HoardSmbPlugin : Plugin() {
         val mode = call.getString("mode") ?: "overwrite"
         if (mode != "overwrite" && mode != "create") smbFail(ErrorCode.UNKNOWN, "mode must be overwrite or create")
         val expected = call.getString("expectedModifiedAt")?.takeIf { it.isNotBlank() }
-        val entry = onSession(call) { s, _ -> TextFiles.write(s, share, path, text, encoding, mode, expected) }
+        val entry = withFs(call) { fs, _ -> fs.writeText(path, text, encoding, mode, expected) }
         JSObject().put("entry", entryJson(entry))
     }
 
     companion object {
         const val NOTIFICATIONS = "notifications"
+        const val STORAGE = "storage"
         private const val TAG = "HoardSmb"
     }
 }

@@ -47,7 +47,8 @@ export function SmbErrorState({
   className,
 }: {
   code: HoardSmbErrorCode
-  machineId: string
+  /** The machine to edit for AUTH_FAILED / GUID_MISMATCH (absent for local locations). */
+  machineId?: string
   attempts?: AddressAttempt[]
   onRetry?: () => void
   retrying?: boolean
@@ -55,7 +56,7 @@ export function SmbErrorState({
 }) {
   const { t } = useTranslation()
   const Icon = ICONS[code] ?? WarningIcon
-  const editable = code === "AUTH_FAILED" || code === "GUID_MISMATCH"
+  const editable = Boolean(machineId) && (code === "AUTH_FAILED" || code === "GUID_MISMATCH")
   const showRoutes =
     (code === "UNREACHABLE" || code === "TIMEOUT" || code === "GUID_MISMATCH") && attempts?.length
   return (
@@ -71,7 +72,7 @@ export function SmbErrorState({
       <EmptyContent className="flex-row flex-wrap justify-center gap-2">
         {editable && (
           <Button asChild>
-            <Link to="/machines/$machineId/edit" params={{ machineId }}>
+            <Link to="/machines/$machineId/edit" params={{ machineId: machineId! }}>
               {code === "AUTH_FAILED" ? t("errors.editCredentials") : t("errors.reviewMachine")}
             </Link>
           </Button>

@@ -10,6 +10,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:requestLegacyExternalStorage="true"
         android:theme="@style/AppTheme"
         android:networkSecurityConfig="@xml/network_security_config">
 
@@ -86,6 +87,26 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Transfer progress notification (Android 13+, asked at the first download). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!--
+      Locations (ADR 0005): browse the phone's storage, USB drives and SD cards as a file manager.
+      Android 11+: "All files access" (MANAGE_EXTERNAL_STORAGE), a Settings switch the user turns on
+      from the first-run screen. Hoard is sideloaded; Google Play only allows this permission for
+      apps whose core purpose is file management, after a declaration review (see the ADR).
+      Android 10 and older: the storage runtime permissions (legacy external storage on 10).
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <!-- Tells USB drives from SD cards (mass-storage USB devices attached). Not required. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
 
     <!-- openFile / "tap to open" need to see which apps can view a file (package visibility, Android 11+). -->
     <queries>

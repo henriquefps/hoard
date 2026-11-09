@@ -96,11 +96,16 @@ class Streamer(private val context: Context, private val credentials: Credential
     }
 
     /** Serve the HTML file's folder (and below) and register a FOLDER token; returns the page URL. */
-    fun prepareWebPage(request: StreamRequest): PreparedStream {
-        val path = SmbPaths.normalize(request.path)
-        if (path.isEmpty()) smbFail(ErrorCode.UNKNOWN, "Not a page")
-        val source = source(request)
+    fun prepareWebPage(request: StreamRequest): PreparedStream = prepareWebPage(source(request), request.path)
+
+    /**
+     * Same for any [StreamSource] (a local location's folder: `LocalStreamSource`). The token owns
+     * [source] and closes it when it ends.
+     */
+    fun prepareWebPage(source: StreamSource, rawPath: String): PreparedStream {
+        val path = SmbPaths.normalize(rawPath)
         try {
+            if (path.isEmpty()) smbFail(ErrorCode.UNKNOWN, "Not a page")
             val info = source.stat(path) ?: smbFail(ErrorCode.NOT_FOUND, "${SmbPaths.name(path)} does not exist")
             if (info.isDirectory) smbFail(ErrorCode.UNKNOWN, "Not a page")
             val name = SmbPaths.name(path)

@@ -10,8 +10,8 @@ import {
   TrashIcon,
   type Icon,
 } from "@phosphor-icons/react"
-import { Link } from "@tanstack/react-router"
-import { useState } from "react"
+import { Link, useNavigate } from "@tanstack/react-router"
+import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { MachineList } from "@/components/MachineList"
@@ -37,26 +37,38 @@ import {
   reorderFavorites,
 } from "@/db/queries"
 import type { FavoriteRecord, MachineWithAddresses } from "@/db/types"
+import { parseLocationId } from "@/features/locations/ids"
+import { PhoneStorage } from "@/features/locations/PhoneStorage"
+import { findVolume, useVolumes } from "@/features/locations/volumesContext"
 import { Section } from "@/features/machines/actions"
+import { useSetting } from "@/features/settings/settings"
 import { useMachineRoute } from "@/features/route/RouteProvider"
 import { RouteStatus } from "@/features/route/RouteStatus"
 
+/**
+ * Home (ADR 0005): this phone (internal storage, USB drives, SD cards), then favorites, then SMB
+ * machines. The first launch shows the all files access screen once.
+ */
 export function HomePage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const machines = useLiveQuery(listMachines)
   const favorites = useLiveQuery(listFavorites)
+  const { access } = useVolumes()
+  const [introSeen] = useSetting("storageIntroSeen")
 
-  if (machines && machines.length === 0) {
-    return (
-      <Page title={t("nav.home")}>
-        <Onboarding />
-      </Page>
-    )
-  }
+  useEffect(() => {
+    if (access && !access.granted && introSeen === false) {
+      void navigate({ to: "/storage-access", replace: true })
+    }
+  }, [access, introSeen, navigate])
 
   return (
     <Page title={t("nav.home")}>
-      <Favorites favorites={favorites} machines={machines} />
+      <PhoneStorage />
+      {(machines?.length !== 0 || (favorites?.length ?? 0) > 0) && (
+        <Favorites favorites={favorites} machines={machines} />
+      )}
       <Section
         title={t("home.machines")}
         action={
@@ -70,6 +82,8 @@ export function HomePage() {
       >
         {machines === undefined ? (
           <Skeleton className="h-16 w-full" />
+        ) : machines.length === 0 ? (
+          <Onboarding />
         ) : (
           <div className="-mx-4 md:-mx-6">
             <MachineList machines={machines} showHeader={false} />
@@ -80,7 +94,7 @@ export function HomePage() {
   )
 }
 
-/** First launch: what Hoard does in three steps, and one button. */
+/** No machine yet: what SMB machines do in three steps, and one button. */
 function Onboarding() {
   const { t } = useTranslation()
   const steps: { icon: Icon; title: string; body: string }[] = [
@@ -89,7 +103,7 @@ function Onboarding() {
     { icon: ArrowsDownUpIcon, title: t("onboarding.step3Title"), body: t("onboarding.step3Body") },
   ]
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-8 py-6 text-center md:py-12">
+    <div className="mx-auto flex w-full max-w-xl flex-col items-center gap-8 rounded-xl border px-4 py-6 text-center md:py-10">
       <span className="inline-flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary [&_svg]:size-8">
         <HardDrivesIcon weight="duotone" />
       </span>
@@ -194,7 +208,7 @@ function Favorites({
               <FavoriteCard
                 key={favorite.id}
                 favorite={favorite}
-                machine={machine(favorite.machine_id)}
+                machine={favorite.machine_id ? machine(favorite.machine_id) : undefined}
                 onRename={() => setRenaming(favorite)}
                 onMove={(delta) => reorder(moveItem(favorites, index, index + delta))}
                 first={index === 0}
@@ -238,20 +252,35 @@ function FavoriteCard({
   const { t } = useTranslation()
   const db = useDb()
   const route = useMachineRoute(machine)
-  const location = [machine?.name, favorite.share, favorite.path].filter(Boolean).join(" / ")
+  const { volumes } = useVolumes()
+  const parsed = parseLocationId(favorite.location_id)
+  const isLocal = parsed.kind !== "smb"
+  const volume = isLocal
+    ? findVolume(volumes, parsed.kind === "volume" ? parsed.uuid : null)
+    : undefined
+  const place = isLocal
+    ? parsed.kind === "device"
+      ? t("locations.internal")
+      : (volume?.label ?? t("locations.drive"))
+    : machine?.name
+  const location = [place, favorite.share, favorite.path].filter(Boolean).join(" / ")
   return (
     <li className="relative flex min-h-16 items-center gap-3 rounded-xl border py-2 pr-1 pl-3 transition-colors hover:bg-muted/50 has-[a:focus-visible]:ring-3 has-[a:focus-visible]:ring-ring/50">
       <span
         aria-hidden
         data-machine-color={machine?.color ?? ""}
-        className="inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-(--machine)/12 text-(--machine) [&_svg]:size-5"
+        className={
+          isLocal
+            ? "inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary [&_svg]:size-5"
+            : "inline-flex size-10 shrink-0 items-center justify-center rounded-lg bg-(--machine)/12 text-(--machine) [&_svg]:size-5"
+        }
       >
         <FolderSimpleStarIcon weight="duotone" />
       </span>
       <Link
-        to="/browse/$machineId"
-        params={{ machineId: favorite.machine_id }}
-        search={{ share: favorite.share, path: favorite.path || undefined }}
+        to="/browse/$locationId"
+        params={{ locationId: favorite.location_id }}
+        search={{ share: favorite.share || undefined, path: favorite.path || undefined }}
         className="flex min-w-0 flex-1 flex-col gap-0.5 outline-none after:absolute after:inset-0"
       >
         <span className="truncate text-[0.9375rem] font-medium" title={favorite.label}>
@@ -260,7 +289,16 @@ function FavoriteCard({
         <span className="truncate text-[0.8125rem] text-muted-foreground" title={location}>
           {location}
         </span>
-        <RouteStatus state={route} hideHost className="max-w-full" />
+        {isLocal ? (
+          parsed.kind === "volume" &&
+          !volume && (
+            <span className="truncate text-[0.8125rem] text-muted-foreground">
+              {t("locations.notConnected")}
+            </span>
+          )
+        ) : (
+          <RouteStatus state={route} hideHost className="max-w-full" />
+        )}
       </Link>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

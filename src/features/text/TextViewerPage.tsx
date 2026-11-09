@@ -54,9 +54,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Spinner } from "@/components/ui/spinner"
 import { Toggle } from "@/components/ui/toggle"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { useLiveQuery } from "@/db/DbProvider"
-import { getMachine } from "@/db/queries"
-import type { MachineWithAddresses } from "@/db/types"
+import { parseLocationId } from "@/features/locations/ids"
+import { LocationErrorState } from "@/features/locations/LocationErrorState"
+import { type BrowseLocation, useBrowseLocation } from "@/features/locations/useBrowseLocation"
 import { accountName, isReadOnly } from "@/features/browse/access"
 import { ReadOnlyBadge } from "@/features/browse/ReadOnlyBadge"
 import { invalidateFolder } from "@/features/browse/useFolder"
@@ -64,7 +64,7 @@ import { useRouteEngine } from "@/features/route/RouteProvider"
 import { DownloadDialog } from "@/features/transfers/DownloadDialog"
 import { useBackHandler } from "@/hooks/useAndroidBackButton"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { hasThumbnail, parentPath, splitPath, uncPath } from "@/lib/files"
+import { hasThumbnail, parentPath, splitPath } from "@/lib/files"
 import { formatBytes, formatFullDate, formatNumber, formatRelativeDate } from "@/lib/format"
 import { goUp } from "@/lib/historyTrail"
 import { canEncode } from "@/lib/text/codec"
@@ -84,7 +84,7 @@ import {
 } from "@/lib/text/textFiles"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
-import type { ReadTextFileResult, TextEncoding } from "@/plugins/smb/definitions"
+import type { LocationRef, ReadTextFileResult, TextEncoding } from "@/plugins/smb/definitions"
 import { isHoardSmbError, smbErrorCode, TEXT_FILE_MAX_BYTES } from "@/plugins/smb/definitions"
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor"
 import { CsvTable } from "./CsvTable"
@@ -97,45 +97,45 @@ import { useTextFile } from "./useTextFile"
 /** Above this many characters on one line, soft wrap starts off (it would lay out the whole line). */
 const WRAP_LINE_LIMIT = 50_000
 
-/** `/view/$machineId?share=&path=[&edit=true]`: the built-in text viewer and editor. */
+/**
+ * `/view/$locationId?share=&path=[&edit=true]`: the built-in text viewer and editor, in any
+ * location (`share` only for SMB).
+ */
 export function TextViewerPage() {
   const { t } = useTranslation()
-  const { machineId } = useParams({ from: "/view/$machineId" })
-  const { share, path, edit } = useSearch({ from: "/view/$machineId" })
-  const machine = useLiveQuery((db) => getMachine(db, machineId), [machineId])
+  const { locationId } = useParams({ from: "/view/$locationId" })
+  const { share, path, edit } = useSearch({ from: "/view/$locationId" })
+  const kind = parseLocationId(locationId).kind
+  const location = useBrowseLocation(locationId, kind === "smb" ? share : undefined)
   const name = splitPath(path ?? "").at(-1) ?? ""
+  const trailLocation = { id: locationId, kind, name: location?.name }
 
-  if (!share || !path || machine === null) {
+  if (!path || location === null || (kind === "smb" && !share)) {
     return (
       <Page
         title={name || t("notFound.title")}
         breadcrumbs={viewTrail(
           t,
-          { id: machineId, name: machine?.name ?? "?" },
-          share ?? "",
+          { ...trailLocation, name: location?.name ?? "?" },
+          share,
           path ?? ""
         )}
       >
-        <SmbErrorState code="NOT_FOUND" machineId={machineId} />
+        <SmbErrorState code="NOT_FOUND" machineId={kind === "smb" ? locationId : undefined} />
       </Page>
     )
   }
-  if (machine === undefined) {
+  if (location === undefined) {
     return (
-      <Page
-        fill
-        title={name}
-        breadcrumbs={viewTrail(t, { id: machineId, name: undefined }, share, path)}
-      >
+      <Page fill title={name} breadcrumbs={viewTrail(t, trailLocation, share, path)}>
         <ViewerSkeleton />
       </Page>
     )
   }
   return (
     <TextFileScreen
-      key={`${share}/${path}`}
-      machine={machine}
-      share={share}
+      key={`${location.cacheKey}/${path}`}
+      location={location}
       path={path}
       startEditing={Boolean(edit)}
     />
@@ -158,13 +158,11 @@ type EditLayout = "editor" | "split" | "preview"
 type Dialog = { kind: "conflict"; remoteModifiedAt: string | null } | { kind: "exitEdit" } | null
 
 function TextFileScreen({
-  machine,
-  share,
+  location: loc,
   path,
   startEditing,
 }: {
-  machine: MachineWithAddresses
-  share: string
+  location: BrowseLocation
   path: string
   startEditing: boolean
 }) {
@@ -176,7 +174,9 @@ function TextFileScreen({
   const location = useLocation()
   const isMobile = useIsMobile()
   const prefs = useTextPrefs()
-  const file = useTextFile(machine, share, path)
+  const { machine, share } = loc
+  const isSmb = loc.kind === "smb"
+  const file = useTextFile(loc, path)
   const name = splitPath(path).at(-1) ?? path
   const folder = parentPath(path) ?? ""
   const format = textFormat(name)
@@ -201,9 +201,9 @@ function TextFileScreen({
   const dirtyRef = useRef(false)
   const renderedRef = useRef<HTMLDivElement>(null)
   const liveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
-  const machineRef = useRef(machine)
+  const locRef = useRef(loc)
   useEffect(() => {
-    machineRef.current = machine
+    locRef.current = loc
     dirtyRef.current = dirty
   })
 
@@ -236,7 +236,7 @@ function TextFileScreen({
   // Saving stays guarded by the server too: access can change while the file is open.
   const serverReadOnly = isReadOnly(doc?.data.access)
   const readOnly = truncated || serverReadOnly
-  const user = accountName(machine.username, machine.domain)
+  const user = machine ? accountName(machine.username, machine.domain) : null
 
   // The editor's baseline (what the server has) after every mount of a loaded document.
   useEffect(() => {
@@ -280,8 +280,7 @@ function TextFileScreen({
   const getRoot = useCallback(() => renderedRef.current, [])
 
   // --- Actions ---
-  const run = <T,>(fn: (sessionId: string) => Promise<T>) =>
-    engine.withSession(machineRef.current, fn)
+  const run = <T,>(fn: (location: LocationRef) => Promise<T>) => locRef.current.run(fn)
 
   const save = useCallback(
     async (options: { force?: boolean } = {}): Promise<boolean> => {
@@ -295,10 +294,9 @@ function TextFileScreen({
       }
       setSaving(true)
       try {
-        const { entry } = await run((sessionId) =>
+        const { entry } = await run((location) =>
           HoardSmb.writeTextFile({
-            sessionId,
-            share,
+            location,
             path,
             text,
             encoding,
@@ -317,7 +315,7 @@ function TextFileScreen({
           lines: countLines(savedText),
         })
         setLiveText(savedText)
-        invalidateFolder(machine.id, share, folder)
+        invalidateFolder(loc.cacheKey, folder)
         toast.success(t("text.saved", { name }))
         return true
       } catch (error) {
@@ -338,8 +336,7 @@ function TextFileScreen({
         setSaving(false)
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `run` reads a ref
-    [doc, readOnly, share, path, folder, name, machine.id, t]
+    [doc, readOnly, path, folder, name, loc.cacheKey, t]
   )
 
   async function saveAsCopy(): Promise<boolean> {
@@ -349,22 +346,20 @@ function TextFileScreen({
     const encoding = canEncode(text, doc.encoding) ? doc.encoding : "utf-8"
     setSaving(true)
     try {
-      const { entries } = await run((sessionId) =>
-        HoardSmb.list({ sessionId, share, path: folder })
-      )
+      const { entries } = await run((location) => HoardSmb.list({ location, path: folder }))
       const taken = new Set(entries.map((e) => e.name.toLowerCase()))
       const copyName = nextFreeName(name, (candidate) => taken.has(candidate.toLowerCase()))
       const copyPath = folder ? `${folder}/${copyName}` : copyName
-      await run((sessionId) =>
-        HoardSmb.writeTextFile({ sessionId, share, path: copyPath, text, encoding, mode: "create" })
+      await run((location) =>
+        HoardSmb.writeTextFile({ location, path: copyPath, text, encoding, mode: "create" })
       )
       dirtyRef.current = false
       setDirty(false)
-      invalidateFolder(machine.id, share, folder)
+      invalidateFolder(loc.cacheKey, folder)
       toast.success(t("text.savedAsCopy", { name: copyName }))
       void navigate({
-        to: "/view/$machineId",
-        params: { machineId: machine.id },
+        to: "/view/$locationId",
+        params: { locationId: loc.id },
         search: { share, path: copyPath, edit: true },
         replace: true,
         ignoreBlocker: true,
@@ -397,7 +392,7 @@ function TextFileScreen({
 
   async function openWithApp() {
     try {
-      await run((sessionId) => HoardSmb.openFile({ sessionId, share, path, chooser: true }))
+      await run((location) => HoardSmb.openFile({ location, path, chooser: true }))
     } catch (error) {
       const code = smbErrorCode(error)
       if (code !== "CANCELLED") {
@@ -409,8 +404,7 @@ function TextFileScreen({
   }
 
   async function copyPath() {
-    const host = engine.activeRoute(machine.id)?.host ?? machine.addresses[0]?.host ?? ""
-    const text = uncPath(host, share, path)
+    const text = loc.displayPath(path)
     try {
       await navigator.clipboard.writeText(text)
       toast.success(t("browse.pathCopied"), { description: text })
@@ -420,8 +414,8 @@ function TextFileScreen({
   }
 
   const folderLink = {
-    to: "/browse/$machineId" as const,
-    params: { machineId: machine.id },
+    to: "/browse/$locationId" as const,
+    params: { locationId: loc.id },
     search: { share, path: folder || undefined },
   }
 
@@ -470,8 +464,8 @@ function TextFileScreen({
       imageSrc: async (imagePath) => {
         const imageName = splitPath(imagePath).at(-1) ?? ""
         if (!hasThumbnail({ name: imageName, isDirectory: false })) return null
-        const result = await engine.withSession(machineRef.current, (sessionId) =>
-          HoardSmb.thumbnail({ sessionId, share, path: imagePath, maxSize: 1600 })
+        const result = await locRef.current.run((location) =>
+          HoardSmb.thumbnail({ location, path: imagePath, maxSize: 1600 })
         )
         return result.src
       },
@@ -484,22 +478,20 @@ function TextFileScreen({
         const targetName = splitPath(target.path).at(-1) ?? ""
         if (target.isFolder || !targetName) {
           void navigate({
-            to: "/browse/$machineId",
-            params: { machineId: machine.id },
+            to: "/browse/$locationId",
+            params: { locationId: loc.id },
             search: { share, path: target.path || undefined },
           })
         } else if (isTextFile(targetName)) {
           void navigate({
-            to: "/view/$machineId",
-            params: { machineId: machine.id },
+            to: "/view/$locationId",
+            params: { locationId: loc.id },
             search: { share, path: target.path },
             hash: target.hash,
           })
         } else {
-          void engine
-            .withSession(machineRef.current, (sessionId) =>
-              HoardSmb.openFile({ sessionId, share, path: target.path })
-            )
+          void locRef.current
+            .run((location) => HoardSmb.openFile({ location, path: target.path }))
             .catch((error: unknown) => {
               const code = smbErrorCode(error)
               if (code !== "CANCELLED") {
@@ -511,7 +503,7 @@ function TextFileScreen({
         }
       },
     }),
-    [engine, share, path, machine.id, navigate, t]
+    [share, path, loc.id, navigate, t]
   )
 
   // A link to `other.md#section`: scroll there once rendered.
@@ -522,9 +514,11 @@ function TextFileScreen({
     return () => clearTimeout(timer)
   }, [hash, showRendered, doc])
 
-  const fileReadOnlyNote = user
-    ? t("access.fileReadOnly", { user })
-    : t("access.fileReadOnlyAnonymous")
+  const fileReadOnlyNote = !isSmb
+    ? t("access.localFileReadOnly")
+    : user
+      ? t("access.fileReadOnly", { user })
+      : t("access.fileReadOnlyAnonymous")
 
   // --- Header ---
   const meta = doc && (
@@ -619,10 +613,12 @@ function TextFileScreen({
             <ArrowSquareOutIcon />
             {t("text.openWith")}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setDownload(true)}>
-            <DownloadSimpleIcon />
-            {t("browse.download")}
-          </DropdownMenuItem>
+          {isSmb && (
+            <DropdownMenuItem onSelect={() => setDownload(true)}>
+              <DownloadSimpleIcon />
+              {t("browse.download")}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onSelect={() => void copyPath()}>
             <CopyIcon />
             {t("browse.copyPath")}
@@ -646,11 +642,11 @@ function TextFileScreen({
       <LoadError
         code={file.error.code}
         size={file.error.size}
-        machine={machine}
+        location={loc}
         attempts={file.error.attempts}
         retrying={file.loading}
         onRetry={() => {
-          if (file.error?.attempts) engine.forget(machine.id)
+          if (file.error?.attempts && machine) engine.forget(machine.id)
           void file.load()
         }}
         onLoadPart={() => void file.load({ truncate: true })}
@@ -828,7 +824,7 @@ function TextFileScreen({
     <Page
       fill
       title={name}
-      breadcrumbs={viewTrail(t, { id: machine.id, name: machine.name }, share, path)}
+      breadcrumbs={viewTrail(t, { id: loc.id, kind: loc.kind, name: loc.name }, share, path)}
       meta={meta}
       actions={actions}
     >
@@ -883,12 +879,12 @@ function TextFileScreen({
           else blocker.reset?.()
         }}
       />
-      {download && doc && (
+      {download && doc && machine && (
         <DownloadDialog
           open
           onOpenChange={(open) => !open && setDownload(false)}
           machine={machine}
-          files={[{ share, path, name, size: doc.size }]}
+          files={[{ share: share ?? "", path, name, size: doc.size }]}
           skippedFolders={0}
           onStarted={() => setDownload(false)}
         />
@@ -963,7 +959,7 @@ function FontSizeMenu() {
 function LoadError({
   code,
   size,
-  machine,
+  location,
   attempts,
   retrying,
   onRetry,
@@ -972,7 +968,7 @@ function LoadError({
 }: {
   code: ReturnType<typeof smbErrorCode>
   size?: number
-  machine: MachineWithAddresses
+  location: BrowseLocation
   attempts?: Parameters<typeof SmbErrorState>[0]["attempts"]
   retrying: boolean
   onRetry: () => void
@@ -1013,9 +1009,9 @@ function LoadError({
     )
   }
   return (
-    <SmbErrorState
+    <LocationErrorState
       code={code}
-      machineId={machine.id}
+      location={location}
       attempts={attempts}
       retrying={retrying}
       onRetry={onRetry}

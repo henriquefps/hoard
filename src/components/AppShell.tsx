@@ -6,6 +6,7 @@ import { useAndroidBackButton } from "@/hooks/useAndroidBackButton"
 import { useTheme } from "@/lib/theme/theme"
 import { TransfersIndicator } from "@/features/transfers/TransfersIndicator"
 import { TransfersDrawer } from "@/features/transfers/TransfersViews"
+import { VolumeNotices } from "@/features/locations/VolumeNotices"
 import { AppLogo } from "./AppLogo"
 import { AppSidebar } from "./AppSidebar"
 import { ThemeMenu } from "./ThemeMenu"
@@ -38,6 +39,7 @@ export function AppShell() {
         </div>
       </SidebarProvider>
       <TransfersDrawer />
+      <VolumeNotices />
       <Toaster
         theme={theme}
         position="bottom-center"

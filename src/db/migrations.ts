@@ -85,6 +85,33 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // Locations (ADR 0005): favorites anywhere, not only on machines. `location_id` is the
+    // machine id for SMB (so every existing favorite keeps working as it was), `device` for the
+    // phone's storage or `vol-<uuid>` for a USB drive / SD card (machine_id NULL, share '').
+    // SQLite cannot drop NOT NULL in place, so the table is rebuilt; ids, labels and order are kept.
+    version: 3,
+    sql: `
+      CREATE TABLE favorites_v3 (
+        id TEXT PRIMARY KEY NOT NULL,
+        location_id TEXT NOT NULL,
+        machine_id TEXT REFERENCES machines(id) ON DELETE CASCADE,
+        share TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT '',
+        label TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        UNIQUE (location_id, share, path),
+        CHECK ((machine_id IS NULL) = (location_id = 'device' OR location_id LIKE 'vol-%')),
+        CHECK (machine_id IS NULL OR machine_id = location_id)
+      );
+      INSERT INTO favorites_v3 (id, location_id, machine_id, share, path, label, sort_order, created_at)
+        SELECT id, machine_id, machine_id, share, path, label, sort_order, created_at FROM favorites;
+      DROP TABLE favorites;
+      ALTER TABLE favorites_v3 RENAME TO favorites;
+      CREATE INDEX idx_favorites_machine ON favorites(machine_id);
+    `,
+  },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.at(-1)?.version ?? 0

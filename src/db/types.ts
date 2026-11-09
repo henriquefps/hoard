@@ -33,10 +33,17 @@ export interface MachineWithAddresses extends MachineRecord {
   addresses: MachineAddressRecord[]
 }
 
-/** Row of `favorites`: a pinned folder. `path` is relative to the share, `""` = share root. */
+/**
+ * Row of `favorites`: a pinned folder in any location (v3, ADR 0005). `path` is relative to the
+ * share (SMB) or the location's root (`""` = root).
+ */
 export interface FavoriteRecord {
   id: string
-  machine_id: string
+  /** The machine id (SMB), `device` or `vol-<uuid>` (same ids as `/browse/$locationId`). */
+  location_id: string
+  /** Set for SMB favorites (deleting the machine deletes them); null for local ones. */
+  machine_id: string | null
+  /** SMB share; `""` for local locations. */
   share: string
   path: string
   label: string
@@ -74,7 +81,8 @@ export interface TransferRecord {
  * Known keys of `settings` (values are JSON strings):
  *  - `showHiddenFiles` boolean, `defaultSort` `{ key, direction }`, `defaultConflict` ConflictPolicy,
  *  - `lastDestination` the SAF tree URI used for the last download, `probeTimeoutMs` number,
- *  - `onboarded` boolean (first-launch hint dismissed), `demoSeeded` / `worstCaseSeeded` (browser).
+ *  - `onboarded` boolean (first-launch hint dismissed), `demoSeeded` / `worstCaseSeeded` (browser),
+ *  - `storageIntroSeen` boolean (the all files access screen was shown once, ADR 0005).
  */
 export type SettingKey =
   | "language"
@@ -84,5 +92,6 @@ export type SettingKey =
   | "lastDestination"
   | "probeTimeoutMs"
   | "onboarded"
+  | "storageIntroSeen"
   | "demoSeeded"
   | "worstCaseSeeded"

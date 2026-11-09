@@ -14,6 +14,13 @@ import type {
   ListDestinationFoldersResult,
   ListResult,
   ListSharesResult,
+  ListVolumesResult,
+  LocationRef,
+  OpenStorageSettingsOptions,
+  StorageAccessResult,
+  StorageVolumeInfo,
+  VolumeRef,
+  VolumeState,
   MachineRef,
   NativeTransfer,
   OpenFileOptions,
@@ -52,6 +59,7 @@ import { detectAddressKind } from "@/lib/addressKind"
 import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
 import { isTextFile } from "@/lib/text/textFiles"
 import { GENERATED_TEXT } from "./mockText"
+import { MOCK_VOLUMES } from "./mockLocal"
 import {
   DEMO_PASSWORDS,
   MOCK_ROUTES,
@@ -134,6 +142,28 @@ const MOCK_MIME_TYPES: Record<string, string> = {
 const MOCK_NO_APP_EXTENSIONS = ["bin", "zst", "ds_store"]
 
 const DESTINATIONS_KEY = "hoard.mock.destinations"
+const STORAGE_ACCESS_KEY = "hoard.mock.storageAccess"
+
+/** Android/data and Android/obb (Android 11+): listed, never openable (like native `LocalPaths`). */
+const isRestrictedPath = (path: string) => {
+  const [first, second] = path.split("/").filter(Boolean)
+  return first?.toLowerCase() === "android" && ["data", "obb"].includes(second?.toLowerCase() ?? "")
+}
+
+interface MockVolume {
+  info: (typeof MOCK_VOLUMES)[number]
+  attached: boolean
+  state: VolumeState
+  root: MockFile[]
+}
+
+function readStorageGrant(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_ACCESS_KEY) === "granted"
+  } catch {
+    return false
+  }
+}
 
 interface MockSession {
   serverKey: MockServerKey
@@ -194,6 +224,16 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   private readonly jobs = new Map<string, MockJob>()
   private readonly trees = structuredClone(MOCK_SERVERS) as Record<MockServerKey, MockServer>
   private nextId = 1
+  /** All files access (mock: remembered in localStorage, toggled from Settings → Developer). */
+  private storageGranted = readStorageGrant()
+  /** Volumes with a SAF grant (`grantVolumeAccess`). */
+  private readonly safGrants = new Set<string>()
+  private readonly volumes: MockVolume[] = MOCK_VOLUMES.map((info) => ({
+    info,
+    attached: info.attachedByDefault,
+    state: info.readOnly ? "mountedReadOnly" : "mounted",
+    root: info.build(),
+  }))
 
   /** Dev tool: switch the simulated network and emit `networkChanged` like Android would. */
   simulateNetwork(next: MockNetwork) {
@@ -210,6 +250,126 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
 
   private wait(ms: number) {
     return this.latencyScale === 0 ? Promise.resolve() : sleep(ms * this.latencyScale)
+  }
+
+  // --- Local storage (mock) -------------------------------------------------------------------
+
+  private volumeInfo(volume: MockVolume): StorageVolumeInfo {
+    const { attachedByDefault: _a, readOnly: _r, build: _b, ...info } = volume.info
+    const readable = volume.state === "mounted" || volume.state === "mountedReadOnly"
+    const access: StorageVolumeInfo["access"] = !readable
+      ? "none"
+      : this.storageGranted
+        ? "path"
+        : info.uuid && this.safGrants.has(info.uuid)
+          ? "saf"
+          : "none"
+    return {
+      ...info,
+      state: volume.state,
+      access,
+      ...(readable ? {} : { totalBytes: undefined, freeBytes: undefined }),
+    }
+  }
+
+  private volumeList(): StorageVolumeInfo[] {
+    return this.volumes.filter((v) => v.attached).map((v) => this.volumeInfo(v))
+  }
+
+  private emitVolumes(change?: { uuid: string | null; state: VolumeState | "removed" }) {
+    this.notifyListeners("volumesChanged", {
+      volumes: this.volumeList(),
+      ...(change ? { change } : {}),
+    })
+  }
+
+  /** Dev tool: plug in or pull out a mock volume (emits `volumesChanged` like Android would). */
+  simulateVolume(uuid: string, attached: boolean) {
+    const volume = this.volumes.find((v) => v.info.uuid === uuid)
+    if (!volume || volume.attached === attached) return
+    volume.attached = attached
+    if (attached) {
+      volume.state = "checking"
+      this.emitVolumes({ uuid, state: "checking" })
+      setTimeout(
+        () => {
+          volume.state = volume.info.readOnly ? "mountedReadOnly" : "mounted"
+          this.emitVolumes({ uuid, state: volume.state })
+        },
+        this.latencyScale === 0 ? 0 : 700
+      )
+    } else {
+      volume.state = "unmounted"
+      this.emitVolumes({ uuid, state: "removed" })
+    }
+  }
+
+  /** Dev tool: turn all files access on or off (as if changed in Android's Settings). */
+  simulateStorageAccess(granted: boolean) {
+    this.storageGranted = granted
+    try {
+      localStorage.setItem(STORAGE_ACCESS_KEY, granted ? "granted" : "denied")
+    } catch {
+      // Not persisted; fine for a mock.
+    }
+    this.emitVolumes()
+  }
+
+  /** Mock-only, for dev tools: which removable volumes are plugged in. */
+  get simulatedVolumes(): { uuid: string; label: string; attached: boolean }[] {
+    return this.volumes
+      .filter((v) => v.info.uuid)
+      .map((v) => ({ uuid: v.info.uuid!, label: v.info.label, attached: v.attached }))
+  }
+
+  async getStorageAccess(): Promise<StorageAccessResult> {
+    return { granted: this.storageGranted, mechanism: "allFiles" }
+  }
+
+  async requestStorageAccess(): Promise<StorageAccessResult> {
+    // The user goes to Settings, flips the switch and comes back.
+    await this.wait(600)
+    this.simulateStorageAccess(true)
+    return this.getStorageAccess()
+  }
+
+  async listVolumes(): Promise<ListVolumesResult> {
+    await this.wait(10)
+    return { volumes: this.volumeList() }
+  }
+
+  async grantVolumeAccess({ uuid }: VolumeRef): Promise<StorageVolumeInfo> {
+    const volume = this.volumes.find((v) => v.info.uuid === uuid && v.attached)
+    if (!volume) throw fail("NOT_FOUND", `No volume ${uuid}`)
+    if (volume.state !== "mounted" && volume.state !== "mountedReadOnly") {
+      throw fail("UNAVAILABLE", `${volume.info.label} is not mounted`, { state: volume.state })
+    }
+    await this.wait(500)
+    this.safGrants.add(uuid)
+    this.emitVolumes()
+    return this.volumeInfo(volume)
+  }
+
+  async openStorageSettings(_options?: OpenStorageSettingsOptions): Promise<void> {
+    console.info("[HoardSmbWeb] would open Android's storage settings")
+  }
+
+  /** The tree of a local location, or why it cannot be read now. */
+  private localRoot(location: Exclude<LocationRef, { kind: "smb" }>) {
+    const volume =
+      location.kind === "device"
+        ? this.volumes.find((v) => v.info.primary)
+        : this.volumes.find((v) => v.info.uuid === location.uuid)
+    if (!volume?.attached)
+      throw fail("UNAVAILABLE", "The volume is not connected", { state: "removed" })
+    if (volume.state !== "mounted" && volume.state !== "mountedReadOnly") {
+      throw fail("UNAVAILABLE", `${volume.info.label} is not mounted`, { state: volume.state })
+    }
+    const info = this.volumeInfo(volume)
+    if (info.access === "none") {
+      throw fail("STORAGE_PERMISSION", `Hoard has no access to ${volume.info.label}`)
+    }
+    return { volume, readOnly: volume.state === "mountedReadOnly" }
   }
 
   // --- Reachability and discovery -----------------------------------------------------------
@@ -353,12 +513,38 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
    * Resolve a path to its node (the share root is a synthetic folder). `readOnly` is true when the
    * share or any folder on the way (or the node itself) is read-only for the account.
    */
-  private resolve(sessionId: string, shareName: string, path: string) {
+  private resolveSmb(sessionId: string, shareName: string, path: string) {
     const session = this.session(sessionId)
     const share = this.shareOf(session, shareName)
-    let node: MockFile = { name: share.name, children: share.root }
+    return {
+      ...HoardSmbWeb.walk(
+        { name: share.name, children: share.root },
+        path,
+        Boolean(share.readOnly)
+      ),
+      latencyMs: session.latencyMs,
+      local: false,
+    }
+  }
+
+  /** Any location: an SMB share through its session, or a local tree (5 ms "latency"). */
+  private resolve(location: LocationRef, path: string) {
+    if (location.kind === "smb") return this.resolveSmb(location.sessionId, location.share, path)
+    const { volume, readOnly } = this.localRoot(location)
+    if (isRestrictedPath(path)) {
+      throw fail("ACCESS_DENIED", "Android keeps this folder to its apps", { restricted: true })
+    }
+    return {
+      ...HoardSmbWeb.walk({ name: volume.info.label, children: volume.root }, path, readOnly),
+      latencyMs: 5,
+      local: true,
+    }
+  }
+
+  private static walk(root: MockFile, path: string, rootReadOnly: boolean) {
+    let node = root
     let parent: MockFile | null = null
-    let readOnly = Boolean(share.readOnly)
+    let readOnly = rootReadOnly
     let parentReadOnly = readOnly
     for (const segment of splitPath(path)) {
       if (node.denied) throw fail("ACCESS_DENIED", `No access to ${node.name}`)
@@ -369,7 +555,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       node = next
       readOnly ||= Boolean(next.readOnly)
     }
-    return { session, node, parent, path: splitPath(path).join("/"), readOnly, parentReadOnly }
+    return { node, parent, path: splitPath(path).join("/"), readOnly, parentReadOnly }
   }
 
   private static readOnlyError(name: string) {
@@ -394,63 +580,68 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     }
   }
 
-  async list({ sessionId, share, path }: PathOptions): Promise<ListResult> {
-    const { session, node, path: clean, readOnly } = this.resolve(sessionId, share, path)
+  async list({ location, path }: PathOptions): Promise<ListResult> {
+    const { latencyMs, node, path: clean, readOnly, local } = this.resolve(location, path)
     if (!node.children) throw fail("NOT_FOUND", `${path} is not a folder`)
     if (node.denied) throw fail("ACCESS_DENIED", `No access to ${node.name}`)
-    await this.wait(session.latencyMs * 2 + Math.min(node.children.length, 400) / 4)
+    await this.wait(latencyMs * 2 + Math.min(node.children.length, 400) / 4)
     return {
-      entries: node.children.map((child) => toEntry(child, joinPath(clean, child.name))),
+      entries: node.children.map((child) => {
+        const entry = toEntry(child, joinPath(clean, child.name))
+        return local && child.children && isRestrictedPath(entry.path)
+          ? { ...entry, restricted: true }
+          : entry
+      }),
       access: readOnly ? "read" : "readWrite",
     }
   }
 
-  async stat({ sessionId, share, path }: PathOptions): Promise<StatResult> {
-    const { session, node, path: clean } = this.resolve(sessionId, share, path)
-    await this.wait(session.latencyMs)
+  async stat({ location, path }: PathOptions): Promise<StatResult> {
+    const { latencyMs, node, path: clean } = this.resolve(location, path)
+    await this.wait(latencyMs)
     return { entry: toEntry(node, clean) }
   }
 
-  async createFolder({ sessionId, share, path, name }: CreateFolderOptions): Promise<StatResult> {
-    const { session, node, path: clean, readOnly } = this.resolve(sessionId, share, path)
+  async createFolder({ location, path, name }: CreateFolderOptions): Promise<StatResult> {
+    const { latencyMs, node, path: clean, readOnly } = this.resolve(location, path)
     if (!node.children) throw fail("NOT_FOUND", `${path} is not a folder`)
     if (readOnly) throw HoardSmbWeb.readOnlyError(node.name)
     if (node.children.some((child) => child.name === name)) {
       throw fail("ALREADY_EXISTS", `${name} already exists`)
     }
-    await this.wait(session.latencyMs * 2)
+    await this.wait(latencyMs * 2)
     const created: MockFile = { name, children: [], modifiedAt: new Date().toISOString() }
     node.children.push(created)
     return { entry: toEntry(created, joinPath(clean, name)) }
   }
 
-  async rename({ sessionId, share, path, newName }: RenameOptions): Promise<StatResult> {
+  async rename({ location, path, newName }: RenameOptions): Promise<StatResult> {
     const {
-      session,
+      latencyMs,
       node,
       parent,
       path: clean,
       readOnly,
       parentReadOnly,
-    } = this.resolve(sessionId, share, path)
+    } = this.resolve(location, path)
     if (!parent) throw fail("ACCESS_DENIED", "Cannot rename the share root")
     if (readOnly || parentReadOnly) throw HoardSmbWeb.readOnlyError(node.name)
     if (parent.children?.some((child) => child.name === newName)) {
       throw fail("ALREADY_EXISTS", `${newName} already exists`)
     }
-    await this.wait(session.latencyMs * 2)
+    await this.wait(latencyMs * 2)
     node.name = newName
     const folder = splitPath(clean).slice(0, -1).join("/")
     return { entry: toEntry(node, joinPath(folder, newName)) }
   }
 
-  async delete({ sessionId, share, path, recursive }: DeleteOptions): Promise<void> {
-    const { session, node, parent, readOnly, parentReadOnly } = this.resolve(sessionId, share, path)
+  async delete({ location, path, recursive }: DeleteOptions): Promise<void> {
+    const { latencyMs, node, parent, readOnly, parentReadOnly } = this.resolve(location, path)
     if (!parent?.children) throw fail("ACCESS_DENIED", "Cannot delete the share root")
     if (readOnly || parentReadOnly) throw HoardSmbWeb.readOnlyError(node.name)
     if (node.children?.length && !recursive)
       throw fail("ACCESS_DENIED", `${node.name} is not empty`)
-    await this.wait(session.latencyMs * 2)
+    await this.wait(latencyMs * 2)
     parent.children.splice(parent.children.indexOf(node), 1)
   }
 
@@ -722,34 +913,33 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
 
   // --- Viewing ------------------------------------------------------------------------------
 
-  async openFile({ sessionId, share, path }: OpenFileOptions): Promise<void> {
-    const { session, node } = this.resolve(sessionId, share, path)
+  async openFile({ location, path }: OpenFileOptions): Promise<void> {
+    const { latencyMs, node, local } = this.resolve(location, path)
     if (node.children) throw fail("UNKNOWN", "Cannot open a folder")
     const ext = extension(node.name)
     if (MOCK_NO_APP_EXTENSIONS.includes(ext)) throw fail("NO_APP", `No app can open .${ext} files`)
-    // Simulates the download to cache at local speed (capped so the UI doesn't wait forever).
-    await this.wait(
-      Math.min(
-        2500,
-        session.latencyMs * 4 + ((node.size ?? 0) / mockSpeedFor(session.latencyMs)) * 1000
+    // SMB: simulates the download to cache at local speed (capped so the UI doesn't wait
+    // forever). Local files open in place.
+    if (!local) {
+      await this.wait(
+        Math.min(2500, latencyMs * 4 + ((node.size ?? 0) / mockSpeedFor(latencyMs)) * 1000)
       )
-    )
-    console.info(`[HoardSmbWeb] would open ${share}/${path} with ACTION_VIEW`)
+    }
+    console.info(`[HoardSmbWeb] would open ${location.kind}:${path} with ACTION_VIEW`)
   }
 
   // --- Streaming and the local web server ----------------------------------------------------
 
   /** Live mock tokens (`stopStreams` clears them); mock-only, for tests and dev tools. */
-  readonly streams = new Map<string, { kind: "file" | "folder"; share: string; path: string }>()
+  readonly streams = new Map<string, { kind: "file" | "folder"; source: string; path: string }>()
 
-  /** Like native: an own connection over the addresses in order (GUID checked), then the file. */
-  private async streamSource({
-    machineId,
-    addresses,
-    expectedServerGuid,
-    share,
-    path,
-  }: StreamSourceOptions) {
+  /**
+   * Like native: an SMB source opens its own connection over the addresses in order (GUID
+   * checked), then the file; a local source reads the file itself.
+   */
+  private async streamSource({ location, path }: StreamSourceOptions) {
+    if (location.kind !== "smb") return this.resolve(location, path)
+    const { machineId, addresses, expectedServerGuid, share } = location
     if (addresses.length === 0) throw fail("UNKNOWN", "addresses is required")
     let lastError: unknown = fail("UNREACHABLE", "No address answered")
     for (const address of addresses) {
@@ -764,7 +954,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
         const sessionId = `mock-stream-${this.nextId++}`
         this.sessions.set(sessionId, { serverKey, latencyMs: route.latencyMs })
         try {
-          return this.resolve(sessionId, share, path)
+          return this.resolveSmb(sessionId, share, path)
         } finally {
           this.sessions.delete(sessionId)
         }
@@ -782,14 +972,21 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     if (node.children) throw fail("UNKNOWN", "Cannot stream a folder")
     const ext = extension(node.name)
     if (MOCK_NO_APP_EXTENSIONS.includes(ext)) throw fail("NO_APP", `No app can open .${ext} files`)
-    const token = this.newToken()
-    this.streams.set(token, { kind: "file", share: options.share, path: options.path })
     const mimeType = options.mimeType ?? MOCK_MIME_TYPES[ext] ?? "application/octet-stream"
+    const { location } = options
+    if (location.kind !== "smb") {
+      // Local files are handed over in place (FileProvider), no stream token.
+      const uri = `content://dev.hfps.hoard.fileprovider/device/${options.path.split("/").map(encodeURIComponent).join("/")}`
+      console.info(`[HoardSmbWeb] would open ${options.path} in place as ${uri}`)
+      return { uri, size: node.size ?? 0, mimeType }
+    }
+    const token = this.newToken()
+    this.streams.set(token, { kind: "file", source: location.share, path: options.path })
     const uri =
       options.transport === "http"
         ? `http://127.0.0.1:38080/${token}/${encodeURIComponent(node.name)}`
         : `content://dev.hfps.hoard.stream/${token}/${encodeURIComponent(node.name)}`
-    console.info(`[HoardSmbWeb] would stream ${options.share}/${options.path} as ${uri}`)
+    console.info(`[HoardSmbWeb] would stream ${location.share}/${options.path} as ${uri}`)
     return { uri, size: node.size ?? 0, mimeType }
   }
 
@@ -797,9 +994,10 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     const { node } = await this.streamSource(options)
     if (node.children) throw fail("UNKNOWN", "Not a page")
     const token = this.newToken()
-    this.streams.set(token, { kind: "folder", share: options.share, path: options.path })
+    const source = options.location.kind === "smb" ? options.location.share : options.location.kind
+    this.streams.set(token, { kind: "folder", source, path: options.path })
     const url = `http://127.0.0.1:38080/${token}/${encodeURIComponent(node.name)}`
-    console.info(`[HoardSmbWeb] would serve ${options.share}/${options.path} at ${url}`)
+    console.info(`[HoardSmbWeb] would serve ${source}/${options.path} at ${url}`)
     return { url }
   }
 
@@ -833,13 +1031,12 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   }
 
   async readTextFile({
-    sessionId,
-    share,
+    location,
     path,
     maxBytes = TEXT_FILE_MAX_BYTES,
     truncate = false,
   }: ReadTextFileOptions): Promise<ReadTextFileResult> {
-    const { session, node, readOnly } = this.resolve(sessionId, share, path)
+    const { latencyMs, node, readOnly } = this.resolve(location, path)
     if (node.children) throw fail("UNKNOWN", `${path} is a folder`)
     const limit = Math.max(1, Math.min(maxBytes, TEXT_FILE_HARD_LIMIT))
     // Files with content report their real size; listing-only ones their listed size.
@@ -849,9 +1046,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     if (size > limit && !truncate) {
       throw fail("TOO_LARGE", `${node.name} is ${size} bytes (limit ${limit})`, { size })
     }
-    await this.wait(
-      session.latencyMs * 2 + (Math.min(size, limit) / mockSpeedFor(session.latencyMs)) * 1000
-    )
+    await this.wait(latencyMs * 2 + (Math.min(size, limit) / mockSpeedFor(latencyMs)) * 1000)
     const decoded = decodeTextPrefix(bytes ?? new Uint8Array(0), limit)
     if (!decoded) throw fail("NOT_TEXT", `${node.name} is not a text file`)
     const result: ReadTextFileResult = {
@@ -880,8 +1075,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
   }
 
   async writeTextFile({
-    sessionId,
-    share,
+    location,
     path,
     text,
     encoding = "utf-8",
@@ -892,11 +1086,12 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     const name = segments.at(-1) ?? ""
     if (!isValidMockName(name)) throw fail("UNKNOWN", `Invalid file name: '${name}'`)
     const folderPath = segments.slice(0, -1).join("/")
-    const { session, node: folder, readOnly } = this.resolve(sessionId, share, folderPath)
+    const { latencyMs, node: folder, readOnly } = this.resolve(location, folderPath)
     if (!folder.children) throw fail("NOT_FOUND", `${folderPath} is not a folder`)
     if (folder.denied) throw fail("ACCESS_DENIED", `No access to ${folder.name}`)
     const existing = folder.children.find((child) => child.name === name)
-    if (readOnly || existing?.readOnly) throw HoardSmbWeb.readOnlyError(existing?.name ?? share)
+    if (readOnly || existing?.readOnly)
+      throw HoardSmbWeb.readOnlyError(existing?.name ?? folder.name)
     if (existing?.children) throw fail("ALREADY_EXISTS", `${name} is a folder`)
     if (mode === "create" && existing) throw fail("ALREADY_EXISTS", `${name} already exists`)
     if (mode === "overwrite" && expectedModifiedAt) {
@@ -911,7 +1106,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       throw fail("UNKNOWN", `${encoding} cannot hold every character of the text`)
     }
     const bytes = encodeText(text, encoding)
-    await this.wait(session.latencyMs * 3 + (bytes.length / mockSpeedFor(session.latencyMs)) * 1000)
+    await this.wait(latencyMs * 3 + (bytes.length / mockSpeedFor(latencyMs)) * 1000)
     const target: MockFile = existing ?? { name }
     target.bytes = bytes
     target.text = undefined
@@ -922,12 +1117,12 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     return { entry: toEntry(target, segments.join("/")) }
   }
 
-  async thumbnail({ sessionId, share, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {
-    const { session, node } = this.resolve(sessionId, share, path)
+  async thumbnail({ location, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {
+    const { latencyMs, node } = this.resolve(location, path)
     if (node.children || !THUMBNAIL_EXTENSIONS.has(extension(node.name))) {
       throw fail("UNKNOWN", "Thumbnails are only available for images and videos")
     }
-    await this.wait(session.latencyMs * 3 + 40)
+    await this.wait(latencyMs * 3 + 40)
     const hue = hueOf(path)
     const landscape = hue % 3 !== 0
     const width = landscape ? maxSize : Math.round(maxSize * 0.75)

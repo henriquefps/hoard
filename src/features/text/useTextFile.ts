@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { MachineWithAddresses } from "@/db/types"
 import { type AddressAttempt, RouteError } from "@/features/route/engine"
-import { useRouteEngine } from "@/features/route/RouteProvider"
+import type { BrowseLocation } from "@/features/locations/useBrowseLocation"
 import { HoardSmb } from "@/plugins/smb"
 import type { HoardSmbErrorCode, ReadTextFileResult } from "@/plugins/smb/definitions"
 import { isHoardSmbError, smbErrorCode } from "@/plugins/smb/definitions"
@@ -14,29 +13,27 @@ export interface TextFileState {
   load: (options?: { truncate?: boolean }) => Promise<ReadTextFileResult | undefined>
 }
 
-/** Read a text file through the route engine's session (reconnects once on an expired session). */
+/** Read a text file in any location (SMB through the route engine's session). */
 export function useTextFile(
-  machine: MachineWithAddresses | undefined,
-  share: string,
+  location: BrowseLocation | null | undefined,
   path: string
 ): TextFileState {
-  const engine = useRouteEngine()
   const [state, setState] = useState<Omit<TextFileState, "load">>({ loading: true })
   const request = useRef(0)
-  const machineRef = useRef(machine)
+  const locationRef = useRef(location)
   useEffect(() => {
-    machineRef.current = machine
+    locationRef.current = location
   })
 
   const load = useCallback(
     async (options: { truncate?: boolean } = {}) => {
-      const current = machineRef.current
+      const current = locationRef.current
       if (!current) return undefined
       const id = ++request.current
       setState((s) => ({ ...s, loading: true }))
       try {
-        const data = await engine.withSession(current, (sessionId) =>
-          HoardSmb.readTextFile({ sessionId, share, path, truncate: options.truncate })
+        const data = await current.run((loc) =>
+          HoardSmb.readTextFile({ location: loc, path, truncate: options.truncate })
         )
         if (id === request.current) setState({ data, loading: false })
         return data
@@ -52,13 +49,14 @@ export function useTextFile(
         return undefined
       }
     },
-    [engine, share, path]
+    [path]
   )
 
-  const ready = Boolean(machine)
+  const ready = Boolean(location)
+  const locationKey = location?.cacheKey
   useEffect(() => {
     if (ready) void load()
-  }, [load, ready])
+  }, [load, ready, locationKey])
 
   return { ...state, load }
 }

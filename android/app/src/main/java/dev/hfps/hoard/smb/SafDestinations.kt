@@ -49,7 +49,11 @@ class SafDestinations(context: Context) {
             if (exists(permission.uri)) {
                 DestinationFolder(permission.uri.toString(), displayName(permission.uri))
             } else {
-                release(permission.uri.toString())
+                // A whole-volume grant (USB drive, SD card: the locations' SAF fallback) is kept
+                // while the volume is unplugged; it works again when it comes back.
+                val onRemovable = runCatching { DocumentsContract.getTreeDocumentId(permission.uri) }.getOrNull()
+                    ?.let { !it.startsWith("primary:") && !it.startsWith("home:") && it.contains(':') } == true
+                if (!onRemovable) release(permission.uri.toString())
                 null
             }
         }

@@ -80,8 +80,8 @@ function MachineRow({ machine }: { machine: MachineWithAddresses }) {
       <div className="flex min-w-0 flex-1 items-center gap-3 @xl:pr-3">
         <MachineIcon icon={machine.icon} color={machine.color} />
         <Link
-          to="/browse/$machineId"
-          params={{ machineId: machine.id }}
+          to="/browse/$locationId"
+          params={{ locationId: machine.id }}
           className="flex min-w-0 flex-1 flex-col gap-0.5 outline-none after:absolute after:inset-0"
         >
           <span className="line-clamp-2 text-[0.9375rem] font-medium [overflow-wrap:anywhere]">

@@ -205,7 +205,7 @@ object LocalWebServer {
             val indexInfo = entry.source.stat(candidate)
             if (indexInfo != null && !indexInfo.isDirectory) return sendFile(entry, candidate, index, indexInfo.size, request, out, head)
         }
-        val body = DirectoryIndex.html(if (target.path.isEmpty()) SmbPaths.name(entry.path).ifEmpty { entry.source.share } else SmbPaths.name(target.path), entry.source.list(remote), target.path.isNotEmpty())
+        val body = DirectoryIndex.html(if (target.path.isEmpty()) SmbPaths.name(entry.path).ifEmpty { entry.source.label } else SmbPaths.name(target.path), entry.source.list(remote), target.path.isNotEmpty())
             .toByteArray(Charsets.UTF_8)
         writeHead(out, 200, "OK", "text/html; charset=utf-8", body.size.toLong(), keepAlive = true)
         if (!head) out.write(body)
@@ -228,7 +228,7 @@ object LocalWebServer {
             writeHead(out, 200, "OK", type, length, keepAlive = true)
         }
         if (head || length == 0L) return true
-        RemoteReader(entry.source, remotePath, size, entry.fetched).use { reader ->
+        entry.source.reader(remotePath, size, entry.fetched).use { reader ->
             val buffer = ByteArray(BUFFER)
             var position = start
             val end = start + length

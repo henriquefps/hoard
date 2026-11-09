@@ -3,6 +3,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DbProvider } from "@/db/DbProvider"
+import { VolumesProvider } from "@/features/locations/VolumesProvider"
 import { RouteProvider } from "@/features/route/RouteProvider"
 import { TransfersProvider } from "@/features/transfers/TransfersProvider"
 import "@/i18n"
@@ -19,9 +20,11 @@ createRoot(document.getElementById("root")!).render(
     <TooltipProvider delayDuration={300}>
       <DbProvider>
         <RouteProvider>
-          <TransfersProvider>
-            <RouterProvider router={router} />
-          </TransfersProvider>
+          <VolumesProvider>
+            <TransfersProvider>
+              <RouterProvider router={router} />
+            </TransfersProvider>
+          </VolumesProvider>
         </RouteProvider>
       </DbProvider>
     </TooltipProvider>

@@ -1,4 +1,6 @@
 import {
+  EjectIcon,
+  GearSixIcon,
   CheckSquareIcon,
   CopyIcon,
   DotsThreeVerticalIcon,
@@ -57,18 +59,21 @@ import {
   addFavorite,
   addManualShare,
   findFavorite,
-  getMachine,
   listManualShares,
   removeFavorite,
   removeManualShare,
 } from "@/db/queries"
 import type { MachineWithAddresses } from "@/db/types"
+import { LocationErrorState } from "@/features/locations/LocationErrorState"
+import { LocationStatus } from "@/features/locations/LocationStatus"
+import { type BrowseLocation, useBrowseLocation } from "@/features/locations/useBrowseLocation"
+import { useLeaveWhenUnplugged } from "@/features/locations/useLeaveWhenUnplugged"
+import { parseLocationId } from "@/features/locations/ids"
 import { BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
 import { accountName, isReadOnly, readOnlyReasonKey } from "@/features/browse/access"
 import { FileRow } from "@/features/browse/FileRow"
 import { ReadOnlyBadge, ReadOnlyMenuNote } from "@/features/browse/ReadOnlyBadge"
 import { invalidateFolder, useFolder } from "@/features/browse/useFolder"
-import { nativeRoute } from "@/features/route/engine"
 import { useMachineRoute, useRouteEngine } from "@/features/route/RouteProvider"
 import { RouteStatus } from "@/features/route/RouteStatus"
 import { useSetting } from "@/features/settings/settings"
@@ -97,95 +102,117 @@ import { smbErrorCode } from "@/plugins/smb/definitions"
 // The sort the user picked lasts for the session, across folders (the default is a setting).
 let sessionSort: SortOrder | null = null
 
-/** `/browse/$machineId?share=&path=`: the machine's shares, then folders and files. */
+/**
+ * `/browse/$locationId?share=&path=`: any location (ADR 0005). A machine shows its shares, then
+ * folders and files; the phone's storage (`device`) and USB drives / SD cards (`vol-<uuid>`) show
+ * their folders from the root.
+ */
 export function BrowsePage() {
   const { t } = useTranslation()
-  const { machineId } = useParams({ from: "/browse/$machineId" })
-  const { share, path = "" } = useSearch({ from: "/browse/$machineId" })
-  const machine = useLiveQuery((db) => getMachine(db, machineId), [machineId])
+  const { locationId } = useParams({ from: "/browse/$locationId" })
+  const { share, path = "" } = useSearch({ from: "/browse/$locationId" })
+  const isSmb = parseLocationId(locationId).kind === "smb"
+  const location = useBrowseLocation(locationId, isSmb ? share : undefined)
+  const machine = location?.machine
   const route = useMachineRoute(machine)
+  useLeaveWhenUnplugged(location)
   const segments = splitPath(path)
-  const title = segments.at(-1) ?? share ?? machine?.name ?? ""
+  const title = segments.at(-1) ?? (isSmb ? share : undefined) ?? location?.name ?? ""
+  const showsFolder = !isSmb || Boolean(share)
   // The open folder's access, reported by FolderView once listed (keyed so a stale answer from
   // the previous folder never shows on the next one).
-  const folderKey = share ? `${share}/${path}` : ""
+  const folderKey = showsFolder ? `${isSmb ? share : ""}/${path}` : ""
   const [access, setAccess] = useState<{ key: string; access?: SmbAccess }>({ key: "" })
-  const readOnly = share !== undefined && access.key === folderKey && isReadOnly(access.access)
-  const readOnlyReason = useReadOnlyReason(machine, path)
+  const readOnly = showsFolder && access.key === folderKey && isReadOnly(access.access)
+  const readOnlyReason = useReadOnlyReason(location, path)
+  const trailLocation = {
+    id: locationId,
+    kind: location?.kind ?? parseLocationId(locationId).kind,
+    name: location?.name,
+  }
 
-  if (machine === null) {
+  if (location === null) {
     return (
       <Page
         title={t("machines.notFound")}
-        breadcrumbs={browseTrail(t, { id: machineId, name: "?" })}
+        breadcrumbs={browseTrail(t, { ...trailLocation, name: "?" })}
       >
-        <SmbErrorState code="NOT_FOUND" machineId={machineId} />
+        <SmbErrorState code="NOT_FOUND" machineId={locationId} />
       </Page>
     )
   }
 
+  const status = isSmb ? (
+    <RouteStatus state={route} className="max-w-full" />
+  ) : (
+    <LocationStatus location={location} />
+  )
   return (
     <Page
       fill
       title={title}
-      breadcrumbs={browseTrail(t, { id: machineId, name: machine?.name }, share, path)}
+      breadcrumbs={browseTrail(t, trailLocation, isSmb ? share : undefined, path)}
       meta={
         readOnly ? (
           <span className="flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <RouteStatus state={route} className="max-w-full" />
+            {status}
             <ReadOnlyBadge title={readOnlyReason} />
           </span>
         ) : (
-          <RouteStatus state={route} className="max-w-full" />
+          status
         )
       }
-      actions={machine && <HeaderActions machine={machine} share={share} path={path} />}
+      actions={location && <HeaderActions location={location} path={path} />}
     >
-      {machine === undefined ? (
+      {location === undefined ? (
         <ListSkeleton className="-mt-4 md:-mt-6" />
-      ) : share ? (
+      ) : showsFolder ? (
         // Keyed by folder: search, filter and selection start fresh in every folder.
         <FolderView
-          key={folderKey}
-          machine={machine}
-          share={share}
+          key={`${location.cacheKey}/${path}`}
+          location={location}
           path={path}
           onAccess={(value) => setAccess({ key: folderKey, access: value })}
         />
       ) : (
-        <SharesView machine={machine} />
+        <SharesView machine={machine!} />
       )}
     </Page>
   )
 }
 
-/** "This folder is read-only for henrique." for the folder at `path` (the share root says "share"). */
-function useReadOnlyReason(machine: MachineWithAddresses | null | undefined, path: string) {
+/**
+ * Why writing is off. SMB: "This folder is read-only for henrique." (the share root says
+ * "share"). Local storage: the drive is mounted read-only, or Android refuses writes there.
+ */
+function useReadOnlyReason(
+  location: Pick<BrowseLocation, "kind" | "machine"> | null | undefined,
+  path: string
+) {
   const { t } = useTranslation()
+  if (location && location.kind !== "smb") {
+    return t(path === "" ? "access.driveReadOnly" : "access.localFolderReadOnly")
+  }
+  const machine = location?.machine
   const user = accountName(machine?.username, machine?.domain)
   return t(readOnlyReasonKey(path, user !== null), { user })
 }
 
-function HeaderActions({
-  machine,
-  share,
-  path,
-}: {
-  machine: MachineWithAddresses
-  share: string | undefined
-  path: string
-}) {
+function HeaderActions({ location, path }: { location: BrowseLocation; path: string }) {
   const { t } = useTranslation()
   const db = useDb()
+  const { machine, share } = location
+  const isSmb = location.kind === "smb"
+  const canPin = !isSmb || Boolean(share)
   const favorite = useLiveQuery(
-    (d) => (share ? findFavorite(d, machine.id, share, path) : Promise.resolve(null)),
-    [machine.id, share, path]
+    (d) => (canPin ? findFavorite(d, location.id, share ?? "", path) : Promise.resolve(null)),
+    [location.id, share, path, canPin]
   )
   const [showHidden, setShowHidden] = useSetting("showHiddenFiles")
-  const label = splitPath(path).at(-1) ?? share ?? ""
+  const label = splitPath(path).at(-1) ?? share ?? location.name ?? ""
   return (
     <>
-      {share && (
+      {canPin && (
         <Button
           variant="ghost"
           size="icon"
@@ -197,7 +224,13 @@ function HeaderActions({
               await removeFavorite(db, favorite.id)
               toast(t("favorites.removed", { name: favorite.label }))
             } else {
-              await addFavorite(db, { machineId: machine.id, share, path, label })
+              await addFavorite(db, {
+                locationId: location.id,
+                machineId: machine?.id ?? null,
+                share: share ?? "",
+                path,
+                label,
+              })
               toast.success(t("favorites.added", { name: label }))
             }
           }}
@@ -223,12 +256,27 @@ function HeaderActions({
             {t("browse.showHidden")}
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem asChild>
-            <Link to="/machines/$machineId/edit" params={{ machineId: machine.id }}>
-              <PencilSimpleIcon />
-              {t("machines.edit")}
-            </Link>
-          </DropdownMenuItem>
+          {machine ? (
+            <DropdownMenuItem asChild>
+              <Link to="/machines/$machineId/edit" params={{ machineId: machine.id }}>
+                <PencilSimpleIcon />
+                {t("machines.edit")}
+              </Link>
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem
+              onSelect={() =>
+                void HoardSmb.openStorageSettings(
+                  location.volume?.uuid ? { uuid: location.volume.uuid } : undefined
+                ).catch(() => toast.error(t("errors.UNKNOWN.title")))
+              }
+            >
+              {location.kind === "volume" ? <EjectIcon /> : <GearSixIcon />}
+              {location.kind === "volume"
+                ? t("locations.ejectInSettings")
+                : t("locations.storageSettings")}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </>
@@ -241,7 +289,8 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
   const { t } = useTranslation()
   const db = useDb()
   const navigate = useNavigate()
-  const folder = useFolder(machine, undefined, "")
+  const location = useBrowseLocation(machine.id)
+  const folder = useFolder(location, "")
   const engine = useRouteEngine()
   const [showHidden] = useSetting("showHiddenFiles")
   const [askName, setAskName] = useState(false)
@@ -279,7 +328,7 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
           try {
             // Opening the root proves the share exists and this account may use it.
             await engine.withSession(machine, (sessionId) =>
-              HoardSmb.list({ sessionId, share: name, path: "" })
+              HoardSmb.list({ location: { kind: "smb", sessionId, share: name }, path: "" })
             )
           } catch (error) {
             const code = smbErrorCode(error)
@@ -294,8 +343,8 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
             await addManualShare(db, machine.id, name)
           }
           void navigate({
-            to: "/browse/$machineId",
-            params: { machineId: machine.id },
+            to: "/browse/$locationId",
+            params: { locationId: machine.id },
             search: { share: name },
           })
         }}
@@ -372,7 +421,7 @@ function ShareRow({
   const engine = useRouteEngine()
   const subtitle = share.comment ?? (manual ? t("browse.addedByName") : undefined)
   const readOnly = isReadOnly(share.access)
-  const reason = useReadOnlyReason(machine, "")
+  const reason = useReadOnlyReason({ kind: "smb", machine }, "")
   return (
     <li className="relative flex min-h-16 items-center gap-3 border-b px-4 py-2 transition-colors hover:bg-muted/50 md:px-6">
       <span
@@ -382,8 +431,8 @@ function ShareRow({
         <HardDriveIcon weight="duotone" />
       </span>
       <Link
-        to="/browse/$machineId"
-        params={{ machineId: machine.id }}
+        to="/browse/$locationId"
+        params={{ locationId: machine.id }}
         search={{ share: share.name }}
         className="flex min-w-0 flex-1 flex-col gap-0.5 outline-none after:absolute after:inset-0 focus-visible:after:bg-muted/50"
       >
@@ -414,6 +463,7 @@ function ShareRow({
           <DropdownMenuItem
             onSelect={async () => {
               await addFavorite(db, {
+                locationId: machine.id,
                 machineId: machine.id,
                 share: share.name,
                 path: "",
@@ -472,13 +522,11 @@ type Dialog =
   | null
 
 function FolderView({
-  machine,
-  share,
+  location,
   path,
   onAccess,
 }: {
-  machine: MachineWithAddresses
-  share: string
+  location: BrowseLocation
   path: string
   /** Called with the folder's access whenever a listing arrives (for the header badge). */
   onAccess: (access: SmbAccess | undefined) => void
@@ -488,12 +536,14 @@ function FolderView({
   const router = useRouter()
   const navigate = useNavigate()
   const engine = useRouteEngine()
-  const folder = useFolder(machine, share, path)
+  const { machine, share } = location
+  const isSmb = location.kind === "smb"
+  const folder = useFolder(location, path)
   // Write actions stay visible but disabled where the server said this account may only read; a
   // write the server refuses anyway (access changed) still shows its error.
   const access = folder.data?.kind === "entries" ? folder.data.access : undefined
   const readOnly = isReadOnly(access)
-  const readOnlyReason = useReadOnlyReason(machine, path)
+  const readOnlyReason = useReadOnlyReason(location, path)
   const onAccessRef = useRef(onAccess)
   useEffect(() => {
     onAccessRef.current = onAccess
@@ -551,11 +601,14 @@ function FolderView({
       clearSelection()
       return true
     }
-    goUp(router, {
-      to: "/browse/$machineId",
-      params: { machineId: machine.id },
-      search: parent === null ? {} : { share, path: parent || undefined },
-    })
+    if (parent === null && !isSmb) goUp(router, { to: "/" })
+    else {
+      goUp(router, {
+        to: "/browse/$locationId",
+        params: { locationId: location.id },
+        search: parent === null ? {} : { share, path: parent || undefined },
+      })
+    }
     return true
   })
 
@@ -585,16 +638,16 @@ function FolderView({
     })
   }
 
-  const run = <T,>(fn: (sessionId: string) => Promise<T>) => engine.withSession(machine, fn)
+  const run = location.run
   const refresh = async () => {
-    invalidateFolder(machine.id, share, path)
+    invalidateFolder(location.cacheKey, path)
     await folder.refresh()
   }
 
   function view(entry: SmbEntry, edit?: boolean) {
     void navigate({
-      to: "/view/$machineId",
-      params: { machineId: machine.id },
+      to: "/view/$locationId",
+      params: { locationId: location.id },
       search: { share, path: entry.path, edit },
     })
   }
@@ -605,10 +658,14 @@ function FolderView({
    * always shows the system chooser.
    */
   async function open(entry: SmbEntry, withChooser = false) {
+    if (entry.restricted) {
+      toast(t("locations.restricted.title"), { description: t("locations.restricted.body") })
+      return
+    }
     if (entry.isDirectory) {
       void navigate({
-        to: "/browse/$machineId",
-        params: { machineId: machine.id },
+        to: "/browse/$locationId",
+        params: { locationId: location.id },
         search: { share, path: entry.path },
       })
       return
@@ -623,16 +680,11 @@ function FolderView({
     try {
       const strategy = openStrategy(entry, withChooser)
       if (strategy === "cache") {
-        await run((sessionId) =>
-          HoardSmb.openFile({ sessionId, share, path: entry.path, chooser: withChooser })
+        await run((loc) =>
+          HoardSmb.openFile({ location: loc, path: entry.path, chooser: withChooser })
         )
       } else {
-        const source = {
-          machineId: machine.id,
-          share,
-          path: entry.path,
-          ...(await nativeRoute(engine, machine)),
-        }
+        const source = { location: await location.streamLocation(), path: entry.path }
         if (strategy === "web") await HoardSmb.openWebPage(source)
         else await HoardSmb.streamFile({ ...source, chooser: withChooser })
       }
@@ -657,17 +709,22 @@ function FolderView({
     setDialog({
       kind: "download",
       folders: list.length - files.length,
-      files: files.map((e) => ({ share, path: e.path, name: e.name, size: e.size })),
+      files: files.map((e) => ({ share: share ?? "", path: e.path, name: e.name, size: e.size })),
     })
   }
 
   async function copyPath(entry: SmbEntry) {
-    const host = engine.activeRoute(machine.id)?.host ?? machine.addresses[0]?.host ?? ""
-    await copyText(uncPath(host, share, entry.path), t)
+    await copyText(location.displayPath(entry.path), t)
   }
 
   async function favorite(entry: SmbEntry) {
-    await addFavorite(db, { machineId: machine.id, share, path: entry.path, label: entry.name })
+    await addFavorite(db, {
+      locationId: location.id,
+      machineId: machine?.id ?? null,
+      share: share ?? "",
+      path: entry.path,
+      label: entry.name,
+    })
     toast.success(t("favorites.added", { name: entry.name }))
   }
 
@@ -707,13 +764,14 @@ function FolderView({
             {t("browse.openWith")}
           </DropdownMenuItem>
         )}
-        {!entry.isDirectory && (
+        {/* Downloads are SMB → phone; copying between any locations comes in phase 2a. */}
+        {!entry.isDirectory && isSmb && (
           <DropdownMenuItem onSelect={() => download([entry])}>
             <DownloadSimpleIcon />
             {t("browse.download")}
           </DropdownMenuItem>
         )}
-        {entry.isDirectory && (
+        {entry.isDirectory && !entry.restricted && (
           <DropdownMenuItem onSelect={() => void favorite(entry)}>
             <StarIcon />
             {t("favorites.add")}
@@ -754,13 +812,23 @@ function FolderView({
   let body
   if (folder.error && !entries) {
     body = (
-      <SmbErrorState
+      <LocationErrorState
         code={folder.error.code}
-        machineId={machine.id}
+        location={location}
         attempts={folder.error.attempts}
+        restricted={folder.error.restricted}
+        upLink={
+          parent === null
+            ? { to: "/" }
+            : {
+                to: "/browse/$locationId",
+                params: { locationId: location.id },
+                search: { share, path: parent || undefined },
+              }
+        }
         retrying={folder.loading}
         onRetry={() => {
-          if (folder.error?.attempts) engine.forget(machine.id)
+          if (folder.error?.attempts && machine) engine.forget(machine.id)
           void folder.refresh()
         }}
       />
@@ -853,8 +921,7 @@ function FolderView({
                 >
                   <FileRow
                     entry={entry}
-                    machine={machine}
-                    share={share}
+                    location={location}
                     selected={selected.has(entry.path)}
                     selectionMode={inSelection}
                     opening={opening === entry.path}
@@ -887,7 +954,7 @@ function FolderView({
           )}
           onClear={clearSelection}
           onSelectAll={() => setSelected(new Set(visible.map((e) => e.path)))}
-          onDownload={() => download(selectedEntries)}
+          onDownload={isSmb ? () => download(selectedEntries) : undefined}
           onDelete={() =>
             selectedEntries.length && setDialog({ kind: "delete", entries: selectedEntries })
           }
@@ -930,7 +997,7 @@ function FolderView({
         validate={validateName()}
         onSubmit={async (name) => {
           try {
-            await run((sessionId) => HoardSmb.createFolder({ sessionId, share, path, name }))
+            await run((loc) => HoardSmb.createFolder({ location: loc, path, name }))
           } catch (error) {
             throw new Error(t(`errors.${smbErrorCode(error)}.title`, t("errors.UNKNOWN.title")), {
               cause: error,
@@ -953,10 +1020,9 @@ function FolderView({
           const clean = name.trim()
           let created: SmbEntry
           try {
-            const result = await run((sessionId) =>
+            const result = await run((loc) =>
               HoardSmb.writeTextFile({
-                sessionId,
-                share,
+                location: loc,
                 path: path ? `${path}/${clean}` : clean,
                 text: "",
                 mode: "create",
@@ -968,7 +1034,7 @@ function FolderView({
               cause: error,
             })
           }
-          invalidateFolder(machine.id, share, path)
+          invalidateFolder(location.cacheKey, path)
           toast.success(t("browse.fileCreated", { name: clean }))
           view(created, true)
         }}
@@ -987,9 +1053,7 @@ function FolderView({
           if (dialog?.kind !== "rename") return
           const entry = dialog.entry
           try {
-            await run((sessionId) =>
-              HoardSmb.rename({ sessionId, share, path: entry.path, newName })
-            )
+            await run((loc) => HoardSmb.rename({ location: loc, path: entry.path, newName }))
           } catch (error) {
             throw new Error(t(`errors.${smbErrorCode(error)}.title`, t("errors.UNKNOWN.title")), {
               cause: error,
@@ -1006,10 +1070,9 @@ function FolderView({
           let failed = 0
           for (const entry of list) {
             try {
-              await run((sessionId) =>
+              await run((loc) =>
                 HoardSmb.delete({
-                  sessionId,
-                  share,
+                  location: loc,
                   path: entry.path,
                   recursive: entry.isDirectory,
                 })
@@ -1024,7 +1087,7 @@ function FolderView({
           else toast.success(t("browse.deleted", { count: list.length }))
         }}
       />
-      {dialog?.kind === "download" && (
+      {dialog?.kind === "download" && machine && (
         <DownloadDialog
           open
           onOpenChange={(o) => !o && setDialog(null)}
@@ -1051,7 +1114,8 @@ function SelectionBar({
   size: string
   onClear: () => void
   onSelectAll: () => void
-  onDownload: () => void
+  /** Absent where downloads do not apply (local storage until phase 2a). */
+  onDownload?: () => void
   onDelete: () => void
   /** Set in a read-only folder: Delete stays visible, disabled, with this as its explanation. */
   readOnlyReason?: string
@@ -1073,10 +1137,12 @@ function SelectionBar({
       <Button variant="ghost" onClick={onSelectAll} className="max-@md:hidden">
         {t("browse.selectAll")}
       </Button>
-      <Button variant="outline" onClick={onDownload} disabled={count === 0}>
-        <DownloadSimpleIcon data-icon="inline-start" />
-        <span className="max-@md:sr-only">{t("browse.download")}</span>
-      </Button>
+      {onDownload && (
+        <Button variant="outline" onClick={onDownload} disabled={count === 0}>
+          <DownloadSimpleIcon data-icon="inline-start" />
+          <span className="max-@md:sr-only">{t("browse.download")}</span>
+        </Button>
+      )}
       {/* A disabled button gets no pointer events: the wrapper carries the explanation. */}
       <span title={readOnlyReason} className="inline-flex">
         <Button

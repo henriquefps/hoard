@@ -1,5 +1,8 @@
 /**
- * The HoardSmb plugin contract: everything the app asks the native side to do.
+ * The HoardSmb plugin contract: everything the app asks the native side to do. Despite the name
+ * it covers every **location** files live in (ADR 0005): SMB shares, the phone's shared storage
+ * and removable volumes (USB drives, SD cards). File operations take a {@link LocationRef}; the
+ * SMB-only methods (probe, discover, credentials, connect, listShares, transfers) are unchanged.
  *
  * Three implementations must stay in lockstep (see CLAUDE.md, "plugin contract rule"):
  *  - this file (the types the UI is written against),
@@ -62,6 +65,17 @@ export const HOARD_SMB_ERROR_CODES = [
    * is not `expectedModifiedAt`. `data.modifiedAt` has the current one (null when it is gone).
    */
   "CONFLICT",
+  /**
+   * Device or volume location: Hoard may not read the phone's files. All files access
+   * (`MANAGE_EXTERNAL_STORAGE`, or the storage permission before Android 11) was not granted, and
+   * for a volume no SAF grant exists either. `requestStorageAccess` / `grantVolumeAccess` fix it.
+   */
+  "STORAGE_PERMISSION",
+  /**
+   * Volume location: the volume is not mounted (unplugged, ejected, still being checked, or a
+   * filesystem Android cannot read). `data.state` has its {@link VolumeState} when known.
+   */
+  "UNAVAILABLE",
 ] as const
 
 export type HoardSmbErrorCode = (typeof HOARD_SMB_ERROR_CODES)[number]
@@ -119,6 +133,108 @@ export interface SmbEntry {
   modifiedAt: IsoDateTime | null
   /** Hidden attribute set, or the name starts with `.`. */
   isHidden: boolean
+  /**
+   * Device and volume locations only: a folder Android keeps to itself (`Android/data`,
+   * `Android/obb` on Android 11+). Listed so the tree looks like it does in other file managers,
+   * but listing it rejects `ACCESS_DENIED` with `data.restricted: true`. Absent elsewhere.
+   */
+  restricted?: boolean
+}
+
+/** Same shape for every location; the name is historical (SMB came first). */
+export type FileEntry = SmbEntry
+
+// ---------------------------------------------------------------------------------------------
+// Locations (ADR 0005)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Where a file operation happens. Paths are always `/`-separated, without a leading slash,
+ * relative to the location's root (`""` is the root):
+ *  - `smb`: a share on a connected session (path inside the share);
+ *  - `device`: the phone's shared storage, `/storage/emulated/0` (path below it: `DCIM/Camera`);
+ *  - `volume`: a removable volume (USB OTG drive, SD card) by its {@link StorageVolumeInfo.uuid}
+ *    (path below the volume root). Natively read by path with all files access, else through the
+ *    volume's SAF tree when `grantVolumeAccess` granted one.
+ */
+export type LocationRef =
+  | { kind: "smb"; sessionId: string; share: string }
+  | { kind: "device" }
+  | { kind: "volume"; uuid: string }
+
+/** The kinds of {@link LocationRef}. */
+export type LocationKind = LocationRef["kind"]
+
+/** A local location (no network, no session). */
+export type LocalLocationRef = Extract<LocationRef, { kind: "device" | "volume" }>
+
+/** Mount state of a storage volume (Android's `Environment.MEDIA_*`, simplified). */
+export type VolumeState =
+  /** Readable and writable. */
+  | "mounted"
+  /** Readable only (write-protect switch, a filesystem Android mounts read-only such as NTFS on some phones). */
+  | "mountedReadOnly"
+  /** Attached and being checked; becomes `mounted` shortly. */
+  | "checking"
+  /** Being ejected from Settings. */
+  | "ejecting"
+  /** Known but not mounted (ejected, unplugged, not formatted, unsupported filesystem). */
+  | "unmounted"
+  /** A filesystem Android cannot mount (exFAT on old phones, ext4, APFS…). */
+  | "unmountable"
+
+/** One storage volume: the phone's own storage (`primary`) or a removable one. */
+export interface StorageVolumeInfo {
+  /**
+   * Stable id across plug-ins: the filesystem UUID (`1A2B-3C4D` for FAT/exFAT). `null` for the
+   * primary (internal) storage, which is the `device` location.
+   */
+  uuid: string | null
+  /** System label ("Internal storage", "SanDisk USB drive", "SD card"). */
+  label: string
+  primary: boolean
+  removable: boolean
+  /** Best guess from Android's own description and the USB devices attached; `internal` for the primary. */
+  kind: "internal" | "usb" | "sd" | "other"
+  state: VolumeState
+  /** Root directory (`/storage/1A2B-3C4D`) when Android exposes it. */
+  path?: string
+  /** Capacity and free space, when the volume is mounted and readable. */
+  totalBytes?: number
+  freeBytes?: number
+  /** Filesystem type (`vfat`, `exfat`, `sdcardfs`…) when `/proc/mounts` says. */
+  fileSystem?: string
+  /**
+   * How Hoard reads it now: `path` (all files access, plain file paths), `saf` (Storage Access
+   * Framework folder grants on it, from `grantVolumeAccess`), `none` (no access yet).
+   */
+  access: "path" | "saf" | "none"
+}
+
+export interface ListVolumesResult {
+  /** The primary storage first, then removable volumes (mounted or not) in the order Android lists them. */
+  volumes: StorageVolumeInfo[]
+}
+
+/** Whether Hoard may read and write the phone's shared storage by path. */
+export interface StorageAccessResult {
+  /**
+   * All files access is on (`MANAGE_EXTERNAL_STORAGE` on Android 11+; the storage runtime
+   * permission before). Device and volume locations need it, or a SAF grant per volume.
+   */
+  granted: boolean
+  /** `allFiles` (Android 11+, a Settings switch) or `runtime` (Android 10 and older, a dialog). */
+  mechanism: "allFiles" | "runtime"
+}
+
+export interface VolumeRef {
+  /** {@link StorageVolumeInfo.uuid} of a removable volume. */
+  uuid: string
+}
+
+export interface OpenStorageSettingsOptions {
+  /** Open the page for this volume when Android has one (else the storage overview). */
+  uuid?: string
 }
 
 /**
@@ -236,16 +352,20 @@ export interface ListSharesResult {
   shares: SmbShare[]
 }
 
-export interface PathOptions extends SessionRef {
-  share: string
-  /** Path inside the share (see {@link SmbEntry.path}); `""` is the share root. */
+/** Every file operation: a location and a path inside it. */
+export interface PathOptions {
+  location: LocationRef
+  /** Path inside the location (see {@link SmbEntry.path} and {@link LocationRef}); `""` is its root. */
   path: string
 }
 
 export interface ListResult {
   /** Folder contents, unsorted (the UI sorts). `.` and `..` are never included. */
   entries: SmbEntry[]
-  /** The account's access to this folder (share and folder level combined); undefined when unknown. */
+  /**
+   * The account's access to this folder (share and folder level combined); undefined when unknown.
+   * Local locations: `read` on a read-only mounted volume or a folder Hoard may not write.
+   */
   access?: SmbAccess
 }
 
@@ -397,18 +517,29 @@ export interface ThumbnailResult {
 // --- Streaming and the local web server ---------------------------------------------------------
 
 /**
- * Where a stream or a served page reads from. Like `startDownload`, native opens its **own**
- * connection (not a `sessionId`): it outlives the UI's sessions and the WebView, and reconnects /
- * fails over across `addresses` while another app plays, re-checking the GUID before credentials.
+ * An SMB share as a stream source. Like `startDownload`, native opens its **own** connection (not
+ * a `sessionId`): it outlives the UI's sessions and the WebView, and reconnects / fails over
+ * across `addresses` while another app plays, re-checking the GUID before credentials.
  */
-export interface StreamSourceOptions {
+export interface SmbStreamLocation {
+  kind: "smb"
   machineId: string
   /** Priority order, the route in use first. */
   addresses: SmbAddress[]
   /** Pinned GUID, checked on every (re)connect. */
   expectedServerGuid: string
   share: string
-  /** File path inside the share. */
+}
+
+/**
+ * Where a stream or a served page reads from: an SMB share (own connection) or a local location
+ * (the file itself: no stream token, no foreground service for `streamFile`).
+ */
+export type StreamLocation = SmbStreamLocation | LocalLocationRef
+
+export interface StreamSourceOptions {
+  location: StreamLocation
+  /** File path inside the location. */
   path: string
 }
 
@@ -546,6 +677,16 @@ export interface TransferProgressEvent {
   bytesPerSecond?: number
 }
 
+/**
+ * A volume was attached, mounted, ejected or removed (USB OTG drive plugged in, SD card pulled).
+ * `volumes` is the full list after the change (same as `listVolumes`).
+ */
+export interface VolumesChangedEvent {
+  volumes: StorageVolumeInfo[]
+  /** The volume that changed and how, when native knows (a plain refresh has none). */
+  change?: { uuid: string | null; state: VolumeState | "removed" }
+}
+
 /** The device's default network changed (Wi-Fi joined/left, VPN up/down). Recheck routes. */
 export interface NetworkChangedEvent {
   /** Kind of the new default network, `none` when offline. */
@@ -556,6 +697,7 @@ export interface NetworkChangedEvent {
 
 export type TransferProgressListener = (event: TransferProgressEvent) => void
 export type NetworkChangedListener = (event: NetworkChangedEvent) => void
+export type VolumesChangedListener = (event: VolumesChangedEvent) => void
 
 // ---------------------------------------------------------------------------------------------
 // The plugin
@@ -597,7 +739,41 @@ export interface HoardSmbPlugin {
   /** Close a session. Idempotent: an unknown `sessionId` resolves. */
   disconnect(options: SessionRef): Promise<void>
 
-  // --- Browsing -----------------------------------------------------------------------------
+  // --- Local storage (ADR 0005) ------------------------------------------------------------
+
+  /** Whether all files access is granted (device and volume locations need it, or a SAF grant). */
+  getStorageAccess(): Promise<StorageAccessResult>
+
+  /**
+   * Ask for all files access: Android 11+ opens Hoard's "All files access" page in Settings
+   * (`ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`) and resolves when the user comes back;
+   * older versions show the storage permission dialog. Resolves with the new state (never
+   * rejects for a refusal: `granted: false`).
+   */
+  requestStorageAccess(): Promise<StorageAccessResult>
+
+  /** The phone's storage volumes: the primary (internal) one first, then removable ones. */
+  listVolumes(): Promise<ListVolumesResult>
+
+  /**
+   * SAF fallback for a volume Hoard cannot read by path (no all files access): opens the system
+   * folder picker on the volume (`StorageVolume.createOpenDocumentTreeIntent`, Android 10+) and
+   * keeps a persisted grant on the folder the user picks. Android 11+ refuses a volume's root in
+   * that picker, so the grant is usually a folder (`DCIM`); call it again to add more. Browsing
+   * then shows the levels above granted folders as folders leading to them; anything outside every
+   * grant rejects `STORAGE_PERMISSION`. Resolves with the volume's info (`access: "saf"`); rejects
+   * `CANCELLED` when the user backs out, `ACCESS_DENIED` for a folder on another volume,
+   * `UNAVAILABLE` when it is not mounted, `NOT_FOUND` for an unknown uuid.
+   */
+  grantVolumeAccess(options: VolumeRef): Promise<StorageVolumeInfo>
+
+  /**
+   * Open the system storage settings (the volume's page when possible). Apps cannot eject a volume
+   * on modern Android; this is where the user does it safely.
+   */
+  openStorageSettings(options?: OpenStorageSettingsOptions): Promise<void>
+
+  // --- Browsing (any location) ----------------------------------------------------------------
 
   /**
    * Disk shares visible to the account, each with its `access` when known (one TREE_CONNECT per
@@ -606,7 +782,10 @@ export interface HoardSmbPlugin {
    */
   listShares(options: SessionRef): Promise<ListSharesResult>
 
-  /** Contents of a folder. Rejects `NOT_FOUND` / `ACCESS_DENIED`. */
+  /**
+   * Contents of a folder in any location. Rejects `NOT_FOUND` / `ACCESS_DENIED` (`data.restricted`
+   * for Android/data and Android/obb) / `STORAGE_PERMISSION` / `UNAVAILABLE`.
+   */
   list(options: PathOptions): Promise<ListResult>
 
   /** One entry's metadata. Rejects `NOT_FOUND`. */
@@ -661,9 +840,10 @@ export interface HoardSmbPlugin {
   // --- Viewing ------------------------------------------------------------------------------
 
   /**
-   * Download the file to the app cache and open it with ACTION_VIEW (chooser if several apps
-   * match, always with `chooser: true`). Rejects `NO_APP` when nothing can open it, `CANCELLED` if
-   * superseded. For small files; large ones and media go through `streamFile`.
+   * Open the file with ACTION_VIEW (chooser if several apps match, always with `chooser: true`).
+   * SMB: downloads to the app cache first (for small files; large ones and media go through
+   * `streamFile`). Local locations: the file itself is shared (FileProvider or its SAF document),
+   * nothing is copied. Rejects `NO_APP` when nothing can open it, `CANCELLED` if superseded.
    */
   openFile(options: OpenFileOptions): Promise<void>
 
@@ -723,6 +903,11 @@ export interface HoardSmbPlugin {
   addListener(
     eventName: "networkChanged",
     listener: NetworkChangedListener
+  ): Promise<PluginListenerHandle>
+
+  addListener(
+    eventName: "volumesChanged",
+    listener: VolumesChangedListener
   ): Promise<PluginListenerHandle>
 
   /** Remove every listener this plugin registered. */

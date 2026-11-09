@@ -26,21 +26,21 @@ Every screen goes through one small query interface, `Db` (`src/db/db.ts`: `quer
   directly over jeep-sqlite (which wraps it in a web component plus IndexedDB) because it is less
   machinery and also runs in Node for the tests.
 
-Schema (v2), ids are TEXT UUIDs created by the app and shared with the native plugin:
+Schema (v3), ids are TEXT UUIDs created by the app and shared with the native plugin:
 
-| Table               | Columns                                                                                                                                                          |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `machines`          | id, name, icon, color, username, domain, server_guid (nullable), sort_order, created_at                                                                          |
-| `machine_addresses` | id, machine_id → machines (cascade), host, port (445), kind (`local`/`tailscale`/`other`), label, sort_order                                                     |
-| `favorites`         | id, machine_id → machines (cascade), share, path (`""` = root), label, sort_order, created_at; unique (machine_id, share, path)                                  |
-| `transfers`         | id, machine_id → machines (cascade), share, remote_path, dest_tree_uri, dest_name, dest_uri, size, bytes_done, state, error_code, error, created_at, finished_at |
-| `settings`          | key, value (JSON)                                                                                                                                                |
-| `manual_shares`     | machine_id → machines (cascade), name (`COLLATE NOCASE`), created_at; primary key (machine_id, name). v2: shares opened by name that the server does not list    |
+| Table               | Columns                                                                                                                                                                                                                                                            |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `machines`          | id, name, icon, color, username, domain, server_guid (nullable), sort_order, created_at                                                                                                                                                                            |
+| `machine_addresses` | id, machine_id → machines (cascade), host, port (445), kind (`local`/`tailscale`/`other`), label, sort_order                                                                                                                                                       |
+| `favorites`         | id, location_id (machine id, `device` or `vol-<uuid>`), machine_id → machines (cascade; null for local locations), share (`''` for local), path (`""` = root), label, sort_order, created_at; unique (location_id, share, path). v3, [ADR 0005](0005-locations.md) |
+| `transfers`         | id, machine_id → machines (cascade), share, remote_path, dest_tree_uri, dest_name, dest_uri, size, bytes_done, state, error_code, error, created_at, finished_at                                                                                                   |
+| `settings`          | key, value (JSON)                                                                                                                                                                                                                                                  |
+| `manual_shares`     | machine_id → machines (cascade), name (`COLLATE NOCASE`), created_at; primary key (machine_id, name). v2: shares opened by name that the server does not list                                                                                                      |
 
 Known `settings` keys (no migration needed, the table is key/value; validated with defaults in
 `src/features/settings/settings.ts`): `showHiddenFiles`, `defaultSort` (`{ key, direction }`),
 `defaultConflict`, `lastDestination` (the SAF tree used for the last download), `probeTimeoutMs`,
-`onboarded`, and in the browser build `demoSeeded` / `worstCaseSeeded`.
+`onboarded`, `storageIntroSeen` (the all files access screen was shown, ADR 0005), and in the browser build `demoSeeded` / `worstCaseSeeded`.
 
 The transfer service writes progress to `transfers` at most once a second per job (plus every
 state change); speed and the active host live only in memory, fed by `transferProgress`.

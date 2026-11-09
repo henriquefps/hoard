@@ -1,10 +1,10 @@
-import { CaretRightIcon } from "@phosphor-icons/react"
+import { CaretRightIcon, LockKeyIcon } from "@phosphor-icons/react"
 import { useRef, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { MiddleTruncate } from "@/components/MiddleTruncate"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Spinner } from "@/components/ui/spinner"
-import type { MachineWithAddresses } from "@/db/types"
+import type { BrowseLocation } from "@/features/locations/useBrowseLocation"
 import { fileKind } from "@/lib/files"
 import { formatBytes, formatFullDate, formatRelativeDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -24,8 +24,7 @@ const LONG_PRESS_MS = 450
  */
 export function FileRow({
   entry,
-  machine,
-  share,
+  location,
   selected,
   selectionMode,
   opening,
@@ -35,8 +34,7 @@ export function FileRow({
   menu,
 }: {
   entry: SmbEntry
-  machine: MachineWithAddresses
-  share: string
+  location: BrowseLocation
   selected: boolean
   selectionMode: boolean
   opening: boolean
@@ -85,7 +83,7 @@ export function FileRow({
       </div>
 
       <div className="flex min-w-0 flex-1 items-center gap-3 @xl:pr-3">
-        <Thumbnail machine={machine} share={share} entry={entry} kind={kind} />
+        <Thumbnail location={location} entry={entry} kind={kind} />
         <button
           type="button"
           data-primary
@@ -128,12 +126,20 @@ export function FileRow({
           <MiddleTruncate text={entry.name} className="hidden w-full text-[0.9375rem] @xl:flex" />
           <span className="flex max-w-full items-center gap-1 truncate text-[0.8125rem] text-muted-foreground @xl:hidden">
             <span className="truncate" title={fullDate || undefined}>
-              {[entry.isDirectory ? t("browse.folder") : size, date].join(" · ")}
+              {entry.restricted
+                ? t("browse.restrictedShort")
+                : [entry.isDirectory ? t("browse.folder") : size, date].join(" · ")}
             </span>
           </span>
         </button>
         {opening && <Spinner className="shrink-0 text-primary" aria-label={t("browse.opening")} />}
-        {entry.isDirectory && !selectionMode && (
+        {entry.restricted && (
+          <LockKeyIcon
+            aria-label={t("browse.restrictedShort")}
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+        )}
+        {entry.isDirectory && !entry.restricted && !selectionMode && (
           <CaretRightIcon
             aria-hidden
             className="size-4 shrink-0 text-muted-foreground @xl:hidden"
