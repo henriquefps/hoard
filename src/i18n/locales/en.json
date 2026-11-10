@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Hoard",
-    "tagline": "SMB file client"
+    "tagline": "File manager and photo culling"
   },
   "nav": {
     "home": "Home",

@@ -1,0 +1,433 @@
+{
+  "$schema": "https://designer.hfps.dev/schema/designer-project.schema.json",
+  "format": "designer",
+  "schemaVersion": 1,
+  "id": "dmwb4rdan794jzs3",
+  "name": "Hoard C1 knockout",
+  "createdAt": 1794341768207,
+  "updatedAt": 1794341772687,
+  "artboard": {
+    "width": 128,
+    "height": 128,
+    "background": {
+      "kind": "none"
+    }
+  },
+  "children": [
+    {
+      "id": "nmwb4rdan60e2umo",
+      "name": "Group",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "transform": {
+        "x": 0,
+        "y": 0,
+        "rotation": 0,
+        "scaleX": 1,
+        "scaleY": 1
+      },
+      "type": "group",
+      "children": [
+        {
+          "id": "nmwb4rdan1sfpmj5",
+          "name": "Path",
+          "visible": true,
+          "locked": false,
+          "opacity": 0.45,
+          "transform": {
+            "x": 73.95912491805154,
+            "y": 52.75682661886958,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1
+          },
+          "type": "path",
+          "subpaths": [
+            {
+              "closed": true,
+              "points": [
+                {
+                  "x": -17.903243700674878,
+                  "y": -47.02468106751118,
+                  "type": "corner",
+                  "in": {
+                    "x": -25.671891102023608,
+                    "y": -48.151362918346294
+                  }
+                },
+                {
+                  "x": 15.175931585641862,
+                  "y": -39.99348530577173,
+                  "type": "corner",
+                  "out": {
+                    "x": 16.27990426236491,
+                    "y": -39.53025717210459
+                  }
+                },
+                {
+                  "x": 18.13877473434313,
+                  "y": -37.963316778496186,
+                  "type": "corner",
+                  "in": {
+                    "x": 17.311046266617666,
+                    "y": -38.828303228383504
+                  }
+                },
+                {
+                  "x": 33.46831841678157,
+                  "y": -14.357889550644074,
+                  "type": "corner",
+                  "out": {
+                    "x": 34.07801447238154,
+                    "y": -13.082483634040486
+                  }
+                },
+                {
+                  "x": 34.111430141616424,
+                  "y": -10.823767108202588,
+                  "type": "corner",
+                  "in": {
+                    "x": 34.272747195459814,
+                    "y": -12.228388466331914
+                  }
+                },
+                {
+                  "x": 22.922000563521905,
+                  "y": 41.81836019278967,
+                  "type": "corner",
+                  "out": {
+                    "x": 22.29379163376214,
+                    "y": 43.98747244566192
+                  }
+                },
+                {
+                  "x": 20.38087508194846,
+                  "y": 47.24672155462427,
+                  "type": "corner",
+                  "in": {
+                    "x": 21.447466018229946,
+                    "y": 45.79510802749239
+                  }
+                },
+                {
+                  "x": 20.38087508194846,
+                  "y": 10.485806542665934,
+                  "type": "corner"
+                },
+                {
+                  "x": 24.940392719060398,
+                  "y": -10.965037417588967,
+                  "type": "corner"
+                },
+                {
+                  "x": 11.566046394848613,
+                  "y": -31.559724736165006,
+                  "type": "corner"
+                },
+                {
+                  "x": -19.554926376585563,
+                  "y": -38.17469170428744,
+                  "type": "corner",
+                  "out": {
+                    "x": -22.812078936185856,
+                    "y": -38.39502293762133
+                  }
+                },
+                {
+                  "x": -24.085441770685847,
+                  "y": -35.232540606260514,
+                  "type": "corner",
+                  "in": {
+                    "x": -22.96192106999723,
+                    "y": -38.29771431814332
+                  }
+                },
+                {
+                  "x": -24.96451491589628,
+                  "y": -31.096826618869578,
+                  "type": "corner"
+                },
+                {
+                  "x": -34.16558026968154,
+                  "y": -31.096826618869585,
+                  "type": "corner"
+                },
+                {
+                  "x": -32.840250399624836,
+                  "y": -37.33201343052954,
+                  "type": "corner",
+                  "out": {
+                    "x": -30.619242940972335,
+                    "y": -45.00082274548982
+                  }
+                }
+              ]
+            }
+          ],
+          "fill": {
+            "kind": "solid",
+            "color": "#000000"
+          },
+          "stroke": {
+            "paint": {
+              "kind": "none"
+            },
+            "width": 1,
+            "cap": "butt",
+            "join": "miter",
+            "dash": []
+          },
+          "fillRule": "evenodd"
+        },
+        {
+          "id": "nmwb4rdan2wopj99",
+          "name": "Path",
+          "visible": true,
+          "locked": false,
+          "opacity": 1,
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1
+          },
+          "type": "path",
+          "fill": {
+            "kind": "none"
+          },
+          "stroke": {
+            "paint": {
+              "kind": "solid",
+              "color": "#000000"
+            },
+            "width": 9,
+            "cap": "round",
+            "join": "round",
+            "dash": []
+          },
+          "subpaths": [
+            {
+              "closed": true,
+              "points": [
+                {
+                  "x": 28,
+                  "y": 30,
+                  "type": "corner",
+                  "in": {
+                    "x": 22.666666666666668,
+                    "y": 30
+                  }
+                },
+                {
+                  "x": 64,
+                  "y": 30,
+                  "type": "corner"
+                },
+                {
+                  "x": 86,
+                  "y": 52,
+                  "type": "corner"
+                },
+                {
+                  "x": 86,
+                  "y": 108,
+                  "type": "corner",
+                  "out": {
+                    "x": 86,
+                    "y": 113.33333333333333
+                  }
+                },
+                {
+                  "x": 78,
+                  "y": 116,
+                  "type": "corner",
+                  "in": {
+                    "x": 83.33333333333333,
+                    "y": 116
+                  }
+                },
+                {
+                  "x": 28,
+                  "y": 116,
+                  "type": "corner",
+                  "out": {
+                    "x": 22.666666666666668,
+                    "y": 116
+                  }
+                },
+                {
+                  "x": 20,
+                  "y": 108,
+                  "type": "corner",
+                  "in": {
+                    "x": 20,
+                    "y": 113.33333333333333
+                  }
+                },
+                {
+                  "x": 20,
+                  "y": 38,
+                  "type": "corner",
+                  "out": {
+                    "x": 20,
+                    "y": 32.666666666666664
+                  }
+                }
+              ]
+            }
+          ],
+          "fillRule": "nonzero"
+        },
+        {
+          "id": "nmwb4rdan3e00mxq",
+          "name": "Path",
+          "visible": true,
+          "locked": false,
+          "opacity": 1,
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1
+          },
+          "type": "path",
+          "fill": {
+            "kind": "none"
+          },
+          "stroke": {
+            "paint": {
+              "kind": "solid",
+              "color": "#000000"
+            },
+            "width": 9,
+            "cap": "round",
+            "join": "round",
+            "dash": []
+          },
+          "subpaths": [
+            {
+              "closed": false,
+              "points": [
+                {
+                  "x": 62,
+                  "y": 30,
+                  "type": "corner"
+                },
+                {
+                  "x": 62,
+                  "y": 54,
+                  "type": "corner"
+                },
+                {
+                  "x": 86,
+                  "y": 54,
+                  "type": "corner"
+                }
+              ]
+            }
+          ],
+          "fillRule": "nonzero"
+        },
+        {
+          "id": "nmwb4rdan4hggjww",
+          "name": "Path",
+          "visible": true,
+          "locked": false,
+          "opacity": 1,
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1
+          },
+          "type": "path",
+          "fill": {
+            "kind": "none"
+          },
+          "stroke": {
+            "paint": {
+              "kind": "solid",
+              "color": "#000000"
+            },
+            "width": 9,
+            "cap": "round",
+            "join": "round",
+            "dash": []
+          },
+          "subpaths": [
+            {
+              "closed": false,
+              "points": [
+                {
+                  "x": 36,
+                  "y": 76,
+                  "type": "corner"
+                },
+                {
+                  "x": 70,
+                  "y": 76,
+                  "type": "corner"
+                }
+              ]
+            }
+          ],
+          "fillRule": "nonzero"
+        },
+        {
+          "id": "nmwb4rdan51bzxhn",
+          "name": "Path",
+          "visible": true,
+          "locked": false,
+          "opacity": 1,
+          "transform": {
+            "x": 0,
+            "y": 0,
+            "rotation": 0,
+            "scaleX": 1,
+            "scaleY": 1
+          },
+          "type": "path",
+          "fill": {
+            "kind": "none"
+          },
+          "stroke": {
+            "paint": {
+              "kind": "solid",
+              "color": "#000000"
+            },
+            "width": 9,
+            "cap": "round",
+            "join": "round",
+            "dash": []
+          },
+          "subpaths": [
+            {
+              "closed": false,
+              "points": [
+                {
+                  "x": 36,
+                  "y": 94,
+                  "type": "corner"
+                },
+                {
+                  "x": 60,
+                  "y": 94,
+                  "type": "corner"
+                }
+              ]
+            }
+          ],
+          "fillRule": "nonzero"
+        }
+      ]
+    }
+  ],
+  "icon": {
+    "preset": "app-icon",
+    "shape": "auto"
+  }
+}
