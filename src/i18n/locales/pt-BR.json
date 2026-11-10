@@ -893,7 +893,8 @@
       "info": "Dados da câmera",
       "imageFailed": "Não foi possível mostrar esta foto.",
       "renderingRaw": "Revelando o RAW em 100%…",
-      "loadingFull": "Carregando 100%…"
+      "loadingFull": "Carregando 100%…",
+      "swipeDecide": "Deslizar para cima e para baixo para escolher e descartar"
     },
     "compare": {
       "open": "Comparar",
@@ -1041,7 +1042,61 @@
       "highlights": "{{value}} de altas luzes estouradas",
       "notAnalysed": "Ainda não analisada",
       "measuredOn": "Medida em: {{source}}, {{size}}",
-      "acceptBurst": "Aceitar para a sequência toda"
+      "acceptBurst": "Aceitar para a sequência toda",
+      "expandHint": "Toque para abrir a sequência; toque no selo ou segure para ver os quadros"
+    },
+    "burstMode": {
+      "position": "Sequência · {{index}} de {{total}}",
+      "exit": "Voltar à pasta",
+      "keep": "Ficar com esta",
+      "kept_one": "Ficou com {{name}}; {{count}} outro quadro descartado",
+      "kept_other": "Ficou com {{name}}; {{count}} outros quadros descartados",
+      "kept_zero": "Ficou com {{name}}",
+      "alreadyKept": "Já escolhida: os outros quadros já estão decididos",
+      "compare": "Comparar com a melhor",
+      "acceptSuggestion": "Aceitar sugestão da sequência",
+      "view": "Ver sequência ({{count}})",
+      "resolved": "{{kept}} de {{size}} escolhidas",
+      "resolvedShort": "{{kept}}/{{size}}",
+      "pending": "{{decided}} de {{size}} decididas"
+    },
+    "chips": {
+      "eyesOpen_one": "Olhos abertos",
+      "eyesOpen_other": "Olhos abertos em {{count}} rostos"
+    },
+    "details": {
+      "title": "Detalhes",
+      "open": "Mostrar detalhes",
+      "close": "Esconder detalhes",
+      "toggle": "Detalhes",
+      "suggestion": "Sugestão",
+      "analysis": "Análise",
+      "camera": "Câmera",
+      "taken": "Tirada",
+      "exposure": "Exposição",
+      "focal": "Distância focal",
+      "lens": "Lente",
+      "file": "Arquivo",
+      "burst": "Sequência",
+      "burstValue": "Quadro {{index}} de {{size}}",
+      "shown": "Mostrando",
+      "sharpness": "Nitidez",
+      "faces": "Rostos",
+      "face": "Rosto {{index}}",
+      "moreFaces_one": "e mais {{count}} rosto",
+      "moreFaces_other": "e mais {{count}} rostos",
+      "exposureLabel": "Exposição",
+      "exposureOk": "Bem exposta",
+      "over": {
+        "blownArea": "Superexposta: {{value}} da foto estourada em áreas grandes",
+        "face": "Superexposta: {{value}} de um rosto estourado",
+        "mean": "Superexposta: clara demais no geral"
+      },
+      "under": {
+        "shadows": "Subexposta: {{value}} de sombras sem detalhe",
+        "mean": "Subexposta: escura demais no geral"
+      },
+      "highlights": "{{value}} de altas luzes estouradas ({{area}} em áreas grandes)"
     }
   }
 }

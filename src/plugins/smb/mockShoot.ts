@@ -402,14 +402,17 @@ export function photoAnalysis(photo: MockPhoto, stem: string): CullAnalysis {
       })
     }
   }
-  // Exposure: a bell around the mean; ~8% over, ~6% under.
+  // Exposure: a bell around the mean; ~8% over (large blown regions), ~6% under, and ~7% with
+  // bright lamps in frame (many blown pixels, no large blown region: not over-exposed).
   const roll = (h >>> 9) % 100
+  const lamps = roll >= 14 && roll < 21
   const mean = roll < 8 ? 0.74 : roll < 14 ? 0.17 : 0.38 + rnd() * 0.18
   const spread = 0.16
   const weights = Array.from({ length: 64 }, (_, i) =>
     Math.exp(-(((i + 0.5) / 64 - mean) ** 2) / (2 * spread * spread))
   )
-  const highlights = roll < 8 ? 0.14 + rnd() * 0.1 : rnd() * 0.01
+  const highlights = roll < 8 ? 0.14 + rnd() * 0.1 : lamps ? 0.08 + rnd() * 0.05 : rnd() * 0.01
+  const blownArea = roll < 8 ? highlights * 0.85 : lamps ? rnd() * 0.02 : 0
   const shadows = roll >= 8 && roll < 14 ? 0.12 + rnd() * 0.1 : rnd() * 0.004
   weights[63] += highlights * 64
   weights[0] += shadows * 64
@@ -422,7 +425,7 @@ export function photoAnalysis(photo: MockPhoto, stem: string): CullAnalysis {
     return [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")
   }).join("")
   return {
-    version: 1,
+    version: 2,
     source: "rawPreview",
     width,
     height,
@@ -442,6 +445,8 @@ export function photoAnalysis(photo: MockPhoto, stem: string): CullAnalysis {
       mean: Math.round(mean * 1e4) / 1e4,
       highlights: Math.round(highlights * 1e5) / 1e5,
       shadows: Math.round(shadows * 1e5) / 1e5,
+      blownArea: Math.round(blownArea * 1e5) / 1e5,
+      faceHighlights: faces.length ? Math.round(rnd() * 0.03 * 1e5) / 1e5 : 0,
     },
     hash,
     colors,

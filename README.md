@@ -6,6 +6,12 @@ A file manager for Android: the phone's own storage, USB drives and SD cards, an
 
 Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; on Android the native Kotlin plugin (smbj, Storage Access Framework, WorkManager transfers) implements the same contract ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
 
+**Burst mode** (1.7.0, browser build with synthetic photos): tap a stack to choose within the burst ("Keep this one" picks the frame on screen and rejects the others, with undo), resolved and pending bursts in the grid, compact icons on the photo and the details in a sheet you swipe up, like the phone's gallery.
+
+| Burst mode                                                  | Keep this one                                                     | Grid                                                             | On the photo                                              | Details                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| ![Burst mode](docs/screenshots/burst-mode/1-burst-mode.png) | ![Keep this one](docs/screenshots/burst-mode/2-keep-this-one.png) | ![Grid](docs/screenshots/burst-mode/3-grid-resolved-pending.png) | ![Chips](docs/screenshots/burst-mode/4-compact-chips.png) | ![Details](docs/screenshots/burst-mode/5-details-sheet.png) |
+
 **Assisted culling** (1.6.0, browser build with synthetic photos): bursts stacked with their best frame crowned and problems marked, suggestions to accept or ignore, the viewer's analysis panel with a histogram, and the assist settings.
 
 | Bursts and flags                                               | Suggestions                                                         | Analysis panel                                                 | Settings                                                      |

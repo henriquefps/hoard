@@ -1,7 +1,8 @@
 # ADR 0009: Assisted culling (sharpness, closed eyes, exposure, bursts, suggestions)
 
 - **Date**: 2026-11-10
-- **Status**: Accepted (1.6.0). Builds on the image core ([ADR 0006](0006-image-core.md)) and the
+- **Status**: Accepted (1.6.0); exposure rule, eyes reading and the crown revised in 1.7.0
+  (`VERSION` 2). Builds on the image core ([ADR 0006](0006-image-core.md)) and the
   culling mode ([ADR 0008](0008-culling.md)); sidecars go through the transfer engine
   ([ADR 0007](0007-transfers-any-location.md)).
 
@@ -105,6 +106,15 @@ The same pipeline on the JVM (`javax.imageio` decode) and on Android (libjpeg-tu
 - **"Eyes closed"**: some prominent face has **both** eye-open probabilities below **T**: low 0.15,
   **medium 0.30 (default)**, high 0.50 (half-closed eyes too). An eye ML Kit cannot judge
   (profile, occlusion: probability absent) never counts as closed.
+- **One reading for everything** (1.7.0, `eyesSummary` in `assist.ts`): the flag, the chips,
+  the details, the ranking and the suggestion reasons all read the same per-face states (open /
+  closed / unknown at the user's sensitivity). 1.6.0's panel looked only at the largest face with a
+  fixed 0.3 on the _more open_ eye, while the flag looked at every prominent face at the chosen
+  sensitivity: with three faces, the largest open and a smaller one closed, the panel said "3 faces
+  · eyes open" and the flag "Eyes closed" (the owner's screenshot). The verdict is now `closed` when
+  any prominent face is closed, `open` when at least one face's eyes are known and none is closed,
+  else `unknown`; the details list every prominent face with its state, and Zoom to face starts on
+  the first closed one.
 - **Calibration**: 31 real frames, 70 faces (67 prominent). At medium, **0** frames flagged. ML Kit
   often reports one eye low on babies and three-quarter views (e.g. L 0.02 / R 1.00), which is
   why both eyes must be closed. These shoots have no frame with clearly closed eyes, so the
@@ -135,11 +145,39 @@ The same pipeline on the JVM (`javax.imageio` decode) and on Android (libjpeg-tu
 - **Histogram**: 64 bins of luma, bin = `floor(Y / 4)`, as fractions of the pixels.
 - `mean` = mean luma / 255; `highlights` = share of pixels with `Y ≥ 250`; `shadows` = share with
   `Y ≤ 5`.
-- **Over-exposed**: `highlights ≥ 0.10` or `mean ≥ 0.70`. **Under-exposed** (only when not over):
-  `shadows ≥ 0.08` or `mean ≤ 0.20`.
-- **Calibration** (31 frames; ±EV applied in linear light: decode sRGB, scale by 2^EV, encode,
-  clip): real frames mean 0.30–0.56, highlights 0–8.4%, shadows 0–0.55% → **0 flagged**. +1 EV:
-  15/31 over, +2 EV: 26/31; −2 EV: 19/31 under; −1 EV: 0/31 (one stop is within taste).
+- **Blown regions** (`blownArea`, 1.7.0): split the analysis image into **16 × 16 px cells** (the
+  last column and row may be narrower; cell `(floor(x / 16), floor(y / 16))`). A cell is blown
+  when at least **half** of its pixels have `Y ≥ 250`. Join blown cells **4-connected**; a region
+  counts when its blown pixels are at least **1% of the frame**. `blownArea` = blown pixels of the
+  counted regions / all pixels.
+- **Blown face** (`faceHighlights`): the largest share of `Y ≥ 250` pixels inside a prominent
+  face's box (the reported box, `x0 = round(x · W)` … `x1 = round((x + width) · W)`); 0 without
+  faces.
+- **Over-exposed**: `blownArea ≥ 0.10`, or `faceHighlights ≥ 0.10`, or `mean ≥ 0.70`.
+  **Under-exposed** (only when not over): `shadows ≥ 0.08` or `mean ≤ 0.20` (unchanged).
+- **Why it changed** (1.7.0): 1.6.0 flagged `highlights ≥ 0.10` — any blown pixels. Indoors, ceiling
+  lights and lamps clip in every good exposure: the owner's event shot had 10.5% blown pixels from
+  bright ceiling lights and was flagged "Overexposed" (and, with every frame of its burst flagged,
+  still crowned: see section 7). Clipping that matters is a **large** blown area (a window, a white
+  wall, a burnt-out shirt) or a **blown face**; small bright spots are not.
+- **Calibration** (31 ZV-E10 frames; ±EV in linear light: decode sRGB, scale by 2^EV, encode,
+  clip; "lights" = white squares of 0.4% of the frame each, spaced apart, over the top of the
+  frame until 6% / 12% of it is blown; "region" = one white square of 5% / 8%; JVM for everything
+  but faces, the device harness with ML Kit for faces):
+
+  | Frames                | 1.6.0 rule (over) | 1.7.0 rule (over)           | notes                                           |
+  | --------------------- | ----------------- | --------------------------- | ----------------------------------------------- |
+  | Real                  | 0 / 31            | 0 / 31                      | blownArea 0–6.6%, faceHighlights ≤ 3.5%         |
+  | + lights 6% / 12%     | 5 / 31, 31 / 31   | 0 / 31, 0 / 31              | blownArea ≤ 8.9% (lights merging with a window) |
+  | + region 5% / 8%      | 4 / 31, 7 / 31    | 0 / 31, 5 / 31              | a backlit window of 6.6% is a real frame        |
+  | +0.5 EV               | 10 / 31           | 4 / 31 (device, with faces) |                                                 |
+  | +1 EV                 | 15 / 31           | 14 / 31 (device)            | JVM without faces: 12 / 31                      |
+  | +2 EV                 | 26 / 31           | 31 / 31 (device)            | faceHighlights median 23%                       |
+  | −1 EV / −2 EV (under) | 0 / 31, 19 / 31   | unchanged                   |                                                 |
+
+  The blown-area threshold is above the real frames' largest region (a backlit window behind a
+  well-exposed baby, 6.6%) and above what the light-spot synthetics reach; the face threshold is
+  about 3× the largest real face clipping and catches most +1 EV and every +2 EV frame.
 
 ## 5. Similarity signature
 
@@ -170,7 +208,15 @@ of these. No scene was wrongly joined.
 
 - **Rank inside a burst**: `score = subject / max(subject in burst) − Σ penalties`, penalties
   eyes closed 1.0, blurry 0.6, over / under-exposed 0.4; ties keep capture order. (Laplacian
-  variance compares well inside one scene; blur is used for the flag.)
+  variance compares well inside one scene; blur is used for the flag.) Since a frame's relative
+  sharpness is at most 1, a flagged frame always ranks below an unflagged one with at least the
+  penalty's share of the sharpness (an eyes-closed frame below any clean frame).
+- **The crown** ("Best in burst", grid, chips, details) goes only to the top-ranked frame **when it
+  has no flag** (1.7.0). The ranking already penalised flagged frames, but 1.6.0 crowned the top
+  frame unconditionally: in a burst where every frame was flagged (all "over-exposed" under the old
+  rule, the sharpest also eyes-closed) the least bad frame was shown as "Best of the burst" next to
+  its flags. Compare and burst mode still order by rank; the suggestion still keeps none ("every
+  frame of this burst has a problem").
 - **Suggestions** (on "Suggest", never automatic):
   - every burst whose frames are all analysed: **keep** the best ("Best frame of the burst · eyes
     open"), **reject** the others with why: their flags, "Blurrier than DSC…" when
@@ -221,7 +267,8 @@ tried (see "Not verified").
 ## UI
 
 - Grid: bursts **stacked** (one cell, its best frame, a count; tap the count to expand, tap the
-  first frame's badge to stack again), crown on the best frame, marks for blurry / eyes closed /
+  first frame's badge to stack again; 1.7.0: tapping the stack opens burst mode, the cover is the
+  kept frame, resolved / pending badges, long press expands: ADR 0008 "Burst mode"), crown on the best frame, marks for blurry / eyes closed /
   over / under; sort by time or sharpest first (stacks only in time order); analysis filter (any
   problem, each flag, no problems); "Analysing 120 of 300" next to the decision progress, never
   blocking.
@@ -229,6 +276,8 @@ tried (see "Not verified").
   decision), a bar with "Accept all" and "Hide", per shot and per burst accept in the viewer.
 - Viewer: the analysis panel under the camera data (sharpness and where it was measured, faces and
   eyes with **Zoom to face**, a 64-bar histogram with clipped ends, flags, the suggestion and why).
+  1.7.0: compact chips on the photo and the same content in a details sheet below the image
+  (phones) or a side panel (ADR 0008 "Burst mode, compact info and the details sheet").
 - Settings (Settings › Culling and the gear on the culling page): blur and eyes sensitivity, burst
   gap.
 
@@ -251,20 +300,27 @@ screen always analysed next.
 
 ## Testing
 
-- TS: `assist.test.ts` (flags and sensitivities, distances, burst grouping: time, scene split,
+- TS: `assist.test.ts` (flags and sensitivities, one eyes reading for flag and details (the
+  three-face case), the exposure rule (lights vs large regions vs blown faces), flagged frames
+  ranked below clean ones and never crowned, distances, burst grouping: time, scene split,
   colour split, near-identical join and its limit, missing/backwards times, 320 frames in one
   burst; ranking, suggestions, decisions win, partial bursts, all-flagged bursts, compare pair,
   sorting, grid stacks), `xmp.test.ts` (well-formed XML parsed with xmldom, namespaces, rating
   clamp, escaping of `& < > " '`, tabs, newlines and invalid characters, one sidecar per pick on
   the RAW), `db.test.ts` (migration v6, cache rows), `web.test.ts` (mock `cullAnalyze`, sidecars).
 - Kotlin (JVM): `ShotAnalysisTest` (sizes, exact area resampling, blur/Laplacian on synthetic
-  blur, faces and prominence, exposure, hashes), `TransferRunnerTest` (sidecars at the destination
+  blur, faces and prominence, exposure, blown regions — small spots, a 6% window, a region under
+  1%, half-blown cells — and face highlights, hashes), `TransferRunnerTest` (sidecars at the destination
   only, after conflict renames, not for skipped files, JSON round trip).
 - Opt-in on real files (copies; never committed): `AnalysisCalibrationTest` (JVM,
   `HOARD_ARW_DIR`): preview vs JPEG, synthetic blur and ±EV; `AnalysisHarnessTest` (device, `-e
 dir … -e synthetic true`): ML Kit faces, timings, synthetic blur on face regions.
 
 ## Not verified
+
+- The 1.7.0 exposure rule on the owner's indoor event (484 shots, not available to the build):
+  the light-source case is reproduced synthetically. Real closed eyes and real blown faces are
+  still not in the calibration set.
 
 - Closed-eye **detection on real closed eyes**: the calibration shoots have none; only the absence
   of false positives (0 of 31) is measured.

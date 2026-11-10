@@ -9,6 +9,9 @@ import {
   type CullDecision,
   filterShots,
   nextUnmarked,
+  pageTarget,
+  PAGING,
+  releaseVelocity,
   planCopy,
   planDeleteRejects,
   prefetchSlice,
@@ -278,5 +281,56 @@ describe("prefetch window and tiles", () => {
       },
     ])
     expect(tilesFor({ x: 0, y: 0, width: 6000, height: 4000 }, 6000, 4000, 4)).toHaveLength(6)
+  })
+})
+
+describe("paging", () => {
+  const W = 400
+  it("pages both ways by distance, symmetric", () => {
+    expect(pageTarget(-W * 0.3, 0, W, 5, 10)).toBe(6)
+    expect(pageTarget(W * 0.3, 0, W, 5, 10)).toBe(4)
+    expect(pageTarget(-W * 0.2, 0, W, 5, 10)).toBe(5)
+    expect(pageTarget(W * 0.2, 0, W, 5, 10)).toBe(5)
+    expect(pageTarget(W * PAGING.distance, 0, W, 5, 10)).toBe(4)
+  })
+
+  it("pages both ways by a fling in the direction of the finger", () => {
+    expect(pageTarget(-40, -0.8, W, 5, 10)).toBe(6)
+    expect(pageTarget(40, 0.8, W, 5, 10)).toBe(4)
+    // The old bug: a right swipe whose velocity read negative paged to the NEXT shot (the next
+    // branch was checked first and accepted any negative velocity).
+    expect(pageTarget(60, -0.8, W, 5, 10)).toBe(5)
+    expect(pageTarget(-60, 0.8, W, 5, 10)).toBe(5)
+    // Jitter: a fast but tiny move never pages.
+    expect(pageTarget(8, 2, W, 5, 10)).toBe(5)
+    expect(pageTarget(0, 2, W, 5, 10)).toBe(5)
+  })
+
+  it("stays inside the order at both ends", () => {
+    expect(pageTarget(W, 1, W, 0, 10)).toBe(0)
+    expect(pageTarget(-W, -1, W, 9, 10)).toBe(9)
+    expect(pageTarget(W, 1, W, 1, 10)).toBe(0)
+    expect(pageTarget(-W, -1, W, 8, 10)).toBe(9)
+    expect(pageTarget(W, 1, W, 0, 1)).toBe(0)
+    expect(pageTarget(W, 1, 0, 3, 10)).toBe(3)
+  })
+
+  it("measures the release velocity over the last samples, zero after a rest", () => {
+    const samples = [
+      { x: 0, y: 0, t: 0 },
+      { x: 20, y: 0, t: 16 },
+      { x: 60, y: 2, t: 32 },
+      { x: 100, y: 4, t: 48 },
+    ]
+    expect(releaseVelocity(samples, 50).x).toBeCloseTo(100 / 48)
+    expect(releaseVelocity(samples, 48 + 81)).toEqual({ x: 0, y: 0 })
+    // Only the last 80 ms count: an early burst of speed is forgotten.
+    const late = [
+      { x: 0, y: 0, t: 0 },
+      { x: 200, y: 0, t: 10 },
+      { x: 205, y: 0, t: 200 },
+    ]
+    expect(releaseVelocity(late, 200).x).toBe(0)
+    expect(releaseVelocity([], 10)).toEqual({ x: 0, y: 0 })
   })
 })

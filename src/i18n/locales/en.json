@@ -893,7 +893,8 @@
       "info": "Camera data",
       "imageFailed": "This shot could not be shown.",
       "renderingRaw": "Rendering the RAW at 100%…",
-      "loadingFull": "Loading 100%…"
+      "loadingFull": "Loading 100%…",
+      "swipeDecide": "Swipe up and down to pick and reject"
     },
     "compare": {
       "open": "Compare",
@@ -1041,7 +1042,61 @@
       "highlights": "{{value}} blown highlights",
       "notAnalysed": "Not analysed yet",
       "measuredOn": "Measured on: {{source}}, {{size}}",
-      "acceptBurst": "Accept for the whole burst"
+      "acceptBurst": "Accept for the whole burst",
+      "expandHint": "Tap to open this burst; tap the badge or long-press to show its frames"
+    },
+    "burstMode": {
+      "position": "Burst · {{index}} of {{total}}",
+      "exit": "Back to the folder",
+      "keep": "Keep this one",
+      "kept_one": "Kept {{name}} and rejected {{count}} other frame",
+      "kept_other": "Kept {{name}} and rejected {{count}} other frames",
+      "kept_zero": "Kept {{name}}",
+      "alreadyKept": "Already kept: the other frames are decided",
+      "compare": "Compare with the best",
+      "acceptSuggestion": "Accept burst suggestion",
+      "view": "View burst ({{count}})",
+      "resolved": "{{kept}} of {{size}} kept",
+      "resolvedShort": "{{kept}}/{{size}}",
+      "pending": "{{decided}} of {{size}} decided"
+    },
+    "chips": {
+      "eyesOpen_one": "Eyes open",
+      "eyesOpen_other": "Eyes open on {{count}} faces"
+    },
+    "details": {
+      "title": "Details",
+      "open": "Show details",
+      "close": "Hide details",
+      "toggle": "Details",
+      "suggestion": "Suggestion",
+      "analysis": "Analysis",
+      "camera": "Camera",
+      "taken": "Taken",
+      "exposure": "Exposure",
+      "focal": "Focal length",
+      "lens": "Lens",
+      "file": "File",
+      "burst": "Burst",
+      "burstValue": "Frame {{index}} of {{size}}",
+      "shown": "Showing",
+      "sharpness": "Sharpness",
+      "faces": "Faces",
+      "face": "Face {{index}}",
+      "moreFaces_one": "and {{count}} more face",
+      "moreFaces_other": "and {{count}} more faces",
+      "exposureLabel": "Exposure",
+      "exposureOk": "Well exposed",
+      "over": {
+        "blownArea": "Overexposed: {{value}} of the frame blown in large areas",
+        "face": "Overexposed: {{value}} of a face blown out",
+        "mean": "Overexposed: very bright overall"
+      },
+      "under": {
+        "shadows": "Underexposed: {{value}} crushed shadows",
+        "mean": "Underexposed: very dark overall"
+      },
+      "highlights": "{{value}} blown highlights ({{area}} in large areas)"
     }
   }
 }

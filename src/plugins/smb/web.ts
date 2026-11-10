@@ -5,6 +5,7 @@ import type {
   CullAnalyzeOptions,
   CullAnalyzeResult,
   CullCloseOptions,
+  GestureExclusionOptions,
   CullImageOptions,
   CullImageResult,
   CullMetadataOptions,
@@ -1267,6 +1268,23 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
 
   async cullClose({ cullId }: CullCloseOptions): Promise<void> {
     this.culls.delete(cullId)
+  }
+
+  /** The bands last set with `setGestureExclusion` (tests; the browser has no back gesture). */
+  gestureExclusion: GestureExclusionOptions["bands"] = []
+
+  async setGestureExclusion({ bands }: GestureExclusionOptions): Promise<void> {
+    if (!Array.isArray(bands)) throw fail("UNKNOWN", "bands must be a list")
+    for (const band of bands) {
+      if (
+        !Number.isFinite(band?.top) ||
+        !Number.isFinite(band?.height) ||
+        band.top < 0 ||
+        band.height < 0
+      )
+        throw fail("UNKNOWN", "Invalid gesture exclusion band")
+    }
+    this.gestureExclusion = bands.map((b) => ({ top: b.top, height: b.height }))
   }
 
   async thumbnail({ location, path, maxSize }: ThumbnailOptions): Promise<ThumbnailResult> {

@@ -81,9 +81,20 @@ class AnalysisCalibrationTest {
                 val d = ShotAnalysis.analyze(moved, null)
                 println("SYN ${shot.stem} motion$length | best=${f(d.best)} blurBestTile=${f(d.subjectBlur, 3)}")
             }
-            for (ev in listOf(-2.0, -1.0, 1.0, 2.0)) {
+            println("EXP ${shot.stem} ev0 | mean=${f(a.exposure.mean, 3)} hi=${f(a.exposure.highlights * 100, 2)}% blown=${f(a.exposure.blownArea * 100, 2)}% lo=${f(a.exposure.shadows * 100, 2)}%")
+            for (ev in listOf(-2.0, -1.0, 0.5, 1.0, 1.5, 2.0)) {
                 val e = ShotAnalysis.analyze(exposure(image, ev), null).exposure
-                println("SYN ${shot.stem} ev$ev | mean=${f(e.mean, 3)} hi=${f(e.highlights * 100, 2)}% lo=${f(e.shadows * 100, 2)}%")
+                println("EXP ${shot.stem} ev$ev | mean=${f(e.mean, 3)} hi=${f(e.highlights * 100, 2)}% blown=${f(e.blownArea * 100, 2)}% lo=${f(e.shadows * 100, 2)}%")
+            }
+            // Indoor lights: many small blown spots (each well under 1% of the frame), 6% and 12% in all.
+            for (share in listOf(0.06, 0.12)) {
+                val e = ShotAnalysis.analyze(lights(image, share, 0.004), null).exposure
+                println("EXP ${shot.stem} lights${(share * 100).toInt()} | mean=${f(e.mean, 3)} hi=${f(e.highlights * 100, 2)}% blown=${f(e.blownArea * 100, 2)}%")
+            }
+            // A large blown area (a window, a white wall): one region of 5% / 8% of the frame.
+            for (share in listOf(0.05, 0.08)) {
+                val e = ShotAnalysis.analyze(lights(image, share, share), null).exposure
+                println("EXP ${shot.stem} region${(share * 100).toInt()} | mean=${f(e.mean, 3)} hi=${f(e.highlights * 100, 2)}% blown=${f(e.blownArea * 100, 2)}%")
             }
         }
     }
@@ -122,6 +133,28 @@ class AnalysisCalibrationTest {
             return out
         }
         return Rgb(w, h, pass(pass(image.argb, kx, true), ky, false))
+    }
+
+    /** White squares of [each] of the frame added along the top third until [share] is blown. */
+    private fun lights(image: Rgb, share: Double, each: Double): Rgb {
+        val out = image.argb.copyOf()
+        val w = image.width
+        val h = image.height
+        val side = kotlin.math.sqrt(each * w * h).roundToInt().coerceAtLeast(2)
+        val count = kotlin.math.ceil(share / each).toInt()
+        val gap = side * 2
+        var placed = 0
+        var y = side / 2
+        while (placed < count && y + side <= h) {
+            var x = side / 2
+            while (placed < count && x + side <= w) {
+                for (yy in y until y + side) for (xx in x until x + side) out[yy * w + xx] = 0xFFFFFFFF.toInt()
+                placed++
+                x += gap
+            }
+            y += gap
+        }
+        return Rgb(w, h, out)
     }
 
     /** ±EV in linear light (sRGB decoded, scaled, encoded, clipped). */

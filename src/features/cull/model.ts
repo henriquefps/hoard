@@ -384,3 +384,56 @@ export function tilesFor(
   }
   return tiles.sort((a, b) => a.distance - b.distance).map(({ distance: _d, ...tile }) => tile)
 }
+
+// --- Paging ----------------------------------------------------------------------------------
+
+export const PAGING = {
+  /** A swipe longer than this share of the width pages… */
+  distance: 0.22,
+  /** …and so does a fling faster than this (CSS px per ms)… */
+  fling: 0.45,
+  /** …when it moved at least this far (CSS px) the same way: a tap's jitter never pages. */
+  minFling: 16,
+} as const
+
+/**
+ * Where a horizontal swipe released at `dx` (CSS px, positive = finger moved right, towards the
+ * previous shot) with velocity `vx` (px/ms) lands, from `index` in `count` shots. Both directions
+ * follow the same rule: far enough, or a fling **in the direction the finger moved** (a fling
+ * against the displacement — the finger turning back — springs back instead of paging the other
+ * way). Never leaves 0 … count − 1.
+ */
+export function pageTarget(
+  dx: number,
+  vx: number,
+  width: number,
+  index: number,
+  count: number
+): number {
+  const direction = Math.sign(dx)
+  if (direction === 0 || width <= 0) return index
+  const far = Math.abs(dx) >= width * PAGING.distance
+  const flung =
+    Math.abs(dx) >= PAGING.minFling && Math.sign(vx) === direction && Math.abs(vx) >= PAGING.fling
+  if (!far && !flung) return index
+  const next = index - direction
+  return next < 0 || next >= count ? index : next
+}
+
+/**
+ * Release velocity (px/ms) from the pointer's recent samples: the displacement over the last
+ * `window` ms (0 when the finger rested longer than that before lifting), so one noisy sample
+ * cannot decide a fling.
+ */
+export function releaseVelocity(
+  samples: readonly { x: number; y: number; t: number }[],
+  now: number,
+  window = 80
+): { x: number; y: number } {
+  const last = samples.at(-1)
+  if (!last || now - last.t > window) return { x: 0, y: 0 }
+  const first = samples.find((s) => last.t - s.t <= window) ?? last
+  const dt = last.t - first.t
+  if (dt <= 0) return { x: 0, y: 0 }
+  return { x: (last.x - first.x) / dt, y: (last.y - first.y) / dt }
+}

@@ -66,8 +66,8 @@ class AnalysisHarnessTest {
             }
             Log.i(
                 TAG,
-                "SHOT ${shot.stem} src=${result.source} ${a.width}x${a.height} ms=${result.millis} global=%.1f best=%.1f subject=%.1f kind=${a.subjectKind} blur=%.3f mean=%.3f hi=%.4f lo=%.4f hash=${a.hash} faces=${a.faces.size} [$faceText]"
-                    .format(a.global, a.best, a.subject, a.subjectBlur, a.exposure.mean, a.exposure.highlights, a.exposure.shadows),
+                "SHOT ${shot.stem} src=${result.source} ${a.width}x${a.height} ms=${result.millis} global=%.1f best=%.1f subject=%.1f kind=${a.subjectKind} blur=%.3f mean=%.3f hi=%.4f blown=%.4f faceHi=%.4f lo=%.4f hash=${a.hash} faces=${a.faces.size} [$faceText]"
+                    .format(a.global, a.best, a.subject, a.subjectBlur, a.exposure.mean, a.exposure.highlights, a.exposure.blownArea, a.exposure.faceHighlights, a.exposure.shadows),
             )
         }
         // Synthetic blur with the same faces: where do face regions of degraded frames land?
@@ -84,6 +84,11 @@ class AnalysisHarnessTest {
                 for (length in listOf(6, 12)) {
                     line.append(" m$length=%.3f".format(ShotAnalysis.analyze(motion(image, length), detected).subjectBlur))
                 }
+                for (ev in listOf(0.5, 1.0, 1.5, 2.0)) {
+                    val e = ShotAnalysis.analyze(exposure(image, ev), detected).exposure
+                    line.append(" ev$ev=mean%.3f/blown%.4f/face%.4f".format(e.mean, e.blownArea, e.faceHighlights))
+                }
+                line.append(" ev0=blown%.4f/face%.4f".format(base.exposure.blownArea, base.exposure.faceHighlights))
                 Log.i(TAG, line.toString())
             }
         }
@@ -91,6 +96,22 @@ class AnalysisHarnessTest {
         faces.close()
         core.close()
         root.deleteRecursively()
+    }
+
+    /** ±EV in linear light (sRGB decoded, scaled, encoded, clipped), as in AnalysisCalibrationTest. */
+    private fun exposure(image: Rgb, ev: Double): Rgb {
+        val factor = Math.pow(2.0, ev)
+        val lut = IntArray(256) { v ->
+            val c = v / 255.0
+            val linear = if (c <= 0.04045) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
+            val scaled = (linear * factor).coerceIn(0.0, 1.0)
+            val s = if (scaled <= 0.0031308) scaled * 12.92 else 1.055 * Math.pow(scaled, 1 / 2.4) - 0.055
+            Math.round(s * 255).toInt().coerceIn(0, 255)
+        }
+        return Rgb(image.width, image.height, IntArray(image.argb.size) { i ->
+            val c = image.argb[i]
+            (0xFF shl 24) or (lut[(c shr 16) and 0xFF] shl 16) or (lut[(c shr 8) and 0xFF] shl 8) or lut[c and 0xFF]
+        })
     }
 
     private fun gaussian(image: Rgb, sigma: Double): Rgb {

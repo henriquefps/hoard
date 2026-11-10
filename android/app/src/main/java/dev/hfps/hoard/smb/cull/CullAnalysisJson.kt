@@ -48,6 +48,8 @@ object CullAnalysisJson {
                 put("mean", r(a.exposure.mean, 4))
                 put("highlights", r(a.exposure.highlights, 5))
                 put("shadows", r(a.exposure.shadows, 5))
+                put("blownArea", r(a.exposure.blownArea, 5))
+                put("faceHighlights", r(a.exposure.faceHighlights, 5))
             })
             put("hash", a.hash)
             put("colors", a.colors)

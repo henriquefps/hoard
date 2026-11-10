@@ -101,7 +101,8 @@ Every call after `cullOpen` passes `location` again: an SMB session can be repla
   order until then. Virtualized rows (the 20,000-file folder of the mock scrolls). Filters: all /
   picked / rejected / not decided, and "N stars or more"; progress "n of N decided" with a bar.
 - **Viewer** (full screen, dark in both themes): swipe left/right to page, **swipe up = pick, swipe
-  down = reject** at fit, buttons for reject / 1–5 stars / pick, **auto-advance** (a setting, on by
+  down = reject** at fit (1.7.0: swipe up opens the details; swipe-to-decide is a setting, see
+  "Burst mode"), buttons for reject / 1–5 stars / pick, **auto-advance** (a setting, on by
   default), **undo** (200 steps, jumps back to the shot it changed), a filmstrip, the **EXIF
   overlay** (time with milliseconds, shutter, aperture, ISO, focal length with 35 mm equivalent,
   lens, camera, size, burst position, and which image is shown: "Embedded preview", "Camera JPEG",
@@ -116,6 +117,74 @@ Every call after `cullOpen` passes `location` again: an SMB session can be repla
   shot id, so they survive restarts, re-entering the folder and a USB drive being unplugged and
   plugged back (volume UUIDs are stable). `cull_sessions` keeps started / last visited / last shot
   ("Continue" opens at the next undecided shot after it). Nothing is written next to the photos.
+
+## Burst mode, compact info and the details sheet (1.7.0)
+
+Real use (a 484-shot event) showed three problems: a burst could not be chosen within (the viewer
+walked the whole folder from the stack's cover, only a "2/5" badge said you were in a burst), the
+EXIF and analysis cards covered most of the photo on a phone, and swiping to the previous shot was
+unreliable. `src/features/cull/burst.ts` holds the pure part (tested in `burst.test.ts`).
+
+- **Folder viewer steps** (`viewerSteps`): in the plain time view (bursts stacked, no decision,
+  star or analysis filter) a burst is **one step**, shown by its **cover** (`burstCover`: the first
+  frame the user picked, else the crowned best of ADR 0009, else the first frame not rejected) with
+  **View burst (n)** and its status ("1 of 5 kept", or "2 of 5 decided" while pending). Any filter
+  shows individual frames (a burst only partly in the filtered list is never collapsed), so
+  "Rejected" lists rejected frames one by one. The grid stacks under exactly the same condition.
+- **Burst mode**: tapping a stack (or a frame of an expanded burst, or Resume landing inside an
+  undecided burst) opens the viewer **inside the burst**: the header says "Burst · 2 of 5", swipes
+  and the filmstrip stay within the burst's frames (each thumbnail with its sharpness number, a
+  crown on the suggested best and a closed-eyes mark), and ← (or Back, Esc, `B`) returns to the
+  folder on the burst's step. Closing the viewer reveals the last shot in the grid (1.6.1); a frame
+  of a stacked burst reveals its stack.
+- **Keep this one** (`keepThisOne`, button or `K`): picks the frame on screen and rejects the other
+  frames of the burst in **one undo step** (toast with Undo, and the viewer's undo). Frames the
+  user kept **explicitly** — picked, or rated with stars (stars mean "keep, this much") — are left
+  as they are, so several keepers stay possible: pick another frame with ✓ before or after, and
+  Keep this one never un-picks it. Frames already rejected stay rejected; the kept frame keeps its
+  stars. With auto-advance on, it returns to the folder and moves to the next step.
+- **Quick compare** in a burst: the frame on screen against the burst's top-ranked frame (or the
+  runner-up when it is the top one), synchronized zoom starting on the main face (the first face
+  with closed eyes, else the largest: `eyesSummary(...).focus`); "Keep" there is Keep this one.
+- **Accept burst suggestion**: burst mode computes the burst's ADR 0009 suggestion whether or not
+  "Suggest" is on, and accepts it as one undo step.
+- **Grid**: a resolved burst (every frame picked or rejected) shows its kept frame as the cover and a
+  primary "✓ 1/5" badge; a pending one an orange (warning) badge and outline. The badge (44 px
+  hitbox, with a caret) expands the stack; so does a **long press** (the WebView's `contextmenu`;
+  right click on desktop).
+- **Compact info on the photo** (`InfoChips`): one row of icon chips (crown, each flag, sharpness,
+  eyes open, RAW+JPG, burst position) with labels for screen readers; a tap opens the details.
+- **Details** (`ShotDetails`): on phones a **bottom sheet below the image** like the phone's
+  gallery (Vaul, non-modal, snap points 50% and 94%; the photo moves into the top half and keeps
+  paging and zooming; the sheet starts with a compact reject · stars · pick row so deciding never
+  needs it closed; its list scrolls at the top snap; drag down or swipe down on the photo to close).
+  On wider screens a 22 rem side panel (open by default). Content: the suggestion with Accept /
+  Accept for the whole burst, sharpness and where it was measured, every prominent face with its
+  eyes and **Zoom to face** (6 listed, then "and N more"), exposure in words (what triggered a flag)
+  with the histogram, shadows, highlights and the share in large blown areas, then the camera data.
+  The `i` button and `I` toggle it. Radix marks `body` with `pointer-events: none` while the sheet
+  is open; the viewer declares `pointer-events: auto` and restores `body` when the sheet closes.
+- **Swipe up now opens the details** (the gallery convention). Swipe-to-decide moved behind a
+  setting, **"Swipe up and down to pick and reject"** (`cullSwipeDecide`, the viewer's ⋯ menu, off by
+  default); swipe down on the photo closes the sheet.
+- **Paging fix.** The swipe deltas were measured in the image box's own coordinates, but the pager
+  moves that box with the finger: each move read back the finger's movement minus the track's
+  previous offset, so the distance came out at about half and the per-sample velocity flipped
+  sign. A slow 35%-wide swipe failed both ways, and the "next" branch was checked first and
+  accepted any negative velocity, so a noisy sample could even turn a swipe right into "next".
+  Now deltas and velocity use screen coordinates, the velocity is the displacement over the last
+  80 ms (0 after a rest), and `pageTarget` (model.ts, tested both ways) pages on distance (22% of
+  the width) or a fling **in the direction the finger moved** (≥ 0.45 px/ms over ≥ 16 px).
+  Second cause, found on the emulator: a swipe right that starts at the left screen edge was taken
+  by **Android's back gesture** and closed the viewer. The viewer now asks the plugin for gesture
+  exclusion (`setGestureExclusion`, a new contract method: a 200 px band across the middle of the
+  photo, 48 dp from each edge; Android honours at most 200 dp per edge), cleared when the viewer or
+  compare closes. Back still works from the rest of the edge and with the back button.
+
+  Emulator (`hoard-burst`, `adb shell input swipe`, 1080 × 2400): before — fast swipes paged both
+  ways, 35%-wide 600 ms swipes paged neither way, a swipe from x = 40 closed the viewer. After —
+  fast and slow swipes page both ways, from the middle and from x = 8 / x = 1072, with the details
+  sheet open too; a 10% swipe springs back.
 
 ## Finish
 
@@ -175,7 +244,9 @@ under the link.
 
 ## Testing
 
-- TS (Vitest): `src/features/cull/model.test.ts` (pairing edge cases, capture order, burst hints,
+- TS (Vitest): `src/features/cull/burst.test.ts` (Keep this one: one undo step, explicit picks
+  and stars preserved, bursts of 2 and 40; covers; status; folder steps and filters; compare
+  partner); `src/features/cull/model.test.ts` (paging both ways, release velocity, pairing edge cases, capture order, burst hints,
   decisions + undo, filters, progress, copy planning per kind with fallbacks, target folder,
   delete planning, prefetch slice, sample sizes, tile grid); `src/db/db.test.ts` (migration v5,
   sessions, decisions, unmarking deletes rows, destinations, machine deletion);
@@ -201,6 +272,8 @@ under the link.
   numbers above come from the slow emulator link.
 - USB drives and SD cards on real hardware; SAF-only volumes (`DescriptorSource` has no test and
   was not exercised: the emulator runs were on phone storage by path).
+- Burst mode, the details sheet and the edge exclusion on a real phone (S24 Ultra, Samsung's
+  gesture settings); the emulator runs used `adb shell input swipe`, not a finger.
 - Jank was judged by eye on the emulator and by the timings above; no frame-time trace on a phone.
 
 ## Consequences

@@ -208,5 +208,6 @@ export type SettingKey =
   | "cullEyesSensitivity"
   | "cullBurstGapMs"
   | "cullXmpSidecars"
+  | "cullSwipeDecide"
   | "demoSeeded"
   | "worstCaseSeeded"
