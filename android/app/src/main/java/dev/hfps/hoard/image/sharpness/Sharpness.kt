@@ -90,6 +90,35 @@ object Sharpness {
         return SharpnessScore(variance(sum, sq, n), cols, rows, tiles)
     }
 
+    /**
+     * Variance of the 4-neighbour Laplacian over the rectangle [x0, x1) x [y0, y1) (pixels on the
+     * image border are skipped, as in [score]). 0 for regions smaller than 3 x 3.
+     */
+    fun region(luma: Luma, x0: Int, y0: Int, x1: Int, y1: Int): Double {
+        val w = luma.width
+        val left = max(1, x0)
+        val right = min(w - 1, x1)
+        val top = max(1, y0)
+        val bottom = min(luma.height - 1, y1)
+        var sum = 0.0
+        var sq = 0.0
+        var n = 0L
+        val p = luma.pixels
+        for (y in top until bottom) {
+            val row = y * w
+            for (x in left until right) {
+                val i = row + x
+                val lap = (p[i - 1].toInt() and 0xFF) + (p[i + 1].toInt() and 0xFF) +
+                    (p[i - w].toInt() and 0xFF) + (p[i + w].toInt() and 0xFF) - 4 * (p[i].toInt() and 0xFF)
+                val v = lap.toDouble()
+                sum += v
+                sq += v * v
+                n++
+            }
+        }
+        return variance(sum, sq, n)
+    }
+
     /** Box-filter downscale so the longest side is at most [longSide] (integer factor). */
     fun downscale(luma: Luma, longSide: Int = ANALYSIS_LONG_SIDE): Luma {
         val factor = (max(luma.width, luma.height) + longSide - 1) / longSide

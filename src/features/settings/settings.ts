@@ -5,6 +5,7 @@ import type { SettingKey } from "@/db/types"
 import { DEFAULT_SORT, isSortOrder, type SortOrder } from "@/lib/files"
 import type { RecentDestination } from "@/db/types"
 import type { TransferConflict } from "@/plugins/smb/definitions"
+import { DEFAULT_ASSIST, type Sensitivity } from "@/features/cull/assist"
 
 /** App settings kept in the `settings` table, with their defaults and validation. */
 export interface Settings {
@@ -20,7 +21,17 @@ export interface Settings {
   storageIntroSeen: boolean
   /** The culling viewer moves to the next shot after a pick or reject (ADR 0008). */
   cullAutoAdvance: boolean
+  /** How readily a shot is called blurry (ADR 0009). */
+  cullBlurSensitivity: Sensitivity
+  /** How readily eyes are called closed (ADR 0009). */
+  cullEyesSensitivity: Sensitivity
+  /** Frames at most this far apart start a burst (ADR 0009). */
+  cullBurstGapMs: number
+  /** "Copy picks" writes XMP sidecars at the destination (ADR 0009); off by default. */
+  cullXmpSidecars: boolean
 }
+
+const SENSITIVITIES: Sensitivity[] = ["low", "medium", "high"]
 
 export const CONFLICT_POLICIES: TransferConflict[] = ["ask", "rename", "overwrite", "skip"]
 export const MAX_RECENT_DESTINATIONS = 6
@@ -35,6 +46,10 @@ export const SETTING_DEFAULTS: Settings = {
   onboarded: false,
   storageIntroSeen: false,
   cullAutoAdvance: true,
+  cullBlurSensitivity: DEFAULT_ASSIST.blur,
+  cullEyesSensitivity: DEFAULT_ASSIST.eyes,
+  cullBurstGapMs: DEFAULT_ASSIST.burstGapMs,
+  cullXmpSidecars: false,
 }
 
 const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
@@ -55,6 +70,10 @@ const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
   onboarded: (v) => typeof v === "boolean",
   storageIntroSeen: (v) => typeof v === "boolean",
   cullAutoAdvance: (v) => typeof v === "boolean",
+  cullBlurSensitivity: (v) => SENSITIVITIES.includes(v as Sensitivity),
+  cullEyesSensitivity: (v) => SENSITIVITIES.includes(v as Sensitivity),
+  cullBurstGapMs: (v) => typeof v === "number" && v >= 100 && v <= 10_000,
+  cullXmpSidecars: (v) => typeof v === "boolean",
 }
 
 export async function readSetting<K extends keyof Settings>(

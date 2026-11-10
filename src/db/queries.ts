@@ -3,6 +3,7 @@ import type { TransferConflict, TransferOp, TransferProgressEvent } from "@/plug
 import { TERMINAL_TRANSFER_STATES } from "@/plugins/smb/definitions"
 import type { Db } from "./db"
 import type {
+  CullAnalysisRecord,
   CullDecisionRecord,
   CullDestinationRecord,
   CullFlag,
@@ -129,6 +130,7 @@ export async function deleteMachine(db: Db, id: string): Promise<void> {
     // Culling rows have no foreign key (local locations are not rows): clear them by hand.
     await db.run("DELETE FROM cull_decisions WHERE location_id = ?", [id])
     await db.run("DELETE FROM cull_sessions WHERE location_id = ?", [id])
+    await db.run("DELETE FROM cull_analysis WHERE location_id = ?", [id])
     await db.run("DELETE FROM cull_destinations WHERE source_location_id = ? OR location_id = ?", [
       id,
       id,
@@ -527,4 +529,80 @@ export async function setCullDestination(
       now(),
     ]
   )
+}
+
+// --- Assisted culling (ADR 0009) -------------------------------------------------------------
+
+/** Every cached analysis of a folder's files (the caller checks size, modified time and version). */
+export async function listCullAnalyses(db: Db, key: CullFolderKey): Promise<CullAnalysisRecord[]> {
+  return db.query<CullAnalysisRecord>(
+    "SELECT * FROM cull_analysis WHERE location_id = ? AND share = ? AND folder = ?",
+    folderParams(key)
+  )
+}
+
+export interface CullAnalysisInput {
+  /** The analysed file. */
+  path: string
+  size: number
+  modifiedAt: string | null
+  version: number
+  /** JSON of `CullAnalysis`. */
+  analysis: string
+}
+
+/** Cache analyses of a folder's files in one transaction (a newer one replaces a stale row). */
+export async function saveCullAnalyses(
+  db: Db,
+  key: CullFolderKey,
+  items: readonly CullAnalysisInput[]
+): Promise<void> {
+  if (items.length === 0) return
+  const at = now()
+  await db.transaction(async () => {
+    for (const item of items) {
+      await db.run(
+        `INSERT INTO cull_analysis (location_id, share, path, folder, size, modified_at, version, analysis, analysed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (location_id, share, path) DO UPDATE SET
+           folder = excluded.folder, size = excluded.size, modified_at = excluded.modified_at,
+           version = excluded.version, analysis = excluded.analysis, analysed_at = excluded.analysed_at`,
+        [
+          key.locationId,
+          key.share,
+          item.path,
+          key.path,
+          item.size,
+          item.modifiedAt,
+          item.version,
+          item.analysis,
+          at,
+        ]
+      )
+    }
+  })
+}
+
+/** Drop a folder's cached analyses (Settings › clear, or files that were deleted). */
+export async function forgetCullAnalyses(
+  db: Db,
+  key: CullFolderKey,
+  paths?: readonly string[]
+): Promise<void> {
+  if (!paths) {
+    await db.run(
+      "DELETE FROM cull_analysis WHERE location_id = ? AND share = ? AND folder = ?",
+      folderParams(key)
+    )
+    return
+  }
+  await db.transaction(async () => {
+    for (const path of paths) {
+      await db.run("DELETE FROM cull_analysis WHERE location_id = ? AND share = ? AND path = ?", [
+        key.locationId,
+        key.share,
+        path,
+      ])
+    }
+  })
 }

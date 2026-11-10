@@ -31,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useDb } from "@/db/DbProvider"
+import { AssistSettingsFields } from "@/features/cull/assistParts"
 import { useVolumes } from "@/features/locations/volumesContext"
 import { Section } from "@/features/machines/actions"
 import { useRouteEngine } from "@/features/route/RouteProvider"
@@ -214,6 +215,10 @@ export function SettingsPage() {
         </Section>
 
         <StorageSettings />
+
+        <Section title={t("settings.culling")} description={t("settings.cullingHint")}>
+          <AssistSettingsFields />
+        </Section>
 
         <Section title={t("settings.downloads")}>
           <FieldGroup>

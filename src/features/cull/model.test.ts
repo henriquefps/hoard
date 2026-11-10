@@ -4,8 +4,6 @@ import type { CullMetadata, CullShot, SmbEntry } from "@/plugins/smb/definitions
 import {
   ALL_SHOTS,
   applyChange,
-  burstHints,
-  burstOf,
   changeOf,
   copyTargetPath,
   type CullDecision,
@@ -109,29 +107,6 @@ describe("order and bursts", () => {
       "dsc4",
       "dsc10",
     ])
-  })
-
-  it("marks runs of frames less than a second apart, not single frames", () => {
-    const ordered = ["a", "b", "c", "d", "e", "f"].map((id) => shot(id))
-    const times = [0, 200, 450, 5_000, 9_000, 9_900]
-    const metadata = new Map(ordered.map((s, i) => [s.id, meta(times[i])]))
-    const hints = burstHints(ordered, metadata)
-    expect(hints.get("a")).toEqual({ burst: "a", index: 0, size: 3 })
-    expect(hints.get("c")).toEqual({ burst: "a", index: 2, size: 3 })
-    expect(hints.has("d")).toBe(false)
-    expect(hints.get("f")).toEqual({ burst: "e", index: 1, size: 2 })
-    expect(burstOf(ordered, hints, "b")).toEqual(["a", "b", "c"])
-    expect(burstOf(ordered, hints, "d")).toEqual(["d"])
-  })
-
-  it("breaks a run at a shot without time", () => {
-    const ordered = ["a", "b", "c"].map((id) => shot(id))
-    const metadata = new Map([
-      ["a", meta(0)],
-      ["b", meta(undefined)],
-      ["c", meta(100)],
-    ])
-    expect(burstHints(ordered, metadata).size).toBe(0)
   })
 })
 

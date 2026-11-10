@@ -1,5 +1,5 @@
 /**
- * Pure culling logic (ADR 0008), unit tested in `model.test.ts`: ordering and burst hints, filters
+ * Pure culling logic (ADR 0008), unit tested in `model.test.ts`: ordering, filters
  * and progress, decisions with undo, what "Copy picks" and "Delete rejects" touch, the prefetch
  * window and the 100% tile grid. No React, no plugin calls.
  */
@@ -115,62 +115,13 @@ export function sortByCapture(
   })
 }
 
-/** Frames closer than this to the previous one belong to the same burst (hint only; phase 3 groups for real). */
-export const BURST_GAP_MS = 1000
-
+/** A shot's place in its burst (ADR 0009 groups them: `groupBursts` in `assist.ts`). */
 export interface BurstPosition {
   /** Id of the burst's first shot. */
   burst: string
   /** 0-based position in the burst. */
   index: number
   size: number
-}
-
-/**
- * Burst hints: runs of 2+ consecutive shots (in the given order) each less than
- * {@link BURST_GAP_MS} after the previous one: what a camera's continuous drive produces, and what
- * the grid marks so a whole run can be compared.
- */
-export function burstHints(
-  ordered: readonly CullShot[],
-  metadata: ReadonlyMap<string, CullMetadata | undefined>
-): Map<string, BurstPosition> {
-  const result = new Map<string, BurstPosition>()
-  let run: string[] = []
-  const flush = () => {
-    if (run.length >= 2)
-      run.forEach((id, index) => result.set(id, { burst: run[0], index, size: run.length }))
-    run = []
-  }
-  let previous: number | undefined
-  for (const shot of ordered) {
-    const time = metadata.get(shot.id)?.captureMillis
-    if (time === undefined) {
-      flush()
-      previous = undefined
-      continue
-    }
-    if (previous !== undefined && time >= previous && time - previous < BURST_GAP_MS)
-      run.push(shot.id)
-    else {
-      flush()
-      run = [shot.id]
-    }
-    previous = time
-  }
-  flush()
-  return result
-}
-
-/** The shots of the burst `shotId` is in (itself alone when not in one). */
-export function burstOf(
-  ordered: readonly CullShot[],
-  hints: ReadonlyMap<string, BurstPosition>,
-  shotId: string
-): string[] {
-  const position = hints.get(shotId)
-  if (!position) return [shotId]
-  return ordered.filter((s) => hints.get(s.id)?.burst === position.burst).map((s) => s.id)
 }
 
 // --- Filters and progress --------------------------------------------------------------------

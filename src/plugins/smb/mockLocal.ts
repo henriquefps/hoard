@@ -11,7 +11,7 @@
  * Settings → Developer attaches and detaches them and toggles all files access.
  */
 import type { MockFile } from "./mockData"
-import { longShoot, zvE10Shoot } from "./mockShoot"
+import { longShoot, oneBurstShoot, zvE10Shoot } from "./mockShoot"
 import type { StorageVolumeInfo } from "./definitions"
 
 const MiB = 1024 * 1024
@@ -104,6 +104,7 @@ export function buildUsbTree(): MockFile[] {
       d("101MSDCF", sony(1001, 20_000, false)),
       d("102MSDCF", zvE10Shoot()),
       d("103MSDCF", longShoot()),
+      d("104MSDCF", oneBurstShoot()),
     ]),
     d("PRIVATE", [d("M4ROOT", [d("CLIP", []), f("MEDIAPRO.XML", 18_000, 1)])]),
     d(

@@ -127,6 +127,15 @@ export class MockTransferEngine {
       throw this.fail("UNKNOWN", `Transfer ${options.transferId} is already running`)
     }
     if (!options.sources.length) throw this.fail("UNKNOWN", "No sources")
+    if (options.sidecars?.length && options.op !== "copy") {
+      throw this.fail("UNKNOWN", "Sidecars are written by copies only")
+    }
+    if (
+      (options.sidecars?.length ?? 0) > 5000 ||
+      options.sidecars?.some((x) => !x.sourcePath || !x.content || x.content.length > 16 * 1024)
+    ) {
+      throw this.fail("UNKNOWN", "Invalid sidecars")
+    }
     if ((options.destination.location as TransferSourceLocation).kind === "incoming") {
       throw this.fail("UNKNOWN", "Shared files are not a destination")
     }
@@ -563,6 +572,26 @@ export class MockTransferEngine {
         parent?.children?.splice(parent.children.indexOf(node!), 1)
       }
       item.bytesDone = item.size
+      // XMP sidecar (ADR 0009): `<destination stem>.xmp` next to the copy, replacing an older one.
+      const sidecar =
+        job.op === "copy"
+          ? job.options.sidecars?.find((x) => x.sourcePath === item.sourcePath)
+          : undefined
+      if (sidecar) {
+        const dot = name.lastIndexOf(".")
+        const xmpName = `${dot > 0 ? name.slice(0, dot) : name}.xmp`
+        const file: MockFile = {
+          name: xmpName,
+          size: new TextEncoder().encode(sidecar.content).length,
+          modifiedAt: new Date().toISOString(),
+          text: sidecar.content,
+        }
+        const existing = folder.children.findIndex(
+          (c) => c.name.toLowerCase() === xmpName.toLowerCase()
+        )
+        if (existing >= 0) folder.children.splice(existing, 1, file)
+        else folder.children.push(file)
+      }
     }
     item.state = "completed"
     this.report(job)

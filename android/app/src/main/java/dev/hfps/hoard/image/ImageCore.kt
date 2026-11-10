@@ -5,6 +5,11 @@ import android.content.ComponentCallbacks2
 import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
+import dev.hfps.hoard.image.analysis.AnalysisResult
+import dev.hfps.hoard.image.analysis.Faces
+import dev.hfps.hoard.image.analysis.Resample
+import dev.hfps.hoard.image.analysis.Rgb
+import dev.hfps.hoard.image.analysis.ShotAnalysis
 import dev.hfps.hoard.image.cache.CacheKeys
 import dev.hfps.hoard.image.cache.DiskCache
 import dev.hfps.hoard.image.cache.PriorityScheduler
@@ -76,6 +81,9 @@ data class ImageFileResult(val file: File, val width: Int, val height: Int)
 /** A screen image file: what it was made from and whether it is the plan's final quality. */
 data class ScreenFile(val file: File, val width: Int, val height: Int, val source: ScreenSource, val final: Boolean)
 
+/** An analysis (ADR 0009) and which image it was measured on. */
+data class ShotAnalysisResult(val analysis: AnalysisResult, val source: ScreenSource, val millis: Long)
+
 /** The 100% image: upright size and where its pixels come from. */
 data class ZoomInfo(val width: Int, val height: Int, val source: ZoomSource)
 
@@ -113,6 +121,10 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
     private val openSequence = java.util.concurrent.atomic.AtomicLong()
 
     val libRawAvailable: Boolean get() = LibRawDecoder.isAvailable
+
+    /** Face detector for [analyze] (set by the app: ML Kit); null = faces are not looked for. */
+    @Volatile var faces: Faces? = null
+    private val analyses = SizedLruCache<String, ShotAnalysisResult>(4000, { 1 })
 
     // --- Metadata ----------------------------------------------------------------------------
 
@@ -242,6 +254,8 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
     }
 
     fun cancel(job: PriorityScheduler.Job<*>) = scheduler.cancel(job.key)
+
+    fun cancelKey(key: String) = scheduler.cancel(key)
 
     private fun <T> track(job: PriorityScheduler.Job<T>, direct: Boolean): PriorityScheduler.Job<T> {
         if (direct) {
@@ -419,6 +433,64 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
         "screens" to screens.sizeBytes(), "tiles" to tiles.sizeBytes(), "memory" to memory.sizeBytes,
     )
 
+    // --- Assisted culling (ADR 0009) ---------------------------------------------------------
+
+    /**
+     * Sharpness, faces, exposure and similarity of [shot], measured on the cheapest good image: the
+     * RAW's embedded preview when it is at least [ANALYSIS_MIN_PREVIEW] px (two small reads, also
+     * over SMB), else the camera JPEG (read whole; local files are read in place). The image is
+     * reduced to [ShotAnalysis.LONG_SIDE] with an exact area average, so every shot of a folder is
+     * measured at the same scale. Memoized per file identity.
+     */
+    fun analyze(shot: ShotRequest, priority: Int = ANALYSIS_PRIORITY): PriorityScheduler.Job<ShotAnalysisResult> {
+        val key = "analysis:" + CacheKeys.key(shot.primary.identity, Variant.ORIGINAL, "analysis:${ShotAnalysis.VERSION}:${shot.raw?.identity}")
+        analyses[key]?.let { return scheduler.done(key, it) }
+        return scheduler.submit(key, priority) { cancel ->
+            analyses[key] ?: run {
+                val started = System.nanoTime()
+                val (image, source) = analysisRgb(shot, cancel)
+                val (w, h) = image.width to image.height
+                val faceList = detectFaces(image)
+                val analysis = ShotAnalysis.analyze(image, faceList)
+                val millis = (System.nanoTime() - started) / 1_000_000
+                Log.d(TAG, "analysis ${shot.primary.name} $source ${w}x$h faces=${faceList?.size} in $millis ms")
+                ShotAnalysisResult(analysis, source, millis)
+            }.also { analyses.put(key, it) }
+        }
+    }
+
+    /** The upright analysis image of [shot] (exact area average to [ShotAnalysis.LONG_SIDE]). Blocking. */
+    internal fun analysisRgb(shot: ShotRequest, cancel: CancelToken = CancelToken.NONE): Pair<Rgb, ScreenSource> {
+        val (decoded, source) = analysisImage(shot, cancel)
+        cancel.throwIfCancelled()
+        val bitmap = decoded.bitmap
+        val (w, h) = ShotAnalysis.analysisSize(bitmap.width, bitmap.height)
+        val pixels = Resample.area(bitmap.width, bitmap.height, w, h) { y, row -> bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1) }
+        bitmap.recycle()
+        return Rgb(w, h, pixels) to source
+    }
+
+    /** Faces in an analysis image (null: no detector). Blocking. */
+    internal fun detectFaces(image: Rgb): List<dev.hfps.hoard.image.analysis.DetectedFace>? = faces?.let { detector ->
+        val bitmap = Bitmap.createBitmap(image.argb, image.width, image.height, Bitmap.Config.ARGB_8888)
+        try { detector.detect(bitmap) } finally { bitmap.recycle() }
+    }
+
+    private fun analysisImage(shot: ShotRequest, cancel: CancelToken): Pair<DecodedImage, ScreenSource> {
+        // Decode at least LONG_SIDE (BitmapDecoding keeps >= 90% of its target, so ask a bit more).
+        val target = ShotAnalysis.LONG_SIDE * 10 / 9 + 1
+        shot.raw?.let { raw ->
+            val inspection = inspect(raw)
+            val preview = inspection.largestPreview
+            if (preview != null && (max(preview.width, preview.height) >= ANALYSIS_MIN_PREVIEW || shot.rendered == null)) {
+                return BitmapDecoding.decode(previewBytes(raw, preview), target, inspection.metadata.orientation) to ScreenSource.RAW_PREVIEW
+            }
+        }
+        val rendered = shot.rendered ?: error("Nothing to analyse in ${shot.raw?.name}")
+        val local = stageOriginal(rendered, cancel)
+        return BitmapDecoding.decode(local, target, inspect(rendered).metadata.orientation) to ScreenSource.RENDERED
+    }
+
     // --- Sharpness ---------------------------------------------------------------------------
 
     /** Focus score of a decoded (software) bitmap, analysed at [Sharpness.ANALYSIS_LONG_SIDE]. */
@@ -501,6 +573,10 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
 
     companion object {
         private const val TAG = "HoardImage"
+        /** Analysis waits behind the viewer's prefetch (1..~30) and grid thumbnails (50). */
+        const val ANALYSIS_PRIORITY = 60
+        /** An embedded preview this large (px, long side) is good enough to analyse (ZV-E10: 1616). */
+        const val ANALYSIS_MIN_PREVIEW = 1024
 
         fun sharpness(bitmap: Bitmap, cols: Int = 4, rows: Int = 4): SharpnessScore {
             require(bitmap.config != Bitmap.Config.HARDWARE) { "Sharpness needs a software bitmap" }

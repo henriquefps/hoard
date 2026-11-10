@@ -149,6 +149,26 @@ export interface CullDecisionRecord {
   updated_at: string
 }
 
+/**
+ * Row of `cull_analysis` (v6, ADR 0009): a shot's measurements, keyed by the analysed file (its
+ * RAW, else its JPEG); valid while `size`, `modified_at` and `version` match the file and the app.
+ */
+export interface CullAnalysisRecord {
+  location_id: string
+  share: string
+  /** The analysed file's path. */
+  path: string
+  /** Its folder (for listing a folder's rows). */
+  folder: string
+  size: number
+  /** As listed (`CullFile.modifiedAt`); null when the location does not say. */
+  modified_at: string | null
+  version: number
+  /** JSON of `CullAnalysis`. */
+  analysis: string
+  analysed_at: string
+}
+
 /** Row of `cull_destinations`: the last "Copy picks" destination for a source location. */
 export interface CullDestinationRecord {
   source_location_id: string
@@ -169,7 +189,9 @@ export interface CullDestinationRecord {
  *    destination picker's "Recent", newest first), `probeTimeoutMs` number,
  *  - `onboarded` boolean (first-launch hint dismissed), `demoSeeded` / `worstCaseSeeded` (browser),
  *  - `storageIntroSeen` boolean (the all files access screen was shown once, ADR 0005),
- *  - `cullAutoAdvance` boolean (the culling viewer moves on after a pick or reject, ADR 0008).
+ *  - `cullAutoAdvance` boolean (the culling viewer moves on after a pick or reject, ADR 0008),
+ *  - `cullBlurSensitivity` / `cullEyesSensitivity` `"low" | "medium" | "high"`, `cullBurstGapMs`
+ *    number, `cullXmpSidecars` boolean (assisted culling, ADR 0009).
  */
 export type SettingKey =
   | "language"
@@ -182,5 +204,9 @@ export type SettingKey =
   | "onboarded"
   | "storageIntroSeen"
   | "cullAutoAdvance"
+  | "cullBlurSensitivity"
+  | "cullEyesSensitivity"
+  | "cullBurstGapMs"
+  | "cullXmpSidecars"
   | "demoSeeded"
   | "worstCaseSeeded"

@@ -544,7 +544,9 @@
     "mockStorageAccess": "Acesso a todos os arquivos simulado",
     "mockShare": "Compartilhar arquivos com o Hoard",
     "mockShareHint": "Finge que outro app compartilhou três fotos e um PDF: a tela Salvar em… abre.",
-    "mockShareAction": "Simular compartilhamento"
+    "mockShareAction": "Simular compartilhamento",
+    "culling": "Seleção de fotos",
+    "cullingHint": "Assistência na seleção: o que conta como desfocada ou olhos fechados, e como as sequências são agrupadas."
   },
   "theme": {
     "label": "Tema",
@@ -901,7 +903,9 @@
       "next": "Próxima foto à direita",
       "keep": "Ficar com esta",
       "focus": "Foco {{value}}",
-      "focusHelp": "Nota de foco (a área mais nítida). Compare fotos da mesma sequência; maior é mais nítida."
+      "focusHelp": "Nota de foco (a área mais nítida). Compare fotos da mesma sequência; maior é mais nítida.",
+      "sharpness": "Nitidez {{value}}",
+      "sharpnessHelp": "Nitidez do assunto (um rosto, senão a área mais nítida), de 0 a 100. A coroa marca o quadro melhor: mais nítido, olhos abertos, bem exposto."
     },
     "copy": {
       "menu_one": "Copiar {{count}} escolhida para…",
@@ -928,7 +932,9 @@
       "subfolderName": "Nome da pasta",
       "useFolder": "Usar esta pasta",
       "start_one": "Copiar {{count}} arquivo",
-      "start_other": "Copiar {{count}} arquivos"
+      "start_other": "Copiar {{count}} arquivos",
+      "xmp": "Gravar as estrelas em arquivos XMP",
+      "xmpHint": "Um pequeno arquivo .xmp com as estrelas ao lado de cada foto copiada, só no destino, para o Lightroom, darktable e outros editores."
     },
     "delete": {
       "menu_one": "Apagar {{count}} descartada…",
@@ -950,6 +956,92 @@
       "refused": "O local recusou apagar (somente leitura).",
       "partial_one": "{{count}} foto foi apagada antes de parar.",
       "partial_other": "{{count}} fotos foram apagadas antes de parar."
+    },
+    "assist": {
+      "analysing": "Analisando {{done}} de {{total}}",
+      "analysed": "Todas as fotos analisadas",
+      "failed_one": "{{count}} foto não pôde ser analisada",
+      "failed_other": "{{count}} fotos não puderam ser analisadas",
+      "suggest": "Sugerir",
+      "suggestSummary": "Sugestões: manter {{keep}}, rejeitar {{reject}}",
+      "suggestNone": "Nenhuma sugestão agora",
+      "suggestHint": "O melhor quadro de cada sequência e as fotos com algum problema. Nada muda até você aceitar.",
+      "suggestPartial": "Ainda analisando: mais sugestões vão aparecer. Nada muda até você aceitar.",
+      "acceptAll_one": "Aceitar {{count}}",
+      "acceptAll_other": "Aceitar todas ({{count}})",
+      "accept": "Aceitar",
+      "accepted_one": "{{count}} sugestão aceita",
+      "accepted_other": "{{count}} sugestões aceitas",
+      "dismiss": "Ocultar",
+      "suggestKeep": "Sugestão: manter",
+      "suggestReject": "Sugestão: rejeitar",
+      "keepShort": "Manter?",
+      "rejectShort": "Rejeitar?",
+      "reason": {
+        "sharpest": "Melhor quadro da sequência",
+        "eyesOpen": "olhos abertos",
+        "blurrierThan": "Mais desfocada que {{name}}",
+        "notBest": "{{name}} é um quadro melhor",
+        "allFlagged": "todos os quadros desta sequência têm algum problema"
+      },
+      "flag": {
+        "blurry": "Desfocada",
+        "eyesClosed": "Olhos fechados",
+        "overexposed": "Superexposta",
+        "underexposed": "Subexposta"
+      },
+      "best": "Melhor da sequência",
+      "filter": {
+        "label": "Análise",
+        "any": "Qualquer análise",
+        "flagged": "Com problema",
+        "clean": "Sem problemas",
+        "blurry": "Desfocadas",
+        "eyesClosed": "Olhos fechados",
+        "overexposed": "Superexpostas",
+        "underexposed": "Subexpostas"
+      },
+      "sort": {
+        "label": "Ordenar",
+        "time": "Hora",
+        "sharpness": "Mais nítidas"
+      },
+      "stack": "Empilhar sequências",
+      "expand_one": "Mostrar o {{count}} quadro desta sequência",
+      "expand_other": "Mostrar os {{count}} quadros desta sequência",
+      "collapse": "Empilhar esta sequência de novo",
+      "settings": "Ajustes da assistência",
+      "settingsTitle": "Assistência na seleção",
+      "settingsHint": "Como o Hoard marca fotos e agrupa sequências. Marcas e sugestões nunca decidem por você.",
+      "blurSetting": "Fotos desfocadas",
+      "blurHint": "Mais alto marca também fotos um pouco suaves; mais baixo só as claramente desfocadas.",
+      "eyesSetting": "Olhos fechados",
+      "eyesHint": "Mais alto marca também olhos semicerrados. Só contam rostos grandes o bastante para importar.",
+      "burstGap": "Intervalo da sequência",
+      "burstGapHint": "Fotos tiradas com menos que isso de diferença começam uma sequência (uma cena nova a divide). Quadros quase idênticos até quatro vezes mais distantes entram nela.",
+      "seconds": "{{value}} s",
+      "sensitivity": {
+        "low": "Baixa",
+        "medium": "Média",
+        "high": "Alta"
+      },
+      "sharpness": "Nitidez {{value}}",
+      "subjectFace": "no rosto",
+      "subjectTile": "na área mais nítida",
+      "faces_one": "{{count}} rosto",
+      "faces_other": "{{count}} rostos",
+      "eyesOpen": "olhos abertos",
+      "eyesClosed": "olhos fechados",
+      "eyesUnknown": "olhos não visíveis",
+      "noFaces": "Nenhum rosto",
+      "facesUnavailable": "Detecção de rostos indisponível",
+      "jumpToFace": "Ampliar o rosto",
+      "histogram": "Histograma de brilho",
+      "shadows": "{{value}} de sombras sem detalhe",
+      "highlights": "{{value}} de altas luzes estouradas",
+      "notAnalysed": "Ainda não analisada",
+      "measuredOn": "Medida em: {{source}}, {{size}}",
+      "acceptBurst": "Aceitar para a sequência toda"
     }
   }
 }

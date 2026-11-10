@@ -210,6 +210,29 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // Assisted culling (ADR 0009): what native measured on a shot (sharpness, faces, exposure,
+    // similarity), cached so reopening a folder does not recompute. Keyed by the analysed file
+    // (the shot's RAW, else its JPEG): location id + share + path, valid while its size, modified
+    // time and the analysis version still match (a stale row is replaced on the next save).
+    // `folder` lists a folder's rows at once. No foreign keys, like the other culling tables.
+    version: 6,
+    sql: `
+      CREATE TABLE cull_analysis (
+        location_id TEXT NOT NULL,
+        share TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL,
+        folder TEXT NOT NULL DEFAULT '',
+        size INTEGER NOT NULL,
+        modified_at TEXT,
+        version INTEGER NOT NULL,
+        analysis TEXT NOT NULL,
+        analysed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (location_id, share, path)
+      );
+      CREATE INDEX idx_cull_analysis_folder ON cull_analysis(location_id, share, folder);
+    `,
+  },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.at(-1)?.version ?? 0

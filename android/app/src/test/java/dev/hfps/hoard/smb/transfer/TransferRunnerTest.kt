@@ -385,6 +385,37 @@ class TransferRunnerTest {
     }
 
     @Test
+    fun `XMP sidecars are written at the destination only, follow renames, skip skipped files`() {
+        fsOf(phone).file("DCIM/DSC1.ARW", bytes(20, 1))
+        fsOf(phone).file("DCIM/DSC1.JPG", bytes(10, 2))
+        fsOf(phone).file("DCIM/DSC2.JPG", bytes(10, 3))
+        fsOf(phone).file("DCIM/DSC3.JPG", bytes(10, 4))
+        fsOf(usb).file("Pictures/DSC2.JPG", bytes(5, 9))
+        fsOf(usb).file("Pictures/DSC3.JPG", bytes(5, 9))
+        val sidecars = mapOf("DCIM/DSC1.ARW" to "<x1/>", "DCIM/DSC2.JPG" to "<x2/>", "DCIM/DSC3.JPG" to "<x3/>")
+        val first = TransferJob(
+            "t", "copy", listOf("DSC1.ARW", "DSC1.JPG", "DSC2.JPG").map { TransferSource(phone, "DCIM/$it") }, usb, "Pictures", Conflicts.RENAME, "now",
+            sidecars = sidecars,
+        )
+        run(first)
+        val dest = fsOf(usb)
+        assertEquals("<x1/>", dest.bytes("Pictures/DSC1.xmp")?.toString(Charsets.UTF_8))
+        // DSC2.JPG existed: the copy became "DSC2 (1).JPG" and its sidecar follows that name.
+        assertNotNull(dest.bytes("Pictures/DSC2 (1).JPG"))
+        assertEquals("<x2/>", dest.bytes("Pictures/DSC2 (1).xmp")?.toString(Charsets.UTF_8))
+        assertNull(dest.bytes("Pictures/DSC2.xmp"))
+        // Never next to the source; no partial names left behind.
+        assertTrue(fsOf(phone).nodes.keys.none { it.endsWith(".xmp") })
+        assertTrue(dest.nodes.keys.none { it.contains(".part") || it.contains("hoardpart") })
+        // A skipped file gets no sidecar.
+        val skip = TransferJob("t2", "copy", listOf(TransferSource(phone, "DCIM/DSC3.JPG")), usb, "Pictures", Conflicts.SKIP, "now", sidecars = sidecars)
+        run(skip)
+        assertNull(dest.bytes("Pictures/DSC3.xmp"))
+        // Sidecars survive the job's JSON round trip (a restart mid-copy).
+        assertEquals(sidecars, TransferJob.fromJson(first.toJson()).sidecars)
+    }
+
+    @Test
     fun `jobs survive a JSON round trip, and 1_3 downloads migrate`() {
         val job = job("move", listOf(TransferSource(nas, "a/b.jpg"), TransferSource(Endpoint.Incoming("s1"), "0")), Endpoint.Tree("content://x/tree/y"), "Photos", Conflicts.ASK)
         job.items += TransferItem(0, 0, "a/b.jpg", "Photos/b (1).jpg", ItemKinds.FILE, 10, 5, TransferStates.FAILED, 4, Conflicts.OVERWRITE, ErrorCode.TIMEOUT, "slow")

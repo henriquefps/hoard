@@ -12,10 +12,13 @@ import { useBackHandler } from "@/hooks/useAndroidBackButton"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
 import type { CullSharpnessScore, CullShot } from "@/plugins/smb/definitions"
+import { rankBurst, sharpnessScore } from "./assist"
+import { FLAG_ICONS } from "./assistLabels"
 import { DecisionBar, Filmstrip } from "./CullViewer"
 import { decisionOf, withFlag } from "./model"
 import { formatCapture } from "./exif"
 import { FlagMark, KindBadge } from "./parts"
+import type { CullAssist } from "./useCullAssist"
 import type { CullFolder } from "./useCullFolder"
 import { ViewLink } from "./viewLink"
 import { ZoomableImage } from "./ZoomableImage"
@@ -29,6 +32,7 @@ import { ZoomableImage } from "./ZoomableImage"
  */
 export function CompareView({
   folder,
+  assist,
   order,
   a,
   b,
@@ -38,6 +42,7 @@ export function CompareView({
   onExit,
 }: {
   folder: CullFolder
+  assist: CullAssist
   order: CullShot[]
   a: CullShot
   b: CullShot
@@ -57,8 +62,9 @@ export function CompareView({
     return true
   })
 
+  // Shots without an analysis yet fall back to the ADR 0006 focus score.
   useEffect(() => {
-    const missing = [a.id, b.id].filter((id) => !scores.has(id))
+    const missing = [a.id, b.id].filter((id) => !scores.has(id) && !assist.analyses.has(id))
     if (missing.length === 0) return
     let cancelled = false
     void folder
@@ -80,13 +86,28 @@ export function CompareView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a.id, b.id, folder.key])
 
+  // With both analysed: the better-ranked frame (sharpness on the face or best area, eyes,
+  // exposure: ADR 0009); else the higher focus score.
+  const ranked =
+    assist.analyses.has(a.id) && assist.analyses.has(b.id)
+      ? rankBurst([a.id, b.id], assist.analyses, assist.settings)
+      : null
   const best = (id: string) => scores.get(id)?.best
-  const sharper =
-    best(a.id) !== undefined && best(b.id) !== undefined && best(a.id) !== best(b.id)
+  const sharper = ranked
+    ? ranked[0].score !== ranked[1].score
+      ? ranked[0].shotId
+      : undefined
+    : best(a.id) !== undefined && best(b.id) !== undefined && best(a.id) !== best(b.id)
       ? best(a.id)! > best(b.id)!
         ? a.id
         : b.id
       : undefined
+  const scoreLabel = (id: string) => {
+    const analysis = assist.analyses.get(id)
+    if (analysis) return t("cull.compare.sharpness", { value: sharpnessScore(analysis) })
+    const focus = scores.get(id)?.best
+    return focus !== undefined ? t("cull.compare.focus", { value: Math.round(focus) }) : undefined
+  }
 
   /** Pick one, reject the other: one undo step. */
   const keep = (winner: CullShot, loser: CullShot) =>
@@ -141,7 +162,8 @@ export function CompareView({
           { shot: b, other: a, pane: "b" },
         ].map(({ shot, other, pane }) => {
           const decision = decisionOf(folder.decisions, shot.id)
-          const score = scores.get(shot.id)
+          const label = scoreLabel(shot.id)
+          const flags = assist.flags.get(shot.id)
           const capture = formatCapture(folder.metadata.get(shot.id)?.captureTime, i18n.language)
           return (
             <section
@@ -171,20 +193,36 @@ export function CompareView({
                   ) : null}
                   <KindBadge shot={shot} />
                   <FlagMark decision={decision} />
-                  {score?.best !== undefined ? (
+                  {label ? (
                     <span
                       className={cn(
                         "inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-xs tabular-nums",
                         sharper === shot.id ? "bg-primary text-primary-foreground" : "bg-viewer/75"
                       )}
-                      title={t("cull.compare.focusHelp")}
+                      title={t(
+                        assist.analyses.has(shot.id)
+                          ? "cull.compare.sharpnessHelp"
+                          : "cull.compare.focusHelp"
+                      )}
                     >
                       {sharper === shot.id ? (
                         <CrownSimpleIcon weight="fill" className="size-3" />
                       ) : null}
-                      {t("cull.compare.focus", { value: Math.round(score.best) })}
+                      {label}
                     </span>
                   ) : null}
+                  {flags?.map((flag) => {
+                    const Icon = FLAG_ICONS[flag]
+                    return (
+                      <span
+                        key={flag}
+                        className="inline-flex h-5 items-center gap-1 rounded-md bg-warning px-1.5 text-xs text-viewer [&_svg]:size-3"
+                      >
+                        <Icon weight="bold" />
+                        {t(`cull.assist.flag.${flag}`)}
+                      </span>
+                    )
+                  })}
                 </div>
               </div>
               <div className="flex items-center gap-1 bg-viewer/70 pr-2">

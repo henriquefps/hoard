@@ -594,6 +594,20 @@ export interface StartTransferOptions {
    * same size as already copied.
    */
   resume?: boolean
+  /**
+   * Copies only: small XMP files written **at the destination** next to copied files (ADR 0009),
+   * as `<destination stem>.xmp` once the file at `sourcePath` is copied (a conflict rename carries
+   * over: `DSC1 (1).ARW` → `DSC1 (1).xmp`; a skipped file gets none). Best effort: a sidecar that
+   * cannot be written does not fail the item. At most 5,000, 16 KB each.
+   */
+  sidecars?: TransferSidecar[]
+}
+
+export interface TransferSidecar {
+  /** A source file of the job (as in `sources[].path`). */
+  sourcePath: string
+  /** The XMP document (UTF-8). */
+  content: string
 }
 
 export interface StartTransferResult {
@@ -988,6 +1002,90 @@ export interface CullCloseOptions {
   cullId: string
 }
 
+// --- Assisted culling (ADR 0009) -------------------------------------------------------------
+
+export interface CullAnalyzeOptions extends CullRef {
+  /** Up to 20, analysed one after another in this order (the app sends small batches, nearest first). */
+  shotIds: string[]
+  /** The shot on screen: queued right after the viewer's own prefetch instead of after the grid's thumbnails. */
+  urgent?: boolean
+}
+
+/** A face found in the analysis image (box normalised to 0..1 of the upright image). */
+export interface CullFace {
+  x: number
+  y: number
+  width: number
+  height: number
+  /** ML Kit's probabilities, 0..1; absent when it could not tell (a profile, sunglasses). */
+  leftEyeOpen?: number
+  rightEyeOpen?: number
+  smiling?: number
+  /** Big enough to matter: at least 5% of the long side and 40% of the largest face's width. */
+  prominent: boolean
+  /** Variance of the Laplacian inside the box. */
+  sharpness: number
+  /** Crété-Roffet blur inside the box, 0 (sharp) .. 1 (flat). */
+  blur: number
+}
+
+/**
+ * What native measured on one shot (ADR 0009 has every formula). Cached by the app per file
+ * (size, modified time) and `version`; scores compare within a folder, measured at one scale.
+ */
+export interface CullAnalysis {
+  /** Measurement version: a result with an older version is recomputed. */
+  version: number
+  /** The image measured: the RAW's embedded preview, or the camera JPEG (JPEG-only shots). */
+  source: "rawPreview" | "rendered"
+  /** Analysis image size (long side 1536 unless the source is smaller). */
+  width: number
+  height: number
+  /** Time it took natively, ms (decode + measurements + faces). */
+  millis: number
+  sharpness: {
+    /** Variance of the 4-neighbour Laplacian of the luma, whole frame. */
+    global: number
+    /** The same on a 4 × 4 grid, row-major. */
+    tiles: number[]
+    bestTile: number
+    /** Laplacian variance of the subject: the largest prominent face, else the sharpest tile. */
+    subject: number
+    subjectKind: "face" | "tile"
+    /** Crété-Roffet blur of the subject region, 0..1: what the "blurry" flag compares. */
+    subjectBlur: number
+  }
+  /** Faces were looked for (false: no detector on this device; eyes unknown). */
+  facesDetected: boolean
+  /** Largest first. */
+  faces: CullFace[]
+  exposure: {
+    /** 64 bins of luma (bin = Y / 4), fractions of the pixels. */
+    histogram: number[]
+    /** Mean luma, 0..1. */
+    mean: number
+    /** Share of pixels with luma ≥ 250. */
+    highlights: number
+    /** Share of pixels with luma ≤ 5. */
+    shadows: number
+  }
+  /** 64-bit difference hash, 16 hex digits. */
+  hash: string
+  /** Mean colours of a 4 × 4 grid: 48 bytes as 96 hex digits. */
+  colors: string
+}
+
+export interface CullAnalyzeResult {
+  /** One entry per requested id, in order. */
+  results: {
+    id: string
+    analysis?: CullAnalysis
+    error?: { code: HoardSmbErrorCode; message: string }
+  }[]
+  /** Face detection works on this device. */
+  faces: boolean
+}
+
 // ---------------------------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------------------------
@@ -1292,6 +1390,13 @@ export interface HoardSmbPlugin {
 
   /** Focus scores of some shots (computed on their preview), for choosing within a burst. */
   cullSharpness(options: CullSharpnessOptions): Promise<CullSharpnessResult>
+
+  /**
+   * Assisted culling (ADR 0009): sharpness, faces and eyes, exposure and a similarity signature of
+   * a few shots, measured natively on the RAW's preview or the camera JPEG. Rejects `CANCELLED`
+   * when the folder closes mid-batch; a shot that cannot be read has `error` instead.
+   */
+  cullAnalyze(options: CullAnalyzeOptions): Promise<CullAnalyzeResult>
 
   /** Forget a culling handle and stop its background work. Idempotent. */
   cullClose(options: CullCloseOptions): Promise<void>
