@@ -29,6 +29,11 @@ export interface Settings {
   cullBurstGapMs: number
   /** "Copy picks" writes XMP sidecars at the destination (ADR 0009); off by default. */
   cullXmpSidecars: boolean
+  /**
+   * The viewer's vertical swipes pick (up) and reject (down) instead of opening the details sheet
+   * (ADR 0008, 1.7.0: off by default, swipe up shows the details like the phone's gallery).
+   */
+  cullSwipeDecide: boolean
 }
 
 const SENSITIVITIES: Sensitivity[] = ["low", "medium", "high"]
@@ -50,6 +55,7 @@ export const SETTING_DEFAULTS: Settings = {
   cullEyesSensitivity: DEFAULT_ASSIST.eyes,
   cullBurstGapMs: DEFAULT_ASSIST.burstGapMs,
   cullXmpSidecars: false,
+  cullSwipeDecide: false,
 }
 
 const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
@@ -74,6 +80,7 @@ const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
   cullEyesSensitivity: (v) => SENSITIVITIES.includes(v as Sensitivity),
   cullBurstGapMs: (v) => typeof v === "number" && v >= 100 && v <= 10_000,
   cullXmpSidecars: (v) => typeof v === "boolean",
+  cullSwipeDecide: (v) => typeof v === "boolean",
 }
 
 export async function readSetting<K extends keyof Settings>(

@@ -5,6 +5,9 @@ import {
   colorDistance,
   comparePair,
   DEFAULT_ASSIST,
+  exposureOf,
+  eyesOpen,
+  eyesSummary,
   flagsOf,
   gridItems,
   groupBursts,
@@ -54,12 +57,14 @@ function analysis(over: {
   faces?: CullFace[]
   mean?: number
   highlights?: number
+  blownArea?: number
+  faceHighlights?: number
   shadows?: number
   hash?: string
   colors?: string
 }): CullAnalysis {
   return {
-    version: 1,
+    version: 2,
     source: "rawPreview",
     width: 1536,
     height: 1024,
@@ -79,6 +84,8 @@ function analysis(over: {
       mean: over.mean ?? 0.45,
       highlights: over.highlights ?? 0.01,
       shadows: over.shadows ?? 0.001,
+      blownArea: over.blownArea ?? 0,
+      faceHighlights: over.faceHighlights ?? 0,
     },
     hash: over.hash ?? HASH,
     colors: over.colors ?? COLORS,
@@ -111,11 +118,65 @@ describe("flags", () => {
     expect(flagsOf(analysis({ faces: [face(0.4)] }), { ...DEFAULT_ASSIST, eyes: "high" })).toEqual([
       "eyesClosed",
     ])
-    expect(flagsOf(analysis({ highlights: 0.12 }), DEFAULT_ASSIST)).toEqual(["overexposed"])
+    expect(flagsOf(analysis({ highlights: 0.12, blownArea: 0.11 }), DEFAULT_ASSIST)).toEqual([
+      "overexposed",
+    ])
     expect(flagsOf(analysis({ mean: 0.72 }), DEFAULT_ASSIST)).toEqual(["overexposed"])
     expect(flagsOf(analysis({ shadows: 0.09 }), DEFAULT_ASSIST)).toEqual(["underexposed"])
     expect(flagsOf(analysis({ mean: 0.18 }), DEFAULT_ASSIST)).toEqual(["underexposed"])
     expect(sharpnessScore(analysis({ blur: 0.35 }))).toBe(65)
+  })
+
+  it("over-exposure counts large blown regions and blown faces, not light sources", () => {
+    // The owner's indoor event: 10.5% blown pixels from ceiling lights, no large blown region.
+    expect(flagsOf(analysis({ highlights: 0.105, blownArea: 0.012 }), DEFAULT_ASSIST)).toEqual([])
+    expect(exposureOf(analysis({ highlights: 0.18, blownArea: 0.02 }).exposure).verdict).toBe("ok")
+    // A large blown region (a window, a white wall) of 10% of the frame.
+    expect(exposureOf(analysis({ highlights: 0.12, blownArea: 0.1 }).exposure)).toEqual({
+      verdict: "over",
+      reason: "blownArea",
+    })
+    // A backlit window behind a well-exposed subject (a real frame: 6.6% in one region) is fine.
+    expect(exposureOf(analysis({ highlights: 0.076, blownArea: 0.066 }).exposure).verdict).toBe(
+      "ok"
+    )
+    // A burnt-out face, even with little blown elsewhere.
+    expect(
+      exposureOf(analysis({ highlights: 0.02, faceHighlights: 0.2, faces: [face(0.9)] }).exposure)
+    ).toEqual({ verdict: "over", reason: "face" })
+    expect(exposureOf(analysis({ mean: 0.71 }).exposure).reason).toBe("mean")
+    expect(exposureOf(analysis({ shadows: 0.08 }).exposure)).toEqual({
+      verdict: "under",
+      reason: "shadows",
+    })
+  })
+
+  it("one eyes reading for the flag, the chips and the details", () => {
+    // The owner's screenshot: three faces, the largest open, a smaller one closed. The old panel
+    // read only the largest face ("eyes open") while the flag looked at all of them ("closed").
+    const three = analysis({ faces: [face(0.95), face(0.1), face(0.9)] })
+    const summary = eyesSummary(three, "medium")
+    expect(summary.prominent).toHaveLength(3)
+    expect(summary.states).toEqual(["open", "closed", "open"])
+    expect(summary.closed).toBe(1)
+    expect(summary.verdict).toBe("closed")
+    expect(summary.focus).toBe(three.faces[1])
+    expect(flagsOf(three, DEFAULT_ASSIST)).toContain("eyesClosed")
+    expect(eyesOpen(three, "medium")).toBe(false)
+    // The sensitivity applies to both alike (the panel used a fixed 0.3 before).
+    const half = analysis({ faces: [face(0.4)] })
+    expect(eyesSummary(half, "medium").verdict).toBe("open")
+    expect(eyesSummary(half, "high").verdict).toBe("closed")
+    expect(flagsOf(half, { ...DEFAULT_ASSIST, eyes: "high" })).toContain("eyesClosed")
+    // Background faces never count; unknown eyes are unknown, not open.
+    expect(eyesSummary(analysis({ faces: [face(0.05, false)] }), "medium").verdict).toBe("unknown")
+    expect(
+      eyesSummary(analysis({ faces: [{ ...face(0.05), leftEyeOpen: undefined }] }), "medium").states
+    ).toEqual(["unknown"])
+    expect(eyesSummary(analysis({}), "medium")).toMatchObject({
+      verdict: "unknown",
+      focus: undefined,
+    })
   })
 
   it("filters by flag", () => {
@@ -239,6 +300,31 @@ describe("ranking and suggestions", () => {
     ])
     expect(rankBurst(["x", "y"], tie, DEFAULT_ASSIST)[0].shotId).toBe("x")
     expect(bestInBursts(shots, bursts, analyses, DEFAULT_ASSIST).get("dsc1")).toBe("dsc3")
+  })
+
+  it("penalises flagged frames and never crowns a frame with a problem", () => {
+    // The owner's screenshot: the sharpest frame has closed eyes and is over-exposed; a slightly
+    // softer clean frame must win.
+    const frames = new Map([
+      ["a", analysis({ subject: 300, faces: [face(0.05)], blownArea: 0.12 })],
+      ["b", analysis({ subject: 210, faces: [face(0.9)] })],
+    ])
+    const ranked = rankBurst(["a", "b"], frames, DEFAULT_ASSIST)
+    expect(ranked.map((r) => r.shotId)).toEqual(["b", "a"])
+    expect(ranked[1].score).toBeCloseTo(1 - 1 - 0.4)
+    // Every frame flagged: ranked (least bad first) but no crown.
+    const allBad = new Map([
+      ["a", analysis({ subject: 300, faces: [face(0.05)], blownArea: 0.12 })],
+      ["b", analysis({ subject: 200, blownArea: 0.12 })],
+    ])
+    const pair = [shot("A"), shot("B")]
+    const positions = new Map([
+      ["a", { burst: "a", index: 0, size: 2 }],
+      ["b", { burst: "a", index: 1, size: 2 }],
+    ])
+    expect(rankBurst(["a", "b"], allBad, DEFAULT_ASSIST)[0].shotId).toBe("b")
+    expect(bestInBursts(pair, positions, allBad, DEFAULT_ASSIST).size).toBe(0)
+    expect(bestInBursts(pair, positions, frames, DEFAULT_ASSIST).get("a")).toBe("b")
   })
 
   it("keeps the best of a burst, rejects the rest with reasons and flagged singles", () => {

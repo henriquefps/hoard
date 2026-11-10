@@ -2,9 +2,8 @@ import { CheckIcon, StackIcon, StarIcon, XIcon } from "@phosphor-icons/react"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import type { CullMetadata, CullShot } from "@/plugins/smb/definitions"
+import type { CullShot } from "@/plugins/smb/definitions"
 import { loadThumbnail, peekThumbnail, thumbnails, shotKey } from "./images"
-import { exposureLine, focalLine, formatCapture } from "./exif"
 import type { BurstPosition, CullDecision } from "./model"
 import type { CullFolder } from "./useCullFolder"
 
@@ -118,60 +117,5 @@ export function BurstMark({
       <StackIcon weight="fill" />
       {position.index + 1}/{position.size}
     </span>
-  )
-}
-
-/** The EXIF overlay of the viewer: time, exposure, focal length, lens, camera, size, burst. */
-export function ExifPanel({
-  shot,
-  metadata,
-  burst,
-  className,
-}: {
-  shot: CullShot
-  metadata?: CullMetadata
-  burst?: BurstPosition
-  className?: string
-}) {
-  const { t, i18n } = useTranslation()
-  const capture = formatCapture(metadata?.captureTime, i18n.language)
-  const lines = [
-    capture ? (
-      <span key="time">
-        <span className="font-medium tabular-nums">{capture.time}</span>
-        <span className="text-viewer-foreground/70"> · {capture.date}</span>
-      </span>
-    ) : null,
-    exposureLine(metadata, i18n.language),
-    focalLine(metadata, i18n.language, t),
-    metadata?.lens,
-    [
-      metadata?.make && !metadata.model?.toUpperCase().startsWith(metadata.make.toUpperCase())
-        ? metadata.make
-        : undefined,
-      metadata?.model,
-    ]
-      .filter(Boolean)
-      .join(" ") || undefined,
-    metadata?.width && metadata.height
-      ? `${metadata.width} × ${metadata.height} · ${t(`cull.kind.${shot.kind}`)}`
-      : t(`cull.kind.${shot.kind}`),
-    burst ? t("cull.burst", { index: burst.index + 1, size: burst.size }) : undefined,
-  ].filter(Boolean)
-  return (
-    <div
-      className={cn(
-        "flex max-w-[min(22rem,calc(100vw-2rem))] flex-col gap-0.5 rounded-xl bg-viewer/75 px-3 py-2 text-[0.8125rem] leading-5 text-viewer-foreground backdrop-blur-sm",
-        className
-      )}
-    >
-      <span className="truncate text-sm font-semibold">{shot.stem}</span>
-      {lines.map((line, i) => (
-        <span key={i} className="truncate">
-          {line}
-        </span>
-      ))}
-      {!metadata ? <span className="text-viewer-foreground/70">{t("cull.exif.none")}</span> : null}
-    </div>
   )
 }

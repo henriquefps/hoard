@@ -5,11 +5,17 @@
  * flagged shot). Suggestions never decide anything by themselves: the UI shows them and the user
  * accepts them.
  */
-import type { CullAnalysis, CullFile, CullMetadata, CullShot } from "@/plugins/smb/definitions"
+import type {
+  CullAnalysis,
+  CullFace,
+  CullFile,
+  CullMetadata,
+  CullShot,
+} from "@/plugins/smb/definitions"
 import type { BurstPosition, Decisions } from "./model"
 
 /** Native `ShotAnalysis.VERSION`: cached rows with another version are measured again. */
-export const ANALYSIS_VERSION = 1
+export const ANALYSIS_VERSION = 2
 
 export type Sensitivity = "low" | "medium" | "high"
 
@@ -42,10 +48,16 @@ export const EYES_CLOSED_THRESHOLDS: Record<Sensitivity, number> = {
   high: 0.5,
 }
 
-/** Exposure rules (shares of pixels and mean luma, 0..1), calibrated with ±1 and ±2 EV. */
+/**
+ * Exposure rules (ADR 0009 §4, recalibrated in 1.7.0). Blown pixels alone over-flagged indoor
+ * shots: ceiling lights and lamps clip in any good exposure. What counts now is clipping that
+ * matters: large blown regions, a blown face, or a bright frame overall.
+ */
 export const EXPOSURE_RULES = {
-  /** Over: at least this share of blown highlights (luma ≥ 250)… */
-  overHighlights: 0.1,
+  /** Over: at least this share of the frame blown in large regions (native `blownArea`)… */
+  overBlownArea: 0.1,
+  /** …or this share of a prominent face's box blown… */
+  overFaceHighlights: 0.1,
   /** …or a mean this bright. */
   overMean: 0.7,
   /** Under: at least this share of crushed shadows (luma ≤ 5)… */
@@ -80,36 +92,87 @@ export const analysedFile = (shot: CullShot): CullFile => (shot.raw ?? shot.rend
 export const sharpnessScore = (analysis: CullAnalysis) =>
   Math.round(100 * (1 - analysis.sharpness.subjectBlur))
 
-/** Both eyes of a prominent face below the threshold (unknown eyes never count as closed). */
-export function eyesClosed(analysis: CullAnalysis, sensitivity: Sensitivity): boolean {
-  const limit = EYES_CLOSED_THRESHOLDS[sensitivity]
-  return analysis.faces.some(
-    (f) =>
-      f.prominent &&
-      f.leftEyeOpen !== undefined &&
-      f.rightEyeOpen !== undefined &&
-      f.leftEyeOpen < limit &&
-      f.rightEyeOpen < limit
-  )
+export type EyeState = "open" | "closed" | "unknown"
+
+export interface EyesSummary {
+  /** Prominent faces (the only ones that count), largest first. */
+  prominent: CullFace[]
+  /** Each prominent face's eyes, in the same order. */
+  states: EyeState[]
+  /** Faces with closed eyes (both eyes below the threshold). */
+  closed: number
+  /** Faces with both eyes known and not closed. */
+  open: number
+  /**
+   * The frame's verdict: `closed` when any prominent face has closed eyes (the flag), `open`
+   * when at least one face's eyes are known and none is closed, else `unknown` (no prominent
+   * face, or no eye ML Kit could judge).
+   */
+  verdict: EyeState
+  /** The face to show first ("Zoom to face"): the first with closed eyes, else the largest. */
+  focus?: CullFace
 }
 
-/** Prominent faces whose eyes are known and open. */
-export function eyesOpen(analysis: CullAnalysis, sensitivity: Sensitivity): boolean {
-  const prominent = analysis.faces.filter(
-    (f) => f.prominent && f.leftEyeOpen !== undefined && f.rightEyeOpen !== undefined
+/**
+ * One reading of the eyes for everything that shows them (flag, chips, details, ranking), so a
+ * frame can never say "eyes open" and "eyes closed" at once. A face counts as closed when **both**
+ * eye-open probabilities are below the sensitivity's threshold; an eye ML Kit could not judge
+ * (absent probability) never counts as closed.
+ */
+export function eyesSummary(analysis: CullAnalysis, sensitivity: Sensitivity): EyesSummary {
+  const limit = EYES_CLOSED_THRESHOLDS[sensitivity]
+  const prominent = analysis.faces.filter((f) => f.prominent)
+  const states = prominent.map<EyeState>((f) =>
+    f.leftEyeOpen === undefined || f.rightEyeOpen === undefined
+      ? "unknown"
+      : f.leftEyeOpen < limit && f.rightEyeOpen < limit
+        ? "closed"
+        : "open"
   )
-  return prominent.length > 0 && !eyesClosed(analysis, sensitivity)
+  const closed = states.filter((s) => s === "closed").length
+  const open = states.filter((s) => s === "open").length
+  const firstClosed = states.indexOf("closed")
+  return {
+    prominent,
+    states,
+    closed,
+    open,
+    verdict: closed > 0 ? "closed" : open > 0 ? "open" : "unknown",
+    focus: prominent[firstClosed >= 0 ? firstClosed : 0],
+  }
+}
+
+/** Some prominent face has both eyes closed (the "eyes closed" flag). */
+export const eyesClosed = (analysis: CullAnalysis, sensitivity: Sensitivity) =>
+  eyesSummary(analysis, sensitivity).verdict === "closed"
+
+/** Prominent faces whose eyes are known and none closed. */
+export const eyesOpen = (analysis: CullAnalysis, sensitivity: Sensitivity) =>
+  eyesSummary(analysis, sensitivity).verdict === "open"
+
+export type ExposureVerdict = "over" | "under" | "ok"
+
+/** The exposure rule (see {@link EXPOSURE_RULES}), with what triggered it. */
+export function exposureOf(exposure: CullAnalysis["exposure"]): {
+  verdict: ExposureVerdict
+  reason?: "blownArea" | "face" | "mean" | "shadows"
+} {
+  const r = EXPOSURE_RULES
+  if (exposure.blownArea >= r.overBlownArea) return { verdict: "over", reason: "blownArea" }
+  if (exposure.faceHighlights >= r.overFaceHighlights) return { verdict: "over", reason: "face" }
+  if (exposure.mean >= r.overMean) return { verdict: "over", reason: "mean" }
+  if (exposure.shadows >= r.underShadows) return { verdict: "under", reason: "shadows" }
+  if (exposure.mean <= r.underMean) return { verdict: "under", reason: "mean" }
+  return { verdict: "ok" }
 }
 
 export function flagsOf(analysis: CullAnalysis, settings: AssistSettings): ShotFlag[] {
   const flags: ShotFlag[] = []
   if (analysis.sharpness.subjectBlur >= BLUR_THRESHOLDS[settings.blur]) flags.push("blurry")
   if (eyesClosed(analysis, settings.eyes)) flags.push("eyesClosed")
-  const e = analysis.exposure
-  if (e.highlights >= EXPOSURE_RULES.overHighlights || e.mean >= EXPOSURE_RULES.overMean)
-    flags.push("overexposed")
-  else if (e.shadows >= EXPOSURE_RULES.underShadows || e.mean <= EXPOSURE_RULES.underMean)
-    flags.push("underexposed")
+  const exposure = exposureOf(analysis.exposure).verdict
+  if (exposure === "over") flags.push("overexposed")
+  else if (exposure === "under") flags.push("underexposed")
   return flags
 }
 
@@ -334,7 +397,12 @@ export function suggest(
   return out
 }
 
-/** The best frame of each burst (fully analysed or not: the best of what is known). */
+/**
+ * The crowned frame of each burst: the top-ranked frame **when it has no flag**. A burst whose
+ * best-ranked frame is still blurry, eyes-closed or badly exposed gets no crown (the ranking still
+ * orders it, for compare and burst mode, but "Best of the burst" is never shown next to a problem).
+ * Works with partial analyses: the best of what is known.
+ */
 export function bestInBursts(
   ordered: readonly CullShot[],
   bursts: ReadonlyMap<string, BurstPosition>,
@@ -344,7 +412,7 @@ export function bestInBursts(
   const best = new Map<string, string>()
   for (const [burst, ids] of burstMembers(ordered, bursts)) {
     const top = rankBurst(ids, analyses, settings)[0]
-    if (top) best.set(burst, top.shotId)
+    if (top && top.flags.length === 0) best.set(burst, top.shotId)
   }
   return best
 }
@@ -409,13 +477,14 @@ export type GridItem =
 
 /**
  * Grid cells for `shots` (already filtered and sorted): with `stack`, the frames of a burst
- * collapse into one cell showing its best frame (or the first), unless the burst is in
- * `expanded`. `index` is the shot's position in `shots` (what the viewer opens).
+ * collapse into one cell showing its cover (`covers`: the frame the user kept, else the crowned
+ * best; `burstCover` in `burst.ts`), or its first frame, unless the burst is in `expanded`.
+ * `index` is the shot's position in `shots`.
  */
 export function gridItems(
   shots: readonly CullShot[],
   bursts: ReadonlyMap<string, BurstPosition>,
-  best: ReadonlyMap<string, string>,
+  covers: ReadonlyMap<string, string>,
   expanded: ReadonlySet<string>,
   stack: boolean
 ): GridItem[] {
@@ -435,7 +504,7 @@ export function gridItems(
     }
     if (seen.has(b)) return
     seen.add(b)
-    const cover = best.get(b)
+    const cover = covers.get(b)
     const coverIndex = cover ? shots.findIndex((x) => x.id === cover) : -1
     const at = coverIndex >= 0 ? coverIndex : index
     items.push({ kind: "stack", burst: b, shotId: shots[at].id, index: at, size: count.get(b)! })

@@ -19,7 +19,7 @@ import {
   shotKey,
   tiles as tileQueue,
 } from "./images"
-import { sampleForScale, type Tile, tilesFor } from "./model"
+import { releaseVelocity, sampleForScale, type Tile, tilesFor } from "./model"
 import type { CullFolder } from "./useCullFolder"
 import type { SharedView, ViewLink } from "./viewLink"
 
@@ -368,8 +368,15 @@ export function ZoomableImage({
     mode: "none" | "pan" | "swipe" | "pinch"
     pinch?: { distance: number; mid: { x: number; y: number }; view: View }
     moved: boolean
-    last: { x: number; y: number; t: number }
-    velocity: { x: number; y: number }
+    /**
+     * Pointer positions in **screen** coordinates (clientX/Y). Swipe and pan deltas and the
+     * release velocity come from these, never from box-local points: during a swipe the pager
+     * moves this box with the finger, so a local point would subtract the track's own movement
+     * (the dx read back about half of the real move and the velocity flipped sign between
+     * samples, which made swiping to the previous shot unreliable).
+     */
+    screen: { x: number; y: number }
+    samples: { x: number; y: number; t: number }[]
   } | null>(null)
   const lastTap = useRef<{ x: number; y: number; t: number } | null>(null)
   const tapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -387,14 +394,15 @@ export function ZoomableImage({
     const current = view.current ?? fitView()
     const g = gesture.current
     if (!g || g.pointers.size === 0) {
+      const now = performance.now()
       gesture.current = {
         pointers: new Map([[event.pointerId, point]]),
-        start: { ...point, t: performance.now() },
+        start: { ...point, t: now },
         startView: current,
         mode: "none",
         moved: false,
-        last: { ...point, t: performance.now() },
-        velocity: { x: 0, y: 0 },
+        screen: { x: event.clientX, y: event.clientY },
+        samples: [{ x: event.clientX, y: event.clientY, t: now }],
       }
       return
     }
@@ -418,9 +426,8 @@ export function ZoomableImage({
     const point = local(event)
     g.pointers.set(event.pointerId, point)
     const now = performance.now()
-    const dt = Math.max(1, now - g.last.t)
-    g.velocity = { x: (point.x - g.last.x) / dt, y: (point.y - g.last.y) / dt }
-    g.last = { ...point, t: now }
+    g.samples.push({ x: event.clientX, y: event.clientY, t: now })
+    if (g.samples.length > 12) g.samples.shift()
     if (g.mode === "pinch" && g.pinch && g.pointers.size >= 2) {
       const [a, b] = [...g.pointers.values()]
       const distance = Math.hypot(a.x - b.x, a.y - b.y)
@@ -437,8 +444,8 @@ export function ZoomableImage({
       if (!zoom && s > fit * 1.05) void loadZoom(folder, shot).then(setZoom, () => {})
       return
     }
-    const dx = point.x - g.start.x
-    const dy = point.y - g.start.y
+    const dx = event.clientX - g.screen.x
+    const dy = event.clientY - g.screen.y
     if (!g.moved && Math.hypot(dx, dy) < TAP_SLOP) return
     if (!g.moved) {
       g.moved = true
@@ -449,7 +456,8 @@ export function ZoomableImage({
       paint(next)
       publish(next, false)
     } else if (g.mode === "swipe") {
-      onSwipe?.("move", dx, dy, g.velocity.x, g.velocity.y)
+      const v = releaseVelocity(g.samples, now)
+      onSwipe?.("move", dx, dy, v.x, v.y)
     }
   }
 
@@ -471,14 +479,21 @@ export function ZoomableImage({
       else if (g.mode === "pan") settle(view.current ?? g.startView)
       return
     }
+    const velocity = releaseVelocity(g.samples, performance.now())
     if (g.mode === "swipe") {
-      onSwipe?.("end", point.x - g.start.x, point.y - g.start.y, g.velocity.x, g.velocity.y)
+      onSwipe?.(
+        "end",
+        event.clientX - g.screen.x,
+        event.clientY - g.screen.y,
+        velocity.x,
+        velocity.y
+      )
       return
     }
     if (g.mode === "pan") {
       // A short glide in the direction of the fling, then clamp.
       const v = view.current ?? g.startView
-      settle({ s: v.s, x: v.x + g.velocity.x * 120, y: v.y + g.velocity.y * 120 })
+      settle({ s: v.s, x: v.x + velocity.x * 120, y: v.y + velocity.y * 120 })
       return
     }
     // A tap: a second one soon after is a double tap (zoom), else it toggles the chrome.

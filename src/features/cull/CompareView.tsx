@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { useBackHandler } from "@/hooks/useAndroidBackButton"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
-import type { CullSharpnessScore, CullShot } from "@/plugins/smb/definitions"
+import type { CullFace, CullSharpnessScore, CullShot } from "@/plugins/smb/definitions"
 import { rankBurst, sharpnessScore } from "./assist"
 import { FLAG_ICONS } from "./assistLabels"
 import { DecisionBar, Filmstrip } from "./CullViewer"
@@ -37,6 +37,8 @@ export function CompareView({
   a,
   b,
   longSide,
+  focusFace,
+  onKeep,
   onB,
   onClose,
   onExit,
@@ -47,6 +49,10 @@ export function CompareView({
   a: CullShot
   b: CullShot
   longSide: number
+  /** Open zoomed on this face of `a` (both panes follow: synchronized zoom). */
+  focusFace?: CullFace
+  /** "Keep" on a pane; by default picks it and rejects the other (burst mode: Keep this one). */
+  onKeep?: (winner: CullShot, loser: CullShot) => void
   onB: (shotId: string) => void
   onClose: () => void
   onExit: () => void
@@ -55,6 +61,14 @@ export function CompareView({
   const link = useMemo(() => new ViewLink(), [])
   const [scores, setScores] = useState<Map<string, CullSharpnessScore>>(new Map())
   const aIndex = order.findIndex((s) => s.id === a.id)
+  // Start on the main face once pane a has laid out (the link carries the view to pane b).
+  const [focus, setFocus] = useState<(CullFace & { seq: number; shotId: string }) | undefined>()
+  useEffect(() => {
+    if (!focusFace) return
+    const timer = window.setTimeout(() => setFocus({ ...focusFace, seq: 1, shotId: a.id }), 350)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const bIndex = order.findIndex((s) => s.id === b.id)
 
   useBackHandler(() => {
@@ -111,6 +125,8 @@ export function CompareView({
 
   /** Pick one, reject the other: one undo step. */
   const keep = (winner: CullShot, loser: CullShot) =>
+    onKeep ? onKeep(winner, loser) : keepPair(winner, loser)
+  const keepPair = (winner: CullShot, loser: CullShot) =>
     folder.decide([winner.id, loser.id], (d, id) =>
       withFlag(d, id === winner.id ? "pick" : "reject")
     )
@@ -181,6 +197,7 @@ export function CompareView({
                   active
                   link={link}
                   paneId={pane}
+                  focusRequest={pane === "a" && focus?.shotId === shot.id ? focus : undefined}
                 />
                 <div className="pointer-events-none absolute top-2 left-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-1">
                   <span className="rounded-md bg-viewer/75 px-1.5 py-0.5 text-[0.8125rem] font-medium">

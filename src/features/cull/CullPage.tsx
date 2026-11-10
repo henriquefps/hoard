@@ -1,4 +1,6 @@
 import {
+  CaretDownIcon,
+  CheckIcon,
   CopyIcon,
   FlagCheckeredIcon,
   GearSixIcon,
@@ -67,7 +69,8 @@ import {
 } from "./assist"
 import { AssistSettingsDialog, FlagMarks, SuggestionMark } from "./assistParts"
 import { CopyPicksDialog } from "./CopyPicksDialog"
-import { CullViewer } from "./CullViewer"
+import { burstCover, burstStatus, stepOf, viewerSteps, type ViewerStep } from "./burst"
+import { CullViewer, type ViewerStart } from "./CullViewer"
 import {
   ALL_SHOTS,
   type CullFilter,
@@ -135,8 +138,11 @@ export interface SuggestionState {
   /** Suggestions are shown (the user pressed Suggest). */
   on: boolean
   items: ReadonlyMap<string, Suggestion>
-  /** Accept some (one undo step); returns how many shots changed. */
-  accept: (shotIds: readonly string[]) => number
+  /**
+   * Accept some (one undo step); returns how many shots changed. `items` are the suggestions to
+   * accept from (burst mode's own); by default the folder's.
+   */
+  accept: (shotIds: readonly string[], items?: readonly Suggestion[]) => number
 }
 
 function CullFolderPage({
@@ -160,7 +166,7 @@ function CullFolderPage({
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const [suggesting, setSuggesting] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [viewer, setViewer] = useState<{ ids: string[]; index: number } | null>(null)
+  const [viewer, setViewer] = useState<{ steps: ViewerStep[]; start: ViewerStart } | null>(null)
   const [reveal, setReveal] = useState<{ shotId: string } | null>(null)
   const [copying, setCopying] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -187,10 +193,9 @@ function CullFolderPage({
     [suggesting, folder.shots, assist.bursts, assist.analyses, folder.decisions, assist.settings]
   )
   const accept = useCallback(
-    (shotIds: readonly string[]) => {
-      const chosen = shotIds
-        .map((id) => suggestionItems.get(id))
-        .filter((s): s is Suggestion => Boolean(s))
+    (shotIds: readonly string[], items?: readonly Suggestion[]) => {
+      const source = items ? new Map(items.map((s) => [s.shotId, s])) : suggestionItems
+      const chosen = shotIds.map((id) => source.get(id)).filter((s): s is Suggestion => Boolean(s))
       if (chosen.length === 0) return 0
       const actions = new Map(chosen.map((s) => [s.shotId, s.action]))
       const change = folder.decide([...actions.keys()], (d, id) =>
@@ -208,13 +213,47 @@ function CullFolderPage({
   )
   const suggestions: SuggestionState = { on: suggesting, items: suggestionItems, accept }
 
-  const openAt = (index: number) => setViewer({ ids: visible.map((s) => s.id), index })
+  // Bursts are one step (and stacks in the grid) only in the plain time view: any filter shows
+  // individual frames (e.g. "Rejected" lists the rejected frames of a burst one by one).
+  const collapse =
+    stack &&
+    sort === "time" &&
+    filter.flag === "all" &&
+    filter.minStars === 0 &&
+    assistFilter === "any"
+  /**
+   * Open the viewer on `shotId`. A frame of a burst (a stack, or a frame of an expanded burst)
+   * opens burst mode on it; the folder behind it walks bursts as one step.
+   */
+  const openShot = (shotId: string, intoBurst: boolean) => {
+    const steps = viewerSteps(
+      visible.map((s) => s.id),
+      assist.bursts,
+      assist.members,
+      collapse
+    )
+    const step = Math.max(0, stepOf(steps, shotId))
+    const burst = assist.bursts.get(shotId)?.burst
+    const members = burst ? assist.members.get(burst) : undefined
+    setViewer({
+      steps,
+      start: {
+        step,
+        burst:
+          intoBurst && burst && members && members.length >= 2
+            ? { burst, shotIds: [...members], shotId }
+            : undefined,
+      },
+    })
+  }
   const resume = () => {
+    if (visible.length === 0) return
     const ids = visible.map((s) => s.id)
-    if (ids.length === 0) return
     const last = folder.session?.last_shot_id ? ids.indexOf(folder.session.last_shot_id) : -1
     const next = nextUnmarked(visible, folder.decisions, last >= 0 ? last - 1 : -1)
-    setViewer({ ids, index: next >= 0 ? next : Math.max(0, last) })
+    const at = next >= 0 ? next : Math.max(0, last)
+    // Resuming inside an undecided burst continues in burst mode.
+    openShot(ids[at], collapse && next >= 0)
   }
 
   const meta =
@@ -327,7 +366,7 @@ function CullFolderPage({
               assist={assist}
               suggestions={suggestions}
               shots={visible}
-              stack={stack && sort === "time"}
+              stack={collapse}
               expanded={expanded}
               onToggleBurst={(burst) =>
                 setExpanded((current) => {
@@ -337,7 +376,7 @@ function CullFolderPage({
                   return next
                 })
               }
-              onOpen={openAt}
+              onOpen={openShot}
               reveal={reveal}
             />
           )}
@@ -348,8 +387,8 @@ function CullFolderPage({
           folder={folder}
           assist={assist}
           suggestions={suggestions}
-          orderIds={viewer.ids}
-          startIndex={viewer.index}
+          steps={viewer.steps}
+          start={viewer.start}
           onClose={(lastShotId) => {
             assist.focus(null)
             setViewer(null)
@@ -650,7 +689,8 @@ function ShotGrid({
   stack: boolean
   expanded: ReadonlySet<string>
   onToggleBurst: (burst: string) => void
-  onOpen: (index: number) => void
+  /** Open the viewer on a shot; `intoBurst` opens burst mode on it (a stack, an expanded frame). */
+  onOpen: (shotId: string, intoBurst: boolean) => void
   /** Scroll this shot into view (the viewer was closed on it); a new object = a new request. */
   reveal: { shotId: string } | null
 }) {
@@ -664,9 +704,16 @@ function ShotGrid({
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
+  // A stack shows the frame the user kept, else the crowned best (burst mode, 1.7.0).
+  const covers = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const [burst, ids] of assist.members)
+      map.set(burst, burstCover(ids, folder.decisions, assist.best.get(burst)))
+    return map
+  }, [assist.members, assist.best, folder.decisions])
   const items = useMemo(
-    () => gridItems(shots, assist.bursts, assist.best, expanded, stack),
-    [shots, assist.bursts, assist.best, expanded, stack]
+    () => gridItems(shots, assist.bursts, covers, expanded, stack),
+    [shots, assist.bursts, covers, expanded, stack]
   )
   const byId = useMemo(() => new Map(shots.map((s) => [s.id, s])), [shots])
   const columns = Math.max(3, Math.floor((width + GAP) / (MIN_CELL + GAP)))
@@ -742,6 +789,9 @@ function ShotGrid({
               const burst = assist.bursts.get(shot.id)
               const suggestion = suggestions.on ? suggestions.items.get(shot.id) : undefined
               const isStack = item.kind === "stack"
+              const status = isStack
+                ? burstStatus(assist.members.get(item.burst) ?? [], folder.decisions)
+                : undefined
               return (
                 <div
                   key={isStack ? `stack:${item.burst}` : shot.id}
@@ -758,7 +808,19 @@ function ShotGrid({
                         ? t(decision.flag === "pick" ? "cull.flag.picked" : "cull.flag.rejected")
                         : t("cull.flag.unmarked"),
                     })}
-                    onClick={() => onOpen(item.index)}
+                    onClick={() =>
+                      onOpen(
+                        shot.id,
+                        isStack || Boolean(stack && burst && expanded.has(burst.burst))
+                      )
+                    }
+                    onContextMenu={(event) => {
+                      // Long press (or right click) on a burst expands or stacks it.
+                      const target = isStack ? item.burst : stack ? burst?.burst : undefined
+                      if (!target) return
+                      event.preventDefault()
+                      onToggleBurst(target)
+                    }}
                     className={cn(
                       "group relative size-full overflow-hidden bg-muted focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                     )}
@@ -775,7 +837,10 @@ function ShotGrid({
                     {isStack ? (
                       <span
                         aria-hidden
-                        className="pointer-events-none absolute inset-0 border-2 border-primary/70"
+                        className={cn(
+                          "pointer-events-none absolute inset-0 border-2",
+                          status?.resolved ? "border-primary" : "border-warning/80"
+                        )}
                       />
                     ) : null}
                     {suggestion ? (
@@ -807,12 +872,28 @@ function ShotGrid({
                     <button
                       type="button"
                       onClick={() => onToggleBurst(item.burst)}
-                      aria-label={t("cull.assist.expand", { count: item.size })}
+                      aria-label={`${t("cull.assist.expand", { count: item.size })} · ${
+                        status?.resolved
+                          ? t("cull.burstMode.resolved", { kept: status.kept, size: item.size })
+                          : t("cull.burstMode.pending", {
+                              decided: status?.decided ?? 0,
+                              size: item.size,
+                            })
+                      }`}
+                      title={t("cull.assist.expandHint")}
                       aria-expanded={false}
-                      className="absolute top-1 left-1 inline-flex h-6 items-center gap-1 rounded-md bg-primary px-1.5 text-xs leading-none font-medium text-primary-foreground tabular-nums before:absolute before:-inset-2 [&_svg]:size-3.5"
+                      className={cn(
+                        "absolute top-1 left-1 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs leading-none font-medium tabular-nums before:absolute before:-inset-2 [&_svg]:size-3.5",
+                        status?.resolved
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-warning text-viewer"
+                      )}
                     >
-                      <StackIcon weight="fill" />
-                      {item.size}
+                      {status?.resolved ? <CheckIcon weight="bold" /> : <StackIcon weight="fill" />}
+                      {status?.resolved
+                        ? t("cull.burstMode.resolvedShort", { kept: status.kept, size: item.size })
+                        : item.size}
+                      <CaretDownIcon weight="bold" />
                     </button>
                   ) : burst ? (
                     stack && burst.index === 0 && expanded.has(burst.burst) ? (

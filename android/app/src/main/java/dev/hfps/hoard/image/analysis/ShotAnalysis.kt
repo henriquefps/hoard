@@ -59,6 +59,13 @@ data class Exposure(
     val highlights: Double,
     /** Share of pixels with Y <= 5 (crushed shadows). */
     val shadows: Double,
+    /**
+     * Share of the frame's pixels that are blown inside **large** clipped regions (see
+     * [ShotAnalysis.blownRegions]): small light sources and specular glints do not count.
+     */
+    val blownArea: Double = 0.0,
+    /** Largest share of blown pixels inside a prominent face's box (0 without faces). */
+    val faceHighlights: Double = 0.0,
 ) {
     override fun equals(other: Any?) = other is Exposure && histogram.contentEquals(other.histogram) && mean == other.mean
     override fun hashCode() = histogram.contentHashCode()
@@ -98,7 +105,7 @@ object ShotAnalysis {
      * Bump when any measurement changes: cached results carry it, and the app recomputes a
      * folder whose rows have an older version.
      */
-    const val VERSION = 1
+    const val VERSION = 2
 
     /** Long side of the analysis image (the ZV-E10's embedded preview is 1616 px; JPEGs are reduced). */
     const val LONG_SIDE = 1536
@@ -113,6 +120,13 @@ object ShotAnalysis {
     /** Luma at or above this is a blown highlight; at or below [SHADOW_LUMA] a crushed shadow. */
     const val HIGHLIGHT_LUMA = 250
     const val SHADOW_LUMA = 5
+
+    /** Blown regions are found on a grid of square cells this many pixels wide (analysis size)... */
+    const val BLOWN_CELL = 16
+    /** ...a cell is blown when at least this share of its pixels is... */
+    const val BLOWN_CELL_SHARE = 0.5
+    /** ...and a 4-connected run of blown cells counts when its blown pixels reach this share of the frame. */
+    const val BLOWN_REGION_MIN = 0.01
 
     /** Length of the Crété-Roffet averaging filter (1 x 9 and 9 x 1). */
     const val BLUR_WINDOW = 9
@@ -150,7 +164,9 @@ object ShotAnalysis {
             subjectBlur = blur,
             faces = reported,
             facesDetected = faces != null,
-            exposure = exposure(luma),
+            exposure = exposure(luma).let { e ->
+                e.copy(faceHighlights = reported.filter { it.prominent }.maxOfOrNull { faceHighlights(luma, it) } ?: 0.0)
+            },
             hash = hex(dHash(luma)),
             colors = colorSignature(image).joinToString("") { "%02x".format(it.toInt() and 0xFF) },
         )
@@ -215,7 +231,74 @@ object ShotAnalysis {
             mean = sum.toDouble() / n / 255.0,
             highlights = high.toDouble() / n,
             shadows = low.toDouble() / n,
+            blownArea = blownRegions(luma),
         )
+    }
+
+    /**
+     * Share of the frame that is blown in large regions (a window, a white wall, a burnt-out face),
+     * as opposed to many small bright spots (ceiling lights, lamps, specular glints) that clip in
+     * any well-exposed indoor shot. The image is split into [BLOWN_CELL]-pixel cells (the last
+     * column and row may be narrower); a cell is blown when at least [BLOWN_CELL_SHARE] of its
+     * pixels have `Y >= HIGHLIGHT_LUMA`. Blown cells are joined 4-connected; a region counts when
+     * its blown pixels are at least [BLOWN_REGION_MIN] of the frame. Result: the blown pixels of
+     * the counted regions / all pixels.
+     */
+    fun blownRegions(luma: Luma): Double {
+        val w = luma.width
+        val h = luma.height
+        val cols = (w + BLOWN_CELL - 1) / BLOWN_CELL
+        val rows = (h + BLOWN_CELL - 1) / BLOWN_CELL
+        val blownIn = IntArray(cols * rows)
+        val sizeOf = IntArray(cols * rows)
+        for (y in 0 until h) {
+            val row = (y / BLOWN_CELL) * cols
+            for (x in 0 until w) {
+                val cell = row + x / BLOWN_CELL
+                sizeOf[cell]++
+                if ((luma.pixels[y * w + x].toInt() and 0xFF) >= HIGHLIGHT_LUMA) blownIn[cell]++
+            }
+        }
+        val blown = BooleanArray(cols * rows) { blownIn[it] >= sizeOf[it] * BLOWN_CELL_SHARE && blownIn[it] > 0 }
+        val seen = BooleanArray(cols * rows)
+        val stack = IntArray(cols * rows)
+        val minPixels = BLOWN_REGION_MIN * w * h
+        var counted = 0L
+        for (start in blown.indices) {
+            if (!blown[start] || seen[start]) continue
+            var top = 0
+            stack[top++] = start
+            seen[start] = true
+            var pixels = 0L
+            while (top > 0) {
+                val c = stack[--top]
+                pixels += blownIn[c]
+                val cx = c % cols
+                val cy = c / cols
+                fun visit(n: Int) {
+                    if (blown[n] && !seen[n]) { seen[n] = true; stack[top++] = n }
+                }
+                if (cx > 0) visit(c - 1)
+                if (cx < cols - 1) visit(c + 1)
+                if (cy > 0) visit(c - cols)
+                if (cy < rows - 1) visit(c + cols)
+            }
+            if (pixels >= minPixels) counted += pixels
+        }
+        return counted.toDouble() / (w.toLong() * h)
+    }
+
+    /** Share of pixels with `Y >= HIGHLIGHT_LUMA` inside [face]'s box (rounded as in [facesOf]). */
+    fun faceHighlights(luma: Luma, face: FaceResult): Double {
+        val x0 = (face.x * luma.width).roundToInt().coerceIn(0, luma.width - 1)
+        val y0 = (face.y * luma.height).roundToInt().coerceIn(0, luma.height - 1)
+        val x1 = ((face.x + face.width) * luma.width).roundToInt().coerceIn(x0 + 1, luma.width)
+        val y1 = ((face.y + face.height) * luma.height).roundToInt().coerceIn(y0 + 1, luma.height)
+        var high = 0L
+        for (y in y0 until y1) for (x in x0 until x1) {
+            if ((luma.pixels[y * luma.width + x].toInt() and 0xFF) >= HIGHLIGHT_LUMA) high++
+        }
+        return high.toDouble() / ((x1 - x0).toLong() * (y1 - y0))
     }
 
     /**

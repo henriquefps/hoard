@@ -1142,6 +1142,46 @@ class HoardSmbPlugin : Plugin() {
         JSObject().put("results", results).put("faces", cull.facesAvailable)
     }
 
+    /**
+     * Edge swipes inside these bands (CSS px from the WebView's top) go to the app, not to the back
+     * gesture: the culling viewer pages by swiping (contract `setGestureExclusion`). Android honours
+     * 200 dp per edge, so the bands are cut to that, top first.
+     */
+    @PluginMethod
+    fun setGestureExclusion(call: PluginCall) {
+        val bands = try {
+            call.getArray("bands")?.toList<JSONObject>().orEmpty().map { it.getDouble("top") to it.getDouble("height") }
+        } catch (e: Exception) {
+            null
+        }
+        if (bands == null || bands.any { (top, height) -> !top.isFinite() || !height.isFinite() || top < 0 || height < 0 }) {
+            reject(call, HoardSmbException(ErrorCode.UNKNOWN, "Invalid gesture exclusion band"))
+            return
+        }
+        val webView = bridge?.webView
+        if (webView == null || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            call.resolve()
+            return
+        }
+        webView.post {
+            val density = webView.resources.displayMetrics.density
+            val edge = (EXCLUSION_EDGE_DP * density).toInt()
+            var budget = EXCLUSION_MAX_DP * density
+            val rects = mutableListOf<android.graphics.Rect>()
+            for ((top, height) in bands.sortedBy { it.first }) {
+                val h = minOf(height * density, budget.toDouble())
+                if (h <= 0) break
+                budget -= h.toFloat()
+                val y0 = (top * density).toInt()
+                val y1 = (top * density + h).toInt()
+                rects += android.graphics.Rect(0, y0, edge, y1)
+                rects += android.graphics.Rect(webView.width - edge, y0, webView.width, y1)
+            }
+            webView.systemGestureExclusionRects = rects
+            call.resolve()
+        }
+    }
+
     @PluginMethod
     fun cullClose(call: PluginCall) = run(call) {
         cull.close(call.requireString("cullId"))
@@ -1149,6 +1189,10 @@ class HoardSmbPlugin : Plugin() {
     }
 
     companion object {
+        /** Width of the excluded strip at each screen edge (the back gesture's zone is narrower). */
+        private const val EXCLUSION_EDGE_DP = 48
+        /** Android honours at most this much excluded height per edge. */
+        private const val EXCLUSION_MAX_DP = 200f
         /** Long side the sharpness score is computed at (the RAW preview size; ADR 0006). */
         private const val SHARPNESS_SIDE = 1600
         /** Priority of `cullAnalyze(urgent: true)` (the shot on screen): after its own prefetch window. */

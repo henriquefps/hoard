@@ -998,6 +998,16 @@ export interface CullSharpnessResult {
   scores: CullSharpnessScore[]
 }
 
+/**
+ * Horizontal bands (CSS px from the top of the WebView) where a swipe that starts at the left or
+ * right screen edge goes to the app instead of Android's back gesture: the culling viewer's photo
+ * pages by swiping (ADR 0008). Android honours at most 200 dp of height per edge (the bands are
+ * cut to that, top first). An empty list gives the edges back to the system.
+ */
+export interface GestureExclusionOptions {
+  bands: { top: number; height: number }[]
+}
+
 export interface CullCloseOptions {
   cullId: string
 }
@@ -1068,6 +1078,14 @@ export interface CullAnalysis {
     highlights: number
     /** Share of pixels with luma ≤ 5. */
     shadows: number
+    /**
+     * Share of the frame blown inside large clipped regions (16 px cells at least half blown,
+     * 4-connected, a region counting from 1% of the frame): small light sources and glints do
+     * not count (ADR 0009 §4).
+     */
+    blownArea: number
+    /** Largest share of blown pixels (luma ≥ 250) inside a prominent face's box; 0 without faces. */
+    faceHighlights: number
   }
   /** 64-bit difference hash, 16 hex digits. */
   hash: string
@@ -1400,6 +1418,13 @@ export interface HoardSmbPlugin {
 
   /** Forget a culling handle and stop its background work. Idempotent. */
   cullClose(options: CullCloseOptions): Promise<void>
+
+  /**
+   * Keep swipes from the screen edges inside these bands for the app (Android's back gesture
+   * still works everywhere else, and the back button always). Rejects `UNKNOWN` for a negative or
+   * non-finite band. No-op before Android 10 and on the web.
+   */
+  setGestureExclusion(options: GestureExclusionOptions): Promise<void>
 
   // --- Events -------------------------------------------------------------------------------
 

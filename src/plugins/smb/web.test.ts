@@ -1108,6 +1108,19 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
     ).toBe("NOT_FOUND")
   })
 
+  it("keeps edge swipes in bands for the viewer, validates them, clears with none", async () => {
+    await smb.setGestureExclusion({ bands: [{ top: 200, height: 300 }] })
+    expect(smb.gestureExclusion).toEqual([{ top: 200, height: 300 }])
+    expect(await code(smb.setGestureExclusion({ bands: [{ top: -1, height: 10 }] }))).toBe(
+      "UNKNOWN"
+    )
+    expect(await code(smb.setGestureExclusion({ bands: [{ top: 0, height: NaN }] }))).toBe(
+      "UNKNOWN"
+    )
+    await smb.setGestureExclusion({ bands: [] })
+    expect(smb.gestureExclusion).toEqual([])
+  })
+
   it("analyses shots: sharpness, faces, exposure and burst signatures (ADR 0009)", async () => {
     smb.simulateStorageAccess(true)
     const { cullId, shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
@@ -1121,13 +1134,15 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
     expect(results).toHaveLength(20)
     expect(results.at(-1)?.error?.code).toBe("NOT_FOUND")
     for (const { analysis } of results.slice(0, 19)) {
-      expect(analysis?.version).toBe(1)
+      expect(analysis?.version).toBe(2)
       expect(analysis?.sharpness.tiles).toHaveLength(16)
       expect(analysis?.exposure.histogram).toHaveLength(64)
       expect(analysis!.exposure.histogram.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 3)
       expect(analysis?.hash).toMatch(/^[0-9a-f]{16}$/)
       expect(analysis?.colors).toMatch(/^[0-9a-f]{96}$/)
       expect(Math.max(analysis!.width, analysis!.height)).toBe(1536)
+      expect(analysis!.exposure.blownArea).toBeLessThanOrEqual(analysis!.exposure.highlights)
+      expect(analysis!.exposure.faceHighlights).toBeGreaterThanOrEqual(0)
     }
     // Deterministic, and a JPEG-only shot is measured on its JPEG.
     const again = await smb.cullAnalyze({ ...ref, shotIds: [ids[0]] })

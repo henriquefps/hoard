@@ -111,6 +111,35 @@ class ShotAnalysisTest {
     }
 
     @Test
+    fun `blown regions count large clipped areas, not small light sources`() {
+        // 320 x 320 = 20 x 20 cells of 16 px. Small lamps: 8 x 8 px spots, 2% of the frame in all.
+        val lamps = gray(320, 320) { x, y -> if (x % 32 < 8 && y % 32 < 8 && y < 160) 255 else 120 }
+        val e = ShotAnalysis.analyze(lamps, null).exposure
+        assertTrue(e.highlights > 0.03)
+        assertEquals(0.0, e.blownArea, 0.0)
+        // A window: one blown 96 x 64 block (6% of the frame) plus the same lamps elsewhere.
+        val window = gray(320, 320) { x, y -> if ((x in 200 until 296 && y in 192 until 256) || (x % 32 < 8 && y % 32 < 8 && y < 160)) 255 else 120 }
+        assertEquals(96.0 * 64 / (320 * 320), ShotAnalysis.analyze(window, null).exposure.blownArea, 1e-9)
+        // A region under 1% of the frame does not count: 24 x 32 px = 0.75%.
+        val small = gray(320, 320) { x, y -> if (x in 32 until 56 && y in 32 until 64) 255 else 120 }
+        assertEquals(0.0, ShotAnalysis.analyze(small, null).exposure.blownArea, 0.0)
+        // Cells only half blown still join: a diagonal edge across a region is counted.
+        val half = gray(320, 320) { x, y -> if (x < 160 && y < 160 && (x % 16) < 8) 255 else 120 }
+        assertEquals(0.125, ShotAnalysis.analyze(half, null).exposure.blownArea, 1e-9)
+    }
+
+    @Test
+    fun `face highlights are measured inside prominent faces only`() {
+        // A face box at 100..200 x 100..200 whose top quarter is blown.
+        val image = gray(400, 400) { x, y -> if (x in 100 until 200 && y in 100 until 125) 255 else 100 }
+        val face = DetectedFace(100f, 100f, 200f, 200f, 0.9f, 0.9f)
+        val tiny = DetectedFace(300f, 300f, 310f, 310f, 0.9f, 0.9f)
+        val e = ShotAnalysis.analyze(image, listOf(face, tiny)).exposure
+        assertEquals(0.25, e.faceHighlights, 1e-9)
+        assertEquals(0.0, ShotAnalysis.analyze(image, null).exposure.faceHighlights, 0.0)
+    }
+
+    @Test
     fun `hashes match for near-identical frames and differ for another scene`() {
         val scene = gray(320, 240) { x, y -> (x * 255 / 320 + y / 3) % 256 }
         val shifted = gray(320, 240) { x, y -> ((x + 2) * 255 / 320 + y / 3 + 3) % 256 }
