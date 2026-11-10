@@ -1,7 +1,7 @@
 {
   "app": {
     "name": "Hoard",
-    "tagline": "Cliente de arquivos SMB"
+    "tagline": "Gerenciador de arquivos e seleção de fotos"
   },
   "nav": {
     "home": "Início",

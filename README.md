@@ -2,7 +2,7 @@
 
 # Hoard
 
-A file manager for Android: the phone's own storage, USB drives and SD cards, and the shared folders of your computers over SMB. Save your **machines** once, each with every address it answers on (local network IP, Tailscale IP or MagicDNS name), and Hoard picks the one that is reachable right now. Browse shares and folders, pin favorite folders, and copy or move files between any of them.
+A file manager for Android: the phone's own storage, USB drives and SD cards, and the shared folders of your computers over SMB, with copy, move and share between any of them. It also culls photo shoots (RAW, JPEG and RAW+JPEG pairs) straight from the card, with help spotting blurry shots, closed eyes, bad exposure and bursts, and copies the picks anywhere ([ADR 0008](docs/adr/0008-culling.md), [ADR 0009](docs/adr/0009-assisted-culling.md)). Save your **machines** once, each with every address it answers on (local network IP, Tailscale IP or MagicDNS name), and Hoard picks the one that is reachable right now.
 
 Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; on Android the native Kotlin plugin (smbj, Storage Access Framework, WorkManager transfers) implements the same contract ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
 

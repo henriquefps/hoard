@@ -1,7 +1,7 @@
 # Hoard: notes for agents
 
-File manager for Android (Capacitor 8 + React): SMB shares, the phone's storage, USB drives and SD
-cards, all as _locations_ (ADR 0005), with copy/move/share between any of them (ADR 0007). Read `README.md` and `docs/adr/` first.
+Android file manager and photo culling app (Capacitor 8 + React): the phone's storage, USB drives, SD
+cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share between any of them (ADR 0007). Read `README.md` and `docs/adr/` first.
 
 ## Commands
 

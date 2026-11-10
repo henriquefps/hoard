@@ -1,11 +1,7 @@
-<!-- Hoard: a stash of folders (stacked layers) with a network signal on the front folder. Drawn in a 100 box, scaled to the 128 glyph space. -->
-<g transform="scale(1.28)">
-<g stroke="currentColor" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
-  <path d="M38 12 H62" opacity="0.45"/>
-  <path d="M26 26 H74" opacity="0.7"/>
-  <path d="M14 84 V46 Q14 40 20 40 H36 L43 48 H80 Q86 48 86 54 V84 Q86 90 80 90 H20 Q14 90 14 84 Z"/>
-  <path d="M41 69 A12 12 0 0 1 59 69"/>
-  <path d="M33 63 A24 24 0 0 1 67 63"/>
-</g>
-<circle cx="50" cy="77" r="4" fill="currentColor"/>
+<g>
+  <path d="M56.056 5.732L89.135 12.763C90.239 13.227 91.27 13.929 92.098 14.794L107.427 38.399C108.037 39.674 108.232 40.528 108.071 41.933L96.881 94.575C96.253 96.744 95.407 98.552 94.34 100.004L94.34 63.243L98.9 41.792L85.525 21.197L54.404 14.582C51.147 14.362 50.997 14.459 49.874 17.524L48.995 21.66L39.794 21.66L41.119 15.425C43.34 7.756 48.287 4.605 56.056 5.732Z" fill-rule="evenodd" fill="currentColor" opacity="0.45"/>
+  <path d="M28 30L64 30L86 52L86 108C86 113.333 83.333 116 78 116L28 116C22.667 116 20 113.333 20 108L20 38C20 32.667 22.667 30 28 30Z" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M62 30L62 54L86 54" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M36 76L70 76" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M36 94L60 94" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
 </g>
