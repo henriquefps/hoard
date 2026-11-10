@@ -1,6 +1,6 @@
 import { ArrowLeftIcon } from "@phosphor-icons/react"
-import { Link } from "@tanstack/react-router"
-import { Fragment, type ReactNode } from "react"
+import { Link, useRouter, type LinkOptions } from "@tanstack/react-router"
+import { Fragment, type MouseEvent, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Breadcrumb,
@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
+import { goBackTo } from "@/lib/historyTrail"
 import { type Crumb, parentOf } from "./breadcrumbs"
 
 /**
@@ -44,6 +45,7 @@ export function Page({
 }) {
   const parent = breadcrumbs && parentOf(breadcrumbs)
   const backLabel = useBackLabel()
+  const upClick = useUpClick()
   return (
     <div
       className={cn(
@@ -61,7 +63,12 @@ export function Page({
             {parent?.link && (
               // Below 768 px the collapsed breadcrumb ("← Parent") is the back control.
               <Button variant="ghost" size="icon" className="-ml-2 hidden md:inline-flex" asChild>
-                <Link {...parent.link} activeOptions={ANCESTOR} aria-label={backLabel(parent)}>
+                <Link
+                  {...parent.link}
+                  activeOptions={ANCESTOR}
+                  aria-label={backLabel(parent)}
+                  onClick={upClick(parent.link)}
+                >
                   <ArrowLeftIcon />
                 </Link>
               </Button>
@@ -98,10 +105,23 @@ function useBackLabel() {
     parent.label === undefined ? t("common.back") : t("common.backTo", { name: parent.label })
 }
 
+/**
+ * Going up to a page we came from is a history step, so the page returns with its scroll position
+ * (lib/historyTrail.ts); other clicks (new tab, modifier keys) keep the link's own behaviour.
+ */
+function useUpClick() {
+  const router = useRouter()
+  return (link: LinkOptions) => (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    if (goBackTo(router, link)) event.preventDefault()
+  }
+}
+
 /** The full trail from 768 px; below it, only "← <parent>". */
 function PageBreadcrumb({ trail }: { trail: Crumb[] }) {
   const parent = parentOf(trail)
   const backLabel = useBackLabel()
+  const upClick = useUpClick()
   return (
     <Breadcrumb aria-label="Breadcrumb">
       {parent?.link && (
@@ -109,6 +129,7 @@ function PageBreadcrumb({ trail }: { trail: Crumb[] }) {
           {...parent.link}
           activeOptions={ANCESTOR}
           aria-label={backLabel(parent)}
+          onClick={upClick(parent.link)}
           data-slot="breadcrumb-back"
           className="-ml-1 inline-flex max-w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 md:hidden"
         >
@@ -134,6 +155,7 @@ function PageBreadcrumb({ trail }: { trail: Crumb[] }) {
                     <Link
                       {...crumb.link}
                       activeOptions={ANCESTOR}
+                      onClick={upClick(crumb.link)}
                       className="rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
                       <CrumbLabel label={crumb.label} />

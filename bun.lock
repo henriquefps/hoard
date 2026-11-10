@@ -22,6 +22,7 @@
         "@tailwindcss/vite": "^4.3.5",
         "@tanstack/react-router": "^1.170.46",
         "@tanstack/react-virtual": "^3.14.26",
+        "@tanstack/router-core": "1.171.39",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "i18next": "^27.0.1",

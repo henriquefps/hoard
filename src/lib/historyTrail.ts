@@ -27,3 +27,20 @@ export function goUp(router: AnyRouter, parent: NavigateOptions): void {
   if (previous === target && router.history.canGoBack()) router.history.back()
   else void router.navigate({ ...parent, replace: true } as Parameters<AnyRouter["navigate"]>[0])
 }
+
+/**
+ * A breadcrumb or back arrow towards a page that is already behind us in history: go back to that
+ * entry (so it comes back with its scroll position) instead of pushing a new one. False when the
+ * target is not in the history, then the link navigates as usual.
+ */
+export function goBackTo(router: AnyRouter, target: NavigateOptions): boolean {
+  const current = indexOf(router.history.location.state)
+  const href = router.buildLocation(target as Parameters<AnyRouter["buildLocation"]>[0]).href
+  for (let index = current - 1; index >= 0; index--) {
+    if (hrefs.get(index) === href) {
+      router.history.go(index - current)
+      return true
+    }
+  }
+  return false
+}

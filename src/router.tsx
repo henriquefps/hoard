@@ -6,6 +6,12 @@ import {
 } from "@tanstack/react-router"
 import { AppShell } from "@/components/AppShell"
 import { trackHistory } from "@/lib/historyTrail"
+import {
+  SCROLL_IDS,
+  scrollKey,
+  scrollSelector,
+  startScrollRestoration,
+} from "@/lib/scrollRestoration"
 import { NotFoundPage } from "@/routes/NotFoundPage"
 import { HomePage } from "@/routes/HomePage"
 import { MachinesPage } from "@/routes/MachinesPage"
@@ -137,8 +143,20 @@ const routeTree = rootRoute.addChildren([
 
 // Capacitor's local server answers every extension-less path with index.html, so browser history
 // works in the APK as well as in `bun run dev`.
-export const router = createRouter({ routeTree, defaultPreload: "intent" })
+//
+// Scroll restoration (lib/scrollRestoration.ts): one saved offset per history entry, so back /
+// forward / the Android back button restore and opening something new starts at the top. The
+// containers are the ones marked `data-scroll-restoration-id`; they are also reset to the top on a
+// new entry (otherwise TanStack copies the previous page's offset to the next one).
+export const router = createRouter({
+  routeTree,
+  defaultPreload: "intent",
+  scrollRestoration: true,
+  getScrollRestorationKey: scrollKey,
+  scrollToTopSelectors: Object.values(SCROLL_IDS).map(scrollSelector),
+})
 trackHistory(router)
+startScrollRestoration(router)
 
 declare module "@tanstack/react-router" {
   interface Register {

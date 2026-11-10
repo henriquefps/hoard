@@ -9,7 +9,7 @@ import {
 } from "@phosphor-icons/react"
 import { useParams, useSearch } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Page } from "@/components/page/Page"
@@ -50,6 +50,7 @@ import { parseLocationId } from "@/features/locations/ids"
 import { type BrowseLocation, useBrowseLocation } from "@/features/locations/useBrowseLocation"
 import { useLeaveWhenUnplugged } from "@/features/locations/useLeaveWhenUnplugged"
 import { formatBytes, formatNumber } from "@/lib/format"
+import { SCROLL_IDS, registerScrollAnchors } from "@/lib/scrollRestoration"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
 import type { CullShot } from "@/plugins/smb/definitions"
@@ -160,6 +161,7 @@ function CullFolderPage({
   const [suggesting, setSuggesting] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [viewer, setViewer] = useState<{ ids: string[]; index: number } | null>(null)
+  const [reveal, setReveal] = useState<{ shotId: string } | null>(null)
   const [copying, setCopying] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const visible = useMemo(() => {
@@ -336,6 +338,7 @@ function CullFolderPage({
                 })
               }
               onOpen={openAt}
+              reveal={reveal}
             />
           )}
         </div>
@@ -347,9 +350,10 @@ function CullFolderPage({
           suggestions={suggestions}
           orderIds={viewer.ids}
           startIndex={viewer.index}
-          onClose={() => {
+          onClose={(lastShotId) => {
             assist.focus(null)
             setViewer(null)
+            if (lastShotId) setReveal({ shotId: lastShotId })
           }}
         />
       ) : null}
@@ -637,6 +641,7 @@ function ShotGrid({
   expanded,
   onToggleBurst,
   onOpen,
+  reveal,
 }: {
   folder: CullFolder
   assist: CullAssist
@@ -646,6 +651,8 @@ function ShotGrid({
   expanded: ReadonlySet<string>
   onToggleBurst: (burst: string) => void
   onOpen: (index: number) => void
+  /** Scroll this shot into view (the viewer was closed on it); a new object = a new request. */
+  reveal: { shotId: string } | null
 }) {
   const { t } = useTranslation()
   const scroller = useRef<HTMLDivElement>(null)
@@ -676,9 +683,47 @@ function ShotGrid({
     virtualizer.measure()
   }, [cell, virtualizer])
 
+  // Back on the grid (from another page): restore by the first visible shot, so a different width
+  // (more or fewer columns) or a changed list still lands on the same photo.
+  const layout = useRef({ items, columns, cell })
+  useEffect(() => {
+    layout.current = { items, columns, cell }
+  })
+  useEffect(
+    () =>
+      registerScrollAnchors(SCROLL_IDS.cullGrid, {
+        capture(element) {
+          const { items: all, columns: cols, cell: size } = layout.current
+          const rowHeight = size + GAP
+          const row = Math.floor(element.scrollTop / rowHeight)
+          const item = all[row * cols]
+          return item ? { id: item.shotId, offset: element.scrollTop - row * rowHeight } : undefined
+        },
+        resolve(_element, anchor) {
+          const { items: all, columns: cols, cell: size } = layout.current
+          const index = all.findIndex((i) => i.shotId === anchor.id)
+          return index < 0 ? undefined : Math.floor(index / cols) * (size + GAP) + anchor.offset
+        },
+      }),
+    []
+  )
+
+  // Closing the full-screen viewer: keep the shot that was last viewed in view.
+  useEffect(() => {
+    if (!reveal) return
+    const burst = assist.bursts.get(reveal.shotId)?.burst
+    let index = items.findIndex((i) => i.shotId === reveal.shotId)
+    // A shot inside a collapsed burst is shown by its stack.
+    if (index < 0 && burst) index = items.findIndex((i) => i.kind === "stack" && i.burst === burst)
+    if (index >= 0) virtualizer.scrollToIndex(Math.floor(index / columns), { align: "auto" })
+    // Only a new `reveal` request scrolls; the layout is read as it is then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal])
+
   return (
     <div
       ref={scroller}
+      data-scroll-restoration-id={SCROLL_IDS.cullGrid}
       className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
       role="grid"
       aria-label={t("cull.grid")}
