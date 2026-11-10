@@ -2,7 +2,7 @@ import { useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { MAX_RECENT_DESTINATIONS, useSetting } from "@/features/settings/settings"
-import type { TransferConflict, TransferOp } from "@/plugins/smb/definitions"
+import type { TransferConflict, TransferOp, TransferSidecar } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
 import type { PickedFolder } from "./DestinationPicker"
 import { openTransfers } from "./drawerState"
@@ -30,10 +30,15 @@ export function useStartTransfer() {
       source: TransferPlace,
       entries: PickedEntry[],
       destination: PickedFolder,
-      conflict: TransferConflict
+      conflict: TransferConflict,
+      /** XMP sidecars for copied files (Copy picks, ADR 0009). */
+      sidecars?: TransferSidecar[]
     ) => {
       try {
-        await actions.start(transferRequest(op, source, entries, destination, conflict))
+        await actions.start({
+          ...transferRequest(op, source, entries, destination, conflict),
+          ...(sidecars?.length ? { sidecars } : {}),
+        })
       } catch (error) {
         toast.error(t("transfer.startFailed"), {
           description: t(`route.problem.${smbErrorCode(error)}`, t("route.problem.UNKNOWN")),

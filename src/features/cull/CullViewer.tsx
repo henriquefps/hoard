@@ -23,11 +23,15 @@ import { useSetting } from "@/features/settings/settings"
 import { useBackHandler } from "@/hooks/useAndroidBackButton"
 import { cn } from "@/lib/utils"
 import { HoardSmb } from "@/plugins/smb"
-import type { CullImageResult, CullShot, CullZoomResult } from "@/plugins/smb/definitions"
+import type { CullFace, CullImageResult, CullShot, CullZoomResult } from "@/plugins/smb/definitions"
+import { comparePair } from "./assist"
+import { AnalysisPanel } from "./assistParts"
+import type { SuggestionState } from "./CullPage"
 import { CompareView } from "./CompareView"
 import { cullTimings, screenLongSide } from "./images"
 import { decisionOf, prefetchSlice, withFlag, withRating } from "./model"
 import { ExifPanel, FlagMark, KindBadge, ShotThumb } from "./parts"
+import type { CullAssist } from "./useCullAssist"
 import type { CullFolder } from "./useCullFolder"
 import { ZoomableImage } from "./ZoomableImage"
 
@@ -45,11 +49,15 @@ const FLING = 0.45
  */
 export function CullViewer({
   folder,
+  assist,
+  suggestions,
   orderIds,
   startIndex,
   onClose,
 }: {
   folder: CullFolder
+  assist: CullAssist
+  suggestions: SuggestionState
   orderIds: string[]
   startIndex: number
   onClose: (lastShotId: string | undefined) => void
@@ -79,8 +87,14 @@ export function CullViewer({
   const rejectHint = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
 
+  // "Zoom to face" requests, for the shot they were made on.
+  const [focusRequest, setFocusRequest] = useState<
+    (Pick<CullFace, "x" | "y" | "width" | "height"> & { seq: number; shotId: string }) | undefined
+  >()
   useEffect(() => {
     if (current) folder.setLastShot(current.id)
+    // Analysis follows the viewer: the shot on screen first, then its neighbours.
+    if (current) assist.focus(current.id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id])
 
@@ -234,13 +248,31 @@ export function CullViewer({
     return true
   })
 
+  /** Compare opens on the burst's two best frames (ADR 0009), else this shot and the next. */
   const toggleCompare = () => {
     if (compareWith) {
       setCompareWith(null)
       return
     }
-    const other = order[index + 1] ?? order[index - 1]
-    if (other) setCompareWith(other.id)
+    if (!current) return
+    const pair = comparePair(
+      current.id,
+      ids,
+      assist.bursts,
+      assist.members,
+      assist.analyses,
+      assist.settings
+    )
+    if (!pair) return
+    const [a, b] = pair
+    const at = order.findIndex((s) => s.id === a)
+    if (at >= 0 && at !== index && order.some((s) => s.id === b)) goTo(at, false)
+    else if (a !== current.id || !order.some((s) => s.id === b)) {
+      const other = order[index + 1] ?? order[index - 1]
+      if (other) setCompareWith(other.id)
+      return
+    }
+    setCompareWith(b)
   }
 
   useEffect(() => {
@@ -296,6 +328,16 @@ export function CullViewer({
   }, [])
 
   if (!current) return null
+  const suggestion = suggestions.on ? suggestions.items.get(current.id) : undefined
+  const jumpToFace = (face: CullFace) =>
+    setFocusRequest((previous) => ({
+      x: face.x,
+      y: face.y,
+      width: face.width,
+      height: face.height,
+      seq: (previous?.seq ?? 0) + 1,
+      shotId: current.id,
+    }))
   const decision = decisionOf(folder.decisions, current.id)
   const metadata = folder.metadata.get(current.id)
   const loadingFinal = source.image && !source.image.final
@@ -313,6 +355,7 @@ export function CullViewer({
         <CompareView
           folder={folder}
           order={order}
+          assist={assist}
           a={current}
           b={byId.get(compareWith)!}
           longSide={longSide}
@@ -350,6 +393,9 @@ export function CullViewer({
                       onTap={active ? () => setChrome((v) => !v) : undefined}
                       onZoomedChange={active ? setZoomed : undefined}
                       onSource={active ? onSource : undefined}
+                      focusRequest={
+                        active && focusRequest?.shotId === shot.id ? focusRequest : undefined
+                      }
                     />
                   </div>
                 )
@@ -446,8 +492,28 @@ export function CullViewer({
 
           {info && chrome ? (
             <div className="pointer-events-none relative z-10 mt-2 ml-3 self-start">
-              <ExifPanel shot={current} metadata={metadata} burst={folder.bursts.get(current.id)} />
+              <ExifPanel shot={current} metadata={metadata} burst={assist.bursts.get(current.id)} />
               <SourceNote image={source.image} zoom={zoomed ? source.zoom : undefined} />
+              <AnalysisPanel
+                className="mt-2"
+                analysis={assist.analyses.get(current.id)}
+                flags={assist.flags.get(current.id)}
+                best={assist.bursts.has(current.id) && assist.bestShots.has(current.id)}
+                facesAvailable={assist.facesAvailable}
+                suggestion={suggestion}
+                onAccept={suggestion ? () => suggestions.accept([current.id]) : undefined}
+                onAcceptBurst={
+                  suggestion?.burst
+                    ? () =>
+                        suggestions.accept(
+                          [...suggestions.items.values()]
+                            .filter((x) => x.burst === suggestion.burst)
+                            .map((x) => x.shotId)
+                        )
+                    : undefined
+                }
+                onJumpToFace={jumpToFace}
+              />
             </div>
           ) : null}
 

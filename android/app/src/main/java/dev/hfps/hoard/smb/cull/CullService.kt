@@ -7,7 +7,10 @@ import dev.hfps.hoard.image.CullModel
 import dev.hfps.hoard.image.CullShotRef
 import dev.hfps.hoard.image.ImageCore
 import dev.hfps.hoard.image.ImageFile
+import dev.hfps.hoard.image.ShotAnalysisResult
 import dev.hfps.hoard.image.ShotRequest
+import dev.hfps.hoard.image.analysis.MlKitFaces
+import dev.hfps.hoard.image.cache.PriorityScheduler
 import dev.hfps.hoard.image.cache.FileIdentity
 import dev.hfps.hoard.image.format.PhotoMetadata
 import dev.hfps.hoard.image.source.DescriptorSource
@@ -40,6 +43,8 @@ class CullFolder(
 ) {
     val byId: Map<String, CullShotRef> = shots.associateBy { it.id }
     val requests = ConcurrentHashMap<String, ShotRequest>()
+    /** Scheduler keys of this folder's running analyses (cancelled on close). */
+    val analyses: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
 
 /**
@@ -51,8 +56,24 @@ class CullFolder(
  */
 class CullService(private val context: Context, private val sessions: SmbSessions, private val volumes: VolumeRegistry) {
 
+    private val faceDetector = MlKitFaces()
+
     val core: ImageCore by lazy {
-        ImageCore(context.applicationContext).also { context.applicationContext.registerComponentCallbacks(it) }
+        ImageCore(context.applicationContext).also {
+            it.faces = faceDetector
+            context.applicationContext.registerComponentCallbacks(it)
+        }
+    }
+
+    /** Faces can be detected on this device (false after ML Kit failed to load). */
+    val facesAvailable: Boolean get() = faceDetector.available
+
+    /** Assisted-culling analysis of a shot (ADR 0009); jobs are cancelled when the folder closes. */
+    fun analyze(folder: CullFolder, shotId: String, priority: Int): PriorityScheduler.Job<ShotAnalysisResult> {
+        val job = core.analyze(request(folder, shotId), priority)
+        folder.analyses += job.key
+        job.future.whenComplete { _, _ -> folder.analyses -= job.key }
+        return job
     }
 
     private val folders = ConcurrentHashMap<String, CullFolder>()
@@ -78,7 +99,9 @@ class CullService(private val context: Context, private val sessions: SmbSession
     }
 
     fun close(cullId: String) {
-        if (folders.remove(cullId) != null && folders.isEmpty()) {
+        val folder = folders.remove(cullId)
+        folder?.analyses?.toList()?.forEach(core::cancelKey)
+        if (folder != null && folders.isEmpty()) {
             core.cancelPrefetch()
             core.closeZooms()
         }

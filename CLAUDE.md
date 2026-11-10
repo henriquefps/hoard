@@ -24,6 +24,14 @@ cards, all as _locations_ (ADR 0005), with copy/move/share between any of them (
   (`cull*` plugin methods); pure logic in `model.ts` (tested). Measure on the emulator with
   `hoardCull.summary()` over CDP and `adb logcat -s HoardCull HoardImage`. The copy step goes only
   through `copyPicks.ts` (the transfer engine's adapter), never a culling-specific copy.
+- Assisted culling (ADR 0009): native measurements in `dev.hfps.hoard.image.analysis` (pure Kotlin,
+  JVM-tested; formulas written platform-neutrally in the ADR), flags / bursts / suggestions in
+  `src/features/cull/assist.ts`. Changing a measurement bumps `ShotAnalysis.VERSION` and
+  `ANALYSIS_VERSION` together (cached rows in `cull_analysis` are then recomputed). Suggestions
+  never decide: only the user's accept writes decisions. Calibrate on copies with
+  `AnalysisCalibrationTest` (JVM, `HOARD_ARW_DIR`) and `AnalysisHarnessTest` (emulator, ML Kit);
+  report aggregates only. XMP sidecars are written by the transfer engine (`startTransfer`'s
+  `sidecars`), at the destination only.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules

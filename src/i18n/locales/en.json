@@ -544,7 +544,9 @@
     "mockStorageAccess": "Simulated all files access",
     "mockShare": "Share files to Hoard",
     "mockShareHint": "Pretends another app shared three photos and a PDF: the Save to… screen opens.",
-    "mockShareAction": "Simulate a share"
+    "mockShareAction": "Simulate a share",
+    "culling": "Culling",
+    "cullingHint": "Assisted culling: what counts as blurry or eyes closed, and how bursts are grouped."
   },
   "theme": {
     "label": "Theme",
@@ -901,7 +903,9 @@
       "next": "Next shot on the right",
       "keep": "Keep",
       "focus": "Focus {{value}}",
-      "focusHelp": "Focus score (sharpest area). Compare shots of the same burst; higher is sharper."
+      "focusHelp": "Focus score (sharpest area). Compare shots of the same burst; higher is sharper.",
+      "sharpness": "Sharpness {{value}}",
+      "sharpnessHelp": "Sharpness of the subject (a face, else the sharpest area), 0 to 100. The crown marks the better frame: sharper, eyes open, well exposed."
     },
     "copy": {
       "menu_one": "Copy {{count}} pick to…",
@@ -928,7 +932,9 @@
       "subfolderName": "Folder name",
       "useFolder": "Use this folder",
       "start_one": "Copy {{count}} file",
-      "start_other": "Copy {{count}} files"
+      "start_other": "Copy {{count}} files",
+      "xmp": "Write ratings as XMP sidecars",
+      "xmpHint": "A small .xmp file with the stars next to each copied shot, at the destination only, for Lightroom, darktable and other editors."
     },
     "delete": {
       "menu_one": "Delete {{count}} reject…",
@@ -950,6 +956,92 @@
       "refused": "The location refused to delete (read-only).",
       "partial_one": "{{count}} shot was deleted before it stopped.",
       "partial_other": "{{count}} shots were deleted before it stopped."
+    },
+    "assist": {
+      "analysing": "Analysing {{done}} of {{total}}",
+      "analysed": "All shots analysed",
+      "failed_one": "{{count}} shot could not be analysed",
+      "failed_other": "{{count}} shots could not be analysed",
+      "suggest": "Suggest",
+      "suggestSummary": "Suggestions: keep {{keep}}, reject {{reject}}",
+      "suggestNone": "No suggestions right now",
+      "suggestHint": "The best frame of each burst, and shots with a problem. Nothing changes until you accept.",
+      "suggestPartial": "Still analysing: more suggestions will appear. Nothing changes until you accept.",
+      "acceptAll_one": "Accept {{count}}",
+      "acceptAll_other": "Accept all {{count}}",
+      "accept": "Accept",
+      "accepted_one": "{{count}} suggestion accepted",
+      "accepted_other": "{{count}} suggestions accepted",
+      "dismiss": "Hide",
+      "suggestKeep": "Suggested: keep",
+      "suggestReject": "Suggested: reject",
+      "keepShort": "Keep?",
+      "rejectShort": "Reject?",
+      "reason": {
+        "sharpest": "Best frame of the burst",
+        "eyesOpen": "eyes open",
+        "blurrierThan": "Blurrier than {{name}}",
+        "notBest": "{{name}} is a better frame",
+        "allFlagged": "every frame of this burst has a problem"
+      },
+      "flag": {
+        "blurry": "Blurry",
+        "eyesClosed": "Eyes closed",
+        "overexposed": "Overexposed",
+        "underexposed": "Underexposed"
+      },
+      "best": "Best in burst",
+      "filter": {
+        "label": "Analysis",
+        "any": "Any analysis",
+        "flagged": "Any problem",
+        "clean": "No problems",
+        "blurry": "Blurry",
+        "eyesClosed": "Eyes closed",
+        "overexposed": "Overexposed",
+        "underexposed": "Underexposed"
+      },
+      "sort": {
+        "label": "Sort",
+        "time": "Time",
+        "sharpness": "Sharpest"
+      },
+      "stack": "Stack bursts",
+      "expand_one": "Show the {{count}} frame of this burst",
+      "expand_other": "Show the {{count}} frames of this burst",
+      "collapse": "Stack this burst again",
+      "settings": "Assist settings",
+      "settingsTitle": "Culling assist",
+      "settingsHint": "How Hoard flags shots and groups bursts. Flags and suggestions never decide for you.",
+      "blurSetting": "Blurry shots",
+      "blurHint": "Higher flags slightly soft shots too; lower only clearly blurred ones.",
+      "eyesSetting": "Closed eyes",
+      "eyesHint": "Higher also flags half-closed eyes. Only faces big enough to matter count.",
+      "burstGap": "Burst gap",
+      "burstGapHint": "Shots taken closer than this start a burst (a new scene splits it). Near-identical frames up to four times further apart join it.",
+      "seconds": "{{value}} s",
+      "sensitivity": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      },
+      "sharpness": "Sharpness {{value}}",
+      "subjectFace": "on the face",
+      "subjectTile": "on the sharpest area",
+      "faces_one": "{{count}} face",
+      "faces_other": "{{count}} faces",
+      "eyesOpen": "eyes open",
+      "eyesClosed": "eyes closed",
+      "eyesUnknown": "eyes not visible",
+      "noFaces": "No faces",
+      "facesUnavailable": "Face detection unavailable",
+      "jumpToFace": "Zoom to face",
+      "histogram": "Brightness histogram",
+      "shadows": "{{value}} crushed shadows",
+      "highlights": "{{value}} blown highlights",
+      "notAnalysed": "Not analysed yet",
+      "measuredOn": "Measured on: {{source}}, {{size}}",
+      "acceptBurst": "Accept for the whole burst"
     }
   }
 }

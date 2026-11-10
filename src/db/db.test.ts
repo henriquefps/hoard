@@ -5,7 +5,10 @@ import { LATEST_VERSION, migrate, pendingMigrations } from "./migrations"
 import {
   addFavorite,
   addManualShare,
+  forgetCullAnalyses,
   forgetCullShots,
+  listCullAnalyses,
+  saveCullAnalyses,
   getCullDestination,
   getCullSession,
   listCullDecisions,
@@ -63,8 +66,8 @@ async function freshDb(): Promise<Db> {
 
 describe("migrations", () => {
   it("plans every migration for a new database and none at the latest version", () => {
-    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4, 5])
-    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4, 5])
+    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6])
+    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4, 5, 6])
     expect(pendingMigrations(LATEST_VERSION)).toEqual([])
   })
 
@@ -89,6 +92,7 @@ describe("migrations", () => {
         "cull_sessions",
         "cull_decisions",
         "cull_destinations",
+        "cull_analysis",
       ])
     )
   })
@@ -430,6 +434,39 @@ describe("queries", () => {
     expect(JSON.parse(destination.options)).toEqual({ files: "both", folder: "keep" })
   })
 
+  it("caches analyses per file, size, modified time and version (v6)", async () => {
+    const key = { locationId: "vol-1A2B-3C4D", share: "", path: "DCIM/100MSDCF" }
+    expect(await listCullAnalyses(db, key)).toEqual([])
+    const item = {
+      path: "DCIM/100MSDCF/DSC07650.ARW",
+      size: 25_000_000,
+      modifiedAt: "2026-08-09T10:00:00.000Z",
+      version: 1,
+      analysis: JSON.stringify({ hash: "00ff00ff00ff00ff" }),
+    }
+    await saveCullAnalyses(db, key, [
+      item,
+      { ...item, path: "DCIM/100MSDCF/DSC07651.JPG", modifiedAt: null },
+    ])
+    await saveCullAnalyses(db, { ...key, path: "DCIM/101MSDCF" }, [
+      { ...item, path: "DCIM/101MSDCF/X.ARW" },
+    ])
+    const rows = await listCullAnalyses(db, key)
+    expect(rows.map((r) => [r.path, r.size, r.modified_at, r.version]).sort()).toEqual([
+      ["DCIM/100MSDCF/DSC07650.ARW", 25_000_000, "2026-08-09T10:00:00.000Z", 1],
+      ["DCIM/100MSDCF/DSC07651.JPG", 25_000_000, null, 1],
+    ])
+    // A newer result replaces the row of the same file.
+    await saveCullAnalyses(db, key, [{ ...item, size: 1, version: 2, analysis: "{}" }])
+    const replaced = (await listCullAnalyses(db, key)).find((r) => r.path === item.path)!
+    expect([replaced.size, replaced.version, replaced.analysis]).toEqual([1, 2, "{}"])
+    await forgetCullAnalyses(db, key, [item.path])
+    expect(await listCullAnalyses(db, key)).toHaveLength(1)
+    await forgetCullAnalyses(db, key)
+    expect(await listCullAnalyses(db, key)).toEqual([])
+    expect(await listCullAnalyses(db, { ...key, path: "DCIM/101MSDCF" })).toHaveLength(1)
+  })
+
   it("clears a machine's culling rows when the machine is deleted", async () => {
     const id = await saveMachine(db, {
       name: "nas",
@@ -443,7 +480,11 @@ describe("queries", () => {
       { shotId: "a", flag: "pick", rating: 0 },
     ])
     await setCullDestination(db, { locationId: "device", share: "" }, { ...key }, {})
+    await saveCullAnalyses(db, key, [
+      { path: "2026/a.jpg", size: 1, modifiedAt: null, version: 1, analysis: "{}" },
+    ])
     await deleteMachine(db, id)
+    expect(await listCullAnalyses(db, key)).toEqual([])
     expect(await getCullSession(db, key)).toBeNull()
     expect(await listCullDecisions(db, key)).toEqual([])
     expect(await getCullDestination(db, { locationId: "device", share: "" })).toBeNull()

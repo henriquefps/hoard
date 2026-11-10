@@ -375,6 +375,46 @@ describe("HoardSmbWeb", () => {
       expect((await smb.getTransferItems({ transferId: "t1" })).total).toBe(last.itemsTotal)
     })
 
+    it("writes XMP sidecars at the destination only, and only for copies", async () => {
+      const files = (await smb.list({ location: usb, path: "DCIM/102MSDCF" })).entries
+      const arw = files.filter((e) => e.name.endsWith(".ARW")).slice(0, 2)
+      const sidecars = arw.map((e) => ({
+        sourcePath: e.path,
+        content: `<x:xmpmeta>${e.name}</x:xmpmeta>`,
+      }))
+      await smb.startTransfer({
+        transferId: "x1",
+        op: "copy",
+        sources: arw.map((e) => ({ location: usb, path: e.path })),
+        destination: { location: device, path: "Download" },
+        conflict: "rename",
+        sidecars,
+      })
+      expect((await settle("x1")).state).toBe("completed")
+      const stem = arw[0].name.replace(/\.ARW$/, "")
+      expect(await names(device, "Download")).toEqual(
+        expect.arrayContaining([arw[0].name, `${stem}.xmp`])
+      )
+      const text = await smb.readTextFile({ location: device, path: `Download/${stem}.xmp` })
+      expect(text.text).toBe(sidecars[0].content)
+      expect((await names(usb, "DCIM/102MSDCF")).some((n) => n.endsWith(".xmp"))).toBe(false)
+      expect(
+        await smb
+          .startTransfer({
+            transferId: "x2",
+            op: "move",
+            sources: [{ location: usb, path: arw[0].path }],
+            destination: { location: device, path: "Download" },
+            conflict: "rename",
+            sidecars,
+          })
+          .then(
+            () => "OK",
+            (e: unknown) => smbErrorCode(e)
+          )
+      ).toBe("UNKNOWN")
+    })
+
     it("fails over when the connection drops mid-file and completes", async () => {
       await smb.startTransfer({
         transferId: "t2",
@@ -1066,6 +1106,39 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
     expect(
       await code(smb.cullImage({ ...ref, shotId: shots[0].id, longSide: 100, quality: "fast" }))
     ).toBe("NOT_FOUND")
+  })
+
+  it("analyses shots: sharpness, faces, exposure and burst signatures (ADR 0009)", async () => {
+    smb.simulateStorageAccess(true)
+    const { cullId, shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+    const ref = { cullId, location: usb }
+    const ids = shots.map((s) => s.id)
+    const { results, faces } = await smb.cullAnalyze({
+      ...ref,
+      shotIds: [...ids.slice(0, 19), "nope"],
+    })
+    expect(faces).toBe(true)
+    expect(results).toHaveLength(20)
+    expect(results.at(-1)?.error?.code).toBe("NOT_FOUND")
+    for (const { analysis } of results.slice(0, 19)) {
+      expect(analysis?.version).toBe(1)
+      expect(analysis?.sharpness.tiles).toHaveLength(16)
+      expect(analysis?.exposure.histogram).toHaveLength(64)
+      expect(analysis!.exposure.histogram.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 3)
+      expect(analysis?.hash).toMatch(/^[0-9a-f]{16}$/)
+      expect(analysis?.colors).toMatch(/^[0-9a-f]{96}$/)
+      expect(Math.max(analysis!.width, analysis!.height)).toBe(1536)
+    }
+    // Deterministic, and a JPEG-only shot is measured on its JPEG.
+    const again = await smb.cullAnalyze({ ...ref, shotIds: [ids[0]] })
+    expect(again.results[0].analysis).toEqual(results[0].analysis)
+    const jpeg = shots.find((s) => s.kind === "jpeg")!
+    expect(
+      (await smb.cullAnalyze({ ...ref, shotIds: [jpeg.id] })).results[0].analysis?.source
+    ).toBe("rendered")
+    expect(await code(smb.cullAnalyze({ ...ref, shotIds: ids.slice(0, 21) }))).toBe("UNKNOWN")
+    await smb.cullClose({ cullId })
+    expect(await code(smb.cullAnalyze({ ...ref, shotIds: [ids[0]] }))).toBe("NOT_FOUND")
   })
 
   it("culls an SMB folder through the session, and refuses a dropped one", async () => {

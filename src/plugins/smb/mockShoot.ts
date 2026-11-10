@@ -4,7 +4,7 @@
  * "soft" frame (its `blur`) is visibly soft at 100%, like a missed focus. Nothing here is a real
  * photo: the repo is public and the owner's shoots are private.
  */
-import type { CullMetadata } from "./definitions"
+import type { CullAnalysis, CullFace, CullMetadata } from "./definitions"
 import type { MockFile } from "./mockData"
 
 /** Camera data of one shot (shared by the RAW and the JPEG of a pair). */
@@ -29,6 +29,10 @@ export interface MockPhoto {
   /** Scene colors and layout. */
   hue: number
   scene: number
+  /** Frames of one burst share it (their similarity signature matches, ADR 0009). */
+  sceneId?: number
+  /** No faces in this frame (the mock analysis finds none). */
+  noFaces?: boolean
 }
 
 const MiB = 1024 * 1024
@@ -77,6 +81,10 @@ export interface ShootOptions {
   lens?: string
   /** Days ago for the files' modified time. */
   daysAgo?: number
+  /** Worst case: the whole folder is one continuous burst (0.1-0.3 s apart, one scene). */
+  oneBurst?: boolean
+  /** No faces in any frame (landscapes). */
+  noFaces?: boolean
 }
 
 const LENSES = ["30mm F1.4 DC DN | Contemporary 016", "E PZ 16-50mm F3.5-5.6 OSS", "E 11mm F1.8"]
@@ -91,9 +99,13 @@ export function buildShoot(options: ShootOptions): MockFile[] {
   const files: MockFile[] = []
   let time = options.startMs
   let burstLeft = 0
+  let previous: MockPhoto | undefined
   const modifiedAt = new Date(Date.UTC(2026, 10, 8, 12) - (options.daysAgo ?? 3) * 86_400_000)
   for (let i = 0; i < options.count; i++) {
-    if (burstLeft > 0) {
+    const inBurst = burstLeft > 0 || (Boolean(options.oneBurst) && i > 0)
+    if (options.oneBurst && i > 0) {
+      time += 100 + Math.floor(rnd() * 200)
+    } else if (burstLeft > 0) {
       time += 100 + Math.floor(rnd() * 200)
       burstLeft--
     } else {
@@ -124,7 +136,19 @@ export function buildShoot(options: ShootOptions): MockFile[] {
       blur: rnd() < 0.25 ? 2 + Math.floor(rnd() * 5) : rnd() < 0.5 ? 1 : 0,
       hue: Math.floor(rnd() * 360),
       scene: Math.floor(rnd() * 4),
+      sceneId: options.seed + i,
+      ...(options.noFaces ? { noFaces: true } : {}),
     }
+    // A burst frames the same scene: keep the layout, drift the colours a little.
+    if (inBurst && previous) {
+      photo.scene = previous.scene
+      photo.hue = (previous.hue + 3) % 360
+      photo.sceneId = previous.sceneId
+      photo.width = previous.width
+      photo.height = previous.height
+      photo.orientation = previous.orientation
+    }
+    previous = photo
     const stem = `${options.prefix}${pad(options.start + i, 5)}`
     const kind = options.kindOf?.(i) ?? "pair"
     const at = new Date(modifiedAt.getTime() + i * 1000).toISOString()
@@ -289,6 +313,21 @@ export function parkShoot(): MockFile[] {
   })
 }
 
+/** Worst case for assisted culling: 320 RAW-only frames, all one burst, no faces. */
+export function oneBurstShoot(): MockFile[] {
+  return buildShoot({
+    prefix: "DSC",
+    start: 9001,
+    count: 320,
+    startMs: Date.UTC(2026, 9, 20, 15, 0, 0, 0),
+    seed: 20261020,
+    kindOf: () => "raw",
+    oneBurst: true,
+    noFaces: true,
+    daysAgo: 20,
+  })
+}
+
 /** 200 JPEG-only shots (the memory test: scrolling through a long folder). */
 export function longShoot(): MockFile[] {
   return buildShoot({
@@ -300,4 +339,111 @@ export function longShoot(): MockFile[] {
     kindOf: () => "jpeg",
     daysAgo: 27,
   })
+}
+
+// --- Assisted culling (ADR 0009) -------------------------------------------------------------
+
+/** 64-bit hex from a seed (two FNV rounds). */
+function hex64(seed: string): string {
+  const a = hashOf(seed).toString(16).padStart(8, "0")
+  const b = hashOf(`${seed}:2`).toString(16).padStart(8, "0")
+  return a + b
+}
+
+/** Flip `count` bits of a 16-digit hex hash, chosen by `seed`. */
+function flipBits(hash: string, count: number, seed: number): string {
+  let value = BigInt(`0x${hash}`)
+  const rnd = random(seed)
+  for (let i = 0; i < count; i++) value ^= 1n << BigInt(Math.floor(rnd() * 64))
+  return value.toString(16).padStart(16, "0")
+}
+
+function hslRgb(h: number, s: number, l: number): [number, number, number] {
+  const k = (n: number) => (n + h / 30) % 12
+  const a = s * Math.min(l, 1 - l)
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)]
+}
+
+/**
+ * What native `cullAnalyze` would measure on a mock photo: sharpness from its `blur`, faces on
+ * some scenes (now and then with closed eyes), exposure with a few over/under frames, and a
+ * similarity signature shared by the frames of a burst. Deterministic per shot.
+ */
+export function photoAnalysis(photo: MockPhoto, stem: string): CullAnalysis {
+  const h = hashOf(stem)
+  const rnd = random(h)
+  const portrait = photo.height > photo.width
+  const width = portrait ? 1024 : 1536
+  const height = portrait ? 1536 : 1024
+  const focus = photoSharpness(photo, stem)
+  const tiles = Array.from({ length: 16 }, (_, i) =>
+    i === focus.bestTile ? focus.best : Math.round(focus.best * (0.15 + rnd() * 0.6) * 10) / 10
+  )
+  const subjectBlur = Math.round((0.3 + photo.blur * 0.07 + (rnd() - 0.5) * 0.06) * 1000) / 1000
+  // Faces: scenes 0 and 2 are "people" shots (1-3 faces); eyes closed now and then.
+  const faces: CullFace[] = []
+  if (photo.scene % 2 === 0 && !photo.noFaces) {
+    const count = 1 + (h % 3)
+    for (let i = 0; i < count; i++) {
+      const size = i === 0 ? 0.16 : 0.1 - i * 0.02
+      const closed = (h >>> (4 + i)) % 9 === 0
+      faces.push({
+        x: Math.round((0.2 + i * 0.25) * 1000) / 1000,
+        y: Math.round((0.25 + (i % 2) * 0.1) * 1000) / 1000,
+        width: size,
+        height: Math.round(size * (width / height) * 1000) / 1000,
+        leftEyeOpen: closed ? 0.04 + rnd() * 0.1 : 0.85 + rnd() * 0.14,
+        rightEyeOpen: closed ? 0.03 + rnd() * 0.1 : 0.82 + rnd() * 0.17,
+        smiling: Math.round(rnd() * 1000) / 1000,
+        prominent: i === 0 || size >= 0.16 * 0.4,
+        sharpness: Math.round(focus.best * 0.8 * 10) / 10,
+        blur: subjectBlur,
+      })
+    }
+  }
+  // Exposure: a bell around the mean; ~8% over, ~6% under.
+  const roll = (h >>> 9) % 100
+  const mean = roll < 8 ? 0.74 : roll < 14 ? 0.17 : 0.38 + rnd() * 0.18
+  const spread = 0.16
+  const weights = Array.from({ length: 64 }, (_, i) =>
+    Math.exp(-(((i + 0.5) / 64 - mean) ** 2) / (2 * spread * spread))
+  )
+  const highlights = roll < 8 ? 0.14 + rnd() * 0.1 : rnd() * 0.01
+  const shadows = roll >= 8 && roll < 14 ? 0.12 + rnd() * 0.1 : rnd() * 0.004
+  weights[63] += highlights * 64
+  weights[0] += shadows * 64
+  const total = weights.reduce((a, b) => a + b, 0)
+  const histogram = weights.map((w) => Math.round((w / total) * 1e5) / 1e5)
+  // Similarity: the scene's hash with a few bits flipped per frame; colours from the hue.
+  const hash = flipBits(hex64(`scene:${photo.sceneId ?? h}`), 1 + (h % 4), h)
+  const colors = Array.from({ length: 16 }, (_, i) => {
+    const [r, g, b] = hslRgb((photo.hue + (i < 8 ? 0 : 140)) % 360, 0.45, i < 8 ? 0.72 : 0.32)
+    return [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")
+  }).join("")
+  return {
+    version: 1,
+    source: "rawPreview",
+    width,
+    height,
+    millis: 40 + Math.round(rnd() * 60),
+    sharpness: {
+      global: focus.global,
+      tiles,
+      bestTile: focus.bestTile,
+      subject: faces[0]?.sharpness ?? focus.best,
+      subjectKind: faces.length ? "face" : "tile",
+      subjectBlur,
+    },
+    facesDetected: true,
+    faces,
+    exposure: {
+      histogram,
+      mean: Math.round(mean * 1e4) / 1e4,
+      highlights: Math.round(highlights * 1e5) / 1e5,
+      shadows: Math.round(shadows * 1e5) / 1e5,
+    },
+    hash,
+    colors,
+  }
 }

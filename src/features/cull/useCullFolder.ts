@@ -14,8 +14,6 @@ import type { CullMetadata, CullRef, CullShot, SmbAccess } from "@/plugins/smb/d
 import { smbErrorCode } from "@/plugins/smb/definitions"
 import {
   applyChange,
-  burstHints,
-  type BurstPosition,
   changeOf,
   type CullDecision,
   type DecisionChange,
@@ -35,7 +33,6 @@ export interface CullFolder {
   metadata: ReadonlyMap<string, CullMetadata | undefined>
   /** Every shot's metadata was asked for (some may have failed). */
   metadataDone: boolean
-  bursts: ReadonlyMap<string, BurstPosition>
   decisions: ReadonlyMap<string, CullDecision>
   access?: SmbAccess
   libRaw: boolean
@@ -52,6 +49,8 @@ export interface CullFolder {
   /** Shots that no longer exist (deleted rejects): dropped from the list and from the database. */
   removeShots: (shotIds: readonly string[]) => Promise<void>
   setLastShot: (shotId: string) => void
+  /** Run a database write after the folder's other writes (the SQLite adapters cannot overlap transactions). */
+  write: <T>(fn: () => Promise<T>) => Promise<T>
   reload: () => void
 }
 
@@ -199,10 +198,6 @@ export function useCullFolder(
     () => (metadataDone ? sortByCapture(state.shots, metadata) : state.shots),
     [metadataDone, state.shots, metadata]
   )
-  const bursts = useMemo(
-    () => (metadataDone ? burstHints(ordered, metadata) : new Map<string, BurstPosition>()),
-    [metadataDone, ordered, metadata]
-  )
 
   const persist = useCallback(
     (change: DecisionChange, undo: boolean) => {
@@ -288,7 +283,6 @@ export function useCullFolder(
     shots: ordered,
     metadata,
     metadataDone,
-    bursts,
     decisions,
     access: state.access,
     libRaw: state.libRaw,
@@ -299,6 +293,7 @@ export function useCullFolder(
     undo,
     removeShots,
     setLastShot,
+    write: serial,
     reload: () => {
       setState({ status: "loading", shots: [], libRaw: true })
       setMetadata(new Map())

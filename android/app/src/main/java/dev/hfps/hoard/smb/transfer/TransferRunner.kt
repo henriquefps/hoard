@@ -339,6 +339,7 @@ class TransferRunner(
             rememberName(item.destPath)
         }
         src.modifiedMillis?.let { millis -> runCatching { dest.call { setModified(item.destPath, millis) } } }
+        writeSidecar(item)
 
         if (job.isMove) {
             // Only a source that is still exactly what was copied is deleted.
@@ -350,6 +351,42 @@ class TransferRunner(
             }
         }
         complete(item)
+    }
+
+    /**
+     * The XMP sidecar of a copied file (ADR 0009), as `<its destination stem>.xmp` next to it, so
+     * it follows a conflict rename (`DSC1 (1).ARW` → `DSC1 (1).xmp`). An older sidecar of that
+     * name is replaced: it describes the file just written. Written through a partial name like
+     * any file. Best effort: the photo is already safe, so a failure is logged, not an item error.
+     */
+    private fun writeSidecar(item: TransferItem) {
+        val content = job.sidecars[item.sourcePath] ?: return
+        val folder = TransferPaths.parent(item.destPath)
+        val name = TransferPaths.name(item.destPath)
+        val stem = name.substringBeforeLast('.', name)
+        val target = TransferPaths.join(folder, "$stem.xmp")
+        val part = TransferPaths.join(folder, PartNames.of("$stem.xmp"))
+        try {
+            val bytes = content.toByteArray(Charsets.UTF_8)
+            dest.call {
+                val writer = openWrite(part, 0)
+                try {
+                    writer.write(bytes, 0, bytes.size)
+                    writer.finish()
+                } finally {
+                    runCatching { writer.close() }
+                }
+                if (!rename(part, target, true)) throw HoardSmbException(ErrorCode.UNKNOWN, "Could not name $stem.xmp")
+            }
+            rememberName(target)
+        } catch (e: InterruptedException) {
+            throw e
+        } catch (e: java.util.concurrent.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            runCatching { dest.delete(part) }
+            hooks.log("${item.name}: sidecar not written: ${e.message}")
+        }
     }
 
     /** `photo.jpg` → `photo (1).jpg` against the destination folder's names (and those this job added). */

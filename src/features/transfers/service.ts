@@ -9,6 +9,7 @@ import type {
   TransferLocation,
   TransferOp,
   TransferProgressEvent,
+  TransferSidecar,
   TransferSourceLocation,
   TransferState,
 } from "@/plugins/smb/definitions"
@@ -73,6 +74,8 @@ export interface TransferRequest {
   /** The folder the sources land in. */
   destination: TransferPlace & { path: string }
   conflict: TransferConflict
+  /** XMP sidecars to write at the destination next to copied files (ADR 0009, copies only). */
+  sidecars?: TransferSidecar[]
 }
 
 /** Resolves a place to what native needs (the provider uses the route engine for machines). */
@@ -249,7 +252,16 @@ export class TransferService {
       size: request.size ?? 0,
       itemsTotal: request.itemsTotal ?? request.paths.length,
     })
-    await this.run(id, request.op, source, request.paths, destination, request.conflict, false)
+    await this.run(
+      id,
+      request.op,
+      source,
+      request.paths,
+      destination,
+      request.conflict,
+      false,
+      request.sidecars
+    )
     return id
   }
 
@@ -260,7 +272,8 @@ export class TransferService {
     paths: string[],
     destination: TransferPlace & { path: string },
     conflict: TransferConflict,
-    resume: boolean
+    resume: boolean,
+    sidecars?: TransferSidecar[]
   ) {
     this.live.set(id, {
       ...(this.live.get(id) ?? emptyLive()),
@@ -277,6 +290,7 @@ export class TransferService {
         destination: { location: to as TransferLocation, path: destination.path },
         conflict,
         resume,
+        ...(sidecars?.length ? { sidecars } : {}),
       })
     } catch (error) {
       await this.markFailed(id, error)

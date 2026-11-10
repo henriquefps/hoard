@@ -11,7 +11,12 @@ import { useRouteEngine } from "@/features/route/RouteProvider"
 import { TREE_LOCATION_ID } from "@/features/transfers/service"
 import { useStartTransfer } from "@/features/transfers/useStartTransfer"
 import { HoardSmb } from "@/plugins/smb"
-import type { CullFile, LocationRef, TransferConflict } from "@/plugins/smb/definitions"
+import type {
+  CullFile,
+  LocationRef,
+  TransferConflict,
+  TransferSidecar,
+} from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
 
 /** A folder in any location, as routes, favorites and the destination picker name it. */
@@ -38,6 +43,8 @@ export interface CopyPicksAdapterOptions {
   /** Create this folder inside the destination and copy into it (not for `tree` destinations). */
   subfolder?: string
   conflict: TransferConflict
+  /** XMP sidecars to write next to the copies at the destination (ADR 0009). */
+  sidecars?: TransferSidecar[]
 }
 
 export type CopyPicksOutcome = { status: "queued"; count: number }
@@ -94,7 +101,8 @@ export function useCopyPicks() {
           label: subfolder ? `${destination.label} › ${subfolder}` : destination.label,
           treeUri: destination.treeUri,
         },
-        options.conflict
+        options.conflict,
+        options.sidecars
       )
       return { status: "queued", count: items.length }
     },

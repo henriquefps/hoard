@@ -238,6 +238,11 @@ class TransferJob(
     val startedAt: String,
     /** Retry of a job native had lost: an existing destination file of the same size counts as copied. */
     val resumeExisting: Boolean = false,
+    /**
+     * Small text files to write next to copied files (XMP sidecars, ADR 0009): source path →
+     * content. Written as `<destination stem>.xmp` once that file is copied.
+     */
+    val sidecars: Map<String, String> = emptyMap(),
 ) {
     @Volatile var state: String = TransferStates.QUEUED
     @Volatile var errorCode: ErrorCode? = null
@@ -301,6 +306,7 @@ class TransferJob(
             put("conflict", conflict)
             put("startedAt", startedAt)
             put("resumeExisting", resumeExisting)
+            if (sidecars.isNotEmpty()) put("sidecars", JSONObject().apply { sidecars.forEach { (k, v) -> put(k, v) } })
             put("state", state)
             putOpt("errorCode", errorCode?.name)
             putOpt("errorMessage", errorMessage)
@@ -325,6 +331,7 @@ class TransferJob(
                 conflict = json.optString("conflict", Conflicts.RENAME),
                 startedAt = json.getString("startedAt"),
                 resumeExisting = json.optBoolean("resumeExisting"),
+                sidecars = json.optJSONObject("sidecars")?.let { o -> o.keys().asSequence().associateWith { o.getString(it) } }.orEmpty(),
             )
             job.state = json.optString("state", TransferStates.QUEUED)
             job.errorCode = json.optString("errorCode").takeIf { json.has("errorCode") }?.let(ErrorCode::fromName)

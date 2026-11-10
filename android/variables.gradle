@@ -19,4 +19,5 @@ ext {
     coroutinesVersion = '1.10.2'
     workVersion = '2.11.0'
     exifInterfaceVersion = '1.4.1'
+    mlkitFaceDetectionVersion = '16.1.7'
 }

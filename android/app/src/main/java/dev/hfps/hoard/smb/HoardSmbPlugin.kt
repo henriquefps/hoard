@@ -51,6 +51,8 @@ import dev.hfps.hoard.smb.text.TextFiles
 import dev.hfps.hoard.smb.viewer.Opener
 import dev.hfps.hoard.smb.viewer.Thumbnailer
 import dev.hfps.hoard.smb.cull.CullFolder
+import dev.hfps.hoard.image.ImageCore
+import dev.hfps.hoard.smb.cull.CullAnalysisJson
 import dev.hfps.hoard.smb.cull.CullService
 import dev.hfps.hoard.image.CullModel
 import dev.hfps.hoard.image.ScreenSource
@@ -622,6 +624,10 @@ class HoardSmbPlugin : Plugin() {
                 destPath = destination.optString("path"),
                 conflict = call.getString("conflict") ?: "rename",
                 resume = call.getBoolean("resume", false) ?: false,
+                sidecars = call.getArray("sidecars")?.toList<JSONObject>().orEmpty().associate {
+                    (it.optString("sourcePath").takeIf { p -> p.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "sidecars[].sourcePath is required")) to
+                        (it.optString("content").takeIf { c -> c.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "sidecars[].content is required"))
+                },
             ),
         )
         JSObject().put("transferId", job.transferId)
@@ -1109,6 +1115,33 @@ class HoardSmbPlugin : Plugin() {
         JSObject().put("scores", scores)
     }
 
+    /**
+     * Assisted culling measurements (ADR 0009) for a few shots, one after another on the image
+     * core's queue behind the viewer's prefetch. The app sends small batches in its own priority
+     * order (the shot on screen first, then around it) and caches results in its database.
+     */
+    @PluginMethod
+    fun cullAnalyze(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val ids = call.getArray("shotIds")?.toList<String>().orEmpty()
+        if (ids.size > 20) smbFail(ErrorCode.UNKNOWN, "At most 20 shots per call")
+        val urgent = call.getBoolean("urgent", false) == true
+        val results = JSArray()
+        for (id in ids) {
+            val item = JSObject().put("id", id)
+            try {
+                val result = await(folder, cull.analyze(folder, id, if (urgent) ANALYZE_URGENT_PRIORITY else ImageCore.ANALYSIS_PRIORITY))
+                item.put("analysis", CullAnalysisJson.of(result))
+            } catch (e: Throwable) {
+                val error = SmbErrors.map(e)
+                if (error.code == ErrorCode.CANCELLED) throw error
+                item.put("error", JSObject().put("code", error.code.name).put("message", error.message ?: error.code.name))
+            }
+            results.put(item)
+        }
+        JSObject().put("results", results).put("faces", cull.facesAvailable)
+    }
+
     @PluginMethod
     fun cullClose(call: PluginCall) = run(call) {
         cull.close(call.requireString("cullId"))
@@ -1118,6 +1151,8 @@ class HoardSmbPlugin : Plugin() {
     companion object {
         /** Long side the sharpness score is computed at (the RAW preview size; ADR 0006). */
         private const val SHARPNESS_SIDE = 1600
+        /** Priority of `cullAnalyze(urgent: true)` (the shot on screen): after its own prefetch window. */
+        private const val ANALYZE_URGENT_PRIORITY = 30
         /** Priority of `cullImage(background: true)`: right after the prefetch window's fast images. */
         private const val BACKGROUND_PRIORITY = 2
         const val NOTIFICATIONS = "notifications"

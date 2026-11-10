@@ -11,9 +11,11 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ResponsiveDialog"
 import { Button } from "@/components/ui/button"
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { Switch } from "@/components/ui/switch"
 import { useDb } from "@/db/DbProvider"
 import { getCullDestination, setCullDestination } from "@/db/queries"
 import { useSetting } from "@/features/settings/settings"
@@ -31,11 +33,12 @@ import {
   type Decisions,
   planCopy,
 } from "./model"
+import { sidecarsFor } from "./xmp"
 
 /**
  * "Copy picks to…" (ADR 0008): where (any location, through the transfer engine's destination
  * picker; the last destination of this source is remembered), which files of a pair, and the
- * folder name. The copy is one batch job of the transfer engine (`useCopyPicks`): its progress,
+ * folder name, and optionally XMP sidecars with the stars (ADR 0009). The copy is one batch job of the transfer engine (`useCopyPicks`): its progress,
  * conflict question and retries are the engine's.
  */
 export function CopyPicksDialog({
@@ -57,6 +60,8 @@ export function CopyPicksDialog({
   const db = useDb()
   const copyPicks = useCopyPicks()
   const [defaultConflict] = useSetting("defaultConflict")
+  const [xmpSetting, setXmp] = useSetting("cullXmpSidecars")
+  const xmp = xmpSetting ?? false
   const [destination, setDestination] = useState<CopyDestination | null>(null)
   const [conflict, setConflict] = useState<TransferConflict | undefined>()
   const [options, setOptions] = useState<CopyPicksOptions>(DEFAULT_COPY_OPTIONS)
@@ -128,10 +133,19 @@ export function CopyPicksDialog({
         },
         { ...options, treeUri: destination.treeUri, conflict: policy }
       )
+      const sidecars = xmp
+        ? sidecarsFor(
+            plan.items,
+            order,
+            decisions,
+            `Hoard ${__APP_VERSION__}`,
+            new Date().toISOString()
+          )
+        : undefined
       await copyPicks(
         plan.items.map((i) => i.file),
         destination,
-        { source, subfolder, conflict: policy }
+        { source, subfolder, conflict: policy, sidecars }
       )
       onOpenChange(false)
     } catch {
@@ -230,6 +244,18 @@ export function CopyPicksDialog({
                 />
               ) : null}
             </fieldset>
+
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="copy-xmp">{t("cull.copy.xmp")}</FieldLabel>
+                <FieldDescription>{t("cull.copy.xmpHint")}</FieldDescription>
+              </FieldContent>
+              <Switch
+                id="copy-xmp"
+                checked={xmp}
+                onCheckedChange={(checked) => void setXmp(checked)}
+              />
+            </Field>
           </ResponsiveDialogBody>
           <ResponsiveDialogFooter>
             <Button

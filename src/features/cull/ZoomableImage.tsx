@@ -62,6 +62,7 @@ export function ZoomableImage({
   onTap,
   onZoomedChange,
   onSource,
+  focusRequest,
   className,
 }: {
   folder: CullFolder
@@ -76,6 +77,8 @@ export function ZoomableImage({
   onTap?: () => void
   onZoomedChange?: (zoomed: boolean) => void
   onSource?: (image: CullImageResult | undefined, zoom: CullZoomResult | undefined) => void
+  /** Zoom to this region (0..1 of the upright image, e.g. a face); `seq` changes for every request. */
+  focusRequest?: { x: number; y: number; width: number; height: number; seq: number }
   className?: string
 }) {
   const { t } = useTranslation()
@@ -337,6 +340,24 @@ export function ZoomableImage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [dpr, fitScale, fitView, settle, zoomAt, zoom, folder.key, shot]
   )
+
+  // Jump to a face (ADR 0009): the region about 40% of the box, centred, never past the max zoom.
+  useEffect(() => {
+    if (!focusRequest || !active) return
+    const { W, H, cw, ch } = sizeRef.current
+    if (!W || !H || !cw || !ch) return
+    const fw = Math.max(1, focusRequest.width * W)
+    const fh = Math.max(1, focusRequest.height * H)
+    const s = Math.min(
+      maxScale(),
+      Math.max(fitScale() * 1.5, Math.min(cw / (fw * 2.5), ch / (fh * 2.5)))
+    )
+    const cx = (focusRequest.x + focusRequest.width / 2) * W
+    const cy = (focusRequest.y + focusRequest.height / 2) * H
+    if (!zoom) void loadZoom(folder, shot).then(setZoom, () => {})
+    settle({ s, x: cw / 2 - cx * s, y: ch / 2 - cy * s })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusRequest?.seq])
 
   // --- Gestures ------------------------------------------------------------------------------
 

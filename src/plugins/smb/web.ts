@@ -2,6 +2,8 @@ import { WebPlugin } from "@capacitor/core"
 import type {
   ConnectOptions,
   ConnectResult,
+  CullAnalyzeOptions,
+  CullAnalyzeResult,
   CullCloseOptions,
   CullImageOptions,
   CullImageResult,
@@ -81,7 +83,14 @@ import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
 import { isTextFile } from "@/lib/text/textFiles"
 import { pairShots } from "@/lib/photos"
 import { GENERATED_TEXT } from "./mockText"
-import { derivedPhoto, type MockPhoto, photoMetadata, photoSharpness, photoSvg } from "./mockShoot"
+import {
+  derivedPhoto,
+  type MockPhoto,
+  photoAnalysis,
+  photoMetadata,
+  photoSharpness,
+  photoSvg,
+} from "./mockShoot"
 import { MOCK_VOLUMES } from "./mockLocal"
 import { type MockRoot, MockTransferEngine } from "./mockTransfers"
 import {
@@ -1232,6 +1241,28 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
         }
       }),
     }
+  }
+
+  async cullAnalyze(options: CullAnalyzeOptions): Promise<CullAnalyzeResult> {
+    const { cull, latencyMs } = this.cull(options)
+    if (options.shotIds.length > 20) throw fail("UNKNOWN", "At most 20 shots per call")
+    const results: CullAnalyzeResult["results"] = []
+    for (const id of options.shotIds) {
+      // Like native: the RAW's preview (two small reads) or the JPEG, ~40-100 ms of work each.
+      await this.wait(latencyMs * 2 + 45)
+      if (!this.culls.has(options.cullId)) throw fail("CANCELLED", "The folder was closed")
+      try {
+        const shot = this.shotOf(cull, id)
+        const analysis = photoAnalysis(this.photoOf(cull, shot), shot.stem)
+        results.push({ id, analysis: shot.raw ? analysis : { ...analysis, source: "rendered" } })
+      } catch (error) {
+        results.push({
+          id,
+          error: { code: smbErrorCodeOf(error), message: (error as Error).message },
+        })
+      }
+    }
+    return { results, faces: true }
   }
 
   async cullClose({ cullId }: CullCloseOptions): Promise<void> {
