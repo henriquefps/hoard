@@ -102,6 +102,7 @@ import {
 } from "@/lib/files"
 import { formatBytes, formatNumber } from "@/lib/format"
 import { goUp } from "@/lib/historyTrail"
+import { SCROLL_IDS, registerScrollAnchors } from "@/lib/scrollRestoration"
 import { CULL_MIN_PHOTOS, countPhotos } from "@/lib/photos"
 import { isTextFile, opensInViewer } from "@/lib/text/textFiles"
 import { cn } from "@/lib/utils"
@@ -417,7 +418,10 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
     )
   }
   return (
-    <div className="-mx-4 -mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain md:-mx-6 md:-mt-6">
+    <div
+      data-scroll-restoration-id={SCROLL_IDS.browseShares}
+      className="-mx-4 -mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain md:-mx-6 md:-mt-6"
+    >
       <h2 className="px-4 pt-4 pb-2 eyebrow md:px-6">{t("browse.shares")}</h2>
       <ul className="border-t">
         {shares.map((s) => (
@@ -636,6 +640,32 @@ function FolderView({
     overscan: 10,
     getItemKey: (index) => visible[index]?.path ?? index,
   })
+
+  // Restore by file, not only by pixels: the list may have changed since (lib/scrollRestoration.ts).
+  // The adapter reads the latest list and virtualizer through a ref.
+  const anchorList = useRef({ visible, virtualizer })
+  useEffect(() => {
+    anchorList.current = { visible, virtualizer }
+  })
+  useEffect(
+    () =>
+      registerScrollAnchors(SCROLL_IDS.browseList, {
+        capture(element) {
+          const { visible: rows, virtualizer: v } = anchorList.current
+          const top = element.scrollTop
+          const first = v.getVirtualItems().find((item) => item.end > top)
+          const entry = first && rows[first.index]
+          return entry ? { id: entry.path, offset: top - first.start } : undefined
+        },
+        resolve(_element, anchor) {
+          const { visible: rows, virtualizer: v } = anchorList.current
+          const index = rows.findIndex((e) => e.path === anchor.id)
+          const start = index >= 0 ? v.measurementsCache[index]?.start : undefined
+          return start === undefined ? undefined : start + anchor.offset
+        },
+      }),
+    []
+  )
 
   const parent = parentPath(path)
   useBackHandler(() => {
@@ -1012,6 +1042,7 @@ function FolderView({
     body = (
       <div
         ref={scrollRef}
+        data-scroll-restoration-id={SCROLL_IDS.browseList}
         className="@container -mx-4 min-h-0 flex-1 overflow-y-auto overscroll-contain border-t md:-mx-6"
       >
         <SortHeader

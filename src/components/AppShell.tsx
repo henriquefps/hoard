@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
 import { useAndroidBackButton } from "@/hooks/useAndroidBackButton"
+import { SCROLL_IDS } from "@/lib/scrollRestoration"
 import { useTheme } from "@/lib/theme/theme"
 import { TransfersIndicator } from "@/features/transfers/TransfersIndicator"
 import { TransfersDrawer } from "@/features/transfers/TransfersViews"
@@ -36,7 +37,9 @@ export function AppShell() {
         </header>
         <div className="flex h-[calc(100dvh-var(--header-height)-env(safe-area-inset-top))] min-h-0">
           <AppSidebar />
-          <SidebarInset className="min-h-0 min-w-0 overflow-y-auto overscroll-contain bg-card max-md:mx-2 max-md:mb-[max(0.5rem,env(safe-area-inset-bottom))] max-md:rounded-xl max-md:border max-md:shadow-xs md:peer-data-[variant=inset]:mt-0 md:peer-data-[variant=inset]:border md:peer-data-[variant=inset]:shadow-xs">
+          <SidebarInset
+            data-scroll-restoration-id={SCROLL_IDS.shell}
+            className="min-h-0 min-w-0 overflow-y-auto overscroll-contain bg-card max-md:mx-2 max-md:mb-[max(0.5rem,env(safe-area-inset-bottom))] max-md:rounded-xl max-md:border max-md:shadow-xs md:peer-data-[variant=inset]:mt-0 md:peer-data-[variant=inset]:border md:peer-data-[variant=inset]:shadow-xs">
             <Outlet />
             <ClipboardBar />
           </SidebarInset>
