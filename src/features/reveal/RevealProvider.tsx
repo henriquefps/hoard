@@ -14,6 +14,9 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { useDb } from "@/db/DbProvider"
+import { listCullDecisions } from "@/db/queries"
+import { revealCullingFor } from "@/features/cull/xmp"
 import { useSetting } from "@/features/settings/settings"
 import { formatNumber } from "@/lib/format"
 import { HoardSmb } from "@/plugins/smb"
@@ -33,6 +36,7 @@ export function RevealProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<RevealRequest | null>(null)
   const [dontExplain, setDontExplain] = useState(false)
   const [streamNoteSeen, setStreamNoteSeen] = useSetting("revealStreamNoteSeen")
+  const db = useDb()
 
   const check = useCallback(() => {
     void HoardSmb.revealAvailable().then(
@@ -53,11 +57,23 @@ export function RevealProvider({ children }: { children: ReactNode }) {
   const send = useCallback(
     async (request: RevealRequest) => {
       try {
+        const decisions =
+          request.decisions ??
+          (request.cullFolder
+            ? new Map(
+                (await listCullDecisions(db, request.cullFolder)).map((r) => [
+                  r.shot_id,
+                  { flag: r.flag, rating: r.rating },
+                ])
+              )
+            : undefined)
+        const culling = decisions ? revealCullingFor(request.paths, decisions) : {}
         await HoardSmb.openInReveal({
           location: await request.location.streamLocation(),
           paths: request.paths,
           ...(request.title ? { title: request.title } : {}),
           ...(request.initialPath ? { initialPath: request.initialPath } : {}),
+          ...(Object.keys(culling).length ? { culling } : {}),
         })
       } catch (error) {
         const code = smbErrorCode(error)
@@ -72,7 +88,7 @@ export function RevealProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [t]
+    [db, t]
   )
 
   const edit = useCallback(

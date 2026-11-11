@@ -4,6 +4,7 @@ import {
   CopyIcon,
   FlagCheckeredIcon,
   GearSixIcon,
+  LockSimpleIcon,
   PlayIcon,
   SlidersHorizontalIcon,
   SparkleIcon,
@@ -160,7 +161,21 @@ function CullFolderPage({
   trail: ReturnType<typeof cullTrail>
 }) {
   const { t, i18n } = useTranslation()
-  const folder = useCullFolder(location, path, () => toast.error(t("cull.saveFailed")))
+  // Sidecars that could not be written (ADR 0011): one toast per folder session, with the count so far.
+  const sidecarErrors = useRef({ count: 0, shown: false })
+  const folder = useCullFolder(
+    location,
+    path,
+    () => toast.error(t("cull.saveFailed")),
+    (count) => {
+      const errors = sidecarErrors.current
+      errors.count += count
+      if (errors.shown) return
+      errors.shown = true
+      // A moment later, so a batch's failures are counted together.
+      setTimeout(() => toast(t("cull.xmp.notWritten", { count: errors.count })), 1500)
+    }
+  )
   const assist = useCullAssist(folder)
   const [filter, setFilter] = useState<CullFilter>(ALL_SHOTS)
   const [assistFilter, setAssistFilter] = useState<AssistFilter>("any")
@@ -195,6 +210,7 @@ function CullFolderPage({
       paths: shotsPaths(shots),
       title,
       initialPath: initial ? shotInitialPath(initial) : undefined,
+      decisions: folder.decisions,
     })
   const picks = useMemo(
     () => folder.shots.filter((s) => decisionOf(folder.decisions, s.id).flag === "pick"),
@@ -274,14 +290,22 @@ function CullFolderPage({
 
   const meta =
     folder.status === "ready" ? (
-      <span className="text-[0.8125rem] text-muted-foreground tabular-nums">
-        {t("cull.progress", {
-          decided: formatNumber(progress.decided, locale),
-          total: formatNumber(progress.total, locale),
-          picked: formatNumber(progress.picked, locale),
-          rejected: formatNumber(progress.rejected, locale),
-        })}
-      </span>
+      <>
+        <span className="text-[0.8125rem] text-muted-foreground tabular-nums">
+          {t("cull.progress", {
+            decided: formatNumber(progress.decided, locale),
+            total: formatNumber(progress.total, locale),
+            picked: formatNumber(progress.picked, locale),
+            rejected: formatNumber(progress.rejected, locale),
+          })}
+        </span>
+        {folder.sidecarsReadOnly ? (
+          <span className="flex items-start gap-1.5 text-[0.8125rem] text-muted-foreground">
+            <LockSimpleIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0">{t("cull.xmp.readOnly")}</span>
+          </span>
+        ) : null}
+      </>
     ) : undefined
 
   const actions =
@@ -431,6 +455,7 @@ function CullFolderPage({
                     paths: shotPaths(shot),
                     title,
                     initialPath: shotInitialPath(shot),
+                    decisions: folder.decisions,
                   })
               : undefined
           }

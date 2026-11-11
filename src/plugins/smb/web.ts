@@ -5,6 +5,13 @@ import type {
   CullAnalyzeOptions,
   CullAnalyzeResult,
   CullCloseOptions,
+  CullReadSidecarsOptions,
+  CullReadSidecarsResult,
+  CullSidecarRead,
+  CullSidecarWrite,
+  CullWireFlag,
+  CullWriteSidecarsOptions,
+  CullWriteSidecarsResult,
   GestureExclusionOptions,
   CullImageOptions,
   CullImageResult,
@@ -96,6 +103,7 @@ import {
   photoSvg,
 } from "./mockShoot"
 import { MOCK_VOLUMES } from "./mockLocal"
+import { findSidecar, readMockXmp, writeMockXmp } from "./mockXmp"
 import { type MockRoot, MockTransferEngine } from "./mockTransfers"
 import {
   DEMO_PASSWORDS,
@@ -203,6 +211,23 @@ function readStorageGrant(): boolean {
   }
 }
 
+/**
+ * Reveal's `CULLING` extra as native builds it (ADR 0011): the decisions of the files sent only, ratings clamped,
+ * unknown flags dropped. Native keys it by URI; the mock keeps the paths.
+ */
+function revealCulling(
+  sent: readonly string[],
+  culling: NonNullable<OpenInRevealOptions["culling"]>
+): Record<string, { rating: number; flag: CullWireFlag }> {
+  const out: Record<string, { rating: number; flag: CullWireFlag }> = {}
+  for (const path of sent) {
+    const value = culling[path]
+    if (!value || !["pick", "reject", "none"].includes(value.flag)) continue
+    out[path] = { rating: Math.max(0, Math.min(5, Math.round(value.rating))), flag: value.flag }
+  }
+  return out
+}
+
 /** An open culling folder (`cullOpen`). */
 interface MockCull {
   location: LocationRef
@@ -210,6 +235,8 @@ interface MockCull {
   shots: Map<string, CullShot>
   /** Shots whose 100% image was prepared (a RAW-only shot's first LibRaw render is slow). */
   zoomed: Set<string>
+  /** A sidecar write was refused this session (ADR 0011). */
+  readOnly: boolean
 }
 
 /** Size of the ZV-E10's embedded preview (ADR 0006). */
@@ -890,6 +917,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       paths: ordered,
       ...(cleanTitle ? { title: cleanTitle } : {}),
       ...(initialPath && ordered.includes(initialPath) ? { initialPath } : {}),
+      ...(options.culling ? { culling: revealCulling(ordered, options.culling) } : {}),
     }
     this.revealCalls.push(call)
     console.info(`[HoardSmbWeb] would open Reveal with ${ordered.length} file(s)`, call)
@@ -1144,6 +1172,7 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       path,
       shots: new Map(shots.map((shot) => [shot.id, shot])),
       zoomed: new Set(),
+      readOnly: false,
     })
     return { cullId, shots, libRaw: true, ...(access ? { access } : {}) }
   }
@@ -1306,6 +1335,107 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       }
     }
     return { results, faces: true }
+  }
+
+  // --- Culling sidecars (ADR 0011) ---------------------------------------------------------------
+
+  /** Mock-only: every `cullWriteSidecars` call (tests). */
+  readonly sidecarWrites: CullWriteSidecarsOptions[] = []
+
+  private static shotFileNames(shot: CullShot): string[] {
+    return [shot.raw, shot.rendered, ...shot.others].flatMap((f) => (f ? [f.name] : []))
+  }
+
+  private static textOf(node: MockFile): string {
+    return node.text ?? (node.bytes ? new TextDecoder().decode(node.bytes) : "")
+  }
+
+  async cullReadSidecars(options: CullReadSidecarsOptions): Promise<CullReadSidecarsResult> {
+    const { cull, latencyMs } = this.cull(options)
+    const { node: folder } = this.resolve(cull.location, cull.path)
+    const files = (folder.children ?? []).filter((c) => !c.children)
+    const names = files.map((f) => f.name)
+    const out: CullSidecarRead[] = []
+    for (const { id, after } of options.shots) {
+      const shot = cull.shots.get(id)
+      if (!shot) continue
+      const name = findSidecar(shot.stem, HoardSmbWeb.shotFileNames(shot), names)
+      if (!name) continue
+      const node = files.find((f) => f.name === name)!
+      const modifiedMillis = node.modifiedAt ? Date.parse(node.modifiedAt) : null
+      if (after != null && (modifiedMillis ?? -Infinity) <= after) continue
+      const read = readMockXmp(HoardSmbWeb.textOf(node))
+      out.push(
+        read
+          ? { id, name, modifiedMillis, fields: read.fields, hasValues: read.hasValues }
+          : { id, name, modifiedMillis, error: "malformed" }
+      )
+    }
+    await this.wait(latencyMs * 2 + out.length * latencyMs)
+    return { shots: out }
+  }
+
+  async cullWriteSidecars(options: CullWriteSidecarsOptions): Promise<CullWriteSidecarsResult> {
+    const { cull, latencyMs } = this.cull(options)
+    for (const item of options.items) {
+      if (!item.shotId) throw fail("UNKNOWN", "items[].shotId is required")
+      if (
+        !(item.rating >= 0 && item.rating <= 5) ||
+        !["pick", "reject", "none"].includes(item.flag)
+      ) {
+        throw fail("UNKNOWN", "items[]: rating 0..5 and flag pick, reject or none are required")
+      }
+    }
+    this.sidecarWrites.push(options)
+    await this.wait(latencyMs * 2)
+    const { node: folder, readOnly } = this.resolve(cull.location, cull.path)
+    const children = folder.children ?? []
+    const results: CullSidecarWrite[] = options.items.map(({ shotId, rating, flag }) => {
+      const fields = { rating, flag }
+      const shot = cull.shots.get(shotId)
+      if (cull.readOnly) return { shotId, status: "readOnly", fields }
+      if (!shot) {
+        return {
+          shotId,
+          status: "failed",
+          fields,
+          error: { code: "NOT_FOUND", message: `No shot ${shotId}` },
+        }
+      }
+      const files = children.filter((c) => !c.children)
+      const existingName = findSidecar(
+        shot.stem,
+        HoardSmbWeb.shotFileNames(shot),
+        files.map((f) => f.name)
+      )
+      const name = existingName ?? (options.hidden ? `.${shot.stem}.xmp` : `${shot.stem}.xmp`)
+      const existing = existingName ? files.find((f) => f.name === existingName) : undefined
+      if (readOnly || existing?.readOnly) {
+        cull.readOnly = true
+        return { shotId, status: "readOnly", fields, name }
+      }
+      const text = writeMockXmp(
+        existing ? HoardSmbWeb.textOf(existing) : null,
+        fields,
+        `Hoard ${__APP_VERSION__}`,
+        new Date().toISOString()
+      )
+      if (text === null) return { shotId, status: "malformed", fields, name }
+      const target: MockFile = existing ?? { name }
+      target.text = text
+      target.bytes = undefined
+      target.size = new TextEncoder().encode(text).length
+      target.modifiedAt = laterThan(existing?.modifiedAt)
+      if (!existing) children.push(target)
+      return {
+        shotId,
+        status: "written",
+        fields,
+        name,
+        modifiedMillis: Date.parse(target.modifiedAt),
+      }
+    })
+    return { results, readOnly: cull.readOnly }
   }
 
   async cullClose({ cullId }: CullCloseOptions): Promise<void> {

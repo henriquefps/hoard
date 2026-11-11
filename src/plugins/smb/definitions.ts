@@ -595,19 +595,34 @@ export interface StartTransferOptions {
    */
   resume?: boolean
   /**
-   * Copies only: small XMP files written **at the destination** next to copied files (ADR 0009),
-   * as `<destination stem>.xmp` once the file at `sourcePath` is copied (a conflict rename carries
-   * over: `DSC1 (1).ARW` → `DSC1 (1).xmp`; a skipped file gets none). Best effort: a sidecar that
-   * cannot be written does not fail the item. At most 5,000, 16 KB each.
+   * Copies only: XMP sidecars written **at the destination** for copied shots (ADR 0011 "Copy picks"), once the file
+   * at `sourcePath` is copied: merged into the shot's existing sidecar there (`<stem>.xmp`, `<file>.xmp` or their
+   * hidden forms; a malformed one is left alone), else a new `<destination stem>.xmp` (a conflict rename carries
+   * over: `DSC1 (1).ARW` → `DSC1 (1).xmp`; a skipped file gets none). Best effort: a sidecar that cannot be written
+   * does not fail the item. At most 5,000.
    */
   sidecars?: TransferSidecar[]
+  /** New sidecars are hidden (`.<stem>.xmp`): Settings › Culling (ADR 0011). */
+  hiddenSidecars?: boolean
+}
+
+/** A culling flag on the wire (sidecars, Reveal's `CULLING` extra): `none` = unmarked. */
+export type CullWireFlag = "pick" | "reject" | "none"
+
+/** The culling fields of a sidecar (ADR 0011): `xmp:Rating` 0..5 and `digiKam:PickLabel`. */
+export interface SidecarFields {
+  /** 0..5 (a reject's stars are not in the file: it reads back as 0). */
+  rating: number
+  flag: CullWireFlag
+  /** `xmp:Label`, read only (Hoard has no colour labels and never writes one). */
+  label?: string
 }
 
 export interface TransferSidecar {
-  /** A source file of the job (as in `sources[].path`). */
+  /** A source file of the job (as in `sources[].path`): the shot's RAW when copied, else its first file. */
   sourcePath: string
-  /** The XMP document (UTF-8). */
-  content: string
+  rating: number
+  flag: CullWireFlag
 }
 
 export interface StartTransferResult {
@@ -711,6 +726,11 @@ export interface OpenInRevealOptions {
   title?: string
   /** One of `paths`: Reveal opens it in the editor at once, the batch behind it. */
   initialPath?: string
+  /**
+   * Culling decisions by path (one of `paths`; ADR 0011): sent as Reveal's `CULLING` extra (version 1), keyed by
+   * each file's URI. Shots without a decision are left out; a reject sends its stars as `rating`.
+   */
+  culling?: Record<string, { rating: number; flag: CullWireFlag }>
 }
 
 export interface OpenInRevealResult {
@@ -874,6 +894,60 @@ export interface CullOpenResult {
 export interface CullRef {
   cullId: string
   location: LocationRef
+}
+
+export interface CullReadSidecarsOptions extends CullRef {
+  /**
+   * The shots to look at, each with the mtime (ms) its sidecar must be later than to be read (ADR 0011
+   * "Precedence"); `after` absent or null = read any sidecar the shot has.
+   */
+  shots: { id: string; after?: number | null }[]
+  /** List the folder again (the app came back to the front) instead of using the listing made at open. */
+  refresh?: boolean
+}
+
+/** A shot's sidecar as read: `fields` when it is well-formed XMP, else `error` (`malformed`, or a contract code). */
+export interface CullSidecarRead {
+  id: string
+  /** The sidecar's name in the folder (`DSC1.xmp`, `DSC1.ARW.xmp`, `.DSC1.xmp`). */
+  name: string
+  modifiedMillis: number | null
+  fields?: SidecarFields
+  /** The sidecar holds a culling value (a rating, a pick label, or an old Hoard pick); false = develop settings only. */
+  hasValues?: boolean
+  error?: string
+}
+
+export interface CullReadSidecarsResult {
+  /** Only the shots that have a sidecar newer than their `after`. */
+  shots: CullSidecarRead[]
+}
+
+export interface CullWriteSidecarsOptions extends CullRef {
+  /** Decisions to write into the shots' sidecars (unmarked = `rating: 0, flag: "none"`). */
+  items: { shotId: string; rating: number; flag: CullWireFlag }[]
+  /** New sidecars are hidden (`.<stem>.xmp`). */
+  hidden?: boolean
+}
+
+/**
+ * One item's outcome: `written`; `malformed` (the existing sidecar is not XMP: left as it was); `failed` (I/O);
+ * `readOnly` (the folder refused a write this session: not attempted).
+ */
+export interface CullSidecarWrite {
+  shotId: string
+  status: "written" | "malformed" | "failed" | "readOnly"
+  /** What was written for the shot (the latest decision when several were coalesced). */
+  fields: SidecarFields
+  name?: string
+  modifiedMillis?: number
+  error?: { code: HoardSmbErrorCode; message: string }
+}
+
+export interface CullWriteSidecarsResult {
+  results: CullSidecarWrite[]
+  /** The folder refused a write this session: decisions stay in Hoard's database. */
+  readOnly: boolean
 }
 
 /** EXIF essentials of a shot (from the RAW's header when there is one, else the JPEG's). */
@@ -1453,7 +1527,21 @@ export interface HoardSmbPlugin {
    */
   cullAnalyze(options: CullAnalyzeOptions): Promise<CullAnalyzeResult>
 
-  /** Forget a culling handle and stop its background work. Idempotent. */
+  /**
+   * The XMP sidecars of some shots (ADR 0011 "Reading"), only those newer than each shot's `after`: names from the
+   * folder's listing (one pass), then one small read each. Rejects like `list` (for `refresh`).
+   */
+  cullReadSidecars(options: CullReadSidecarsOptions): Promise<CullReadSidecarsResult>
+
+  /**
+   * Write decisions into the shots' sidecars (ADR 0011 "Writing"): merged into the existing sidecar (never a
+   * malformed one), else a new `<stem>.xmp`; atomic, one at a time. Coalesced natively for a moment and written at
+   * once when the app leaves the screen or the folder closes; resolves when written, one result per item. A refused
+   * write (`ACCESS_DENIED`) makes the folder read-only for the session (`readOnly`).
+   */
+  cullWriteSidecars(options: CullWriteSidecarsOptions): Promise<CullWriteSidecarsResult>
+
+  /** Forget a culling handle and stop its background work (pending sidecar writes are still written). Idempotent. */
   cullClose(options: CullCloseOptions): Promise<void>
 
   /**

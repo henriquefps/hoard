@@ -9,6 +9,7 @@ import type {
   CullFlag,
   CullFolderKey,
   CullSessionRecord,
+  CullSidecarRecord,
   FavoriteRecord,
   MachineAddressRecord,
   ManualShareRecord,
@@ -129,6 +130,7 @@ export async function deleteMachine(db: Db, id: string): Promise<void> {
     await db.run("DELETE FROM machines WHERE id = ?", [id])
     // Culling rows have no foreign key (local locations are not rows): clear them by hand.
     await db.run("DELETE FROM cull_decisions WHERE location_id = ?", [id])
+    await db.run("DELETE FROM cull_sidecars WHERE location_id = ?", [id])
     await db.run("DELETE FROM cull_sessions WHERE location_id = ?", [id])
     await db.run("DELETE FROM cull_analysis WHERE location_id = ?", [id])
     await db.run("DELETE FROM cull_destinations WHERE source_location_id = ? OR location_id = ?", [
@@ -477,6 +479,53 @@ export async function saveCullDecisions(
   })
 }
 
+/** The sidecar rows of a folder (ADR 0011). */
+export async function listCullSidecars(db: Db, key: CullFolderKey): Promise<CullSidecarRecord[]> {
+  return db.query<CullSidecarRecord>(
+    "SELECT * FROM cull_sidecars WHERE location_id = ? AND share = ? AND path = ?",
+    folderParams(key)
+  )
+}
+
+/**
+ * Update the sidecar rows of some shots (ADR 0011): a field left undefined keeps its stored value. `decidedAt` is set
+ * by decisions, `sidecarMtime` + `synced` by writes and imports.
+ */
+export async function saveCullSidecars(
+  db: Db,
+  key: CullFolderKey,
+  rows: readonly {
+    shotId: string
+    decidedAt?: number | null
+    sidecarMtime?: number | null
+    synced?: boolean
+  }[]
+): Promise<void> {
+  if (rows.length === 0) return
+  await db.transaction(async () => {
+    for (const row of rows) {
+      await db.run(
+        `INSERT INTO cull_sidecars (location_id, share, path, shot_id, decided_at, sidecar_mtime, synced)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (location_id, share, path, shot_id) DO UPDATE SET
+           decided_at = CASE WHEN ? THEN excluded.decided_at ELSE decided_at END,
+           sidecar_mtime = CASE WHEN ? THEN excluded.sidecar_mtime ELSE sidecar_mtime END,
+           synced = CASE WHEN ? THEN excluded.synced ELSE synced END`,
+        [
+          ...folderParams(key),
+          row.shotId,
+          row.decidedAt ?? null,
+          row.sidecarMtime ?? null,
+          row.synced ? 1 : 0,
+          row.decidedAt !== undefined ? 1 : 0,
+          row.sidecarMtime !== undefined ? 1 : 0,
+          row.synced !== undefined ? 1 : 0,
+        ]
+      )
+    }
+  })
+}
+
 /** Forget the decisions of shots that no longer exist (after "Delete rejects"). */
 export async function forgetCullShots(
   db: Db,
@@ -488,6 +537,10 @@ export async function forgetCullShots(
     for (const shotId of shotIds) {
       await db.run(
         "DELETE FROM cull_decisions WHERE location_id = ? AND share = ? AND path = ? AND shot_id = ?",
+        [...folderParams(key), shotId]
+      )
+      await db.run(
+        "DELETE FROM cull_sidecars WHERE location_id = ? AND share = ? AND path = ? AND shot_id = ?",
         [...folderParams(key), shotId]
       )
     }

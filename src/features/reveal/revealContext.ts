@@ -1,4 +1,6 @@
 import { createContext, useContext } from "react"
+import type { CullFolderKey } from "@/db/types"
+import type { Decisions } from "@/features/cull/model"
 import type { BrowseLocation } from "@/features/locations/useBrowseLocation"
 
 /** One "Edit in Reveal" request: photos of one location (ADR 0010). */
@@ -10,6 +12,10 @@ export interface RevealRequest {
   title?: string
   /** One of `paths`: Reveal opens it in the editor at once. */
   initialPath?: string
+  /** Culling decisions by shot id, sent as Reveal's `CULLING` extra (ADR 0011): the culling page's own. */
+  decisions?: Decisions
+  /** Elsewhere (the browser): the folder whose saved culling decisions to send. */
+  cullFolder?: CullFolderKey
 }
 
 export interface RevealContextValue {

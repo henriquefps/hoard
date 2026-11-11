@@ -832,7 +832,13 @@ function FolderView({
     const paths = selectionPaths(list, entries ?? [])
     if (paths.length === 0) return
     const one = list.length === 1 && !list[0].isDirectory ? list[0].path : undefined
-    reveal.edit({ location, paths, title: folderLabel, initialPath: one })
+    reveal.edit({
+      location,
+      paths,
+      title: folderLabel,
+      initialPath: one,
+      cullFolder: { locationId: location.id, share: isSmb ? (share ?? "") : "", path },
+    })
     if (list.length > 1) clearSelection()
   }
 

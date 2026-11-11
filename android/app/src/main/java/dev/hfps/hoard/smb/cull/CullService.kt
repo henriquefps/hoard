@@ -17,6 +17,7 @@ import dev.hfps.hoard.image.source.DescriptorSource
 import dev.hfps.hoard.image.source.FileSource
 import dev.hfps.hoard.image.source.RandomAccessSource
 import dev.hfps.hoard.image.source.SmbFileSource
+import dev.hfps.hoard.smb.CredentialStore
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.IsoTime
 import dev.hfps.hoard.smb.SmbEntry
@@ -25,6 +26,9 @@ import dev.hfps.hoard.smb.SmbSessions
 import dev.hfps.hoard.smb.location.Location
 import dev.hfps.hoard.smb.location.VolumeRegistry
 import dev.hfps.hoard.smb.smbFail
+import dev.hfps.hoard.smb.transfer.SessionShareFs
+import dev.hfps.hoard.smb.transfer.TransferEndpoints
+import dev.hfps.hoard.smb.transfer.TransferFs
 import dev.hfps.hoard.smb.viewer.RemoteFiles
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -40,6 +44,8 @@ class CullFolder(
     val sourceId: String,
     val shots: List<CullShotRef>,
     @Volatile var location: Location,
+    /** The folder's files as listed at open (names and mtimes): where its shots' sidecars are looked for. */
+    @Volatile var listed: List<ListedName> = emptyList(),
 ) {
     val byId: Map<String, CullShotRef> = shots.associateBy { it.id }
     val requests = ConcurrentHashMap<String, ShotRequest>()
@@ -54,7 +60,22 @@ class CullFolder(
  * descriptors). One [ImageCore] for the app: its worker threads are never interrupted (an
  * interrupted smbj read would close the session for every other call).
  */
-class CullService(private val context: Context, private val sessions: SmbSessions, private val volumes: VolumeRegistry) {
+class CullService(
+    private val context: Context,
+    private val sessions: SmbSessions,
+    private val volumes: VolumeRegistry,
+    credentials: CredentialStore,
+) {
+    private val endpoints = TransferEndpoints(context.applicationContext, credentials)
+
+    /** The folder's file operations for its sidecars (ADR 0011): the session's share, or the local location. */
+    fun fs(folder: CullFolder): TransferFs = when (val location = folder.location) {
+        is Location.Smb -> SessionShareFs(sessions.get(location.sessionId), location.share)
+        is Location.Local -> endpoints.local(location)
+    }
+
+    /** Writes culling decisions into the shots' sidecars (ADR 0011). */
+    val sidecars = CullSidecarWriter(::fs)
 
     private val faceDetector = MlKitFaces()
 
@@ -83,7 +104,8 @@ class CullService(private val context: Context, private val sessions: SmbSession
         val files = entries.filter { !it.isDirectory }.map { entry ->
             CullFileRef(entry.name, entry.path, entry.size, entry.modifiedAt, IsoTime.parse(entry.modifiedAt) ?: 0L)
         }
-        val folder = CullFolder(UUID.randomUUID().toString(), path, sourceIdOf(location), CullModel.shots(files), location)
+        val listed = entries.filter { !it.isDirectory }.map { ListedName(it.name, IsoTime.parse(it.modifiedAt)) }
+        val folder = CullFolder(UUID.randomUUID().toString(), path, sourceIdOf(location), CullModel.shots(files), location, listed)
         folders[folder.id] = folder
         // A few folders at most are culled at once; keep the newest ones.
         if (folders.size > MAX_FOLDERS) folders.keys.filter { it != folder.id }.take(folders.size - MAX_FOLDERS).forEach(::close)
@@ -99,6 +121,7 @@ class CullService(private val context: Context, private val sessions: SmbSession
     }
 
     fun close(cullId: String) {
+        sidecars.close(cullId)
         val folder = folders.remove(cullId)
         folder?.analyses?.toList()?.forEach(core::cancelKey)
         if (folder != null && folders.isEmpty()) {

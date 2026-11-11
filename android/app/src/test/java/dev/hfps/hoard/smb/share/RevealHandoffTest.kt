@@ -62,4 +62,39 @@ class RevealHandoffTest {
         assertEquals("dev.hfps.reveal.extra.TITLE", RevealHandoff.EXTRA_TITLE)
         assertEquals("dev.hfps.reveal.extra.INITIAL_URI", RevealHandoff.EXTRA_INITIAL_URI)
     }
+
+    @Test
+    fun `culling values are keyed by each sent URI, on the RAW and the JPEG, only for shots with a decision`() {
+        val files = listOf(
+            "DCIM/a.ARW" to "content://x/a.ARW",
+            "DCIM/a.jpg" to "content://x/a.jpg",
+            "DCIM/b.jpg" to "content://x/b.jpg",
+            "DCIM/c.ARW" to "content://x/c.ARW",
+        )
+        val values = RevealHandoff.cullingValues(
+            files,
+            mapOf(
+                "DCIM/a.ARW" to RevealHandoff.Culling(4, "pick"),
+                "/DCIM/a.jpg" to RevealHandoff.Culling(4, "pick"),
+                // A reject sends its stars too (Reveal keeps them in its database).
+                "DCIM/c.ARW" to RevealHandoff.Culling(3, "REJECT"),
+                // Not among the files sent: dropped.
+                "DCIM/z.ARW" to RevealHandoff.Culling(1, "pick"),
+            ),
+        )
+        assertEquals(listOf("content://x/a.ARW", "content://x/a.jpg", "content://x/c.ARW"), values.keys.toList())
+        assertEquals(RevealHandoff.Culling(4, "pick"), values["content://x/a.ARW"])
+        assertEquals(RevealHandoff.Culling(3, "reject"), values["content://x/c.ARW"])
+        assertNull(values["content://x/b.jpg"])
+    }
+
+    @Test
+    fun `culling values are clamped and unknown flags dropped`() {
+        val files = listOf("a.ARW" to "u1", "b.ARW" to "u2")
+        val values = RevealHandoff.cullingValues(files, mapOf("a.ARW" to RevealHandoff.Culling(9, "none"), "b.ARW" to RevealHandoff.Culling(2, "maybe")))
+        assertEquals(mapOf("u1" to RevealHandoff.Culling(5, "none")), values)
+        assertEquals("dev.hfps.reveal.extra.CULLING", RevealHandoff.EXTRA_CULLING)
+        assertEquals("dev.hfps.reveal.extra.CULLING_VERSION", RevealHandoff.EXTRA_CULLING_VERSION)
+        assertEquals(1, RevealHandoff.CULLING_VERSION)
+    }
 }

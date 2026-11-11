@@ -250,6 +250,11 @@ of these. No scene was wrongly joined.
 
 ## 9. XMP sidecars
 
+> **Superseded by [ADR 0011](0011-culling-sidecars.md) (1.9.0):** decisions are written to sidecars next to the
+> photos in writable folders and read back; "Copy picks" uses the same native module, merges into a sidecar
+> already at the destination and writes `digiKam:PickLabel` too; its switch became Settings › Culling › "Save
+> ratings next to photos (XMP)", on by default. The text below describes 1.6–1.8.
+
 "Copy picks to…" has **Write ratings as XMP sidecars** (off by default, remembered). For each
 copied shot one `<stem>.xmp` is written **at the destination only**, next to the copy, by the
 transfer engine itself (`startTransfer({ sidecars: [{ sourcePath, content }] })`: after the file is

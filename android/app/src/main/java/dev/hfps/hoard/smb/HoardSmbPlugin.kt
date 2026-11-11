@@ -25,6 +25,7 @@ import dev.hfps.hoard.smb.share.RevealHandoff
 import dev.hfps.hoard.smb.share.ShareOut
 import dev.hfps.hoard.smb.stream.SmbSource
 import dev.hfps.hoard.smb.transfer.Endpoint
+import dev.hfps.hoard.smb.transfer.SidecarJson
 import dev.hfps.hoard.smb.transfer.StartTransferRequest
 import dev.hfps.hoard.smb.transfer.TransferJob
 import dev.hfps.hoard.smb.transfer.TransferSource
@@ -37,6 +38,7 @@ import dev.hfps.hoard.smb.stream.StreamRequest
 import dev.hfps.hoard.smb.stream.MimeTypes
 import dev.hfps.hoard.smb.stream.Streamer
 import dev.hfps.hoard.smb.location.HoardFs
+import dev.hfps.hoard.smb.location.LocalErrors
 import dev.hfps.hoard.smb.location.LocalFile
 import dev.hfps.hoard.smb.location.LocalStreamSource
 import dev.hfps.hoard.smb.location.Location
@@ -55,6 +57,10 @@ import dev.hfps.hoard.smb.cull.CullFolder
 import dev.hfps.hoard.image.ImageCore
 import dev.hfps.hoard.smb.cull.CullAnalysisJson
 import dev.hfps.hoard.smb.cull.CullService
+import dev.hfps.hoard.smb.cull.CullSidecars
+import dev.hfps.hoard.smb.cull.ListedName
+import dev.hfps.hoard.xmp.SidecarTool
+import dev.hfps.hoard.xmp.XmpFields
 import dev.hfps.hoard.image.CullModel
 import dev.hfps.hoard.image.ScreenSource
 import dev.hfps.hoard.image.ZoomSource
@@ -158,7 +164,8 @@ class HoardSmbPlugin : Plugin() {
             notifyListeners("networkChanged", JSObject().put("transport", state.transport).put("vpn", state.vpn))
         }.also { it.start() }
         volumes = VolumeRegistry(context)
-        cull = CullService(context, sessions, volumes)
+        cull = CullService(context, sessions, volumes, credentials)
+        SidecarTool.version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty()
         volumeMonitor = VolumeMonitor(context) { change ->
             scope.launch {
                 val event = JSObject().put("volumes", volumesJson())
@@ -177,7 +184,14 @@ class HoardSmbPlugin : Plugin() {
         scope.launch { runCatching { IncomingShares.receive(context, intent) } }
     }
 
+    /** Hoard leaves the screen: culling's pending sidecar writes go out now (ADR 0011 "Flush"). */
+    override fun handleOnPause() {
+        super.handleOnPause()
+        if (::cull.isInitialized) cull.sidecars.flushAll()
+    }
+
     override fun handleOnDestroy() {
+        if (::cull.isInitialized) cull.sidecars.flushAll()
         IncomingShares.removeListener(shareListener)
         networkMonitor?.stop()
         volumeMonitor?.stop()
@@ -628,9 +642,11 @@ class HoardSmbPlugin : Plugin() {
                 conflict = call.getString("conflict") ?: "rename",
                 resume = call.getBoolean("resume", false) ?: false,
                 sidecars = call.getArray("sidecars")?.toList<JSONObject>().orEmpty().associate {
-                    (it.optString("sourcePath").takeIf { p -> p.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "sidecars[].sourcePath is required")) to
-                        (it.optString("content").takeIf { c -> c.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "sidecars[].content is required"))
+                    val path = it.optString("sourcePath").takeIf { p -> p.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "sidecars[].sourcePath is required")
+                    val rating = if (it.has("rating")) it.optInt("rating", -1) else smbFail(ErrorCode.UNKNOWN, "sidecars[].rating is required")
+                    path to (SidecarJson.fields(rating, it.optString("flag")) ?: smbFail(ErrorCode.UNKNOWN, "sidecars[]: rating 0..5 and flag pick, reject or none are required"))
                 },
+                hiddenSidecars = call.getBoolean("hiddenSidecars", false) ?: false,
             ),
         )
         JSObject().put("transferId", job.transferId)
@@ -718,6 +734,13 @@ class HoardSmbPlugin : Plugin() {
         val paths = call.getArray("paths")?.toList<String>().orEmpty()
         if (paths.isEmpty()) smbFail(ErrorCode.UNKNOWN, "paths is required")
         if (!reveal.isAvailable()) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        // Culling decisions by path (ADR 0011): Reveal's CULLING extra, keyed by the URIs built below.
+        val culling = call.getObject("culling")?.let { values ->
+            values.keys().asSequence().mapNotNull { path ->
+                val value = values.optJSONObject(path) ?: return@mapNotNull null
+                path to RevealHandoff.Culling(value.optInt("rating", 0), value.optString("flag", "none"), value.optString("label").takeIf { it.isNotEmpty() })
+            }.toMap()
+        }.orEmpty()
         val files = withContext(Dispatchers.IO) {
             if (location.optString("kind") == "smb") {
                 val request = streamRequest(call, paths[0])
@@ -730,7 +753,7 @@ class HoardSmbPlugin : Plugin() {
         }
         val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open Reveal from")
         try {
-            withContext(Dispatchers.Main) { reveal.launch(activity, files, call.getString("title"), call.getString("initialPath")) }
+            withContext(Dispatchers.Main) { reveal.launch(activity, files, call.getString("title"), call.getString("initialPath"), culling) }
         } catch (e: Throwable) {
             reveal.discard(files)
             throw e
@@ -1225,6 +1248,87 @@ class HoardSmbPlugin : Plugin() {
             webView.systemGestureExclusionRects = rects
             call.resolve()
         }
+    }
+
+    // --- Culling sidecars (ADR 0011) ------------------------------------------------------------
+
+    private fun sidecarFieldsJson(fields: XmpFields) = JSObject().apply {
+        put("rating", fields.rating)
+        put("flag", fields.flag.wire)
+        fields.label?.let { put("label", it) }
+    }
+
+    /**
+     * The sidecars of some shots whose mtime is later than the caller's threshold: from the listing made at open,
+     * or (`refresh`) from a new listing of the folder (the app came back to the front).
+     */
+    @PluginMethod
+    fun cullReadSidecars(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val wanted = call.getArray("shots")?.toList<JSONObject>().orEmpty()
+        if (wanted.size > 5000) smbFail(ErrorCode.UNKNOWN, "At most 5000 shots per call")
+        val after = wanted.associate { it.getString("id") to (if (it.has("after") && !it.isNull("after")) it.getLong("after") else null) }
+        val shots = after.keys.mapNotNull { folder.byId[it] }
+        val refresh = call.getBoolean("refresh", false) == true
+        val started = System.nanoTime()
+        val found = withContext(Dispatchers.IO) {
+            val read = {
+                cull.fs(folder).use { fs ->
+                    val listed = if (refresh) {
+                        fs.list(folder.path).filter { !it.isDirectory }.map { ListedName(it.name, it.modifiedMillis) }.also { folder.listed = it }
+                    } else {
+                        folder.listed
+                    }
+                    CullSidecars.read(fs, folder.path, shots, listed, after)
+                }
+            }
+            val location = folder.location
+            if (location is Location.Smb) sessions.use(location.sessionId) { read() } else LocalErrors.guard { read() }
+        }
+        CullService.log("sidecars: ${found.size} of ${shots.size} read in ${(System.nanoTime() - started) / 1_000_000} ms")
+        val out = JSArray()
+        found.forEach { item ->
+            out.put(JSObject().apply {
+                put("id", item.shotId)
+                put("name", item.name)
+                put("modifiedMillis", item.modifiedMillis ?: JSONObject.NULL)
+                item.read?.let {
+                    put("fields", sidecarFieldsJson(it.fields))
+                    put("hasValues", it.hasValues)
+                }
+                item.error?.let { put("error", it) }
+            })
+        }
+        JSObject().put("shots", out)
+    }
+
+    /**
+     * Writes decisions into the shots' sidecars. Resolves once they are written (coalesced with other decisions on
+     * the same shots for a moment, ADR 0011 "Writing"), with one result per item.
+     */
+    @PluginMethod
+    fun cullWriteSidecars(call: PluginCall) = run(call) {
+        val folder = call.cullFolder()
+        val items = call.getArray("items")?.toList<JSONObject>().orEmpty().map {
+            val id = it.optString("shotId").takeIf { s -> s.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "items[].shotId is required")
+            val rating = if (it.has("rating")) it.optInt("rating", -1) else -1
+            id to (SidecarJson.fields(rating, it.optString("flag")) ?: smbFail(ErrorCode.UNKNOWN, "items[]: rating 0..5 and flag pick, reject or none are required"))
+        }
+        if (items.isEmpty()) return@run JSObject().put("results", JSArray()).put("readOnly", cull.sidecars.isReadOnly(folder.id))
+        if (items.size > 5000) smbFail(ErrorCode.UNKNOWN, "At most 5000 items per call")
+        val results = cull.sidecars.enqueue(folder, items, call.getBoolean("hidden", false) == true).await()
+        val out = JSArray()
+        results.forEach { r ->
+            out.put(JSObject().apply {
+                put("shotId", r.shotId)
+                put("status", r.status)
+                put("fields", sidecarFieldsJson(r.fields))
+                r.name?.let { put("name", it) }
+                r.modifiedMillis?.let { put("modifiedMillis", it) }
+                r.error?.let { put("error", JSObject().put("code", it.code.name).put("message", it.message ?: it.code.name)) }
+            })
+        }
+        JSObject().put("results", out).put("readOnly", cull.sidecars.isReadOnly(folder.id))
     }
 
     @PluginMethod
