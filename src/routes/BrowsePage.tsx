@@ -30,7 +30,8 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { NameDialog } from "@/components/NameDialog"
-import { Page } from "@/components/page/Page"
+import { ActionLabel, CompactSearch, Page, PageScroll } from "@/components/page/Page"
+import { useScrollMargin } from "@/components/page/useScrollMargin"
 import { browseTrail } from "@/components/page/breadcrumbs"
 import { SmbErrorState } from "@/components/SmbErrorState"
 import {
@@ -76,7 +77,7 @@ import { LocationStatus } from "@/features/locations/LocationStatus"
 import { type BrowseLocation, useBrowseLocation } from "@/features/locations/useBrowseLocation"
 import { useLeaveWhenUnplugged } from "@/features/locations/useLeaveWhenUnplugged"
 import { parseLocationId } from "@/features/locations/ids"
-import { BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
+import { BrowserMenuItems, BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
 import { hasPhotos, selectionPaths } from "@/features/reveal/handoff"
 import { useReveal } from "@/features/reveal/revealContext"
 import { accountName, isReadOnly, readOnlyReasonKey } from "@/features/browse/access"
@@ -170,16 +171,13 @@ export function BrowsePage() {
       title={title}
       breadcrumbs={browseTrail(t, trailLocation, isSmb ? share : undefined, path)}
       meta={
-        readOnly ? (
-          <span className="flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            {status}
-            <ReadOnlyBadge title={readOnlyReason} />
-          </span>
-        ) : (
-          status
-        )
+        <>
+          {status}
+          {readOnly && <ReadOnlyBadge title={readOnlyReason} />}
+        </>
       }
       actions={location && <HeaderActions location={location} path={path} photos={photos} />}
+      menu={location && <HeaderMenu location={location} />}
     >
       {location === undefined ? (
         <ListSkeleton className="-mt-4 md:-mt-6" />
@@ -234,7 +232,6 @@ function HeaderActions({
     (d) => (canPin ? findFavorite(d, location.id, share ?? "", path) : Promise.resolve(null)),
     [location.id, share, path, canPin]
   )
-  const [showHidden, setShowHidden] = useSetting("showHiddenFiles")
   const label = splitPath(path).at(-1) ?? share ?? location.name ?? ""
   return (
     <>
@@ -245,9 +242,10 @@ function HeaderActions({
             params={{ locationId: location.id }}
             search={{ share, path: path || undefined }}
             aria-label={t("cull.open")}
+            title={t("cull.open")}
           >
             <ApertureIcon data-icon="inline-start" />
-            <span className="max-sm:sr-only">{t("cull.open")}</span>
+            <ActionLabel className="max-sm:sr-only">{t("cull.open")}</ActionLabel>
           </Link>
         </Button>
       )}
@@ -280,44 +278,46 @@ function HeaderActions({
           />
         </Button>
       )}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label={t("common.more")}>
-            <DotsThreeVerticalIcon weight="bold" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-52">
-          <DropdownMenuCheckboxItem
-            checked={showHidden ?? false}
-            onCheckedChange={(checked) => void setShowHidden(checked)}
-          >
-            <EyeIcon />
-            {t("browse.showHidden")}
-          </DropdownMenuCheckboxItem>
-          <DropdownMenuSeparator />
-          {machine ? (
-            <DropdownMenuItem asChild>
-              <Link to="/machines/$machineId/edit" params={{ machineId: machine.id }}>
-                <PencilSimpleIcon />
-                {t("machines.edit")}
-              </Link>
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem
-              onSelect={() =>
-                void HoardSmb.openStorageSettings(
-                  location.volume?.uuid ? { uuid: location.volume.uuid } : undefined
-                ).catch(() => toast.error(t("errors.UNKNOWN.title")))
-              }
-            >
-              {location.kind === "volume" ? <EjectIcon /> : <GearSixIcon />}
-              {location.kind === "volume"
-                ? t("locations.ejectInSettings")
-                : t("locations.storageSettings")}
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+    </>
+  )
+}
+
+/** The page's ⋯ items: hidden files, then the machine's or the storage's settings. */
+function HeaderMenu({ location }: { location: BrowseLocation }) {
+  const { t } = useTranslation()
+  const { machine } = location
+  const [showHidden, setShowHidden] = useSetting("showHiddenFiles")
+  return (
+    <>
+      <DropdownMenuCheckboxItem
+        checked={showHidden ?? false}
+        onCheckedChange={(checked) => void setShowHidden(checked)}
+      >
+        <EyeIcon />
+        {t("browse.showHidden")}
+      </DropdownMenuCheckboxItem>
+      <DropdownMenuSeparator />
+      {machine ? (
+        <DropdownMenuItem asChild>
+          <Link to="/machines/$machineId/edit" params={{ machineId: machine.id }}>
+            <PencilSimpleIcon />
+            {t("machines.edit")}
+          </Link>
+        </DropdownMenuItem>
+      ) : (
+        <DropdownMenuItem
+          onSelect={() =>
+            void HoardSmb.openStorageSettings(
+              location.volume?.uuid ? { uuid: location.volume.uuid } : undefined
+            ).catch(() => toast.error(t("errors.UNKNOWN.title")))
+          }
+        >
+          {location.kind === "volume" ? <EjectIcon /> : <GearSixIcon />}
+          {location.kind === "volume"
+            ? t("locations.ejectInSettings")
+            : t("locations.storageSettings")}
+        </DropdownMenuItem>
+      )}
     </>
   )
 }
@@ -421,9 +421,9 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
     )
   }
   return (
-    <div
-      data-scroll-restoration-id={SCROLL_IDS.browseShares}
-      className="-mx-4 -mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain md:-mx-6 md:-mt-6"
+    <PageScroll
+      scrollId={SCROLL_IDS.browseShares}
+      className="-mx-4 -mt-4 -mb-3 md:-mx-6 md:-mt-6 md:-mb-4"
     >
       <h2 className="px-4 pt-4 pb-2 eyebrow md:px-6">{t("browse.shares")}</h2>
       <ul className="border-t">
@@ -432,7 +432,7 @@ function SharesView({ machine }: { machine: MachineWithAddresses }) {
         ))}
       </ul>
       <div className="px-4 py-4 md:px-6">{openByName}</div>
-    </div>
+    </PageScroll>
   )
 }
 
@@ -610,6 +610,7 @@ function FolderView({
   const [opening, setOpening] = useState<string | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const locale = i18n.language
   const effectiveSort = sort ?? defaultSort ?? DEFAULT_SORT
   const setSort = (next: SortOrder) => {
@@ -636,9 +637,12 @@ function FolderView({
   const inSelection = selectionMode || selected.size > 0
   const reveal = useReveal()
 
+  // The list sits under the page header and the table header, inside the same scroller.
+  const scrollMargin = useScrollMargin(listRef, visible.length > 0)
   // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render on purpose
   const virtualizer = useVirtualizer({
     count: visible.length,
+    scrollMargin,
     getScrollElement: () => scrollRef.current,
     estimateSize: () => 64,
     overscan: 10,
@@ -1010,32 +1014,34 @@ function FolderView({
   let body
   if (folder.error && !entries) {
     body = (
-      <LocationErrorState
-        code={folder.error.code}
-        location={location}
-        attempts={folder.error.attempts}
-        restricted={folder.error.restricted}
-        upLink={
-          parent === null
-            ? { to: "/" }
-            : {
-                to: "/browse/$locationId",
-                params: { locationId: location.id },
-                search: { share, path: parent || undefined },
-              }
-        }
-        retrying={folder.loading}
-        onRetry={() => {
-          if (folder.error?.attempts && machine) engine.forget(machine.id)
-          void folder.refresh()
-        }}
-      />
+      <div className="flex flex-col p-4 md:p-6">
+        <LocationErrorState
+          code={folder.error.code}
+          location={location}
+          attempts={folder.error.attempts}
+          restricted={folder.error.restricted}
+          upLink={
+            parent === null
+              ? { to: "/" }
+              : {
+                  to: "/browse/$locationId",
+                  params: { locationId: location.id },
+                  search: { share, path: parent || undefined },
+                }
+          }
+          retrying={folder.loading}
+          onRetry={() => {
+            if (folder.error?.attempts && machine) engine.forget(machine.id)
+            void folder.refresh()
+          }}
+        />
+      </div>
     )
   } else if (!entries) {
-    body = <ListSkeleton />
+    body = <ListSkeleton className="mx-0 border-t-0 md:mx-0" />
   } else if (entries.length === 0) {
     body = (
-      <Empty className="border">
+      <Empty className="m-4 border md:m-6">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <FolderPlusIcon />
@@ -1065,11 +1071,7 @@ function FolderView({
     )
   } else {
     body = (
-      <div
-        ref={scrollRef}
-        data-scroll-restoration-id={SCROLL_IDS.browseList}
-        className="@container -mx-4 min-h-0 flex-1 overflow-y-auto overscroll-contain border-t md:-mx-6"
-      >
+      <>
         <SortHeader
           sort={effectiveSort}
           onSort={setSort}
@@ -1103,6 +1105,7 @@ function FolderView({
           </Empty>
         ) : (
           <div
+            ref={listRef}
             role="list"
             className="relative w-full"
             style={{ height: virtualizer.getTotalSize() }}
@@ -1116,7 +1119,7 @@ function FolderView({
                   data-index={item.index}
                   ref={virtualizer.measureElement}
                   className="absolute top-0 left-0 w-full"
-                  style={{ transform: `translateY(${item.start}px)` }}
+                  style={{ transform: `translateY(${item.start - scrollMargin}px)` }}
                 >
                   <FileRow
                     entry={entry}
@@ -1137,62 +1140,88 @@ function FolderView({
             })}
           </div>
         )}
-      </div>
+      </>
     )
   }
 
   const totalSize = visible.reduce((sum, e) => sum + e.size, 0)
+  const tools = {
+    filter,
+    onFilter: setFilter,
+    sort: effectiveSort,
+    onSort: setSort,
+    onNewFolder: () => setDialog({ kind: "newFolder" }),
+    onNewTextFile: () => setDialog({ kind: "newTextFile" }),
+    readOnlyReason: readOnly ? readOnlyReason : undefined,
+    onRefresh: () => void refresh(),
+    refreshing: folder.loading && Boolean(entries),
+    disabled: !entries,
+  }
   return (
-    <div className="@container flex min-h-0 flex-1 flex-col gap-3">
-      {inSelection ? (
-        <SelectionBar
-          count={selectedEntries.length}
-          size={formatBytes(
-            selectedEntries.reduce((s, e) => s + e.size, 0),
-            locale
-          )}
-          onClear={clearSelection}
-          onSelectAll={() => setSelected(new Set(visible.map((e) => e.path)))}
-          isSmb={isSmb}
-          onClipboard={(op) => toClipboard(op, selectedEntries)}
-          onTransferTo={(intent) => transferTo(intent, selectedEntries)}
-          onShare={() => void shareOut(selectedEntries)}
-          onReveal={
-            reveal.available && hasPhotos(selectedEntries)
-              ? () => editInReveal(selectedEntries)
-              : undefined
-          }
-          onDelete={() =>
-            selectedEntries.length && setDialog({ kind: "delete", entries: selectedEntries })
-          }
-          readOnlyReason={readOnly ? readOnlyReason : undefined}
-        />
-      ) : (
-        <BrowserToolbar
-          query={query}
-          onQuery={setQuery}
-          filter={filter}
-          onFilter={setFilter}
-          sort={effectiveSort}
-          onSort={setSort}
-          onNewFolder={() => setDialog({ kind: "newFolder" })}
-          onNewTextFile={() => setDialog({ kind: "newTextFile" })}
-          readOnlyReason={readOnly ? readOnlyReason : undefined}
-          onRefresh={() => void refresh()}
-          refreshing={folder.loading && Boolean(entries)}
-          disabled={!entries}
-        />
+    // Full bleed in the page body: the header scrolls inside the list (PageScroll).
+    <div className="-mx-4 -mt-4 -mb-3 flex min-h-0 flex-1 flex-col md:-mx-6 md:-mt-6 md:-mb-4">
+      {inSelection && (
+        // Like Android's contextual action bar: the selection's actions stay on top, outside the
+        // scrolling header, so they never scroll away.
+        <div className="@container shrink-0 border-b px-2 py-1.5 md:px-4">
+          <SelectionBar
+            count={selectedEntries.length}
+            size={formatBytes(
+              selectedEntries.reduce((s, e) => s + e.size, 0),
+              locale
+            )}
+            onClear={clearSelection}
+            onSelectAll={() => setSelected(new Set(visible.map((e) => e.path)))}
+            isSmb={isSmb}
+            onClipboard={(op) => toClipboard(op, selectedEntries)}
+            onTransferTo={(intent) => transferTo(intent, selectedEntries)}
+            onShare={() => void shareOut(selectedEntries)}
+            onReveal={
+              reveal.available && hasPhotos(selectedEntries)
+                ? () => editInReveal(selectedEntries)
+                : undefined
+            }
+            onDelete={() =>
+              selectedEntries.length && setDialog({ kind: "delete", entries: selectedEntries })
+            }
+            readOnlyReason={readOnly ? readOnlyReason : undefined}
+          />
+        </div>
       )}
-      {body}
-      {entries && entries.length > 0 && (
-        <p className="-mb-1 text-[0.8125rem] text-muted-foreground tabular-nums" aria-live="polite">
-          {t("browse.count", {
-            count: visible.length,
-            formatted: formatNumber(visible.length, locale),
-          })}
-          {totalSize > 0 ? ` · ${formatBytes(totalSize, locale)}` : ""}
-        </p>
-      )}
+      <PageScroll
+        ref={scrollRef}
+        scrollId={entries && entries.length > 0 ? SCROLL_IDS.browseList : undefined}
+        className="@container"
+        toolbar={
+          inSelection ? undefined : <BrowserToolbar query={query} onQuery={setQuery} {...tools} />
+        }
+        compactTools={
+          inSelection ? undefined : (
+            <CompactSearch
+              value={query}
+              onChange={setQuery}
+              label={t("browse.search")}
+              disabled={!entries}
+            />
+          )
+        }
+        compactMenu={inSelection ? undefined : <BrowserMenuItems {...tools} />}
+      >
+        {body}
+        {entries && entries.length > 0 && (
+          // At the end of the list: no fixed line taking height from it (1.9.1).
+          <p
+            className="px-4 py-3 text-[0.8125rem] text-muted-foreground tabular-nums md:px-6"
+            aria-live="polite"
+          >
+            {t("browse.count", {
+              count: visible.length,
+              formatted: formatNumber(visible.length, locale),
+            })}
+            {totalSize > 0 ? ` · ${formatBytes(totalSize, locale)}` : ""}
+          </p>
+        )}
+      </PageScroll>
 
       <NameDialog
         open={dialog?.kind === "newFolder"}

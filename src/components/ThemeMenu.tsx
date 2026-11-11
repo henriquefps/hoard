@@ -37,7 +37,7 @@ export function PaletteSwatch({ palette }: { palette: Palette }) {
 }
 
 /** Top bar menu: Light/Dark/System, then the palette. The trigger shows the theme choice. */
-export function ThemeMenu() {
+export function ThemeMenu({ side }: { side?: "bottom" | "right" } = {}) {
   const { t } = useTranslation()
   const theme = useTheme()
   const palette = usePalette()
@@ -49,7 +49,7 @@ export function ThemeMenu() {
           <Current />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" side={side}>
         <DropdownMenuLabel>{t("theme.label")}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme} onValueChange={(v) => isTheme(v) && setTheme(v)}>
           {THEMES.map((option) => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.1
+
+- **Compact, collapsing page header** (landscape phones and short screens): scrolling a list down moves the page header (breadcrumbs, title, status line) and its toolbar out with the content; a compact bar stays on top with ←, the folder name on one line and the page's actions as icons (search expands into a field, one ⋯ menu holds filter, sort, new folder, refresh and the page's own items). Scrolling up brings the full header back at once (quick-return); it follows the finger, nothing animates by itself. Same behaviour on every page with this header: machine, phone and USB folders, the culling grid (its filter rows and analysis progress collapse too), machines, transfers, settings.
+- **Breadcrumbs on one line**: the tail that fits (`… › crucial › Images`), the earlier levels behind "…"; the current folder is no longer repeated above the title. The ← back button shows at every width.
+- **One meta line**: connection, address, latency and the Read-only badge share one line under the title.
+- **Short screens** (viewport ≤ 500 px tall, e.g. a phone in landscape): the 56 dp top bar goes away and the sidebar becomes an icon rail (logo on top, transfers and theme at the bottom, tooltips, same items and active state) instead of the full pinned sidebar; labelled header buttons ("Cull photos", "Start culling", "Add machine") become icon buttons; the culling filters fit on one line. In a deep folder at 900×415 the file list went from 3 % of the screen to 51 % at the top and 84 % after scrolling (390×844 portrait: 58 % → 66 % and 86 %).
+- The browse list's item count moved to the end of the list; while selecting, the selection bar stays above the scrolling header.
+
 ## 1.9.0
 
 - **Culling ratings as XMP sidecars** ([ADR 0011](docs/adr/0011-culling-sidecars.md)): in folders Hoard can write (phone storage, SD card, USB drive or camera, SMB shares that take writes) every pick, reject and star rating is written into the shot's XMP sidecar next to the photos (`<stem>.xmp`, shared by a RAW + JPEG pair): `xmp:Rating` (−1 for a reject) and `digiKam:PickLabel`, merged into an existing sidecar (Lightroom's develop settings, darktable's history, Reveal's recipe, keywords stay), never over a malformed one, atomically, coalesced and written at once when the app leaves the screen. Sidecars named `<file>.xmp` (darktable) or hidden (`.name.xmp`) are found and updated in place.

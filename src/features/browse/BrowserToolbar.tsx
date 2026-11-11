@@ -4,6 +4,7 @@ import {
   ArrowUpIcon,
   FilePlusIcon,
   FolderPlusIcon,
+  FunnelSimpleIcon,
   MagnifyingGlassIcon,
   SortAscendingIcon,
   XIcon,
@@ -19,6 +20,9 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -43,13 +47,31 @@ import {
   type SortKey,
   type SortOrder,
 } from "@/lib/files"
+import { useIsShort } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 import { TABLE_COLUMNS } from "./FileRow"
 import { ReadOnlyMenuNote } from "./ReadOnlyBadge"
 
+interface ToolbarProps {
+  query: string
+  onQuery: (query: string) => void
+  filter: FileFilter
+  onFilter: (filter: FileFilter) => void
+  sort: SortOrder
+  onSort: (sort: SortOrder) => void
+  onNewFolder: () => void
+  onNewTextFile: () => void
+  /** Set in a read-only folder: the New items stay visible, disabled, with this explanation. */
+  readOnlyReason?: string
+  onRefresh: () => void
+  refreshing: boolean
+  disabled: boolean
+}
+
 /**
  * Search, filter, sort and folder actions. Never wraps on desktop: the filter is a ToggleGroup
- * from `@2xl`, a Select below; below `@md` (phones) search gets its own full-width row.
+ * from `@2xl`, a Select below; below `@md` (phones) search gets its own full-width row. In the
+ * page's compact bar the same controls are `CompactSearch` + `BrowserMenuItems`.
  */
 export function BrowserToolbar({
   query,
@@ -64,22 +86,10 @@ export function BrowserToolbar({
   onRefresh,
   refreshing,
   disabled,
-}: {
-  query: string
-  onQuery: (query: string) => void
-  filter: FileFilter
-  onFilter: (filter: FileFilter) => void
-  sort: SortOrder
-  onSort: (sort: SortOrder) => void
-  onNewFolder: () => void
-  onNewTextFile: () => void
-  /** Set in a read-only folder: the New items stay visible, disabled, with this explanation. */
-  readOnlyReason?: string
-  onRefresh: () => void
-  refreshing: boolean
-  disabled: boolean
-}) {
+}: ToolbarProps) {
   const { t } = useTranslation()
+  // Short screens (landscape): the filter is the Select, so the search keeps its width.
+  const short = useIsShort()
   return (
     <div
       className="flex flex-wrap items-center gap-2 @md:flex-nowrap"
@@ -117,7 +127,10 @@ export function BrowserToolbar({
         onValueChange={(v) => isFileFilter(v) && onFilter(v)}
         disabled={disabled}
       >
-        <SelectTrigger className="w-40 @2xl:hidden" aria-label={t("browse.filter")}>
+        <SelectTrigger
+          className={cn("w-40", !short && "@2xl:hidden")}
+          aria-label={t("browse.filter")}
+        >
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -134,7 +147,7 @@ export function BrowserToolbar({
         value={filter}
         onValueChange={(v) => isFileFilter(v) && onFilter(v)}
         aria-label={t("browse.filter")}
-        className="hidden shrink-0 @2xl:flex"
+        className={cn("hidden shrink-0", !short && "@2xl:flex")}
         spacing={0}
         disabled={disabled}
       >
@@ -159,33 +172,7 @@ export function BrowserToolbar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-48">
-            <DropdownMenuLabel>{t("browse.sortBy")}</DropdownMenuLabel>
-            <DropdownMenuRadioGroup
-              value={sort.key}
-              onValueChange={(key) => onSort({ ...sort, key: key as SortKey })}
-            >
-              {SORT_KEYS.map((key) => (
-                <DropdownMenuRadioItem key={key} value={key}>
-                  {t(`browse.sortKeys.${key}`)}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuRadioGroup
-              value={sort.direction}
-              onValueChange={(direction) =>
-                onSort({ ...sort, direction: direction as SortOrder["direction"] })
-              }
-            >
-              <DropdownMenuRadioItem value="asc">
-                <ArrowUpIcon />
-                {t(`browse.directions.${sort.key}.asc`)}
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="desc">
-                <ArrowDownIcon />
-                {t(`browse.directions.${sort.key}.desc`)}
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
+            <SortItems sort={sort} onSort={onSort} />
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
@@ -234,6 +221,109 @@ export function BrowserToolbar({
   )
 }
 
+/** Sort key and direction as radio items (the sort menu, and the compact bar's ⋯ sub-menu). */
+function SortItems({ sort, onSort }: { sort: SortOrder; onSort: (sort: SortOrder) => void }) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <DropdownMenuLabel>{t("browse.sortBy")}</DropdownMenuLabel>
+      <DropdownMenuRadioGroup
+        value={sort.key}
+        onValueChange={(key) => onSort({ ...sort, key: key as SortKey })}
+      >
+        {SORT_KEYS.map((key) => (
+          <DropdownMenuRadioItem key={key} value={key}>
+            {t(`browse.sortKeys.${key}`)}
+          </DropdownMenuRadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
+      <DropdownMenuSeparator />
+      <DropdownMenuRadioGroup
+        value={sort.direction}
+        onValueChange={(direction) =>
+          onSort({ ...sort, direction: direction as SortOrder["direction"] })
+        }
+      >
+        <DropdownMenuRadioItem value="asc">
+          <ArrowUpIcon />
+          {t(`browse.directions.${sort.key}.asc`)}
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem value="desc">
+          <ArrowDownIcon />
+          {t(`browse.directions.${sort.key}.desc`)}
+        </DropdownMenuRadioItem>
+      </DropdownMenuRadioGroup>
+    </>
+  )
+}
+
+/**
+ * The toolbar's controls as ⋯ menu items, for the page's compact bar (the search is its own
+ * `CompactSearch` icon there): filter, sort, new folder / text file, refresh.
+ */
+export function BrowserMenuItems({
+  filter,
+  onFilter,
+  sort,
+  onSort,
+  onNewFolder,
+  onNewTextFile,
+  readOnlyReason,
+  onRefresh,
+  refreshing,
+  disabled,
+}: Omit<ToolbarProps, "query" | "onQuery">) {
+  const { t } = useTranslation()
+  return (
+    <>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger disabled={disabled}>
+          <FunnelSimpleIcon />
+          {t("browse.filter")}
+          <span className="ml-auto pl-2 text-muted-foreground">
+            {t(`browse.filters.${filter}`)}
+          </span>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuRadioGroup
+            value={filter}
+            onValueChange={(v) => isFileFilter(v) && onFilter(v)}
+          >
+            {FILTERS.map((option) => (
+              <DropdownMenuRadioItem key={option} value={option}>
+                {t(`browse.filters.${option}`)}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger disabled={disabled}>
+          <SortAscendingIcon />
+          {t("browse.sort")}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="min-w-48">
+          <SortItems sort={sort} onSort={onSort} />
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={onNewFolder} disabled={disabled || Boolean(readOnlyReason)}>
+        <FolderPlusIcon />
+        {t("browse.newFolder")}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={onNewTextFile} disabled={disabled || Boolean(readOnlyReason)}>
+        <FilePlusIcon />
+        {t("browse.newTextFile")}
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={onRefresh} disabled={refreshing}>
+        <ArrowsClockwiseIcon />
+        {t("browse.refresh")}
+      </DropdownMenuItem>
+      {readOnlyReason && <ReadOnlyMenuNote reason={readOnlyReason} />}
+    </>
+  )
+}
+
 /** Desktop table header (from `@xl`): select all and sortable columns. Sticky inside the list. */
 export function SortHeader({
   sort,
@@ -273,7 +363,9 @@ export function SortHeader({
   return (
     <div
       className={cn(
-        "sticky top-0 z-20 hidden h-11 items-center border-b bg-card @xl:grid",
+        // Under the page's compact bar (Page sets --page-sticky-top on the scroller). On short
+        // screens it scrolls away with the header: sorting is in the compact bar's ⋯ menu.
+        "sticky top-[var(--page-sticky-top,0px)] z-10 hidden h-11 items-center border-b bg-card @xl:grid short:static short:h-9",
         TABLE_COLUMNS
       )}
     >
