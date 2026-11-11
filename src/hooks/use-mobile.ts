@@ -17,3 +17,21 @@ export function useIsMobile() {
     () => false
   )
 }
+
+/** Short screens: the `short` Tailwind variant (src/index.css), e.g. a phone in landscape. */
+export const SHORT_QUERY = "(max-height: 500px)"
+
+const subscribeShort = (onChange: () => void) => {
+  const mql = window.matchMedia(SHORT_QUERY)
+  mql.addEventListener("change", onChange)
+  return () => mql.removeEventListener("change", onChange)
+}
+
+/** True when the viewport is at most 500px tall (landscape phones): sidebar rail, no app bar. */
+export function useIsShort() {
+  return useSyncExternalStore(
+    subscribeShort,
+    () => window.matchMedia(SHORT_QUERY).matches,
+    () => false
+  )
+}

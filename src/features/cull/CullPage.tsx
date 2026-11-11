@@ -3,12 +3,15 @@ import {
   CheckIcon,
   CopyIcon,
   FlagCheckeredIcon,
+  FunnelSimpleIcon,
   GearSixIcon,
   LockSimpleIcon,
   PlayIcon,
   SlidersHorizontalIcon,
+  SortAscendingIcon,
   SparkleIcon,
   StackIcon,
+  StarIcon,
   TrashIcon,
 } from "@phosphor-icons/react"
 import { useParams, useSearch } from "@tanstack/react-router"
@@ -16,7 +19,8 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
-import { Page } from "@/components/page/Page"
+import { ActionLabel, Page, PageScroll } from "@/components/page/Page"
+import { useScrollMargin } from "@/components/page/useScrollMargin"
 import { cullTrail } from "@/components/page/breadcrumbs"
 import { SmbErrorState } from "@/components/SmbErrorState"
 import {
@@ -32,8 +36,15 @@ import {
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
@@ -53,6 +64,7 @@ import { LocationErrorState } from "@/features/locations/LocationErrorState"
 import { parseLocationId } from "@/features/locations/ids"
 import { type BrowseLocation, useBrowseLocation } from "@/features/locations/useBrowseLocation"
 import { useLeaveWhenUnplugged } from "@/features/locations/useLeaveWhenUnplugged"
+import { useIsShort } from "@/hooks/use-mobile"
 import { formatBytes, formatNumber } from "@/lib/format"
 import { SCROLL_IDS, registerScrollAnchors } from "@/lib/scrollRestoration"
 import { cn } from "@/lib/utils"
@@ -300,9 +312,12 @@ function CullFolderPage({
           })}
         </span>
         {folder.sidecarsReadOnly ? (
-          <span className="flex items-start gap-1.5 text-[0.8125rem] text-muted-foreground">
-            <LockSimpleIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-            <span className="min-w-0">{t("cull.xmp.readOnly")}</span>
+          <span
+            className="flex max-w-full min-w-0 items-center gap-1.5 text-[0.8125rem] text-muted-foreground"
+            title={t("cull.xmp.readOnly")}
+          >
+            <LockSimpleIcon className="size-3.5 shrink-0" aria-hidden />
+            <span className="min-w-0 truncate">{t("cull.xmp.readOnly")}</span>
           </span>
         ) : null}
       </>
@@ -311,23 +326,28 @@ function CullFolderPage({
   const actions =
     folder.status === "ready" && folder.shots.length > 0 ? (
       <>
-        <Button onClick={resume} disabled={visible.length === 0}>
+        <Button
+          onClick={resume}
+          disabled={visible.length === 0}
+          title={progress.decided > 0 ? t("cull.resume") : t("cull.start")}
+        >
           <PlayIcon data-icon="inline-start" weight="fill" />
-          {progress.decided > 0 ? t("cull.resume") : t("cull.start")}
+          <ActionLabel>{progress.decided > 0 ? t("cull.resume") : t("cull.start")}</ActionLabel>
         </Button>
         <Button
           variant={suggesting ? "secondary" : "outline"}
           aria-pressed={suggesting}
           onClick={() => setSuggesting((v) => !v)}
+          title={t("cull.assist.suggest")}
         >
           <SparkleIcon data-icon="inline-start" weight={suggesting ? "fill" : "regular"} />
-          <span className="max-sm:sr-only">{t("cull.assist.suggest")}</span>
+          <ActionLabel className="max-sm:sr-only">{t("cull.assist.suggest")}</ActionLabel>
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline">
+            <Button variant="outline" title={t("cull.finish")}>
               <FlagCheckeredIcon data-icon="inline-start" />
-              <span className="max-sm:sr-only">{t("cull.finish")}</span>
+              <ActionLabel className="max-sm:sr-only">{t("cull.finish")}</ActionLabel>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-60">
@@ -368,6 +388,23 @@ function CullFolderPage({
       </>
     ) : undefined
 
+  const toolbar: ToolbarProps = {
+    folder,
+    assist,
+    filter,
+    onFilter: setFilter,
+    assistFilter,
+    onAssistFilter: setAssistFilter,
+    sort,
+    onSort: setSort,
+    stack,
+    onStack: (next) => {
+      setStack(next)
+      setExpanded(new Set())
+    },
+    onSettings: () => setSettingsOpen(true),
+    visibleCount: visible.length,
+  }
   return (
     <Page fill title={title} breadcrumbs={trail} meta={meta} actions={actions}>
       {folder.status === "loading" ? (
@@ -386,31 +423,24 @@ function CullFolderPage({
           </EmptyHeader>
         </Empty>
       ) : (
-        <div className="-mx-4 -mt-4 flex min-h-0 flex-1 flex-col md:-mx-6 md:-mt-6">
-          <Toolbar
-            folder={folder}
-            assist={assist}
-            filter={filter}
-            onFilter={setFilter}
-            assistFilter={assistFilter}
-            onAssistFilter={setAssistFilter}
-            sort={sort}
-            onSort={setSort}
-            stack={stack}
-            onStack={(next) => {
-              setStack(next)
-              setExpanded(new Set())
-            }}
-            onSettings={() => setSettingsOpen(true)}
-            visibleCount={visible.length}
-          />
-          {suggesting ? (
-            <SuggestionBar
-              suggestions={suggestions}
-              assist={assist}
-              onHide={() => setSuggesting(false)}
-            />
-          ) : null}
+        // Full bleed: the page header, the filter rows and the progress scroll away with the grid.
+        <PageScroll
+          scrollId={visible.length > 0 ? SCROLL_IDS.cullGrid : undefined}
+          className="-mx-4 -mt-4 -mb-3 flex flex-col md:-mx-6 md:-mt-6 md:-mb-4"
+          toolbar={
+            <div className="flex flex-col gap-2">
+              <Toolbar {...toolbar} />
+              {suggesting ? (
+                <SuggestionBar
+                  suggestions={suggestions}
+                  assist={assist}
+                  onHide={() => setSuggesting(false)}
+                />
+              ) : null}
+            </div>
+          }
+          compactMenu={<CullMenuItems {...toolbar} suggestions={suggestions} />}
+        >
           {visible.length === 0 ? (
             <Empty className="flex-1">
               <EmptyHeader>
@@ -438,7 +468,7 @@ function CullFolderPage({
               reveal={reveal}
             />
           )}
-        </div>
+        </PageScroll>
       )}
       {viewer ? (
         <CullViewer
@@ -505,7 +535,7 @@ function SuggestionBar({
   }
   const analysing = assist.progress.done + assist.progress.failed < assist.progress.total
   return (
-    <div className="@container flex flex-col gap-2 border-b px-4 py-3 md:px-6">
+    <div className="@container flex flex-col gap-2 border-t pt-3 short:pt-2">
       <div className="flex items-start gap-3">
         <SparkleIcon weight="fill" className="mt-0.5 size-5 shrink-0 text-primary" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -552,20 +582,7 @@ function SuggestionBar({
 const FLAG_FILTERS: CullFlagFilter[] = ["all", "picked", "rejected", "unmarked"]
 const ASSIST_FILTERS: AssistFilter[] = ["any", "flagged", ...SHOT_FLAGS, "clean"]
 
-function Toolbar({
-  folder,
-  assist,
-  filter,
-  onFilter,
-  assistFilter,
-  onAssistFilter,
-  sort,
-  onSort,
-  stack,
-  onStack,
-  onSettings,
-  visibleCount,
-}: {
+interface ToolbarProps {
   folder: CullFolder
   assist: CullAssist
   filter: CullFilter
@@ -578,7 +595,10 @@ function Toolbar({
   onStack: (stack: boolean) => void
   onSettings: () => void
   visibleCount: number
-}) {
+}
+
+/** The filters' option labels with their counts ("Picked · 12"), shared by toolbar and ⋯ menu. */
+function useFilterLabels(folder: CullFolder, assist: CullAssist) {
   const { t, i18n } = useTranslation()
   const locale = i18n.language
   const progress = progressOf(folder.shots, folder.decisions)
@@ -598,112 +618,268 @@ function Toolbar({
     value === "any"
       ? t("cull.assist.filter.any")
       : `${t(`cull.assist.filter.${value}`)} · ${formatNumber(assistCount(value), locale)}`
+  const starsLabel = (stars: number) =>
+    stars === 0 ? t("cull.filter.anyStars") : t("cull.filter.minStars", { count: stars })
+  return { label, assistLabel, starsLabel }
+}
+
+/**
+ * The grid's filters and sort as ⋯ items, for the compact bar while the filter rows are scrolled
+ * away (1.9.1); "Accept all" while suggestions show.
+ */
+function CullMenuItems({
+  folder,
+  assist,
+  filter,
+  onFilter,
+  assistFilter,
+  onAssistFilter,
+  sort,
+  onSort,
+  stack,
+  onStack,
+  onSettings,
+  suggestions,
+}: ToolbarProps & { suggestions: SuggestionState }) {
+  const { t } = useTranslation()
+  const { label, assistLabel, starsLabel } = useFilterLabels(folder, assist)
+  return (
+    <>
+      {suggestions.on && (
+        <>
+          <DropdownMenuItem
+            disabled={suggestions.items.size === 0}
+            onSelect={() => suggestions.accept([...suggestions.items.keys()])}
+          >
+            <SparkleIcon />
+            {t("cull.assist.acceptAll", { count: suggestions.items.size })}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      )}
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <FunnelSimpleIcon />
+          {t("cull.filter.label")}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuRadioGroup
+            value={filter.flag}
+            onValueChange={(value) => onFilter({ ...filter, flag: value as CullFlagFilter })}
+          >
+            {FLAG_FILTERS.map((value) => (
+              <DropdownMenuRadioItem key={value} value={value}>
+                {label(value)}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <StarIcon />
+          {t("cull.filter.stars")}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuRadioGroup
+            value={String(filter.minStars)}
+            onValueChange={(value) => onFilter({ ...filter, minStars: Number(value) })}
+          >
+            {[0, 1, 2, 3, 4, 5].map((stars) => (
+              <DropdownMenuRadioItem key={stars} value={String(stars)}>
+                {starsLabel(stars)}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <SparkleIcon />
+          {t("cull.assist.filter.label")}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuRadioGroup
+            value={assistFilter}
+            onValueChange={(v) => onAssistFilter(v as AssistFilter)}
+          >
+            {ASSIST_FILTERS.map((value) => (
+              <DropdownMenuRadioItem key={value} value={value}>
+                {assistLabel(value)}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <SortAscendingIcon />
+          {t("cull.assist.sort.label")}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuRadioGroup value={sort} onValueChange={(v) => onSort(v as CullSort)}>
+            <DropdownMenuRadioItem value="time">{t("cull.assist.sort.time")}</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="sharpness">
+              {t("cull.assist.sort.sharpness")}
+            </DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+      <DropdownMenuCheckboxItem
+        checked={stack && sort === "time"}
+        disabled={sort !== "time"}
+        onCheckedChange={(checked) => onStack(checked)}
+      >
+        <StackIcon />
+        {t("cull.assist.stack")}
+      </DropdownMenuCheckboxItem>
+      <DropdownMenuItem onSelect={onSettings}>
+        <GearSixIcon />
+        {t("cull.assist.settings")}
+      </DropdownMenuItem>
+    </>
+  )
+}
+
+/**
+ * Filter rows and progress above the grid; they collapse with the page header. Short screens
+ * (landscape) put the two filter rows on one line and use the Select for the flag filter.
+ */
+function Toolbar({
+  folder,
+  assist,
+  filter,
+  onFilter,
+  assistFilter,
+  onAssistFilter,
+  sort,
+  onSort,
+  stack,
+  onStack,
+  onSettings,
+  visibleCount,
+}: ToolbarProps) {
+  const { t, i18n } = useTranslation()
+  const short = useIsShort()
+  const { label, assistLabel, starsLabel } = useFilterLabels(folder, assist)
+  const locale = i18n.language
+  const progress = progressOf(folder.shots, folder.decisions)
   const a = assist.progress
   const analysing = a.done + a.failed < a.total
   return (
-    <div className="@container flex flex-col gap-2 border-b px-4 py-3 md:px-6">
-      <div className="flex items-center gap-2">
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          value={filter.flag}
-          onValueChange={(value) => value && onFilter({ ...filter, flag: value as CullFlagFilter })}
-          className="hidden @2xl:flex"
-        >
-          {FLAG_FILTERS.map((value) => (
-            <ToggleGroupItem key={value} value={value} className="px-3">
-              {label(value)}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-        <Select
-          value={filter.flag}
-          onValueChange={(value) => onFilter({ ...filter, flag: value as CullFlagFilter })}
-        >
-          <SelectTrigger className="min-w-0 flex-1 @2xl:hidden" aria-label={t("cull.filter.label")}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
+    <div className="@container flex flex-col gap-2 short:gap-1.5">
+      <div className={cn("flex flex-col gap-2", short && "@2xl:flex-row")}>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            value={filter.flag}
+            onValueChange={(value) =>
+              value && onFilter({ ...filter, flag: value as CullFlagFilter })
+            }
+            className={cn("hidden", !short && "@2xl:flex")}
+          >
             {FLAG_FILTERS.map((value) => (
-              <SelectItem key={value} value={value}>
+              <ToggleGroupItem key={value} value={value} className="px-3">
                 {label(value)}
-              </SelectItem>
+              </ToggleGroupItem>
             ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={String(filter.minStars)}
-          onValueChange={(value) => onFilter({ ...filter, minStars: Number(value) })}
-        >
-          <SelectTrigger className="w-36 shrink-0" aria-label={t("cull.filter.stars")}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {[0, 1, 2, 3, 4, 5].map((stars) => (
-              <SelectItem key={stars} value={String(stars)}>
-                {stars === 0
-                  ? t("cull.filter.anyStars")
-                  : t("cull.filter.minStars", { count: stars })}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <span className="ml-auto hidden text-[0.8125rem] text-muted-foreground tabular-nums @2xl:inline">
-          {t("cull.showing", {
-            count: visibleCount,
-            shown: formatNumber(visibleCount, locale),
-          })}
-        </span>
-      </div>
-      <div className="flex items-center gap-2">
-        <Select value={assistFilter} onValueChange={(v) => onAssistFilter(v as AssistFilter)}>
-          <SelectTrigger
-            className="min-w-0 flex-1 @2xl:w-56 @2xl:flex-none"
-            aria-label={t("cull.assist.filter.label")}
+          </ToggleGroup>
+          <Select
+            value={filter.flag}
+            onValueChange={(value) => onFilter({ ...filter, flag: value as CullFlagFilter })}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ASSIST_FILTERS.map((value) => (
-              <SelectItem key={value} value={value}>
-                {assistLabel(value)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={sort} onValueChange={(v) => onSort(v as CullSort)}>
-          <SelectTrigger
-            className="w-auto shrink-0 @md:w-44"
-            aria-label={t("cull.assist.sort.label")}
+            <SelectTrigger
+              className={cn("min-w-0 flex-1", !short && "@2xl:hidden")}
+              aria-label={t("cull.filter.label")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {FLAG_FILTERS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {label(value)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={String(filter.minStars)}
+            onValueChange={(value) => onFilter({ ...filter, minStars: Number(value) })}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="time">{t("cull.assist.sort.time")}</SelectItem>
-            <SelectItem value="sharpness">{t("cull.assist.sort.sharpness")}</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button
-          variant="outline"
-          size="icon"
-          aria-pressed={stack}
-          aria-label={t("cull.assist.stack")}
-          title={t("cull.assist.stack")}
-          disabled={sort !== "time"}
-          onClick={() => onStack(!stack)}
-          className={cn(stack && sort === "time" && "bg-muted text-primary")}
-        >
-          <StackIcon weight={stack && sort === "time" ? "fill" : "regular"} />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label={t("cull.assist.settings")}
-          title={t("cull.assist.settings")}
-          onClick={onSettings}
-        >
-          <GearSixIcon />
-        </Button>
+            <SelectTrigger className="w-36 shrink-0" aria-label={t("cull.filter.stars")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[0, 1, 2, 3, 4, 5].map((stars) => (
+                <SelectItem key={stars} value={String(stars)}>
+                  {starsLabel(stars)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <span
+            className={cn(
+              "ml-auto hidden text-[0.8125rem] text-muted-foreground tabular-nums",
+              !short && "@2xl:inline"
+            )}
+          >
+            {t("cull.showing", {
+              count: visibleCount,
+              shown: formatNumber(visibleCount, locale),
+            })}
+          </span>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Select value={assistFilter} onValueChange={(v) => onAssistFilter(v as AssistFilter)}>
+            <SelectTrigger
+              className={cn("min-w-0 flex-1", !short && "@2xl:w-56 @2xl:flex-none")}
+              aria-label={t("cull.assist.filter.label")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ASSIST_FILTERS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {assistLabel(value)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={sort} onValueChange={(v) => onSort(v as CullSort)}>
+            <SelectTrigger
+              className={cn("w-auto shrink-0", !short && "@md:w-44")}
+              aria-label={t("cull.assist.sort.label")}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="time">{t("cull.assist.sort.time")}</SelectItem>
+              <SelectItem value="sharpness">{t("cull.assist.sort.sharpness")}</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-pressed={stack}
+            aria-label={t("cull.assist.stack")}
+            title={t("cull.assist.stack")}
+            disabled={sort !== "time"}
+            onClick={() => onStack(!stack)}
+            className={cn(stack && sort === "time" && "bg-muted text-primary")}
+          >
+            <StackIcon weight={stack && sort === "time" ? "fill" : "regular"} />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={t("cull.assist.settings")}
+            title={t("cull.assist.settings")}
+            onClick={onSettings}
+          >
+            <GearSixIcon />
+          </Button>
+        </div>
       </div>
       <div className="flex items-center gap-3">
         <Progress
@@ -765,10 +941,12 @@ function ShotGrid({
   reveal: { shotId: string } | null
 }) {
   const { t } = useTranslation()
-  const scroller = useRef<HTMLDivElement>(null)
+  // The grid scrolls in the page's PageScroll, under the header and the filter rows.
+  const grid = useRef<HTMLDivElement>(null)
+  const scrollMargin = useScrollMargin(grid, true)
   const [width, setWidth] = useState(0)
   useLayoutEffect(() => {
-    const element = scroller.current
+    const element = grid.current
     if (!element) return
     const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width))
     observer.observe(element)
@@ -792,7 +970,8 @@ function ShotGrid({
   // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render on purpose
   const virtualizer = useVirtualizer({
     count: rows,
-    getScrollElement: () => scroller.current,
+    scrollMargin,
+    getScrollElement: () => grid.current?.closest<HTMLElement>("[data-page-scroll]") ?? null,
     estimateSize: () => cell + GAP,
     overscan: 4,
   })
@@ -802,24 +981,28 @@ function ShotGrid({
 
   // Back on the grid (from another page): restore by the first visible shot, so a different width
   // (more or fewer columns) or a changed list still lands on the same photo.
-  const layout = useRef({ items, columns, cell })
+  const layout = useRef({ items, columns, cell, scrollMargin })
   useEffect(() => {
-    layout.current = { items, columns, cell }
+    layout.current = { items, columns, cell, scrollMargin }
   })
   useEffect(
     () =>
       registerScrollAnchors(SCROLL_IDS.cullGrid, {
+        // Offsets inside the grid: the header above it (scrollMargin) is not part of a row.
         capture(element) {
-          const { items: all, columns: cols, cell: size } = layout.current
+          const { items: all, columns: cols, cell: size, scrollMargin: margin } = layout.current
           const rowHeight = size + GAP
-          const row = Math.floor(element.scrollTop / rowHeight)
+          const top = Math.max(0, element.scrollTop - margin)
+          const row = Math.floor(top / rowHeight)
           const item = all[row * cols]
-          return item ? { id: item.shotId, offset: element.scrollTop - row * rowHeight } : undefined
+          return item ? { id: item.shotId, offset: top - row * rowHeight } : undefined
         },
         resolve(_element, anchor) {
-          const { items: all, columns: cols, cell: size } = layout.current
+          const { items: all, columns: cols, cell: size, scrollMargin: margin } = layout.current
           const index = all.findIndex((i) => i.shotId === anchor.id)
-          return index < 0 ? undefined : Math.floor(index / cols) * (size + GAP) + anchor.offset
+          return index < 0
+            ? undefined
+            : margin + Math.floor(index / cols) * (size + GAP) + anchor.offset
         },
       }),
     []
@@ -839,159 +1022,148 @@ function ShotGrid({
 
   return (
     <div
-      ref={scroller}
-      data-scroll-restoration-id={SCROLL_IDS.cullGrid}
-      className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+      ref={grid}
       role="grid"
       aria-label={t("cull.grid")}
+      className="relative w-full shrink-0"
+      style={{ height: virtualizer.getTotalSize() }}
     >
-      <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-        {virtualizer.getVirtualItems().map((row) => (
-          <div
-            key={row.key}
-            role="row"
-            className="absolute left-0 flex w-full"
-            style={{ top: row.start, height: cell, gap: GAP }}
-          >
-            {items.slice(row.index * columns, row.index * columns + columns).map((item) => {
-              const shot = byId.get(item.shotId)!
-              const decision = decisionOf(folder.decisions, shot.id)
-              const burst = assist.bursts.get(shot.id)
-              const suggestion = suggestions.on ? suggestions.items.get(shot.id) : undefined
-              const isStack = item.kind === "stack"
-              const status = isStack
-                ? burstStatus(assist.members.get(item.burst) ?? [], folder.decisions)
-                : undefined
-              return (
-                <div
-                  key={isStack ? `stack:${item.burst}` : shot.id}
-                  role="gridcell"
-                  className="relative shrink-0"
-                  style={{ width: cell, height: cell }}
+      {virtualizer.getVirtualItems().map((row) => (
+        <div
+          key={row.key}
+          role="row"
+          className="absolute left-0 flex w-full"
+          style={{ top: row.start - scrollMargin, height: cell, gap: GAP }}
+        >
+          {items.slice(row.index * columns, row.index * columns + columns).map((item) => {
+            const shot = byId.get(item.shotId)!
+            const decision = decisionOf(folder.decisions, shot.id)
+            const burst = assist.bursts.get(shot.id)
+            const suggestion = suggestions.on ? suggestions.items.get(shot.id) : undefined
+            const isStack = item.kind === "stack"
+            const status = isStack
+              ? burstStatus(assist.members.get(item.burst) ?? [], folder.decisions)
+              : undefined
+            return (
+              <div
+                key={isStack ? `stack:${item.burst}` : shot.id}
+                role="gridcell"
+                className="relative shrink-0"
+                style={{ width: cell, height: cell }}
+              >
+                <button
+                  type="button"
+                  aria-label={t("cull.cellLabel", {
+                    name: shot.stem,
+                    kind: t(`cull.kind.${shot.kind}`),
+                    state: decision.flag
+                      ? t(decision.flag === "pick" ? "cull.flag.picked" : "cull.flag.rejected")
+                      : t("cull.flag.unmarked"),
+                  })}
+                  onClick={() =>
+                    onOpen(shot.id, isStack || Boolean(stack && burst && expanded.has(burst.burst)))
+                  }
+                  onContextMenu={(event) => {
+                    // Long press (or right click) on a burst expands or stacks it.
+                    const target = isStack ? item.burst : stack ? burst?.burst : undefined
+                    if (!target) return
+                    event.preventDefault()
+                    onToggleBurst(target)
+                  }}
+                  className={cn(
+                    "group relative size-full overflow-hidden bg-muted focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                  )}
                 >
-                  <button
-                    type="button"
-                    aria-label={t("cull.cellLabel", {
-                      name: shot.stem,
-                      kind: t(`cull.kind.${shot.kind}`),
-                      state: decision.flag
-                        ? t(decision.flag === "pick" ? "cull.flag.picked" : "cull.flag.rejected")
-                        : t("cull.flag.unmarked"),
-                    })}
-                    onClick={() =>
-                      onOpen(
-                        shot.id,
-                        isStack || Boolean(stack && burst && expanded.has(burst.burst))
-                      )
-                    }
-                    onContextMenu={(event) => {
-                      // Long press (or right click) on a burst expands or stacks it.
-                      const target = isStack ? item.burst : stack ? burst?.burst : undefined
-                      if (!target) return
-                      event.preventDefault()
-                      onToggleBurst(target)
-                    }}
+                  <ShotThumb
+                    folder={folder}
+                    shot={shot}
                     className={cn(
-                      "group relative size-full overflow-hidden bg-muted focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                      "size-full transition-opacity",
+                      decision.flag === "reject" && "opacity-40",
+                      suggestion?.action === "reject" && !decision.flag && "opacity-60"
                     )}
-                  >
-                    <ShotThumb
-                      folder={folder}
-                      shot={shot}
+                  />
+                  {isStack ? (
+                    <span
+                      aria-hidden
                       className={cn(
-                        "size-full transition-opacity",
-                        decision.flag === "reject" && "opacity-40",
-                        suggestion?.action === "reject" && !decision.flag && "opacity-60"
+                        "pointer-events-none absolute inset-0 border-2",
+                        status?.resolved ? "border-primary" : "border-warning/80"
                       )}
                     />
-                    {isStack ? (
-                      <span
-                        aria-hidden
-                        className={cn(
-                          "pointer-events-none absolute inset-0 border-2",
-                          status?.resolved ? "border-primary" : "border-warning/80"
-                        )}
-                      />
-                    ) : null}
-                    {suggestion ? (
-                      <span
-                        aria-hidden
-                        className={cn(
-                          "pointer-events-none absolute inset-0 border-2 border-dashed",
-                          suggestion.action === "keep" ? "border-primary" : "border-destructive"
-                        )}
-                      />
-                    ) : null}
-                    <span className="absolute top-1 right-1 flex flex-col items-end gap-1">
-                      <FlagMark decision={decision} />
-                      <FlagMarks
-                        flags={assist.flags.get(shot.id)}
-                        best={Boolean(burst) && assist.bestShots.has(shot.id)}
-                      />
-                    </span>
-                    {suggestion ? (
-                      <SuggestionMark
-                        suggestion={suggestion}
-                        className="absolute bottom-7 left-1"
-                      />
-                    ) : null}
-                    <KindBadge shot={shot} className="absolute bottom-1 left-1" />
-                    <StarsMark rating={decision.rating} className="absolute right-1 bottom-1" />
+                  ) : null}
+                  {suggestion ? (
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "pointer-events-none absolute inset-0 border-2 border-dashed",
+                        suggestion.action === "keep" ? "border-primary" : "border-destructive"
+                      )}
+                    />
+                  ) : null}
+                  <span className="absolute top-1 right-1 flex flex-col items-end gap-1">
+                    <FlagMark decision={decision} />
+                    <FlagMarks
+                      flags={assist.flags.get(shot.id)}
+                      best={Boolean(burst) && assist.bestShots.has(shot.id)}
+                    />
+                  </span>
+                  {suggestion ? (
+                    <SuggestionMark suggestion={suggestion} className="absolute bottom-7 left-1" />
+                  ) : null}
+                  <KindBadge shot={shot} className="absolute bottom-1 left-1" />
+                  <StarsMark rating={decision.rating} className="absolute right-1 bottom-1" />
+                </button>
+                {isStack ? (
+                  <button
+                    type="button"
+                    onClick={() => onToggleBurst(item.burst)}
+                    aria-label={`${t("cull.assist.expand", { count: item.size })} · ${
+                      status?.resolved
+                        ? t("cull.burstMode.resolved", { kept: status.kept, size: item.size })
+                        : t("cull.burstMode.pending", {
+                            decided: status?.decided ?? 0,
+                            size: item.size,
+                          })
+                    }`}
+                    title={t("cull.assist.expandHint")}
+                    aria-expanded={false}
+                    className={cn(
+                      "absolute top-1 left-1 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs leading-none font-medium tabular-nums before:absolute before:-inset-2 [&_svg]:size-3.5",
+                      status?.resolved
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-warning text-viewer"
+                    )}
+                  >
+                    {status?.resolved ? <CheckIcon weight="bold" /> : <StackIcon weight="fill" />}
+                    {status?.resolved
+                      ? t("cull.burstMode.resolvedShort", { kept: status.kept, size: item.size })
+                      : item.size}
+                    <CaretDownIcon weight="bold" />
                   </button>
-                  {isStack ? (
+                ) : burst ? (
+                  stack && burst.index === 0 && expanded.has(burst.burst) ? (
                     <button
                       type="button"
-                      onClick={() => onToggleBurst(item.burst)}
-                      aria-label={`${t("cull.assist.expand", { count: item.size })} · ${
-                        status?.resolved
-                          ? t("cull.burstMode.resolved", { kept: status.kept, size: item.size })
-                          : t("cull.burstMode.pending", {
-                              decided: status?.decided ?? 0,
-                              size: item.size,
-                            })
-                      }`}
-                      title={t("cull.assist.expandHint")}
-                      aria-expanded={false}
-                      className={cn(
-                        "absolute top-1 left-1 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-xs leading-none font-medium tabular-nums before:absolute before:-inset-2 [&_svg]:size-3.5",
-                        status?.resolved
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-warning text-viewer"
-                      )}
+                      onClick={() => onToggleBurst(burst.burst)}
+                      aria-label={t("cull.assist.collapse")}
+                      aria-expanded
+                      className="absolute top-1 left-1 before:absolute before:-inset-2"
                     >
-                      {status?.resolved ? <CheckIcon weight="bold" /> : <StackIcon weight="fill" />}
-                      {status?.resolved
-                        ? t("cull.burstMode.resolvedShort", { kept: status.kept, size: item.size })
-                        : item.size}
-                      <CaretDownIcon weight="bold" />
+                      <BurstMark position={burst} className="bg-primary text-primary-foreground" />
                     </button>
-                  ) : burst ? (
-                    stack && burst.index === 0 && expanded.has(burst.burst) ? (
-                      <button
-                        type="button"
-                        onClick={() => onToggleBurst(burst.burst)}
-                        aria-label={t("cull.assist.collapse")}
-                        aria-expanded
-                        className="absolute top-1 left-1 before:absolute before:-inset-2"
-                      >
-                        <BurstMark
-                          position={burst}
-                          className="bg-primary text-primary-foreground"
-                        />
-                      </button>
-                    ) : (
-                      <BurstMark
-                        position={burst}
-                        className="pointer-events-none absolute top-1 left-1"
-                      />
-                    )
-                  ) : null}
-                </div>
-              )
-            })}
-          </div>
-        ))}
-      </div>
+                  ) : (
+                    <BurstMark
+                      position={burst}
+                      className="pointer-events-none absolute top-1 left-1"
+                    />
+                  )
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      ))}
     </div>
   )
 }

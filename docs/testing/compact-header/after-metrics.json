@@ -1,0 +1,206 @@
+[
+ {
+  "screen": "smb-deep",
+  "vp": "390x844",
+  "state": "top",
+  "listPct": 66
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "390x844",
+  "state": "scrolled",
+  "listPct": 86
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "390x844",
+  "state": "scrolled-up",
+  "listPct": 83
+ },
+ {
+  "screen": "phone",
+  "vp": "390x844",
+  "state": "top",
+  "listPct": 66
+ },
+ {
+  "screen": "phone",
+  "vp": "390x844",
+  "state": "scrolled",
+  "listPct": 86
+ },
+ {
+  "screen": "phone",
+  "vp": "390x844",
+  "state": "scrolled-up",
+  "listPct": 83
+ },
+ {
+  "screen": "cull",
+  "vp": "390x844",
+  "state": "top",
+  "listPct": 61
+ },
+ {
+  "screen": "cull",
+  "vp": "390x844",
+  "state": "scrolled",
+  "listPct": 86
+ },
+ {
+  "screen": "cull",
+  "vp": "390x844",
+  "state": "scrolled-up",
+  "listPct": 79
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "900x415",
+  "state": "top",
+  "listPct": 51
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "900x415",
+  "state": "scrolled",
+  "listPct": 84
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "900x415",
+  "state": "scrolled-up",
+  "listPct": 76
+ },
+ {
+  "screen": "phone",
+  "vp": "900x415",
+  "state": "top",
+  "listPct": 51
+ },
+ {
+  "screen": "phone",
+  "vp": "900x415",
+  "state": "scrolled",
+  "listPct": 84
+ },
+ {
+  "screen": "phone",
+  "vp": "900x415",
+  "state": "scrolled-up",
+  "listPct": 76
+ },
+ {
+  "screen": "cull",
+  "vp": "900x415",
+  "state": "top",
+  "listPct": 54
+ },
+ {
+  "screen": "cull",
+  "vp": "900x415",
+  "state": "scrolled",
+  "listPct": 83
+ },
+ {
+  "screen": "cull",
+  "vp": "900x415",
+  "state": "scrolled-up",
+  "listPct": 65
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "844x390",
+  "state": "top",
+  "listPct": 48
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "844x390",
+  "state": "scrolled",
+  "listPct": 83
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "844x390",
+  "state": "scrolled-up",
+  "listPct": 75
+ },
+ {
+  "screen": "phone",
+  "vp": "844x390",
+  "state": "top",
+  "listPct": 48
+ },
+ {
+  "screen": "phone",
+  "vp": "844x390",
+  "state": "scrolled",
+  "listPct": 83
+ },
+ {
+  "screen": "phone",
+  "vp": "844x390",
+  "state": "scrolled-up",
+  "listPct": 75
+ },
+ {
+  "screen": "cull",
+  "vp": "844x390",
+  "state": "top",
+  "listPct": 52
+ },
+ {
+  "screen": "cull",
+  "vp": "844x390",
+  "state": "scrolled",
+  "listPct": 82
+ },
+ {
+  "screen": "cull",
+  "vp": "844x390",
+  "state": "scrolled-up",
+  "listPct": 75
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "820x1180",
+  "state": "top",
+  "listPct": 80
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "820x1180",
+  "state": "scrolled",
+  "listPct": 90
+ },
+ {
+  "screen": "smb-deep",
+  "vp": "820x1180",
+  "state": "scrolled-up",
+  "listPct": 88
+ },
+ {
+  "screen": "phone",
+  "vp": "820x1180",
+  "state": "top",
+  "listPct": 80
+ },
+ {
+  "screen": "phone",
+  "vp": "820x1180",
+  "state": "scrolled",
+  "listPct": 90
+ },
+ {
+  "screen": "phone",
+  "vp": "820x1180",
+  "state": "scrolled-up",
+  "listPct": 88
+ },
+ {
+  "screen": "cull",
+  "vp": "820x1180",
+  "state": "top",
+  "listPct": 59
+ }
+]

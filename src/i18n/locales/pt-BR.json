@@ -32,6 +32,12 @@
     "moveDownShort": "Mover para baixo",
     "close": "Fechar"
   },
+  "page": {
+    "breadcrumb": "Trilha de navegação",
+    "earlierLevels_one": "Mostrar {{count}} nível anterior",
+    "earlierLevels_other": "Mostrar {{count}} níveis anteriores",
+    "closeSearch": "Fechar busca"
+  },
   "home": {
     "favorites": "Favoritos",
     "machines": "Máquinas",

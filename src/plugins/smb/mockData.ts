@@ -313,6 +313,10 @@ export const MOCK_SERVERS = {
           dir("etc", [textFile("hostname", "cachyos-fps\n", 30)]),
           dir("home", [dir("henrique", [])]),
           dir("srv", [dir("media", [])]),
+          // A deep read-only photo folder (7 crumbs): the compact header's worst case (1.9.1).
+          dir("mnt", [
+            dir("crucial", [dir("Images", [dir("2026-08-07 Park shoot — Sintra", parkShoot())])]),
+          ]),
           textFile("README.txt", "Read-only view of the whole disk.\n", 60),
         ],
       },

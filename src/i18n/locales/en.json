@@ -32,6 +32,12 @@
     "moveDownShort": "Move down",
     "close": "Close"
   },
+  "page": {
+    "breadcrumb": "Breadcrumb",
+    "earlierLevels_one": "Show {{count}} earlier level",
+    "earlierLevels_other": "Show {{count}} earlier levels",
+    "closeSearch": "Close search"
+  },
   "home": {
     "favorites": "Favorites",
     "machines": "Machines",

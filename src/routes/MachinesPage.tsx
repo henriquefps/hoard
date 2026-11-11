@@ -2,7 +2,7 @@ import { PlusIcon } from "@phosphor-icons/react"
 import { Link } from "@tanstack/react-router"
 import { useTranslation } from "react-i18next"
 import { MachineList } from "@/components/MachineList"
-import { Page } from "@/components/page/Page"
+import { ActionLabel, Page } from "@/components/page/Page"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLiveQuery } from "@/db/DbProvider"
@@ -18,9 +18,9 @@ export function MachinesPage() {
       description={t("machines.description")}
       actions={
         <Button asChild>
-          <Link to="/machines/new">
+          <Link to="/machines/new" title={t("machines.add")}>
             <PlusIcon data-icon="inline-start" />
-            {t("machines.add")}
+            <ActionLabel>{t("machines.add")}</ActionLabel>
           </Link>
         </Button>
       }

@@ -48,7 +48,13 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   below `@xl`, breadcrumbs via `Page` + `components/page/breadcrumbs.ts`, `ResponsiveDialog` for
   form dialogs (Drawer on phones), motion and gesture rules, no raw Tailwind colors). After any
   `shadcn add`: fix `from "cn"` imports, keep `sonner.tsx` without next-themes, re-apply the
-  `tabs.tsx` focus fix and the `progress.tsx` `tone` variant.
+  `tabs.tsx` focus fix, the `progress.tsx` `tone` variant and the `sidebar.tsx` short-screen rail
+  (`useIsShort`, `short:block` / `short:flex`).
+- **Page header** (1.9.1, `components/page/`): `Page` collapses its header on scroll (quick-return,
+  `collapse.ts`) behind a compact bar. A `fill` page puts its scrolling list in `PageScroll`
+  (header, `toolbar`, `compactTools`, `compactMenu`), and a virtual list in it uses
+  `useScrollMargin`. Header buttons wrap their text in `ActionLabel` (icon only when compact and on
+  `short` screens: viewport ≤ 500px tall, where the top bar becomes the sidebar rail).
 - **No hard-coded UI strings.** Every string goes through i18next with keys in both
   `src/i18n/locales/en.json` and `pt-BR.json`.
 - **Plugin contract rule.** `src/plugins/smb/definitions.ts` is the contract. Any change touches, in

@@ -77,6 +77,34 @@ export function registerScrollAnchors(id: ScrollId, adapter: ScrollAnchorAdapter
   }
 }
 
+/**
+ * The offsets this module wrote, per container: the page header (components/page) treats such a
+ * scroll as a jump, not as the user scrolling up, so a restored list keeps its header collapsed.
+ */
+const written = new WeakMap<Element, number>()
+
+function writeScroll(element: HTMLElement, top: number) {
+  written.set(element, top)
+  element.scrollTop = top
+}
+
+/** Containers a restore job is still working on (until it settles or the user touches the screen). */
+const restoring = new Set<string>()
+
+/**
+ * True while scroll restoration is placing `element` (every scroll then is the job's, or the list
+ * settling under it), or while it still sits where the job put it.
+ */
+export function isRestoredScroll(element: Element): boolean {
+  const id = element.getAttribute("data-scroll-restoration-id")
+  if (id && restoring.has(id)) return true
+  const top = written.get(element)
+  if (top === undefined) return false
+  if (Math.abs(element.scrollTop - top) <= 1) return true
+  written.delete(element)
+  return false
+}
+
 /** Test hook. */
 export function resetScrollAnchors() {
   adapters.clear()
@@ -123,19 +151,22 @@ function restore(router: AnyRouter, key: string): () => void {
     } else {
       // A fresh entry starts at the top, also in a container the previous page left scrolled.
       const element = document.querySelector<HTMLElement>(scrollSelector(id))
-      if (element && element.scrollTop !== 0) element.scrollTop = 0
+      if (element && element.scrollTop !== 0) writeScroll(element, 0)
     }
   }
   if (pending.length === 0) return () => {}
+  for (const job of pending) restoring.add(job.id)
 
   let frame = 0
   let stopped = false
   const stop = () => {
     stopped = true
+    for (const job of pending) restoring.delete(job.id)
     cancelAnimationFrame(frame)
     for (const name of USER_EVENTS) document.removeEventListener(name, stop, true)
   }
-  for (const name of USER_EVENTS) document.addEventListener(name, stop, { capture: true, passive: true })
+  for (const name of USER_EVENTS)
+    document.addEventListener(name, stop, { capture: true, passive: true })
 
   const step = () => {
     if (stopped) return
@@ -145,19 +176,24 @@ function restore(router: AnyRouter, key: string): () => void {
       const element = document.querySelector<HTMLElement>(scrollSelector(job.id))
       if (element) {
         const adapter = adapters.get(job.id)
-        const wanted =
-          (job.anchor && adapter?.resolve(element, job.anchor)) ?? job.top
+        const wanted = (job.anchor && adapter?.resolve(element, job.anchor)) ?? job.top
         const { scrollHeight, clientHeight } = element
         const reachable = isReachable(wanted, scrollHeight, clientHeight)
         const expired = now - job.since > GRACE_MS
         if (reachable || expired || EAGER.has(job.id)) {
           const next = clampScroll(wanted, scrollHeight, clientHeight)
           if (Math.abs(element.scrollTop - next) > 0.5) {
-            element.scrollTop = next
+            writeScroll(element, next)
             job.stable = 0
-          } else if (++job.stable >= SETTLE_FRAMES) pending.splice(i, 1)
+          } else if (++job.stable >= SETTLE_FRAMES) {
+            restoring.delete(job.id)
+            pending.splice(i, 1)
+          }
         }
-      } else if (now - job.since > GRACE_MS * 2) pending.splice(i, 1)
+      } else if (now - job.since > GRACE_MS * 2) {
+        restoring.delete(job.id)
+        pending.splice(i, 1)
+      }
     }
     if (pending.length === 0) stop()
     else frame = requestAnimationFrame(step)

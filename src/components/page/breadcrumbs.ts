@@ -16,6 +16,42 @@ export interface Crumb {
 export const parentOf = (trail: readonly Crumb[]): Crumb | undefined =>
   trail.length > 1 ? trail[trail.length - 2] : undefined
 
+/**
+ * The crumbs the header shows above the title (1.9.1): the ancestors only. The current page is the
+ * title, so it is not repeated as the last crumb; when the title names the level just above (the
+ * culled folder under "Cull"), that level is dropped too: the back button goes there.
+ */
+export function headerCrumbs(trail: readonly Crumb[], title: string): Crumb[] {
+  const ancestors = trail.slice(0, -1)
+  const last = ancestors.at(-1)
+  if (last && last.label !== undefined && last.label === title && trail.at(-1)?.label !== title) {
+    return ancestors.slice(0, -1)
+  }
+  return ancestors
+}
+
+/**
+ * How many crumbs of the tail fit on one line (the earlier ones go behind a "…" menu). `widths` are
+ * the crumbs' natural widths (already capped by their max width), `separator` the space one "›"
+ * takes, `more` the "…" button's. At least one crumb always shows (it truncates if it must).
+ */
+export function fitCrumbs(
+  widths: readonly number[],
+  available: number,
+  separator: number,
+  more: number
+): number {
+  const n = widths.length
+  if (n === 0) return 0
+  let used = 0
+  for (let k = 1; k <= n; k++) {
+    used += widths[n - k] + (k > 1 ? separator : 0)
+    const overflow = k < n ? more + separator : 0
+    if (used + overflow > available) return Math.max(1, k - 1)
+  }
+  return n
+}
+
 const machinesCrumb = (t: TFunction): Crumb => ({
   label: t("nav.machines"),
   link: { to: "/machines" },
