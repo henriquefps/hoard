@@ -1098,5 +1098,23 @@
       },
       "highlights": "{{value}} blown highlights ({{area}} in large areas)"
     }
+  },
+  "reveal": {
+    "edit": "Edit in Reveal",
+    "editPicks_one": "Edit {{count}} pick in Reveal",
+    "editPicks_other": "Edit {{count}} picks in Reveal",
+    "editShown_one": "Edit the {{count}} shown in Reveal",
+    "editShown_other": "Edit the {{count}} shown in Reveal",
+    "notInstalled": "Reveal is not installed anymore",
+    "failed": "Could not open Reveal",
+    "about": "Photos open in Reveal, the RAW editor, from the browser and culling (\"Edit in Reveal\").",
+    "confirm": {
+      "title_one": "Open {{n}} file in Reveal?",
+      "title_other": "Open {{n}} files in Reveal?",
+      "many": "Reveal will list all {{n}} files in one batch.",
+      "stream": "Photos on a network share are read through Hoard: Reveal can open them while Hoard is running, and for an hour after it last read them. To keep editing them later, copy them to the phone first and open them from there.",
+      "dontExplain": "Don't explain this again",
+      "action": "Open in Reveal"
+    }
   }
 }

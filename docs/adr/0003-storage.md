@@ -46,7 +46,7 @@ Known `settings` keys (no migration needed, the table is key/value; validated wi
 `defaultConflict` (`ask` / `rename` / `overwrite` / `skip`), `recentDestinations` (the destination picker's "Recent", newest first; 1.4), `lastDestination` (≤ 1.3, no longer read), `probeTimeoutMs`,
 `onboarded`, `storageIntroSeen` (the all files access screen was shown, ADR 0005), `cullAutoAdvance`
 (ADR 0008), `cullBlurSensitivity` / `cullEyesSensitivity` (`low` / `medium` / `high`), `cullBurstGapMs` and
-`cullXmpSidecars` (ADR 0009), `cullSwipeDecide` (ADR 0008, 1.7), and in the browser build `demoSeeded` / `worstCaseSeeded`.
+`cullXmpSidecars` (ADR 0009), `cullSwipeDecide` (ADR 0008, 1.7), `revealStreamNoteSeen` (ADR 0010, 1.8: the SMB note before "Edit in Reveal" was dismissed for good), and in the browser build `demoSeeded` / `worstCaseSeeded`.
 
 The culling tables (v5, v6) have no foreign keys: local locations are not rows. `deleteMachine` clears a
 machine's culling rows (decisions, sessions, destinations, analyses) in the same transaction. The SQLite adapters treat a transaction that begins

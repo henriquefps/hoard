@@ -209,5 +209,6 @@ export type SettingKey =
   | "cullBurstGapMs"
   | "cullXmpSidecars"
   | "cullSwipeDecide"
+  | "revealStreamNoteSeen"
   | "demoSeeded"
   | "worstCaseSeeded"

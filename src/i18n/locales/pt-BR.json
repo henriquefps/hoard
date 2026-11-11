@@ -1098,5 +1098,23 @@
       },
       "highlights": "{{value}} de altas luzes estouradas ({{area}} em áreas grandes)"
     }
+  },
+  "reveal": {
+    "edit": "Editar no Reveal",
+    "editPicks_one": "Editar {{count}} escolhida no Reveal",
+    "editPicks_other": "Editar {{count}} escolhidas no Reveal",
+    "editShown_one": "Editar a {{count}} exibida no Reveal",
+    "editShown_other": "Editar as {{count}} exibidas no Reveal",
+    "notInstalled": "O Reveal não está mais instalado",
+    "failed": "Não foi possível abrir o Reveal",
+    "about": "Fotos abrem no Reveal, o editor de RAW, a partir do navegador de arquivos e da seleção (\"Editar no Reveal\").",
+    "confirm": {
+      "title_one": "Abrir {{n}} arquivo no Reveal?",
+      "title_other": "Abrir {{n}} arquivos no Reveal?",
+      "many": "O Reveal vai listar os {{n}} arquivos em um único lote.",
+      "stream": "Fotos de um compartilhamento de rede são lidas através do Hoard: o Reveal consegue abri-las enquanto o Hoard estiver aberto, e por uma hora depois da última leitura. Para continuar editando depois, copie-as para o celular antes e abra a partir de lá.",
+      "dontExplain": "Não explicar isso de novo",
+      "action": "Abrir no Reveal"
+    }
   }
 }

@@ -989,6 +989,50 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
     expect(pair.raw?.path).toBe(`DCIM/102MSDCF/${pair.raw?.name}`)
   })
 
+  describe("Edit in Reveal", () => {
+    it("reports Reveal installed and records hand-offs in native order", async () => {
+      smb.simulateStorageAccess(true)
+      expect(await smb.revealAvailable()).toEqual({ available: true })
+      const { shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+      const pair = shots.find((s) => s.kind === "pair")!
+      const single = shots.find((s) => s.kind === "jpeg")!
+      const result = await smb.openInReveal({
+        location: usb,
+        // JPEG of the pair first, a duplicate, a non-photo: native reorders and drops them.
+        paths: [pair.rendered!.path, single.rendered!.path, pair.raw!.path, single.rendered!.path],
+        title: `  ${"x".repeat(130)}  `,
+        initialPath: pair.raw!.path,
+      })
+      expect(result).toEqual({ sent: 3 })
+      expect(smb.revealCalls).toEqual([
+        {
+          location: usb,
+          paths: [pair.raw!.path, pair.rendered!.path, single.rendered!.path],
+          title: "x".repeat(120),
+          initialPath: pair.raw!.path,
+        },
+      ])
+    })
+
+    it("drops an initial path not sent, refuses no photos, missing files and no Reveal", async () => {
+      smb.simulateStorageAccess(true)
+      const { shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+      const jpeg = shots.find((s) => s.kind === "jpeg")!.rendered!.path
+      await smb.openInReveal({ location: usb, paths: [jpeg], initialPath: "DCIM/other.JPG" })
+      expect(smb.revealCalls.at(-1)).toEqual({ location: usb, paths: [jpeg] })
+      expect(await code(smb.openInReveal({ location: usb, paths: [] }))).toBe("UNKNOWN")
+      expect(await code(smb.openInReveal({ location: usb, paths: ["DCIM/notes.txt"] }))).toBe(
+        "UNKNOWN"
+      )
+      expect(await code(smb.openInReveal({ location: usb, paths: ["DCIM/nope.JPG"] }))).toBe(
+        "NOT_FOUND"
+      )
+      smb.setRevealInstalled(false)
+      expect(await smb.revealAvailable()).toEqual({ available: false })
+      expect(await code(smb.openInReveal({ location: usb, paths: [jpeg] }))).toBe("NO_APP")
+    })
+  })
+
   it("reports EXIF essentials with sub-second capture times and bursts", async () => {
     smb.simulateStorageAccess(true)
     const { cullId, shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })

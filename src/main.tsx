@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DbProvider } from "@/db/DbProvider"
 import { VolumesProvider } from "@/features/locations/VolumesProvider"
+import { RevealProvider } from "@/features/reveal/RevealProvider"
 import { RouteProvider } from "@/features/route/RouteProvider"
 import { TransfersProvider } from "@/features/transfers/TransfersProvider"
 import "@/i18n"
@@ -22,7 +23,9 @@ createRoot(document.getElementById("root")!).render(
         <RouteProvider>
           <VolumesProvider>
             <TransfersProvider>
-              <RouterProvider router={router} />
+              <RevealProvider>
+                <RouterProvider router={router} />
+              </RevealProvider>
             </TransfersProvider>
           </VolumesProvider>
         </RouteProvider>
