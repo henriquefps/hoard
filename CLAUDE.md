@@ -30,11 +30,15 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `ANALYSIS_VERSION` together (cached rows in `cull_analysis` are then recomputed). Suggestions
   never decide: only the user's accept writes decisions. Calibrate on copies with
   `AnalysisCalibrationTest` (JVM, `HOARD_ARW_DIR`) and `AnalysisHarnessTest` (emulator, ML Kit);
-  report aggregates only. XMP sidecars are written by the transfer engine (`startTransfer`'s
-  `sidecars`), at the destination only.
+  report aggregates only.
+- Culling sidecars (ADR 0011): one native module `dev.hfps.hoard.xmp` (ported from Reveal's `Xmp.kt`; JVM-tested)
+  reads, merges and writes XMP for the culling writer/reader (`smb/cull/CullSidecars.kt`, `cullReadSidecars` /
+  `cullWriteSidecars`) and for "Copy picks" (`TransferRunner.writeSidecar`, `startTransfer`'s `sidecars` as
+  fields). Never overwrite a malformed sidecar; never write into a folder not opened for culling; opening a folder
+  never writes. Precedence rule and `cull_sidecars` in `src/features/cull/xmp.ts`. E2E: `docs/testing/xmp-sidecars.md`.
 - Edit in Reveal (ADR 0010): `smb/share/RevealHandoff.kt` builds Reveal's `DEVELOP` intent (Reveal ADR
   0011); `src/features/reveal/` decides what is sent. Read grant on exactly the URIs sent, never write,
-  never a sidecar; SMB photos stream (`StreamEntry.idleMs`). Test with Reveal's debug APK on the
+  never a sidecar item; decisions go as the `CULLING` extra (ADR 0011); SMB photos stream (`StreamEntry.idleMs`). Test with Reveal's debug APK on the
   emulator only (`./gradlew :app:assembleDebug` in a copy of the reveal repo).
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 

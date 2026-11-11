@@ -43,8 +43,10 @@ export interface CopyPicksAdapterOptions {
   /** Create this folder inside the destination and copy into it (not for `tree` destinations). */
   subfolder?: string
   conflict: TransferConflict
-  /** XMP sidecars to write next to the copies at the destination (ADR 0009). */
+  /** XMP sidecars to write next to the copies at the destination (ADR 0011). */
   sidecars?: TransferSidecar[]
+  /** New sidecars are hidden (`.<stem>.xmp`). */
+  hiddenSidecars?: boolean
 }
 
 export type CopyPicksOutcome = { status: "queued"; count: number }
@@ -102,7 +104,8 @@ export function useCopyPicks() {
           treeUri: destination.treeUri,
         },
         options.conflict,
-        options.sidecars
+        options.sidecars,
+        options.hiddenSidecars
       )
       return { status: "queued", count: items.length }
     },

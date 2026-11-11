@@ -13,6 +13,7 @@ import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.IsoTime
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.smbFail
+import dev.hfps.hoard.xmp.XmpFields
 import kotlinx.coroutines.sync.Semaphore
 import java.util.concurrent.CopyOnWriteArraySet
 
@@ -28,8 +29,10 @@ data class StartTransferRequest(
     val destPath: String,
     val conflict: String,
     val resume: Boolean,
-    /** Source path → XMP sidecar content (ADR 0009). */
-    val sidecars: Map<String, String> = emptyMap(),
+    /** Source path → the culling fields of its XMP sidecar at the destination (ADR 0011). */
+    val sidecars: Map<String, XmpFields> = emptyMap(),
+    /** New sidecars are hidden (`.<stem>.xmp`). */
+    val hiddenSidecars: Boolean = false,
 )
 
 /**
@@ -67,9 +70,7 @@ class TransferManager private constructor(context: Context) {
         if (request.destination is Endpoint.Incoming) smbFail(ErrorCode.UNKNOWN, "Shared files are not a destination")
         if (request.sources.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No sources")
         if (request.sidecars.isNotEmpty() && request.op != "copy") smbFail(ErrorCode.UNKNOWN, "Sidecars are written by copies only")
-        if (request.sidecars.size > MAX_SIDECARS || request.sidecars.values.any { it.length > MAX_SIDECAR_CHARS }) {
-            smbFail(ErrorCode.UNKNOWN, "At most $MAX_SIDECARS sidecars of $MAX_SIDECAR_CHARS characters")
-        }
+        if (request.sidecars.size > MAX_SIDECARS) smbFail(ErrorCode.UNKNOWN, "At most $MAX_SIDECARS sidecars")
         val destPath = SmbPaths.normalize(request.destPath)
         for (source in request.sources) {
             val path = SmbPaths.normalize(source.path)
@@ -111,6 +112,7 @@ class TransferManager private constructor(context: Context) {
             startedAt = IsoTime.now(),
             resumeExisting = request.resume,
             sidecars = request.sidecars.mapKeys { SmbPaths.normalize(it.key) },
+            hiddenSidecars = request.hiddenSidecars,
         )
         store.put(job)
         emit(job)
@@ -201,7 +203,6 @@ class TransferManager private constructor(context: Context) {
         const val MAX_CONCURRENT = 2
         /** One XMP per copied shot; a 5,000-shot card is more than anyone picks. */
         const val MAX_SIDECARS = 5000
-        const val MAX_SIDECAR_CHARS = 16 * 1024
         const val WORK_TAG = "hoard-transfer"
 
         fun workName(transferId: String) = "hoard-transfer-$transferId"

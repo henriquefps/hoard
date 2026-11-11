@@ -31,13 +31,14 @@ export function useStartTransfer() {
       entries: PickedEntry[],
       destination: PickedFolder,
       conflict: TransferConflict,
-      /** XMP sidecars for copied files (Copy picks, ADR 0009). */
-      sidecars?: TransferSidecar[]
+      /** XMP sidecars for copied files (Copy picks, ADR 0011). */
+      sidecars?: TransferSidecar[],
+      hiddenSidecars?: boolean
     ) => {
       try {
         await actions.start({
           ...transferRequest(op, source, entries, destination, conflict),
-          ...(sidecars?.length ? { sidecars } : {}),
+          ...(sidecars?.length ? { sidecars, ...(hiddenSidecars ? { hiddenSidecars } : {}) } : {}),
         })
       } catch (error) {
         toast.error(t("transfer.startFailed"), {

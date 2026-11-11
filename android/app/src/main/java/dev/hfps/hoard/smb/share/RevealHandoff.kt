@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Bundle
 import android.provider.DocumentsContract
 import dev.hfps.hoard.image.format.ImageFormats
 import dev.hfps.hoard.image.format.ImageKind
@@ -41,9 +42,9 @@ import java.util.concurrent.atomic.AtomicLong
  * for minutes). Stream tokens of a hand-off live [HANDOFF_IDLE_MS] after their last read and end
  * with Hoard's process; the UI says so before an SMB hand-off.
  *
- * Hoard never sends a sidecar (`.xmp`) item and never asks for a write grant: Reveal's ratings stay
- * in Reveal unless the user copies sidecars themselves (ADR 0009: Hoard never writes next to the
- * source).
+ * Culling decisions travel with the photos as values (`CULLING`, Reveal ADR 0011 "Culling"; Hoard ADR 0011), for
+ * every shot that has one, whether its folder can hold sidecars or not. Hoard never sends a sidecar (`.xmp`) item
+ * and never asks for a write grant (ADR 0010): changes made in Reveal stay in Reveal.
  */
 class RevealHandoff(private val context: Context, private val opener: Opener) {
 
@@ -95,11 +96,27 @@ class RevealHandoff(private val context: Context, private val opener: Opener) {
     }
 
     /** Starts Reveal. `NO_APP` when it is not installed (or was uninstalled since the UI checked). */
-    fun launch(activity: Activity, files: List<Outgoing>, title: String?, initialPath: String?) {
+    fun launch(activity: Activity, files: List<Outgoing>, title: String?, initialPath: String?, culling: Map<String, Culling> = emptyMap()) {
         val plan = plan(files.map { it.path to it.uri }, title, initialPath, persistable = files.any { it.persistable })
         val intent = Intent(ACTION).setType("image/*").addFlags(plan.flags)
         plan.title?.let { intent.putExtra(EXTRA_TITLE, it) }
         plan.initial?.let { intent.putExtra(EXTRA_INITIAL_URI, it) }
+        val values = cullingValues(files.map { it.path to it.uri.toString() }, culling)
+        if (values.isNotEmpty()) {
+            intent.putExtra(EXTRA_CULLING_VERSION, CULLING_VERSION)
+            intent.putExtra(
+                EXTRA_CULLING,
+                Bundle().apply {
+                    values.forEach { (uri, value) ->
+                        putBundle(uri, Bundle().apply {
+                            putInt(KEY_RATING, value.rating)
+                            putString(KEY_FLAG, value.flag)
+                            value.label?.let { putString(KEY_LABEL, it) }
+                        })
+                    }
+                },
+            )
+        }
         // The ClipData carries the grants: exactly these URIs, nothing else (no folder, no tree).
         val clip = ClipData(ClipDescription(plan.title ?: "Reveal", arrayOf("image/*")), ClipData.Item(plan.items[0]))
         plan.items.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
@@ -121,6 +138,9 @@ class RevealHandoff(private val context: Context, private val opener: Opener) {
     }
 
     private fun isDocumentUri(uri: Uri) = runCatching { DocumentsContract.isDocumentUri(context, uri) }.getOrDefault(false)
+
+    /** A shot's decision as Reveal's `CULLING` extra carries it: stars 0..5 and `pick` / `reject` / `none`. */
+    data class Culling(val rating: Int, val flag: String, val label: String? = null)
 
     /** One photo file to send: its path in the location and the URI Reveal reads. */
     data class Outgoing(val path: String, val uri: Uri, val persistable: Boolean)
@@ -148,6 +168,12 @@ class RevealHandoff(private val context: Context, private val opener: Opener) {
         const val ACTION = "dev.hfps.reveal.action.DEVELOP"
         const val EXTRA_TITLE = "dev.hfps.reveal.extra.TITLE"
         const val EXTRA_INITIAL_URI = "dev.hfps.reveal.extra.INITIAL_URI"
+        const val EXTRA_CULLING = "dev.hfps.reveal.extra.CULLING"
+        const val EXTRA_CULLING_VERSION = "dev.hfps.reveal.extra.CULLING_VERSION"
+        const val CULLING_VERSION = 1
+        const val KEY_RATING = "rating"
+        const val KEY_FLAG = "flag"
+        const val KEY_LABEL = "label"
 
         /** Reveal trims the title to this length; Hoard does it first. */
         const val MAX_TITLE = 120
@@ -196,6 +222,23 @@ class RevealHandoff(private val context: Context, private val opener: Opener) {
             var flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
             if (persistable) flags = flags or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
             return Plan(items, cleanTitle, initial, flags)
+        }
+
+        /**
+         * The `CULLING` extra's content (pure, JVM-tested; Reveal ADR 0011 "Culling"): for each file sent, in order,
+         * its URI string (exactly as in the ClipData) → the decision given for its path. Files without a decision are
+         * left out; ratings are clamped to 0..5 and unknown flags dropped (Reveal ignores them field by field anyway).
+         */
+        fun cullingValues(files: List<Pair<String, String>>, culling: Map<String, Culling>): LinkedHashMap<String, Culling> {
+            val byPath = culling.mapKeys { SmbPaths.normalize(it.key) }
+            val out = LinkedHashMap<String, Culling>()
+            for ((path, uri) in files) {
+                val value = byPath[SmbPaths.normalize(path)] ?: continue
+                val flag = value.flag.lowercase()
+                if (flag != "pick" && flag != "reject" && flag != "none") continue
+                out[uri] = Culling(value.rating.coerceIn(0, 5), flag, value.label?.take(64))
+            }
+            return out
         }
     }
 }

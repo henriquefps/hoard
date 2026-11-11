@@ -150,6 +150,22 @@ export interface CullDecisionRecord {
 }
 
 /**
+ * Row of `cull_sidecars` (v7, ADR 0011): what the import rule needs about a shot's XMP sidecar. Times are epoch ms.
+ */
+export interface CullSidecarRecord {
+  location_id: string
+  share: string
+  path: string
+  shot_id: string
+  /** Hoard's last decision on the shot (including unmarking it); null when only an import touched it. */
+  decided_at: number | null
+  /** The sidecar's mtime when Hoard last wrote or imported it. */
+  sidecar_mtime: number | null
+  /** 1: the sidecar held Hoard's latest decision at `sidecar_mtime`. */
+  synced: number
+}
+
+/**
  * Row of `cull_analysis` (v6, ADR 0009): a shot's measurements, keyed by the analysed file (its
  * RAW, else its JPEG); valid while `size`, `modified_at` and `version` match the file and the app.
  */
@@ -191,7 +207,9 @@ export interface CullDestinationRecord {
  *  - `storageIntroSeen` boolean (the all files access screen was shown once, ADR 0005),
  *  - `cullAutoAdvance` boolean (the culling viewer moves on after a pick or reject, ADR 0008),
  *  - `cullBlurSensitivity` / `cullEyesSensitivity` `"low" | "medium" | "high"`, `cullBurstGapMs`
- *    number, `cullXmpSidecars` boolean (assisted culling, ADR 0009).
+ *    number (assisted culling, ADR 0009), `cullXmpSidecars` (1.6-1.8, dropped by migration v7),
+ *  - `cullSaveXmp` boolean (decisions written to XMP sidecars next to the photos, and by "Copy picks"),
+ *    `cullXmpHidden` boolean (new sidecars as `.<stem>.xmp`) (ADR 0011).
  */
 export type SettingKey =
   | "language"
@@ -208,6 +226,8 @@ export type SettingKey =
   | "cullEyesSensitivity"
   | "cullBurstGapMs"
   | "cullXmpSidecars"
+  | "cullSaveXmp"
+  | "cullXmpHidden"
   | "cullSwipeDecide"
   | "revealStreamNoteSeen"
   | "demoSeeded"

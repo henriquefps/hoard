@@ -78,6 +78,11 @@ to the phone is the existing transfer engine (Copy to…, Copy picks), not a sec
 
 ### No sidecar write-back
 
+> **1.9.0 ([ADR 0011](0011-culling-sidecars.md)):** Hoard now writes culling decisions into XMP sidecars next to
+> the photos in writable folders (not through this hand-off), and every hand-off carries the decisions as
+> Reveal's `CULLING` extra (version 1, keyed by item URI), writable folder or not. The hand-off itself stays as
+> below: no `.xmp` item, no write grant.
+
 Hoard never sends a `.xmp` item and never grants write. Reveal therefore keeps its ratings and
 edits in its own database ("Saved in Reveal only"), and Hoard's decisions stay in Hoard's DB (ADR
 0008). An opt-in "send the existing sidecar, writable" (only when one already exists next to the
@@ -117,4 +122,5 @@ Icon: Phosphor `SlidersHorizontal`. Strings under `reveal.*` (en, pt-BR).
 - `HoardSmbPlugin`: `revealAvailable`, `openInReveal`; `StreamEntry.idleMs`; manifest `<queries>`.
 - `src/features/reveal/` (pure `handoff.ts` + tests, `RevealProvider`), the culling page and viewer,
   the browser, Settings. Setting `revealStreamNoteSeen` (ADR 0003; a key, no migration).
-- Reveal re-reads nothing back into Hoard: decisions made in Reveal stay in Reveal.
+- Reveal re-reads nothing back into Hoard: decisions made in Reveal stay in Reveal (1.9.0: Hoard reads sidecars
+  changed by any editor when a folder opens or the app comes back to the front, ADR 0011).

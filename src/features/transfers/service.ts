@@ -74,8 +74,10 @@ export interface TransferRequest {
   /** The folder the sources land in. */
   destination: TransferPlace & { path: string }
   conflict: TransferConflict
-  /** XMP sidecars to write at the destination next to copied files (ADR 0009, copies only). */
+  /** XMP sidecars to write at the destination next to copied files (ADR 0011, copies only). */
   sidecars?: TransferSidecar[]
+  /** New sidecars are hidden (`.<stem>.xmp`). */
+  hiddenSidecars?: boolean
 }
 
 /** Resolves a place to what native needs (the provider uses the route engine for machines). */
@@ -260,7 +262,8 @@ export class TransferService {
       destination,
       request.conflict,
       false,
-      request.sidecars
+      request.sidecars,
+      request.hiddenSidecars
     )
     return id
   }
@@ -273,7 +276,8 @@ export class TransferService {
     destination: TransferPlace & { path: string },
     conflict: TransferConflict,
     resume: boolean,
-    sidecars?: TransferSidecar[]
+    sidecars?: TransferSidecar[],
+    hiddenSidecars?: boolean
   ) {
     this.live.set(id, {
       ...(this.live.get(id) ?? emptyLive()),
@@ -290,7 +294,7 @@ export class TransferService {
         destination: { location: to as TransferLocation, path: destination.path },
         conflict,
         resume,
-        ...(sidecars?.length ? { sidecars } : {}),
+        ...(sidecars?.length ? { sidecars, ...(hiddenSidecars ? { hiddenSidecars } : {}) } : {}),
       })
     } catch (error) {
       await this.markFailed(id, error)

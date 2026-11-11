@@ -27,8 +27,13 @@ export interface Settings {
   cullEyesSensitivity: Sensitivity
   /** Frames at most this far apart start a burst (ADR 0009). */
   cullBurstGapMs: number
-  /** "Copy picks" writes XMP sidecars at the destination (ADR 0009); off by default. */
-  cullXmpSidecars: boolean
+  /**
+   * Culling decisions are written to XMP sidecars next to the photos in folders Hoard can write, and "Copy picks"
+   * writes them at the destination (ADR 0011); on by default. Replaces 1.6-1.8's `cullXmpSidecars`.
+   */
+  cullSaveXmp: boolean
+  /** New sidecars are hidden files (`.<stem>.xmp`): Reveal and digiKam read them, Lightroom does not. */
+  cullXmpHidden: boolean
   /**
    * The viewer's vertical swipes pick (up) and reject (down) instead of opening the details sheet
    * (ADR 0008, 1.7.0: off by default, swipe up shows the details like the phone's gallery).
@@ -56,7 +61,8 @@ export const SETTING_DEFAULTS: Settings = {
   cullBlurSensitivity: DEFAULT_ASSIST.blur,
   cullEyesSensitivity: DEFAULT_ASSIST.eyes,
   cullBurstGapMs: DEFAULT_ASSIST.burstGapMs,
-  cullXmpSidecars: false,
+  cullSaveXmp: true,
+  cullXmpHidden: false,
   cullSwipeDecide: false,
   revealStreamNoteSeen: false,
 }
@@ -82,7 +88,8 @@ const VALIDATORS: { [K in keyof Settings]: (value: unknown) => boolean } = {
   cullBlurSensitivity: (v) => SENSITIVITIES.includes(v as Sensitivity),
   cullEyesSensitivity: (v) => SENSITIVITIES.includes(v as Sensitivity),
   cullBurstGapMs: (v) => typeof v === "number" && v >= 100 && v <= 10_000,
-  cullXmpSidecars: (v) => typeof v === "boolean",
+  cullSaveXmp: (v) => typeof v === "boolean",
+  cullXmpHidden: (v) => typeof v === "boolean",
   cullSwipeDecide: (v) => typeof v === "boolean",
   revealStreamNoteSeen: (v) => typeof v === "boolean",
 }

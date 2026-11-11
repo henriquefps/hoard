@@ -546,7 +546,7 @@
     "mockShareHint": "Finge que outro app compartilhou três fotos e um PDF: a tela Salvar em… abre.",
     "mockShareAction": "Simular compartilhamento",
     "culling": "Seleção de fotos",
-    "cullingHint": "Assistência na seleção: o que conta como desfocada ou olhos fechados, e como as sequências são agrupadas."
+    "cullingHint": "Assistência na seleção (o que conta como desfocada ou olhos fechados, como as sequências são agrupadas) e as notas salvas em XMP junto às fotos."
   },
   "theme": {
     "label": "Tema",
@@ -934,8 +934,7 @@
       "useFolder": "Usar esta pasta",
       "start_one": "Copiar {{count}} arquivo",
       "start_other": "Copiar {{count}} arquivos",
-      "xmp": "Gravar as estrelas em arquivos XMP",
-      "xmpHint": "Um pequeno arquivo .xmp com as estrelas ao lado de cada foto copiada, só no destino, para o Lightroom, darktable e outros editores."
+      "xmpNote": "Cada foto copiada leva um arquivo XMP com as estrelas e a marca de escolhida (Configurações › Seleção de fotos)."
     },
     "delete": {
       "menu_one": "Apagar {{count}} descartada…",
@@ -1097,6 +1096,15 @@
         "mean": "Subexposta: escura demais no geral"
       },
       "highlights": "{{value}} de altas luzes estouradas ({{area}} em áreas grandes)"
+    },
+    "xmp": {
+      "save": "Salvar as notas junto às fotos (XMP)",
+      "saveHint": "Estrelas, escolhidas e rejeitadas vão para um arquivo .xmp ao lado de cada foto nas pastas em que o Hoard pode gravar, e junto das cópias de \"Copiar escolhidas\". O Lightroom, o darktable, o digiKam e o Reveal leem esses arquivos; notas dadas neles aparecem aqui quando a pasta abre.",
+      "hidden": "Gravar o XMP como arquivo oculto (.nome.xmp)",
+      "hiddenHint": "Os novos arquivos começam com um ponto e ficam escondidos. O Reveal e o digiKam leem esses arquivos; o Lightroom não.",
+      "readOnly": "As notas desta pasta ficam salvas só no Hoard",
+      "notWritten_one": "A nota de {{count}} foto não foi salva ao lado dela: fica só no Hoard",
+      "notWritten_other": "As notas de {{count}} fotos não foram salvas ao lado delas: ficam só no Hoard"
     }
   },
   "reveal": {

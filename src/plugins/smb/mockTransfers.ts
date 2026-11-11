@@ -23,6 +23,7 @@ import type {
 } from "./definitions"
 import { TERMINAL_TRANSFER_STATES } from "./definitions"
 import type { MockFile } from "./mockData"
+import { findSidecar, writeMockXmp } from "./mockXmp"
 
 /** A location's tree as the engine sees it. */
 export interface MockRoot {
@@ -132,7 +133,12 @@ export class MockTransferEngine {
     }
     if (
       (options.sidecars?.length ?? 0) > 5000 ||
-      options.sidecars?.some((x) => !x.sourcePath || !x.content || x.content.length > 16 * 1024)
+      options.sidecars?.some(
+        (x) =>
+          !x.sourcePath ||
+          !(x.rating >= 0 && x.rating <= 5) ||
+          !["pick", "reject", "none"].includes(x.flag)
+      )
     ) {
       throw this.fail("UNKNOWN", "Invalid sidecars")
     }
@@ -572,25 +578,40 @@ export class MockTransferEngine {
         parent?.children?.splice(parent.children.indexOf(node!), 1)
       }
       item.bytesDone = item.size
-      // XMP sidecar (ADR 0009): `<destination stem>.xmp` next to the copy, replacing an older one.
+      // XMP sidecar (ADR 0011 "Copy picks"): merged into the shot's sidecar at the destination, else a new
+      // `<destination stem>.xmp` (hidden on request); a malformed one is left alone.
       const sidecar =
         job.op === "copy"
           ? job.options.sidecars?.find((x) => x.sourcePath === item.sourcePath)
           : undefined
       if (sidecar) {
         const dot = name.lastIndexOf(".")
-        const xmpName = `${dot > 0 ? name.slice(0, dot) : name}.xmp`
-        const file: MockFile = {
-          name: xmpName,
-          size: new TextEncoder().encode(sidecar.content).length,
-          modifiedAt: new Date().toISOString(),
-          text: sidecar.content,
-        }
-        const existing = folder.children.findIndex(
-          (c) => c.name.toLowerCase() === xmpName.toLowerCase()
+        const stem = dot > 0 ? name.slice(0, dot) : name
+        const files = folder.children.filter((c) => !c.children)
+        const existingName = findSidecar(
+          stem,
+          [name],
+          files.map((c) => c.name)
         )
-        if (existing >= 0) folder.children.splice(existing, 1, file)
-        else folder.children.push(file)
+        const existing = existingName ? files.find((c) => c.name === existingName) : undefined
+        const text = writeMockXmp(
+          existing
+            ? (existing.text ?? new TextDecoder().decode(existing.bytes ?? new Uint8Array()))
+            : null,
+          sidecar,
+          `Hoard ${__APP_VERSION__}`,
+          new Date().toISOString()
+        )
+        if (text !== null) {
+          const file: MockFile = existing ?? {
+            name: job.options.hiddenSidecars ? `.${stem}.xmp` : `${stem}.xmp`,
+          }
+          file.text = text
+          file.bytes = undefined
+          file.size = new TextEncoder().encode(text).length
+          file.modifiedAt = new Date().toISOString()
+          if (!existing) folder.children.push(file)
+        }
       }
     }
     item.state = "completed"

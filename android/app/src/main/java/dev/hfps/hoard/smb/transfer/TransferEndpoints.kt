@@ -65,7 +65,7 @@ class TransferEndpoints(private val context: Context, private val credentials: C
     }
 
     /** A device or volume: by path with all files access, else its SAF grants. */
-    private fun local(location: Location.Local): TransferFs {
+    fun local(location: Location.Local): TransferFs {
         val fs = volumes.fs(location)
         return when (fs) {
             is dev.hfps.hoard.smb.location.PathFs -> PathTransferFs(context, fs.root, fs.label, fs.readOnly)
@@ -449,9 +449,7 @@ class IncomingTransferFs(context: Context, private val shareId: String) : Transf
  * Reads are pipelined (4 READs in flight), writes too (4 WRITEs), so [WriteStream.position] is the
  * contiguous prefix the server acknowledged.
  */
-class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials: CredentialStore) : TransferFs {
-    override val label = endpoint.share
-    override val isNetwork = true
+class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials: CredentialStore) : SmbShareFs(endpoint.share) {
     override val addressCount get() = endpoint.addresses.size
 
     private var addressIndex = 0
@@ -460,7 +458,7 @@ class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials:
 
     override val activeHost: String? get() = endpoint.addresses.getOrNull(addressIndex)?.host
 
-    private fun share(): DiskShare {
+    override fun share(): DiskShare {
         share?.takeIf { it.isConnected && handle?.isAlive == true }?.let { return it }
         drop()
         val address = endpoint.addresses[addressIndex]
@@ -490,6 +488,21 @@ class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials:
     }
 
     override fun close() = drop()
+}
+
+/**
+ * A share of a session the UI already holds (culling's sidecars, ADR 0011): the same file operations as
+ * [SmbTransferFs] over [session]'s tree connection, which this endpoint never closes.
+ */
+class SessionShareFs(private val session: dev.hfps.hoard.smb.SmbSession, shareName: String) : SmbShareFs(shareName) {
+    override fun share(): DiskShare = session.share(label)
+}
+
+/** The file operations of an SMB share for the transfer engine; [share] gives the tree connection to use. */
+abstract class SmbShareFs(final override val label: String) : TransferFs {
+    override val isNetwork = true
+
+    protected abstract fun share(): DiskShare
 
     private fun smb(path: String) = SmbPaths.toSmb(path)
 
@@ -500,7 +513,7 @@ class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials:
         return try {
             val info = share().getFileInformation(smb(clean))
             FileStat(
-                if (clean.isEmpty()) endpoint.share else SmbPaths.name(clean),
+                if (clean.isEmpty()) label else SmbPaths.name(clean),
                 info.standardInformation.isDirectory,
                 if (info.standardInformation.isDirectory) 0 else info.standardInformation.endOfFile,
                 info.basicInformation.lastWriteTime?.toEpochMillis()?.takeIf { it > 315_532_800_000L },
@@ -603,7 +616,7 @@ class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials:
         return true
     }
 
-    override fun mapError(error: Throwable): HoardSmbException = SmbErrors.map(error, endpoint.share)
+    override fun mapError(error: Throwable): HoardSmbException = SmbErrors.map(error, label)
 
     private class SmbReader(private val file: SmbFile, private val reader: PipelinedFileReader) : ReadStream {
         private var chunk: ByteArray? = null
@@ -681,7 +694,7 @@ class SmbTransferFs(private val endpoint: Endpoint.Smb, private val credentials:
     }
 
     companion object {
-        private const val CONNECT_TIMEOUT_MS = 10_000L
+        internal const val CONNECT_TIMEOUT_MS = 10_000L
         /** A READ or WRITE unanswered this long means the route died silently: fail over. */
         const val STALL_TIMEOUT_MS = 15_000L
         private const val CHUNK = 1 shl 20

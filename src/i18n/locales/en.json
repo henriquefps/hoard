@@ -546,7 +546,7 @@
     "mockShareHint": "Pretends another app shared three photos and a PDF: the Save to… screen opens.",
     "mockShareAction": "Simulate a share",
     "culling": "Culling",
-    "cullingHint": "Assisted culling: what counts as blurry or eyes closed, and how bursts are grouped."
+    "cullingHint": "Assisted culling (what counts as blurry or eyes closed, how bursts are grouped) and ratings saved as XMP next to the photos."
   },
   "theme": {
     "label": "Theme",
@@ -934,8 +934,7 @@
       "useFolder": "Use this folder",
       "start_one": "Copy {{count}} file",
       "start_other": "Copy {{count}} files",
-      "xmp": "Write ratings as XMP sidecars",
-      "xmpHint": "A small .xmp file with the stars next to each copied shot, at the destination only, for Lightroom, darktable and other editors."
+      "xmpNote": "Each copied shot gets an XMP sidecar with its stars and pick (Settings › Culling)."
     },
     "delete": {
       "menu_one": "Delete {{count}} reject…",
@@ -1097,6 +1096,15 @@
         "mean": "Underexposed: very dark overall"
       },
       "highlights": "{{value}} blown highlights ({{area}} in large areas)"
+    },
+    "xmp": {
+      "save": "Save ratings next to photos (XMP)",
+      "saveHint": "Stars, picks and rejects go into a .xmp file next to each shot in folders Hoard can write, and with the copies of \"Copy picks\". Lightroom, darktable, digiKam and Reveal read them; ratings made there show here when the folder opens.",
+      "hidden": "Write XMP as hidden file (.name.xmp)",
+      "hiddenHint": "New sidecars start with a dot so they stay out of sight. Reveal and digiKam read them; Lightroom does not.",
+      "readOnly": "Ratings are saved only in Hoard for this folder",
+      "notWritten_one": "The rating of {{count}} photo was not saved next to it: kept in Hoard only",
+      "notWritten_other": "The ratings of {{count}} photos were not saved next to them: kept in Hoard only"
     }
   },
   "reveal": {

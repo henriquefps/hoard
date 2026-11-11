@@ -5,6 +5,9 @@ import dev.hfps.hoard.smb.HoardSmbException
 import dev.hfps.hoard.smb.SmbConnector
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.smbFail
+import dev.hfps.hoard.xmp.XmpFields
+import dev.hfps.hoard.xmp.XmpFlag
+import dev.hfps.hoard.xmp.XmpReader
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -239,10 +242,12 @@ class TransferJob(
     /** Retry of a job native had lost: an existing destination file of the same size counts as copied. */
     val resumeExisting: Boolean = false,
     /**
-     * Small text files to write next to copied files (XMP sidecars, ADR 0009): source path →
-     * content. Written as `<destination stem>.xmp` once that file is copied.
+     * XMP sidecars to write next to copied files (ADR 0011 "Copy picks"): source path → the culling fields,
+     * merged into the destination's sidecar of that shot (or a new `<destination stem>.xmp`) once the file is copied.
      */
-    val sidecars: Map<String, String> = emptyMap(),
+    val sidecars: Map<String, XmpFields> = emptyMap(),
+    /** New sidecars are hidden (`.<stem>.xmp`). */
+    val hiddenSidecars: Boolean = false,
 ) {
     @Volatile var state: String = TransferStates.QUEUED
     @Volatile var errorCode: ErrorCode? = null
@@ -306,7 +311,8 @@ class TransferJob(
             put("conflict", conflict)
             put("startedAt", startedAt)
             put("resumeExisting", resumeExisting)
-            if (sidecars.isNotEmpty()) put("sidecars", JSONObject().apply { sidecars.forEach { (k, v) -> put(k, v) } })
+            if (sidecars.isNotEmpty()) put("sidecars", JSONObject().apply { sidecars.forEach { (k, v) -> put(k, SidecarJson.toJson(v)) } })
+            if (hiddenSidecars) put("hiddenSidecars", true)
             put("state", state)
             putOpt("errorCode", errorCode?.name)
             putOpt("errorMessage", errorMessage)
@@ -331,7 +337,10 @@ class TransferJob(
                 conflict = json.optString("conflict", Conflicts.RENAME),
                 startedAt = json.getString("startedAt"),
                 resumeExisting = json.optBoolean("resumeExisting"),
-                sidecars = json.optJSONObject("sidecars")?.let { o -> o.keys().asSequence().associateWith { o.getString(it) } }.orEmpty(),
+                sidecars = json.optJSONObject("sidecars")?.let { o ->
+                    o.keys().asSequence().mapNotNull { key -> SidecarJson.fromJson(o.opt(key))?.let { key to it } }.toMap()
+                }.orEmpty(),
+                hiddenSidecars = json.optBoolean("hiddenSidecars"),
             )
             job.state = json.optString("state", TransferStates.QUEUED)
             job.errorCode = json.optString("errorCode").takeIf { json.has("errorCode") }?.let(ErrorCode::fromName)
@@ -388,5 +397,26 @@ class TransferJob(
             ).also { it.direct = true }
             return job
         }
+    }
+}
+
+/**
+ * A job's sidecar fields in its saved JSON: `{ "rating": 3, "flag": "pick" }`. Jobs saved by Hoard before 1.9.0 hold
+ * the whole XMP document as a string: it is read back into fields (a Hoard sidecar without a pick label is a pick).
+ */
+object SidecarJson {
+    fun toJson(fields: XmpFields): JSONObject = JSONObject().put("rating", fields.rating).put("flag", fields.flag.wire)
+
+    fun fromJson(value: Any?): XmpFields? = when (value) {
+        is JSONObject -> fields(value.optInt("rating", 0), value.optString("flag"))
+        is String -> XmpReader.readOrNull(value.toByteArray(Charsets.UTF_8))?.fields?.copy(label = null)
+        else -> null
+    }
+
+    /** Contract values (`rating` 0..5, `flag` pick/reject/none); null when they are out of range. */
+    fun fields(rating: Int, flag: String?): XmpFields? {
+        if (rating !in 0..XmpFields.MAX_RATING) return null
+        val parsed = XmpFlag.parse(flag) ?: return null
+        return XmpFields(rating, parsed)
     }
 }

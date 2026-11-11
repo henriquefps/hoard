@@ -375,13 +375,21 @@ describe("HoardSmbWeb", () => {
       expect((await smb.getTransferItems({ transferId: "t1" })).total).toBe(last.itemsTotal)
     })
 
-    it("writes XMP sidecars at the destination only, and only for copies", async () => {
+    it("writes XMP sidecars at the destination only, merged, and only for copies", async () => {
       const files = (await smb.list({ location: usb, path: "DCIM/102MSDCF" })).entries
       const arw = files.filter((e) => e.name.endsWith(".ARW")).slice(0, 2)
-      const sidecars = arw.map((e) => ({
+      const sidecars = arw.map((e, i) => ({
         sourcePath: e.path,
-        content: `<x:xmpmeta>${e.name}</x:xmpmeta>`,
+        rating: 4 - i,
+        flag: "pick" as const,
       }))
+      // The second shot already has a sidecar at the destination (Lightroom's develop settings in it).
+      const stem2 = arw[1].name.replace(/\.ARW$/, "")
+      await smb.writeTextFile({
+        location: device,
+        path: `Download/${stem2}.xmp`,
+        text: '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="+0.50"/></rdf:RDF></x:xmpmeta>',
+      })
       await smb.startTransfer({
         transferId: "x1",
         op: "copy",
@@ -395,8 +403,14 @@ describe("HoardSmbWeb", () => {
       expect(await names(device, "Download")).toEqual(
         expect.arrayContaining([arw[0].name, `${stem}.xmp`])
       )
-      const text = await smb.readTextFile({ location: device, path: `Download/${stem}.xmp` })
-      expect(text.text).toBe(sidecars[0].content)
+      const text = (await smb.readTextFile({ location: device, path: `Download/${stem}.xmp` })).text
+      expect(text).toContain('xmp:Rating="4"')
+      expect(text).toContain('digiKam:PickLabel="3"')
+      expect(text).toContain('xmp:CreatorTool="Hoard ')
+      const merged = (await smb.readTextFile({ location: device, path: `Download/${stem2}.xmp` }))
+        .text
+      expect(merged).toContain('crs:Exposure2012="+0.50"')
+      expect(merged).toContain('xmp:Rating="3"')
       expect((await names(usb, "DCIM/102MSDCF")).some((n) => n.endsWith(".xmp"))).toBe(false)
       expect(
         await smb
@@ -407,6 +421,21 @@ describe("HoardSmbWeb", () => {
             destination: { location: device, path: "Download" },
             conflict: "rename",
             sidecars,
+          })
+          .then(
+            () => "OK",
+            (e: unknown) => smbErrorCode(e)
+          )
+      ).toBe("UNKNOWN")
+      expect(
+        await smb
+          .startTransfer({
+            transferId: "x3",
+            op: "copy",
+            sources: [{ location: usb, path: arw[0].path }],
+            destination: { location: device, path: "Download" },
+            conflict: "rename",
+            sidecars: [{ sourcePath: arw[0].path, rating: 7, flag: "pick" }],
           })
           .then(
             () => "OK",
@@ -1030,6 +1059,105 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
       smb.setRevealInstalled(false)
       expect(await smb.revealAvailable()).toEqual({ available: false })
       expect(await code(smb.openInReveal({ location: usb, paths: [jpeg] }))).toBe("NO_APP")
+    })
+  })
+
+  describe("sidecars (ADR 0011)", () => {
+    it("writes decisions next to the photos, merges, never touches a malformed sidecar", async () => {
+      smb.simulateStorageAccess(true)
+      const path = "DCIM/102MSDCF"
+      const { cullId, shots } = await smb.cullOpen({ location: usb, path })
+      const ref = { cullId, location: usb }
+      const [a, b, c] = shots
+      await smb.writeTextFile({ location: usb, path: `${path}/${b.stem}.xmp`, text: "<x:xmpmeta" })
+      const result = await smb.cullWriteSidecars({
+        ...ref,
+        items: [
+          { shotId: a.id, rating: 3, flag: "pick" },
+          { shotId: b.id, rating: 1, flag: "none" },
+          { shotId: c.id, rating: 2, flag: "reject" },
+        ],
+        hidden: true,
+      })
+      expect(result.readOnly).toBe(false)
+      expect(result.results.map((r) => [r.status, r.name])).toEqual([
+        ["written", `.${a.stem}.xmp`],
+        ["malformed", `${b.stem}.xmp`],
+        ["written", `.${c.stem}.xmp`],
+      ])
+      expect((await smb.readTextFile({ location: usb, path: `${path}/${b.stem}.xmp` })).text).toBe(
+        "<x:xmpmeta"
+      )
+      const reject = (await smb.readTextFile({ location: usb, path: `${path}/.${c.stem}.xmp` }))
+        .text
+      expect(reject).toContain('xmp:Rating="-1"')
+      // Read back: everything, then only what is newer than a threshold.
+      const all = await smb.cullReadSidecars({
+        ...ref,
+        shots: [a, b, c].map((s) => ({ id: s.id })),
+      })
+      expect(all.shots.map((s) => [s.id, s.fields, s.error])).toEqual([
+        [a.id, { rating: 3, flag: "pick" }, undefined],
+        [b.id, undefined, "malformed"],
+        [c.id, { rating: 0, flag: "reject" }, undefined],
+      ])
+      const aMtime = all.shots[0].modifiedMillis!
+      const newer = await smb.cullReadSidecars({ ...ref, shots: [{ id: a.id, after: aMtime }] })
+      expect(newer.shots).toEqual([])
+      // Unmarking writes zeros into the same file (no second sidecar).
+      await smb.cullWriteSidecars({ ...ref, items: [{ shotId: a.id, rating: 0, flag: "none" }] })
+      const files = (await smb.list({ location: usb, path })).entries.map((e) => e.name)
+      expect(files.filter((n) => n.toLowerCase().includes(a.stem.toLowerCase() + "."))).toEqual(
+        expect.arrayContaining([`.${a.stem}.xmp`])
+      )
+      expect(files).not.toContain(`${a.stem}.xmp`)
+      expect(
+        await code(
+          smb.cullWriteSidecars({ ...ref, items: [{ shotId: a.id, rating: 6, flag: "pick" }] })
+        )
+      ).toBe("UNKNOWN")
+    })
+
+    it("a read-only share refuses once, then nothing more is attempted", async () => {
+      const nas = await smb.connect({ machineId: "demo-nas-sala", host: "192.168.1.20" })
+      const location = { kind: "smb", sessionId: nas.sessionId, share: "Public" } as const
+      const { cullId, shots, access } = await smb.cullOpen({ location, path: "Wallpapers" })
+      expect(access).toBe("read")
+      const ref = { cullId, location }
+      const first = await smb.cullWriteSidecars({
+        ...ref,
+        items: [{ shotId: shots[0].id, rating: 5, flag: "pick" }],
+      })
+      expect(first).toMatchObject({ readOnly: true, results: [{ status: "readOnly" }] })
+      const second = await smb.cullWriteSidecars({
+        ...ref,
+        items: [{ shotId: shots[1].id, rating: 5, flag: "pick" }],
+      })
+      expect(second.results[0].status).toBe("readOnly")
+      expect(
+        (await smb.list({ location, path: "Wallpapers" })).entries.some((e) =>
+          e.name.endsWith(".xmp")
+        )
+      ).toBe(false)
+    })
+
+    it("sends culling values to Reveal for the files sent only", async () => {
+      smb.simulateStorageAccess(true)
+      const { shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+      const pair = shots.find((s) => s.kind === "pair")!
+      await smb.openInReveal({
+        location: usb,
+        paths: [pair.raw!.path, pair.rendered!.path],
+        culling: {
+          [pair.raw!.path]: { rating: 4, flag: "reject" },
+          [pair.rendered!.path]: { rating: 9, flag: "reject" },
+          "DCIM/other.ARW": { rating: 1, flag: "pick" },
+        },
+      })
+      expect(smb.revealCalls.at(-1)?.culling).toEqual({
+        [pair.raw!.path]: { rating: 4, flag: "reject" },
+        [pair.rendered!.path]: { rating: 5, flag: "reject" },
+      })
     })
   })
 

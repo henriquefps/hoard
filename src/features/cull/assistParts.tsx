@@ -10,7 +10,14 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ResponsiveDialog"
 import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field"
+import { Switch } from "@/components/ui/switch"
 import {
   Select,
   SelectContent,
@@ -141,6 +148,8 @@ export function AssistSettingsFields() {
   const [blur, setBlur] = useSetting("cullBlurSensitivity")
   const [eyes, setEyes] = useSetting("cullEyesSensitivity")
   const [gap, setGap] = useSetting("cullBurstGapMs")
+  const [saveXmp, setSaveXmp] = useSetting("cullSaveXmp")
+  const [hiddenXmp, setHiddenXmp] = useSetting("cullXmpHidden")
   const sensitivity = (id: string, value: Sensitivity, onChange: (value: Sensitivity) => void) => (
     <ToggleGroup
       type="single"
@@ -187,6 +196,29 @@ export function AssistSettingsFields() {
           </SelectContent>
         </Select>
         <FieldDescription>{t("cull.assist.burstGapHint")}</FieldDescription>
+      </Field>
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldLabel htmlFor="cull-save-xmp">{t("cull.xmp.save")}</FieldLabel>
+          <FieldDescription>{t("cull.xmp.saveHint")}</FieldDescription>
+        </FieldContent>
+        <Switch
+          id="cull-save-xmp"
+          checked={saveXmp ?? true}
+          onCheckedChange={(checked) => void setSaveXmp(checked)}
+        />
+      </Field>
+      <Field orientation="horizontal" data-disabled={!(saveXmp ?? true) || undefined}>
+        <FieldContent>
+          <FieldLabel htmlFor="cull-xmp-hidden">{t("cull.xmp.hidden")}</FieldLabel>
+          <FieldDescription>{t("cull.xmp.hiddenHint")}</FieldDescription>
+        </FieldContent>
+        <Switch
+          id="cull-xmp-hidden"
+          checked={hiddenXmp ?? false}
+          disabled={!(saveXmp ?? true)}
+          onCheckedChange={(checked) => void setHiddenXmp(checked)}
+        />
       </Field>
     </FieldGroup>
   )

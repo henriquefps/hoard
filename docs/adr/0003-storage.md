@@ -26,7 +26,7 @@ Every screen goes through one small query interface, `Db` (`src/db/db.ts`: `quer
   directly over jeep-sqlite (which wraps it in a web component plus IndexedDB) because it is less
   machinery and also runs in Node for the tests.
 
-Schema (v6), ids are TEXT UUIDs created by the app and shared with the native plugin:
+Schema (v7), ids are TEXT UUIDs created by the app and shared with the native plugin:
 
 | Table               | Columns                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -40,18 +40,22 @@ Schema (v6), ids are TEXT UUIDs created by the app and shared with the native pl
 | `cull_decisions`    | location_id, share, path, shot_id (lowercase stem: a RAW + JPEG pair is one shot), flag (`pick`/`reject`/null), rating (0..5), updated_at; primary key (location_id, share, path, shot_id). A row exists only while a shot is flagged or rated. v5                                                                                                                                                                                                                                                                 |
 | `cull_destinations` | source_location_id, source_share, location_id, share, path, label, options (JSON), updated_at; primary key (source_location_id, source_share): the last "Copy picks" destination per source. v5                                                                                                                                                                                                                                                                                                                    |
 | `cull_analysis`     | location_id, share, path (the analysed file: the shot's RAW, else its JPEG), folder, size, modified_at (as listed), version, analysis (JSON `CullAnalysis`), analysed_at; primary key (location_id, share, path), index (location_id, share, folder). A cache: valid while size, modified time and the analysis version match. v6, [ADR 0009](0009-assisted-culling.md)                                                                                                                                            |
+| `cull_sidecars`     | location_id, share, path, shot_id, decided_at (ms, Hoard's last decision on the shot, unmarking included), sidecar_mtime (ms, the XMP sidecar's mtime when Hoard last wrote or imported it), synced (1: that sidecar held Hoard's latest decision); primary key (location_id, share, path, shot_id). Kept when an unmarked shot's `cull_decisions` row is deleted. The import rule of [ADR 0011](0011-culling-sidecars.md) compares a sidecar's mtime with these. v7                                               |
 
 Known `settings` keys (no migration needed, the table is key/value; validated with defaults in
 `src/features/settings/settings.ts`): `showHiddenFiles`, `defaultSort` (`{ key, direction }`),
 `defaultConflict` (`ask` / `rename` / `overwrite` / `skip`), `recentDestinations` (the destination picker's "Recent", newest first; 1.4), `lastDestination` (≤ 1.3, no longer read), `probeTimeoutMs`,
 `onboarded`, `storageIntroSeen` (the all files access screen was shown, ADR 0005), `cullAutoAdvance`
-(ADR 0008), `cullBlurSensitivity` / `cullEyesSensitivity` (`low` / `medium` / `high`), `cullBurstGapMs` and
-`cullXmpSidecars` (ADR 0009), `cullSwipeDecide` (ADR 0008, 1.7), `revealStreamNoteSeen` (ADR 0010, 1.8: the SMB note before "Edit in Reveal" was dismissed for good), and in the browser build `demoSeeded` / `worstCaseSeeded`.
+(ADR 0008), `cullBlurSensitivity` / `cullEyesSensitivity` (`low` / `medium` / `high`), `cullBurstGapMs` (ADR 0009),
+`cullXmpSidecars` (1.6–1.8, "Copy picks" XMP; dropped by migration v7), `cullSaveXmp` (decisions written to XMP sidecars, on by
+default) and `cullXmpHidden` (new sidecars as `.<stem>.xmp`) (ADR 0011, 1.9), `cullSwipeDecide` (ADR 0008, 1.7), `revealStreamNoteSeen` (ADR 0010, 1.8: the SMB note before "Edit in Reveal" was dismissed for good), and in the browser build `demoSeeded` / `worstCaseSeeded`.
 
-The culling tables (v5, v6) have no foreign keys: local locations are not rows. `deleteMachine` clears a
-machine's culling rows (decisions, sessions, destinations, analyses) in the same transaction. The SQLite adapters treat a transaction that begins
+The culling tables (v5–v7) have no foreign keys: local locations are not rows. `deleteMachine` clears a
+machine's culling rows (decisions, sessions, destinations, analyses, sidecar times) in the same transaction. The SQLite adapters treat a transaction that begins
 while another is open as nested (they cannot tell the two apart), so callers that write in quick
-succession (culling decisions) serialize their writes.
+succession (culling decisions) serialize their writes. Since 1.9 the Capacitor adapter also runs top-level
+transactions and standalone writes one after another (the plugin refuses `beginTransaction` while another
+statement's own transaction is open).
 
 The transfer service writes progress (bytes and item counts) to `transfers` at most once a second per job (plus every
 state change); speed and the active host live only in memory, fed by `transferProgress`.

@@ -3,6 +3,11 @@ package dev.hfps.hoard.smb.transfer
 import dev.hfps.hoard.smb.ConflictNames
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.HoardSmbException
+import dev.hfps.hoard.smb.IsoTime
+import dev.hfps.hoard.xmp.SidecarNames
+import dev.hfps.hoard.xmp.SidecarTool
+import dev.hfps.hoard.xmp.SidecarWrite
+import dev.hfps.hoard.xmp.Sidecars
 import java.util.Locale
 
 /** What the runner needs from Android (clock, events, persistence, sleeping). Fakes in tests. */
@@ -64,6 +69,9 @@ class TransferRunner(
 
     /** Destination folder → lowercase names in it (for renames), filled lazily. */
     private val destNames = HashMap<String, MutableSet<String>>()
+
+    /** Sidecar names per destination folder (lower case → as listed), listed once per job (ADR 0011). */
+    private val sidecarNames = HashMap<String, HashMap<String, String>>()
 
     /** The endpoint's filesystem; one that cannot be opened (drive gone, grant revoked) stops the job. */
     private fun fs(endpoint: Endpoint): TransferFs = opened.getOrPut(endpoint.key) {
@@ -354,37 +362,36 @@ class TransferRunner(
     }
 
     /**
-     * The XMP sidecar of a copied file (ADR 0009), as `<its destination stem>.xmp` next to it, so
-     * it follows a conflict rename (`DSC1 (1).ARW` → `DSC1 (1).xmp`). An older sidecar of that
-     * name is replaced: it describes the file just written. Written through a partial name like
-     * any file. Best effort: the photo is already safe, so a failure is logged, not an item error.
+     * The XMP sidecar of a copied file (ADR 0011, "Copy picks"), next to it at the destination, through the shared
+     * sidecar module ([Sidecars]): merged into the shot's existing sidecar there (`<stem>.xmp`, `<file>.xmp` or
+     * their hidden forms, ADR 0011 "Naming"), else a new `<its destination stem>.xmp` (`.<stem>.xmp` with the
+     * hidden option), so it follows a conflict rename (`DSC1 (1).ARW` → `DSC1 (1).xmp`). A malformed sidecar is
+     * left as it is. Best effort: the photo is already safe, so a failure is logged, not an item error.
      */
     private fun writeSidecar(item: TransferItem) {
-        val content = job.sidecars[item.sourcePath] ?: return
+        val fields = job.sidecars[item.sourcePath] ?: return
         val folder = TransferPaths.parent(item.destPath)
         val name = TransferPaths.name(item.destPath)
         val stem = name.substringBeforeLast('.', name)
-        val target = TransferPaths.join(folder, "$stem.xmp")
-        val part = TransferPaths.join(folder, PartNames.of("$stem.xmp"))
         try {
-            val bytes = content.toByteArray(Charsets.UTF_8)
-            dest.call {
-                val writer = openWrite(part, 0)
-                try {
-                    writer.write(bytes, 0, bytes.size)
-                    writer.finish()
-                } finally {
-                    runCatching { writer.close() }
-                }
-                if (!rename(part, target, true)) throw HoardSmbException(ErrorCode.UNKNOWN, "Could not name $stem.xmp")
+            val names = sidecarNames.getOrPut(folder) {
+                dest.call { list(folder) }.filter { !it.isDirectory && SidecarNames.isSidecar(it.name) }
+                    .associateTo(HashMap()) { it.name.lowercase(Locale.ROOT) to it.name }
             }
-            rememberName(target)
+            val existing = SidecarNames.find(stem, listOf(name)) { names[it] }
+            when (val result = dest.call { Sidecars.write(this, folder, stem, existing, fields, job.hiddenSidecars, SidecarTool.creatorTool, IsoTime.now()) }) {
+                is SidecarWrite.Written -> {
+                    names[result.name.lowercase(Locale.ROOT)] = result.name
+                    rememberName(TransferPaths.join(folder, result.name))
+                }
+                is SidecarWrite.Malformed -> hooks.log("${item.name}: ${result.name} is not well-formed XMP; left as it was")
+                is SidecarWrite.Failed -> hooks.log("${item.name}: sidecar not written: ${result.error.message}")
+            }
         } catch (e: InterruptedException) {
             throw e
         } catch (e: java.util.concurrent.CancellationException) {
             throw e
         } catch (e: Exception) {
-            runCatching { dest.delete(part) }
             hooks.log("${item.name}: sidecar not written: ${e.message}")
         }
     }

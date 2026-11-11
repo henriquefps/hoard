@@ -12,6 +12,8 @@ import {
   getCullDestination,
   getCullSession,
   listCullDecisions,
+  listCullSidecars,
+  saveCullSidecars,
   saveCullDecisions,
   setCullDestination,
   touchCullSession,
@@ -66,8 +68,8 @@ async function freshDb(): Promise<Db> {
 
 describe("migrations", () => {
   it("plans every migration for a new database and none at the latest version", () => {
-    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6])
-    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4, 5, 6])
+    expect(pendingMigrations(0).map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(pendingMigrations(1).map((m) => m.version)).toEqual([2, 3, 4, 5, 6, 7])
     expect(pendingMigrations(LATEST_VERSION)).toEqual([])
   })
 
@@ -93,6 +95,7 @@ describe("migrations", () => {
         "cull_decisions",
         "cull_destinations",
         "cull_analysis",
+        "cull_sidecars",
       ])
     )
   })
@@ -467,6 +470,41 @@ describe("queries", () => {
     expect(await listCullAnalyses(db, { ...key, path: "DCIM/101MSDCF" })).toHaveLength(1)
   })
 
+  it("keeps sidecar times per shot, field by field, and forgets them with the shot (v7)", async () => {
+    const key = { locationId: "device", share: "", path: "DCIM/100MSDCF" }
+    await saveCullSidecars(db, key, [{ shotId: "a", decidedAt: 1000, synced: false }])
+    await saveCullSidecars(db, key, [{ shotId: "a", sidecarMtime: 2000, synced: true }])
+    await saveCullSidecars(db, key, [{ shotId: "b", sidecarMtime: 3000, synced: true }])
+    await saveCullSidecars(db, { ...key, path: "other" }, [{ shotId: "a", decidedAt: 5 }])
+    const rows = await listCullSidecars(db, key)
+    expect(rows.map((r) => [r.shot_id, r.decided_at, r.sidecar_mtime, r.synced]).sort()).toEqual([
+      ["a", 1000, 2000, 1],
+      ["b", null, 3000, 1],
+    ])
+    // A later decision keeps the stored mtime and clears `synced`.
+    await saveCullSidecars(db, key, [{ shotId: "a", decidedAt: 4000, synced: false }])
+    const a = (await listCullSidecars(db, key)).find((r) => r.shot_id === "a")!
+    expect([a.decided_at, a.sidecar_mtime, a.synced]).toEqual([4000, 2000, 0])
+    await forgetCullShots(db, key, ["a"])
+    expect((await listCullSidecars(db, key)).map((r) => r.shot_id)).toEqual(["b"])
+    await expect(
+      db.run("INSERT INTO cull_sidecars (location_id, shot_id, synced) VALUES ('device', 'x', 2)")
+    ).rejects.toThrow()
+  })
+
+  it("drops the old Copy picks switch so the new default applies (v7)", async () => {
+    const old = sqljsDb(new SQL.Database())
+    for (const migration of pendingMigrations(0).filter((m) => m.version <= 6)) {
+      await old.execute(migration.sql)
+      await old.execute(`PRAGMA user_version = ${migration.version}`)
+    }
+    await setSetting(old, "cullXmpSidecars", false)
+    await setSetting(old, "cullAutoAdvance", false)
+    await migrate(old)
+    expect(await getSetting(old, "cullXmpSidecars", "gone")).toBe("gone")
+    expect(await getSetting(old, "cullAutoAdvance", true)).toBe(false)
+  })
+
   it("clears a machine's culling rows when the machine is deleted", async () => {
     const id = await saveMachine(db, {
       name: "nas",
@@ -483,7 +521,9 @@ describe("queries", () => {
     await saveCullAnalyses(db, key, [
       { path: "2026/a.jpg", size: 1, modifiedAt: null, version: 1, analysis: "{}" },
     ])
+    await saveCullSidecars(db, key, [{ shotId: "a", decidedAt: 1 }])
     await deleteMachine(db, id)
+    expect(await listCullSidecars(db, key)).toEqual([])
     expect(await listCullAnalyses(db, key)).toEqual([])
     expect(await getCullSession(db, key)).toBeNull()
     expect(await listCullDecisions(db, key)).toEqual([])

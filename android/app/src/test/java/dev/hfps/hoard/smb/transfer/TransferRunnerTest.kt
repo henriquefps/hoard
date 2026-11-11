@@ -2,6 +2,9 @@ package dev.hfps.hoard.smb.transfer
 
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.HoardSmbException
+import dev.hfps.hoard.xmp.XmpFields
+import dev.hfps.hoard.xmp.XmpFlag
+import dev.hfps.hoard.xmp.XmpReader
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -392,17 +395,26 @@ class TransferRunnerTest {
         fsOf(phone).file("DCIM/DSC3.JPG", bytes(10, 4))
         fsOf(usb).file("Pictures/DSC2.JPG", bytes(5, 9))
         fsOf(usb).file("Pictures/DSC3.JPG", bytes(5, 9))
-        val sidecars = mapOf("DCIM/DSC1.ARW" to "<x1/>", "DCIM/DSC2.JPG" to "<x2/>", "DCIM/DSC3.JPG" to "<x3/>")
+        val sidecars = mapOf(
+            "DCIM/DSC1.ARW" to XmpFields(4, XmpFlag.PICK),
+            "DCIM/DSC2.JPG" to XmpFields(2, XmpFlag.NONE),
+            "DCIM/DSC3.JPG" to XmpFields(1, XmpFlag.PICK),
+        )
         val first = TransferJob(
             "t", "copy", listOf("DSC1.ARW", "DSC1.JPG", "DSC2.JPG").map { TransferSource(phone, "DCIM/$it") }, usb, "Pictures", Conflicts.RENAME, "now",
             sidecars = sidecars,
         )
         run(first)
         val dest = fsOf(usb)
-        assertEquals("<x1/>", dest.bytes("Pictures/DSC1.xmp")?.toString(Charsets.UTF_8))
+        val dsc1 = dest.bytes("Pictures/DSC1.xmp")!!
+        assertEquals(XmpFields(4, XmpFlag.PICK), XmpReader.read(dsc1).fields)
+        assertTrue(dsc1.toString(Charsets.UTF_8).contains("digiKam:PickLabel=\"3\""))
+        assertTrue(dsc1.toString(Charsets.UTF_8).contains("xmp:CreatorTool=\"Hoard"))
+        // One sidecar per pair, on the RAW's stem: the JPEG got none of its own.
+        assertNull(dest.bytes("Pictures/DSC1.JPG.xmp"))
         // DSC2.JPG existed: the copy became "DSC2 (1).JPG" and its sidecar follows that name.
         assertNotNull(dest.bytes("Pictures/DSC2 (1).JPG"))
-        assertEquals("<x2/>", dest.bytes("Pictures/DSC2 (1).xmp")?.toString(Charsets.UTF_8))
+        assertEquals(XmpFields(2, XmpFlag.NONE), XmpReader.read(dest.bytes("Pictures/DSC2 (1).xmp")!!).fields)
         assertNull(dest.bytes("Pictures/DSC2.xmp"))
         // Never next to the source; no partial names left behind.
         assertTrue(fsOf(phone).nodes.keys.none { it.endsWith(".xmp") })
@@ -413,6 +425,51 @@ class TransferRunnerTest {
         assertNull(dest.bytes("Pictures/DSC3.xmp"))
         // Sidecars survive the job's JSON round trip (a restart mid-copy).
         assertEquals(sidecars, TransferJob.fromJson(first.toJson()).sidecars)
+    }
+
+    @Test
+    fun `an existing sidecar at the destination is merged, a malformed one left alone, hidden names honoured`() {
+        val lightroom = """
+            <x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+             <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+               xmp:Rating="1" xmp:Label="Red" crs:Exposure2012="+0.50"/>
+            </rdf:RDF></x:xmpmeta>
+        """.trimIndent()
+        fsOf(phone).file("DCIM/DSC1.ARW", bytes(20, 1))
+        fsOf(phone).file("DCIM/DSC2.ARW", bytes(20, 2))
+        fsOf(phone).file("DCIM/DSC3.ARW", bytes(20, 3))
+        fsOf(phone).file("DCIM/DSC4.ARW", bytes(20, 4))
+        val dest = fsOf(usb)
+        dest.file("Pictures/dsc1.xmp", lightroom.toByteArray())
+        dest.file("Pictures/DSC2.ARW.xmp", "<x:xmpmeta".toByteArray())
+        dest.file("Pictures/.DSC3.xmp", lightroom.toByteArray())
+        val sidecars = listOf("DSC1", "DSC2", "DSC3", "DSC4").associate { "DCIM/$it.ARW" to XmpFields(5, XmpFlag.PICK) }
+        val job = TransferJob(
+            "t", "copy", sidecars.keys.map { TransferSource(phone, it) }, usb, "Pictures", Conflicts.OVERWRITE, "now",
+            sidecars = sidecars, hiddenSidecars = true,
+        )
+        run(job)
+        // Merged into the existing sidecar under its own name: develop settings and the label kept.
+        val merged = dest.bytes("Pictures/dsc1.xmp")!!.toString(Charsets.UTF_8)
+        assertTrue(merged.contains("crs:Exposure2012=\"+0.50\""))
+        assertEquals(XmpFields(5, XmpFlag.PICK, "Red"), XmpReader.read(merged.toByteArray()).fields)
+        assertNull(dest.bytes("Pictures/DSC1.xmp"))
+        assertNull(dest.bytes("Pictures/.DSC1.xmp"))
+        // darktable's name is the shot's sidecar; it is malformed: byte for byte as it was, and no second sidecar.
+        assertEquals("<x:xmpmeta", dest.bytes("Pictures/DSC2.ARW.xmp")!!.toString(Charsets.UTF_8))
+        assertNull(dest.bytes("Pictures/.DSC2.xmp"))
+        // An existing hidden sidecar is used; a new one is hidden because of the option.
+        assertEquals(5, XmpReader.read(dest.bytes("Pictures/.DSC3.xmp")!!).fields.rating)
+        assertEquals(XmpFields(5, XmpFlag.PICK), XmpReader.read(dest.bytes("Pictures/.DSC4.xmp")!!).fields)
+        assertNull(dest.bytes("Pictures/DSC4.xmp"))
+        assertTrue(TransferJob.fromJson(job.toJson()).hiddenSidecars)
+    }
+
+    @Test
+    fun `jobs saved before 1_9_0 with XMP text read back as fields`() {
+        val json = job("copy", listOf(TransferSource(phone, "a.ARW")), usb).toJson()
+        json.put("sidecars", org.json.JSONObject().put("a.ARW", "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"3\" xmp:CreatorTool=\"Hoard 1.8.0\"/></rdf:RDF></x:xmpmeta>"))
+        assertEquals(mapOf("a.ARW" to XmpFields(3, XmpFlag.PICK)), TransferJob.fromJson(json).sidecars)
     }
 
     @Test

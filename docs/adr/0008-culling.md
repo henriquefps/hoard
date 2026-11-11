@@ -10,7 +10,8 @@ The owner shoots a Sony ZV-E10 in RAW + JPEG. The workflow: the camera's SD card
 (or a folder on the NAS / Mac over SMB, or the phone itself) → **cull on the phone** → copy the
 keepers anywhere (phone, USB drive / SD card, SMB share; never forced to the NAS). It must work for
 RAW-only, JPEG-only and RAW+JPEG shots; a pair is one shot and a decision applies to both files.
-No compatibility with the old macOS PhotoCull app (no IPTC, no sidecars).
+No compatibility with the old macOS PhotoCull app (no IPTC, no sidecars). Since 1.9.0 decisions are
+also written to standard XMP sidecars next to the photos in writable folders, and read back ([ADR 0011](0011-culling-sidecars.md)).
 
 ADR 0005 made every place files live a _location_; ADR 0006 built the native image core (preview
 extraction with partial reads, screen and region decode, LibRaw, caches, priority prefetch,
@@ -280,5 +281,6 @@ under the link.
 
 - Culling works on every location the app can browse, with the same UI in the browser build.
 - Disk cache budget grows by up to 512 MB (`screens/` + `tiles/`), trimmed LRU like the others.
-- Decisions are per folder: moving a shoot to another folder starts its culling over (no sidecars
-  by design).
+- Decisions are per folder in the database: moving a shoot to another folder starts its culling over,
+  except that since 1.9.0 the shots' XMP sidecars travel with the photos and are imported when the new
+  folder opens ([ADR 0011](0011-culling-sidecars.md)).

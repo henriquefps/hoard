@@ -233,6 +233,27 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_cull_analysis_folder ON cull_analysis(location_id, share, folder);
     `,
   },
+  {
+    // Culling ratings as XMP sidecars (ADR 0011): per shot, when Hoard last decided (ms, kept when a shot is
+    // unmarked and its `cull_decisions` row deleted), the sidecar's mtime (ms) when Hoard last wrote or imported
+    // it, and whether that sidecar holds Hoard's latest decision (`synced`). The import rule compares a sidecar's
+    // mtime with these. The 1.6-1.8 "Copy picks" switch (`cullXmpSidecars`, off by default) is folded into
+    // "Save ratings next to photos" (`cullSaveXmp`, on by default): the old key is dropped.
+    version: 7,
+    sql: `
+      CREATE TABLE cull_sidecars (
+        location_id TEXT NOT NULL,
+        share TEXT NOT NULL DEFAULT '',
+        path TEXT NOT NULL DEFAULT '',
+        shot_id TEXT NOT NULL,
+        decided_at INTEGER,
+        sidecar_mtime INTEGER,
+        synced INTEGER NOT NULL DEFAULT 0 CHECK (synced IN (0, 1)),
+        PRIMARY KEY (location_id, share, path, shot_id)
+      );
+      DELETE FROM settings WHERE key = 'cullXmpSidecars';
+    `,
+  },
 ]
 
 export const LATEST_VERSION = MIGRATIONS.at(-1)?.version ?? 0

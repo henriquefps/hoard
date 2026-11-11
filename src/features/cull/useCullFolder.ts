@@ -1,16 +1,27 @@
+import { App } from "@capacitor/app"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useDb } from "@/db/DbProvider"
 import {
   forgetCullShots,
   getCullSession,
   listCullDecisions,
+  listCullSidecars,
   saveCullDecisions,
+  saveCullSidecars,
   touchCullSession,
 } from "@/db/queries"
 import type { CullFolderKey, CullSessionRecord } from "@/db/types"
 import type { BrowseLocation } from "@/features/locations/useBrowseLocation"
 import { HoardSmb } from "@/plugins/smb"
-import type { CullMetadata, CullRef, CullShot, SmbAccess } from "@/plugins/smb/definitions"
+import { useSetting } from "@/features/settings/settings"
+import type {
+  CullMetadata,
+  CullRef,
+  CullShot,
+  CullSidecarRead,
+  CullWriteSidecarsResult,
+  SmbAccess,
+} from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
 import {
   applyChange,
@@ -19,10 +30,22 @@ import {
   type DecisionChange,
   pushUndo,
   sortByCapture,
+  UNMARKED,
 } from "./model"
+import {
+  importAfter,
+  importChanges,
+  importedDecision,
+  type SidecarState,
+  sidecarStateOf,
+  wireOf,
+} from "./xmp"
 
 /** Metadata is read in batches of this many shots (two small reads per RAW natively). */
 const METADATA_BATCH = 60
+
+/** Sidecars are asked for in batches of this many shots (one listing, then only the newer ones are read). */
+const SIDECAR_BATCH = 2000
 
 export interface CullFolder {
   key: CullFolderKey
@@ -52,19 +75,47 @@ export interface CullFolder {
   /** Run a database write after the folder's other writes (the SQLite adapters cannot overlap transactions). */
   write: <T>(fn: () => Promise<T>) => Promise<T>
   reload: () => void
+  /**
+   * Decisions stay in Hoard only: "Save ratings next to photos" is on but the folder is read-only (its listing says
+   * so, or a write was refused this session). ADR 0011.
+   */
+  sidecarsReadOnly: boolean
 }
 
 /**
  * A folder opened for culling (ADR 0008): its shots (paired natively), their EXIF, the decisions
  * saved in the database, undo, and the culling session's times. Decisions are applied at once and
  * saved in the background; a failed save shows in `onSaveError`.
+ *
+ * XMP sidecars (ADR 0011): on open (and when the app comes back to the front) the shots' sidecars newer than what
+ * Hoard last wrote or decided are read and imported as decisions; every decision is written into the shot's sidecar
+ * natively (coalesced, flushed when the app leaves). Sidecars that could not be written are counted in
+ * `onSidecarError`; a refused write makes the folder read-only for the session.
  */
 export function useCullFolder(
   location: BrowseLocation,
   path: string,
-  onSaveError: (error: unknown) => void
+  onSaveError: (error: unknown) => void,
+  onSidecarError: (count: number) => void = () => {}
 ): CullFolder {
   const db = useDb()
+  const saveXmp = useSetting("cullSaveXmp")[0] ?? true
+  const hiddenXmp = useSetting("cullXmpHidden")[0] ?? false
+  const xmpRef = useRef({ save: saveXmp, hidden: hiddenXmp })
+  useEffect(() => {
+    xmpRef.current = { save: saveXmp, hidden: hiddenXmp }
+  })
+  const [sidecarsRefused, setSidecarsRefused] = useState(false)
+  /** What Hoard knows about each shot's sidecar (the `cull_sidecars` rows, kept current in memory). */
+  const sidecarStates = useRef(new Map<string, SidecarState>())
+  /** Shots decided since the folder opened (the open-time import leaves them alone). */
+  const touched = useRef(new Set<string>())
+  /** Sidecar writes not answered yet, per shot (a resume-time import leaves them alone). */
+  const writing = useRef(new Map<string, number>())
+  const onSidecarErrorRef = useRef(onSidecarError)
+  useEffect(() => {
+    onSidecarErrorRef.current = onSidecarError
+  })
   const key = useMemo<CullFolderKey>(
     () => ({ locationId: location.id, share: location.share ?? "", path }),
     [location.id, location.share, path]
@@ -82,6 +133,11 @@ export function useCullFolder(
   const [decisions, setDecisions] = useState<Map<string, CullDecision>>(new Map())
   const [session, setSession] = useState<CullSessionRecord | null>(null)
   const [undoStack, setUndoStack] = useState<DecisionChange[]>([])
+  const sidecarsReadOnly = state.access === "read" || sidecarsRefused
+  const readOnlyRef = useRef(sidecarsReadOnly)
+  useEffect(() => {
+    readOnlyRef.current = sidecarsReadOnly
+  })
 
   const locationRef = useRef(location)
   useEffect(() => {
@@ -137,6 +193,73 @@ export function useCullFolder(
     [open]
   )
 
+  /**
+   * Imports sidecars newer than Hoard's last write or decision (ADR 0011 "Precedence") as decisions. At open, shots
+   * decided meanwhile are left alone; any time, shots whose own write is still on its way.
+   */
+  const applyImports = useCallback(
+    (found: readonly CullSidecarRead[], atOpen: boolean) => {
+      const next = new Map(decisionsRef.current)
+      const changed: { shotId: string; flag: CullDecision["flag"]; rating: number }[] = []
+      const rows: { shotId: string; sidecarMtime: number; synced: boolean }[] = []
+      for (const item of found) {
+        if (!item.fields || item.modifiedMillis === null) continue
+        if (writing.current.has(item.id) || (atOpen && touched.current.has(item.id))) continue
+        const current = next.get(item.id) ?? UNMARKED
+        const imported = importedDecision(current, item.fields, item.hasValues ?? false)
+        if (!imported) continue
+        const state = sidecarStates.current.get(item.id)
+        sidecarStates.current.set(item.id, {
+          decidedAt: state?.decidedAt ?? null,
+          sidecarMtime: item.modifiedMillis,
+          synced: true,
+        })
+        rows.push({ shotId: item.id, sidecarMtime: item.modifiedMillis, synced: true })
+        if (!importChanges(current, imported)) continue
+        if (!imported.flag && imported.rating === 0) next.delete(item.id)
+        else next.set(item.id, imported)
+        changed.push({ shotId: item.id, ...imported })
+      }
+      if (changed.length) {
+        decisionsRef.current = next
+        setDecisions(next)
+      }
+      if (changed.length || rows.length) {
+        void serial(async () => {
+          await saveCullDecisions(db, key, changed)
+          await saveCullSidecars(db, key, rows)
+        }).catch((error: unknown) => onSaveErrorRef.current(error))
+      }
+      return changed.length
+    },
+    [db, key, serial]
+  )
+
+  /** Reads the sidecars of `ids` that may win over Hoard (`refresh`: list the folder again first). */
+  const readSidecars = useCallback(
+    async (ids: readonly string[], refresh: boolean, isCancelled: () => boolean) => {
+      const atOpen = !refresh
+      for (let start = 0; start < ids.length && !isCancelled(); start += SIDECAR_BATCH) {
+        const shots = ids.slice(start, start + SIDECAR_BATCH).map((id) => ({
+          id,
+          after: importAfter(
+            sidecarStates.current.get(id) ?? { decidedAt: null, sidecarMtime: null, synced: false }
+          ),
+        }))
+        const result = await call((ref) =>
+          HoardSmb.cullReadSidecars({
+            ...ref,
+            shots,
+            ...(refresh && start === 0 ? { refresh } : {}),
+          })
+        )
+        if (isCancelled()) return
+        applyImports(result.shots, atOpen)
+      }
+    },
+    [call, applyImports]
+  )
+
   // Open: list + pair natively, then decisions and session from the database, then EXIF in batches.
   useEffect(() => {
     let cancelled = false
@@ -160,6 +283,26 @@ export function useCullFolder(
           libRaw: opened.libRaw,
         })
         await serial(() => touchCullSession(db, key, { shotCount: opened.shots.length }))
+        // Sidecars (ADR 0011): what each shot's sidecar must be newer than, then import the newer ones.
+        const sidecarRows = await listCullSidecars(db, key)
+        if (cancelled) return
+        const rowsById = new Map(sidecarRows.map((r) => [r.shot_id, r]))
+        const decidedAt = new Map(rows.map((r) => [r.shot_id, r.updated_at]))
+        sidecarStates.current = new Map(
+          opened.shots.map((s) => [s.id, sidecarStateOf(rowsById.get(s.id), decidedAt.get(s.id))])
+        )
+        touched.current = new Set()
+        writing.current = new Map()
+        setSidecarsRefused(false)
+        try {
+          await readSidecars(
+            opened.shots.map((s) => s.id),
+            false,
+            () => cancelled
+          )
+        } catch {
+          // Unreadable sidecars leave Hoard's decisions as they are.
+        }
         const ids = opened.shots.map((s) => s.id)
         for (let start = 0; start < ids.length && !cancelled; start += METADATA_BATCH) {
           const batch = ids.slice(start, start + METADATA_BATCH)
@@ -199,11 +342,50 @@ export function useCullFolder(
     [metadataDone, state.shots, metadata]
   )
 
+  /** Records native's answer to a sidecar write: the mtime of what it wrote, the read-only folder, the failures. */
+  const onSidecarsWritten = useCallback(
+    (result: CullWriteSidecarsResult) => {
+      const rows: { shotId: string; sidecarMtime: number; synced: boolean }[] = []
+      let failed = 0
+      for (const r of result.results) {
+        const left = (writing.current.get(r.shotId) ?? 1) - 1
+        if (left > 0) writing.current.set(r.shotId, left)
+        else writing.current.delete(r.shotId)
+        if (r.status === "malformed" || r.status === "failed") failed++
+        if (r.status !== "written" || r.modifiedMillis === undefined) continue
+        // Only when the sidecar now holds the shot's latest decision (a newer write may be on its way).
+        const current = wireOf(decisionsRef.current.get(r.shotId) ?? UNMARKED)
+        if (current.rating !== r.fields.rating || current.flag !== r.fields.flag) continue
+        const state = sidecarStates.current.get(r.shotId)
+        sidecarStates.current.set(r.shotId, {
+          decidedAt: state?.decidedAt ?? null,
+          sidecarMtime: r.modifiedMillis,
+          synced: true,
+        })
+        rows.push({ shotId: r.shotId, sidecarMtime: r.modifiedMillis, synced: true })
+      }
+      if (result.readOnly) setSidecarsRefused(true)
+      if (failed > 0) onSidecarErrorRef.current(failed)
+      if (rows.length) void serial(() => saveCullSidecars(db, key, rows)).catch(() => {})
+    },
+    [db, key, serial]
+  )
+
   const persist = useCallback(
     (change: DecisionChange, undo: boolean) => {
       const values = undo ? change.before : change.after
-      void serial(() =>
-        saveCullDecisions(
+      const at = Date.now()
+      for (const shotId of change.shotIds) {
+        touched.current.add(shotId)
+        const state = sidecarStates.current.get(shotId)
+        sidecarStates.current.set(shotId, {
+          decidedAt: at,
+          sidecarMtime: state?.sidecarMtime ?? null,
+          synced: false,
+        })
+      }
+      void serial(async () => {
+        await saveCullDecisions(
           db,
           key,
           change.shotIds.map((shotId, i) => ({
@@ -212,9 +394,27 @@ export function useCullFolder(
             rating: values[i].rating,
           }))
         )
-      ).catch((error: unknown) => onSaveErrorRef.current(error))
+        await saveCullSidecars(
+          db,
+          key,
+          change.shotIds.map((shotId) => ({ shotId, decidedAt: at, synced: false }))
+        )
+      }).catch((error: unknown) => onSaveErrorRef.current(error))
+      // The sidecars next to the photos (ADR 0011): native coalesces and writes them.
+      const xmp = xmpRef.current
+      if (!xmp.save || readOnlyRef.current) return
+      const items = change.shotIds.map((shotId, i) => ({ shotId, ...wireOf(values[i]) }))
+      for (const { shotId } of items)
+        writing.current.set(shotId, (writing.current.get(shotId) ?? 0) + 1)
+      void call((ref) => HoardSmb.cullWriteSidecars({ ...ref, items, hidden: xmp.hidden })).then(
+        onSidecarsWritten,
+        () => {
+          for (const { shotId } of items) writing.current.delete(shotId)
+          onSidecarErrorRef.current(items.length)
+        }
+      )
     },
-    [db, key, serial]
+    [db, key, serial, call, onSidecarsWritten]
   )
 
   const decide = useCallback(
@@ -264,6 +464,24 @@ export function useCullFolder(
     [db, key, serial, state.shots.length]
   )
 
+  // Back from another app (Reveal, a file manager): sidecars changed there are read again (ADR 0011).
+  const shotIdsRef = useRef<string[]>([])
+  useEffect(() => {
+    shotIdsRef.current = state.shots.map((s) => s.id)
+  })
+  useEffect(() => {
+    if (state.status !== "ready") return
+    let cancelled = false
+    const refresh = () => {
+      void readSidecars(shotIdsRef.current, true, () => cancelled).catch(() => {})
+    }
+    const handle = App.addListener("resume", refresh)
+    return () => {
+      cancelled = true
+      void handle.then((h) => h.remove()).catch(() => {})
+    }
+  }, [state.status, readSidecars])
+
   const lastShotTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const setLastShot = useCallback(
     (shotId: string) => {
@@ -294,6 +512,7 @@ export function useCullFolder(
     removeShots,
     setLastShot,
     write: serial,
+    sidecarsReadOnly: saveXmp && sidecarsReadOnly,
     reload: () => {
       setState({ status: "loading", shots: [], libRaw: true })
       setMetadata(new Map())
