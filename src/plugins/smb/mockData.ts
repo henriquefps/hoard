@@ -179,6 +179,9 @@ const manyFiles = Array.from({ length: 1284 }, (_, i) =>
   )
 )
 
+/** The mock reports Reveal (the RAW editor, ADR 0010) as installed, so "Edit in Reveal" shows. */
+export const MOCK_REVEAL_INSTALLED = true
+
 export const MOCK_SERVERS = {
   cachy: {
     guid: "6f1c2b9e-3a5d-4c7e-9b21-0d8e4f7a1c35",

@@ -43,6 +43,8 @@ import type {
   VolumeState,
   MachineRef,
   OpenFileOptions,
+  OpenInRevealOptions,
+  OpenInRevealResult,
   OpenWebPageOptions,
   OpenWebPageResult,
   PathOptions,
@@ -83,6 +85,7 @@ import { detectAddressKind } from "@/lib/addressKind"
 import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
 import { isTextFile } from "@/lib/text/textFiles"
 import { pairShots } from "@/lib/photos"
+import { revealOrder } from "@/features/reveal/handoff"
 import { GENERATED_TEXT } from "./mockText"
 import {
   derivedPhoto,
@@ -96,6 +99,7 @@ import { MOCK_VOLUMES } from "./mockLocal"
 import { type MockRoot, MockTransferEngine } from "./mockTransfers"
 import {
   DEMO_PASSWORDS,
+  MOCK_REVEAL_INSTALLED,
   MOCK_ROUTES,
   MOCK_SERVERS,
   type MockFile,
@@ -852,6 +856,44 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
       if (node.children) throw fail("UNKNOWN", "Folders cannot be shared")
     }
     console.info(`[HoardSmbWeb] would open the share sheet with ${paths.length} file(s)`, paths)
+  }
+
+  // --- Edit in Reveal (ADR 0010) ----------------------------------------------------------------
+
+  /** Mock-only: Reveal is "installed" (`setRevealInstalled` from dev tools and tests). */
+  revealInstalled = MOCK_REVEAL_INSTALLED
+  /** Mock-only: every hand-off as native would send it (order applied, paths checked). */
+  readonly revealCalls: OpenInRevealOptions[] = []
+
+  /** Dev tool: install or uninstall the mock Reveal (the app re-checks on resume). */
+  setRevealInstalled(installed: boolean) {
+    this.revealInstalled = installed
+  }
+
+  async revealAvailable(): Promise<{ available: boolean }> {
+    return { available: this.revealInstalled }
+  }
+
+  async openInReveal(options: OpenInRevealOptions): Promise<OpenInRevealResult> {
+    const { location, paths, title, initialPath } = options
+    if (paths.length === 0) throw fail("UNKNOWN", "paths is required")
+    if (!this.revealInstalled) throw fail("NO_APP", "Reveal is not installed")
+    const ordered = revealOrder(paths)
+    if (ordered.length === 0) throw fail("UNKNOWN", "No photos to edit")
+    for (const path of ordered) {
+      const { node } = await this.streamSource({ location, path })
+      if (node.children) throw fail("UNKNOWN", "Folders cannot be edited")
+    }
+    const cleanTitle = title?.trim().slice(0, 120).trim()
+    const call: OpenInRevealOptions = {
+      location,
+      paths: ordered,
+      ...(cleanTitle ? { title: cleanTitle } : {}),
+      ...(initialPath && ordered.includes(initialPath) ? { initialPath } : {}),
+    }
+    this.revealCalls.push(call)
+    console.info(`[HoardSmbWeb] would open Reveal with ${ordered.length} file(s)`, call)
+    return { sent: ordered.length }
   }
 
   /** Dev tool: pretend another app shared files to Hoard (emits `filesShared`). */

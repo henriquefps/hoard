@@ -21,6 +21,7 @@ import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
 import dev.hfps.hoard.smb.share.IncomingShare
 import dev.hfps.hoard.smb.share.IncomingShares
+import dev.hfps.hoard.smb.share.RevealHandoff
 import dev.hfps.hoard.smb.share.ShareOut
 import dev.hfps.hoard.smb.stream.SmbSource
 import dev.hfps.hoard.smb.transfer.Endpoint
@@ -123,6 +124,7 @@ class HoardSmbPlugin : Plugin() {
     private var askedForNotifications = false
 
     private lateinit var shareOut: ShareOut
+    private lateinit var reveal: RevealHandoff
 
     private val transferListener: (TransferProgress) -> Unit = { event ->
         notifyListeners("transferProgress", progressJson(event.job, event.bytesPerSecond))
@@ -141,6 +143,7 @@ class HoardSmbPlugin : Plugin() {
         thumbnailer = Thumbnailer(context)
         streamer = Streamer(context, credentials)
         shareOut = ShareOut(context, opener)
+        reveal = RevealHandoff(context, opener)
         IncomingShares.init(context)
         IncomingShares.addListener(shareListener)
         // Launched (or relaunched) from another app's share sheet.
@@ -691,6 +694,48 @@ class HoardSmbPlugin : Plugin() {
         val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to share from")
         withContext(Dispatchers.Main) { shareOut.launch(activity, files) }
         null
+    }
+
+    // --- Edit in Reveal (ADR 0010) -----------------------------------------------------------
+
+    @PluginMethod
+    fun revealAvailable(call: PluginCall) = run(call) {
+        JSObject().put("available", reveal.isAvailable())
+    }
+
+    @PluginMethod
+    fun openInReveal(call: PluginCall) {
+        // SMB photos stream through the foreground service: ask for its notification first.
+        if (isSmbSource(call) && askForNotifications(call, "onRevealPermission")) return
+        doOpenInReveal(call)
+    }
+
+    @PermissionCallback
+    private fun onRevealPermission(call: PluginCall) = doOpenInReveal(call)
+
+    private fun doOpenInReveal(call: PluginCall) = run(call) {
+        val location = call.getObject("location") ?: smbFail(ErrorCode.UNKNOWN, "location is required")
+        val paths = call.getArray("paths")?.toList<String>().orEmpty()
+        if (paths.isEmpty()) smbFail(ErrorCode.UNKNOWN, "paths is required")
+        if (!reveal.isAvailable()) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        val files = withContext(Dispatchers.IO) {
+            if (location.optString("kind") == "smb") {
+                val request = streamRequest(call, paths[0])
+                reveal.smb({
+                    SmbSource(request.machineId, request.addresses, request.expectedServerGuid, request.share, credentials::get)
+                }, paths)
+            } else {
+                reveal.local(volumes.fs(Location.parse(location) as Location.Local), paths)
+            }
+        }
+        val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open Reveal from")
+        try {
+            withContext(Dispatchers.Main) { reveal.launch(activity, files, call.getString("title"), call.getString("initialPath")) }
+        } catch (e: Throwable) {
+            reveal.discard(files)
+            throw e
+        }
+        JSObject().put("sent", files.size)
     }
 
     @PluginMethod

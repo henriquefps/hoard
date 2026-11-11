@@ -38,6 +38,8 @@ class StreamEntry(
     val http: Boolean,
     /** The content:// URI handed out (FILE), to revoke grants when the token ends. */
     var contentUri: Uri? = null,
+    /** Idle time before the token ends, when not the kind's default (hand-offs to Reveal: longer). */
+    val idleMs: Long? = null,
 ) {
     val openFds = AtomicInteger()
     val holders = AtomicInteger()
@@ -51,7 +53,7 @@ class StreamEntry(
         lastUsedAt = System.currentTimeMillis()
     }
 
-    fun snapshot() = StreamExpiry.State(kind, openFds.get() + activeRequests.get(), holders.get(), lastUsedAt)
+    fun snapshot() = StreamExpiry.State(kind, openFds.get() + activeRequests.get(), holders.get(), lastUsedAt, idleMs)
 }
 
 /**
@@ -59,6 +61,7 @@ class StreamEntry(
  *  - never while a file descriptor or an HTTP response is open, or while an in-app viewer holds it;
  *  - FILE: [FILE_IDLE_MS] after the last use (VLC closes and reopens the FD on some seeks and when
  *    it comes back from the background; the chooser may also stay open for a while);
+ *  - a hand-off to Reveal sets its own [StreamEntry.idleMs] (longer: an editor reopens files);
  *  - FOLDER: [FOLDER_IDLE_MS] after the last request once no viewer holds it (a page handed to
  *    Chrome keeps working while the user reads it, and lazy assets still load).
  */
@@ -66,11 +69,11 @@ object StreamExpiry {
     const val FILE_IDLE_MS = 15 * 60_000L
     const val FOLDER_IDLE_MS = 30 * 60_000L
 
-    data class State(val kind: StreamKind, val busy: Int, val holders: Int, val lastUsedAt: Long)
+    data class State(val kind: StreamKind, val busy: Int, val holders: Int, val lastUsedAt: Long, val idleMs: Long? = null)
 
     fun isExpired(state: State, now: Long): Boolean {
         if (state.busy > 0 || state.holders > 0) return false
-        val idle = if (state.kind == StreamKind.FILE) FILE_IDLE_MS else FOLDER_IDLE_MS
+        val idle = state.idleMs ?: if (state.kind == StreamKind.FILE) FILE_IDLE_MS else FOLDER_IDLE_MS
         return now - state.lastUsedAt >= idle
     }
 }

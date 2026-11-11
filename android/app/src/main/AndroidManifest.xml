@@ -126,6 +126,11 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="*/*" />
         </intent>
+        <!-- "Edit in Reveal" (ADR 0010): is the owner's RAW editor installed (release or debug)? -->
+        <intent>
+            <action android:name="dev.hfps.reveal.action.DEVELOP" />
+            <data android:mimeType="image/*" />
+        </intent>
         <!-- "Open in browser" for pages served by the local web server. -->
         <intent>
             <action android:name="android.intent.action.VIEW" />

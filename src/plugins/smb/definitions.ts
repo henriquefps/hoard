@@ -52,7 +52,7 @@ export const HOARD_SMB_ERROR_CODES = [
   "CANCELLED",
   /** The persisted SAF permission for a destination folder was revoked or the folder is gone. */
   "PERMISSION_REVOKED",
-  /** No app on the device can open this file type (`openFile`). */
+  /** No app on the device can open this file type (`openFile`), or Reveal is not installed (`openInReveal`). */
   "NO_APP",
   /** Anything else; `message` has the details. Also returned by the not-yet-implemented native stub. */
   "UNKNOWN",
@@ -697,6 +697,27 @@ export interface ShareFilesOptions {
   paths: string[]
 }
 
+/** `openInReveal`: photos of one location handed to Reveal, the RAW editor (ADR 0010). */
+export interface OpenInRevealOptions {
+  /** Where the photos are (SMB: own connection, the photos stream like `streamFile`). */
+  location: StreamLocation
+  /**
+   * Photo files in that location, in the order Reveal should list them. Native keeps the order but
+   * puts the files of one shot (same folder, same case-insensitive stem) together, RAW first;
+   * duplicates and non-photos are dropped. The caller expands a shot to all its files.
+   */
+  paths: string[]
+  /** Names the batch in Reveal (e.g. the folder); trimmed to 120 characters. */
+  title?: string
+  /** One of `paths`: Reveal opens it in the editor at once, the batch behind it. */
+  initialPath?: string
+}
+
+export interface OpenInRevealResult {
+  /** Files sent (after de-duplication). */
+  sent: number
+}
+
 /** One file another app shared to Hoard. */
 export interface SharedFile {
   /** Its `path` in an {@link IncomingLocation}. */
@@ -1306,6 +1327,22 @@ export interface HoardSmbPlugin {
    * through the proxy file descriptor provider like `streamFile`. Rejects `NO_APP`, `NOT_FOUND`.
    */
   shareFiles(options: ShareFilesOptions): Promise<void>
+
+  /**
+   * Reveal (the owner's RAW editor, `dev.hfps.reveal[.debug]`) is installed and handles its
+   * hand-off action. Cheap; the UI asks again whenever the app comes back to the foreground.
+   */
+  revealAvailable(): Promise<{ available: boolean }>
+
+  /**
+   * "Edit in Reveal" (ADR 0010): one `dev.hfps.reveal.action.DEVELOP` intent with the photos as
+   * `ClipData` and a read grant on exactly those URIs. Local files go in place (FileProvider; SAF
+   * documents also allow Reveal a persistable grant); SMB files stream through the proxy file
+   * descriptor provider (never copied), readable while Hoard runs and for 60 min after their last
+   * read. Never a sidecar, never a write grant. Rejects `NO_APP` (Reveal not installed),
+   * `NOT_FOUND`, `UNKNOWN` (no photos among `paths`), and for SMB the connection errors.
+   */
+  openInReveal(options: OpenInRevealOptions): Promise<OpenInRevealResult>
 
   /** What another app shared to Hoard and the UI has not handled yet (also the launch intent). */
   getSharedFiles(): Promise<GetSharedFilesResult>

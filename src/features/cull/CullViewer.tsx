@@ -8,6 +8,7 @@ import {
   DotsThreeVerticalIcon,
   EyeClosedIcon,
   InfoIcon,
+  SlidersHorizontalIcon,
   SparkleIcon,
   StackIcon,
   StarIcon,
@@ -31,6 +32,8 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Spinner } from "@/components/ui/spinner"
@@ -99,6 +102,7 @@ export function CullViewer({
   suggestions,
   steps,
   start,
+  onEditInReveal,
   onClose,
 }: {
   folder: CullFolder
@@ -106,6 +110,8 @@ export function CullViewer({
   suggestions: SuggestionState
   steps: ViewerStep[]
   start: ViewerStart
+  /** "Edit in Reveal" on the current shot; only while Reveal is installed (ADR 0010). */
+  onEditInReveal?: (shot: CullShot) => void
   onClose: (lastShotId: string | undefined) => void
 }) {
   const { t } = useTranslation()
@@ -227,7 +233,7 @@ export function CullViewer({
     if (sheetOpen) return
     const timer = window.setTimeout(() => {
       const modalOpen = document.querySelector(
-        '[role=alertdialog][data-state=open], [role=dialog][data-state=open]:not([data-vaul-drawer])'
+        "[role=alertdialog][data-state=open], [role=dialog][data-state=open]:not([data-vaul-drawer])"
       )
       if (!modalOpen && document.body.style.pointerEvents === "none")
         document.body.style.pointerEvents = ""
@@ -768,6 +774,15 @@ export function CullViewer({
                   >
                     {t("cull.viewer.swipeDecide")}
                   </DropdownMenuCheckboxItem>
+                  {onEditInReveal ? (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => onEditInReveal(current)}>
+                        <SlidersHorizontalIcon />
+                        {t("reveal.edit")}
+                      </DropdownMenuItem>
+                    </>
+                  ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

@@ -32,6 +32,10 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `AnalysisCalibrationTest` (JVM, `HOARD_ARW_DIR`) and `AnalysisHarnessTest` (emulator, ML Kit);
   report aggregates only. XMP sidecars are written by the transfer engine (`startTransfer`'s
   `sidecars`), at the destination only.
+- Edit in Reveal (ADR 0010): `smb/share/RevealHandoff.kt` builds Reveal's `DEVELOP` intent (Reveal ADR
+  0011); `src/features/reveal/` decides what is sent. Read grant on exactly the URIs sent, never write,
+  never a sidecar; SMB photos stream (`StreamEntry.idleMs`). Test with Reveal's debug APK on the
+  emulator only (`./gradlew :app:assembleDebug` in a copy of the reveal repo).
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules

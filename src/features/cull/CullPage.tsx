@@ -5,6 +5,7 @@ import {
   FlagCheckeredIcon,
   GearSixIcon,
   PlayIcon,
+  SlidersHorizontalIcon,
   SparkleIcon,
   StackIcon,
   TrashIcon,
@@ -69,6 +70,8 @@ import {
 } from "./assist"
 import { AssistSettingsDialog, FlagMarks, SuggestionMark } from "./assistParts"
 import { CopyPicksDialog } from "./CopyPicksDialog"
+import { shotInitialPath, shotPaths, shotsPaths } from "@/features/reveal/handoff"
+import { useReveal } from "@/features/reveal/revealContext"
 import { burstCover, burstStatus, stepOf, viewerSteps, type ViewerStep } from "./burst"
 import { CullViewer, type ViewerStart } from "./CullViewer"
 import {
@@ -184,6 +187,19 @@ function CullFolderPage({
   )
   const locale = i18n.language
   const readOnly = folder.access === "read"
+  const revealApp = useReveal()
+  /** "Edit in Reveal" (ADR 0010): shots with every file (RAW + JPEG), titled by the folder. */
+  const editInReveal = (shots: readonly CullShot[], initial?: CullShot) =>
+    revealApp.edit({
+      location,
+      paths: shotsPaths(shots),
+      title,
+      initialPath: initial ? shotInitialPath(initial) : undefined,
+    })
+  const picks = useMemo(
+    () => folder.shots.filter((s) => decisionOf(folder.decisions, s.id).flag === "pick"),
+    [folder.shots, folder.decisions]
+  )
 
   const suggestionItems = useMemo(
     () =>
@@ -295,6 +311,24 @@ function CullFolderPage({
               <CopyIcon />
               {t("cull.copy.menu", { count: progress.picked })}
             </DropdownMenuItem>
+            {revealApp.available ? (
+              <>
+                <DropdownMenuItem
+                  disabled={picks.length === 0}
+                  onSelect={() => editInReveal(picks)}
+                >
+                  <SlidersHorizontalIcon />
+                  {t("reveal.editPicks", { count: picks.length })}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={visible.length === 0}
+                  onSelect={() => editInReveal(visible)}
+                >
+                  <SlidersHorizontalIcon />
+                  {t("reveal.editShown", { count: visible.length })}
+                </DropdownMenuItem>
+              </>
+            ) : null}
             <DropdownMenuItem
               variant="destructive"
               disabled={progress.rejected === 0 || readOnly}
@@ -389,6 +423,17 @@ function CullFolderPage({
           suggestions={suggestions}
           steps={viewer.steps}
           start={viewer.start}
+          onEditInReveal={
+            revealApp.available
+              ? (shot) =>
+                  revealApp.edit({
+                    location,
+                    paths: shotPaths(shot),
+                    title,
+                    initialPath: shotInitialPath(shot),
+                  })
+              : undefined
+          }
           onClose={(lastShotId) => {
             assist.focus(null)
             setViewer(null)

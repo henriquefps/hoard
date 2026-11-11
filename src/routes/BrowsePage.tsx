@@ -11,6 +11,7 @@ import {
   FolderSimpleIcon,
   ScissorsIcon,
   ShareNetworkIcon,
+  SlidersHorizontalIcon,
   UploadSimpleIcon,
   EyeIcon,
   FilePlusIcon,
@@ -76,6 +77,8 @@ import { type BrowseLocation, useBrowseLocation } from "@/features/locations/use
 import { useLeaveWhenUnplugged } from "@/features/locations/useLeaveWhenUnplugged"
 import { parseLocationId } from "@/features/locations/ids"
 import { BrowserToolbar, SortHeader } from "@/features/browse/BrowserToolbar"
+import { hasPhotos, selectionPaths } from "@/features/reveal/handoff"
+import { useReveal } from "@/features/reveal/revealContext"
 import { accountName, isReadOnly, readOnlyReasonKey } from "@/features/browse/access"
 import { FileRow } from "@/features/browse/FileRow"
 import { ReadOnlyBadge, ReadOnlyMenuNote } from "@/features/browse/ReadOnlyBadge"
@@ -631,6 +634,7 @@ function FolderView({
   )
   const selectedEntries = visible.filter((e) => selected.has(e.path))
   const inSelection = selectionMode || selected.size > 0
+  const reveal = useReveal()
 
   // eslint-disable-next-line react-hooks/incompatible-library -- the virtualizer is read during render on purpose
   const virtualizer = useVirtualizer({
@@ -823,6 +827,15 @@ function FolderView({
     }
   }
 
+  /** "Edit in Reveal" (ADR 0010): the photos among `list`, each with its pair (RAW + JPEG). */
+  function editInReveal(list: SmbEntry[]) {
+    const paths = selectionPaths(list, entries ?? [])
+    if (paths.length === 0) return
+    const one = list.length === 1 && !list[0].isDirectory ? list[0].path : undefined
+    reveal.edit({ location, paths, title: folderLabel, initialPath: one })
+    if (list.length > 1) clearSelection()
+  }
+
   // Files landing here (or leaving with a move) show up without a manual refresh.
   const transferSignal = useFolderTransferSignal(location.id, share, path)
   const lastSignal = useRef(transferSignal)
@@ -939,6 +952,12 @@ function FolderView({
               <DropdownMenuItem onSelect={() => void shareOut([entry])}>
                 <ShareNetworkIcon />
                 {t("transfer.share")}
+              </DropdownMenuItem>
+            )}
+            {reveal.available && hasPhotos([entry]) && (
+              <DropdownMenuItem onSelect={() => editInReveal([entry])}>
+                <SlidersHorizontalIcon />
+                {t("reveal.edit")}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
@@ -1132,6 +1151,11 @@ function FolderView({
           onClipboard={(op) => toClipboard(op, selectedEntries)}
           onTransferTo={(intent) => transferTo(intent, selectedEntries)}
           onShare={() => void shareOut(selectedEntries)}
+          onReveal={
+            reveal.available && hasPhotos(selectedEntries)
+              ? () => editInReveal(selectedEntries)
+              : undefined
+          }
           onDelete={() =>
             selectedEntries.length && setDialog({ kind: "delete", entries: selectedEntries })
           }
@@ -1287,6 +1311,7 @@ function SelectionBar({
   onClipboard,
   onTransferTo,
   onShare,
+  onReveal,
   onDelete,
   readOnlyReason,
 }: {
@@ -1298,6 +1323,8 @@ function SelectionBar({
   onClipboard: (op: "copy" | "move") => void
   onTransferTo: (intent: Exclude<TransferIntent, "save">) => void
   onShare: () => void
+  /** "Edit in Reveal": set only when Reveal is installed and photos are selected (ADR 0010). */
+  onReveal?: () => void
   onDelete: () => void
   /** Set in a read-only folder: Move and Delete stay visible, disabled, with this as their explanation. */
   readOnlyReason?: string
@@ -1403,6 +1430,12 @@ function SelectionBar({
             <ShareNetworkIcon />
             {t("transfer.share")}
           </DropdownMenuItem>
+          {onReveal ? (
+            <DropdownMenuItem onSelect={onReveal}>
+              <SlidersHorizontalIcon />
+              {t("reveal.edit")}
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onSelectAll}>{t("browse.selectAll")}</DropdownMenuItem>
         </DropdownMenuContent>

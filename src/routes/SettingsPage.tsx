@@ -56,11 +56,13 @@ import {
 import { HoardSmb } from "@/plugins/smb"
 import type { DestinationFolder, TransferConflict } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
+import { useReveal } from "@/features/reveal/revealContext"
 
 const REPOSITORY = "https://github.com/henriquefps/hoard"
 
 export function SettingsPage() {
   const { t, i18n } = useTranslation()
+  const reveal = useReveal()
   const theme = useTheme()
   const palette = usePalette()
   const [showHidden, setShowHidden] = useSetting("showHiddenFiles")
@@ -256,6 +258,9 @@ export function SettingsPage() {
               </span>
             </p>
             <p className="text-[0.9375rem] text-muted-foreground">{t("settings.aboutBody")}</p>
+            {reveal.available ? (
+              <p className="text-[0.9375rem] text-muted-foreground">{t("reveal.about")}</p>
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" asChild>
                 <a href={REPOSITORY} target="_blank" rel="noreferrer">
