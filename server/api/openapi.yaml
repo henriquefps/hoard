@@ -1,0 +1,558 @@
+openapi: 3.1.0
+info:
+  title: reveal-sync device API
+  version: "1"
+  summary: Sync of Reveal edits, library metadata, smart previews and original backups with a self-hosted server.
+  description: |
+    The normative description is ADR 0017 (docs/adr/0017-sync-protocol.md); where this file and the ADR differ, the
+    ADR wins. Every request except `GET /v1/health` and `POST /v1/pair` needs `Authorization: Bearer <device key>`.
+    Errors are always `{"error": {"code", "message", "details"?}}` (see `Error`).
+  license:
+    name: AGPL-3.0-or-later
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+servers:
+  - url: "{server}"
+    variables:
+      server:
+        default: http://192.168.1.10:3071
+        description: The address from the pairing QR code (any reveal-sync server).
+security:
+  - deviceKey: []
+tags:
+  - name: server
+  - name: pairing
+  - name: changes
+  - name: blobs
+  - name: originals
+  - name: nas
+paths:
+  /v1/health:
+    get:
+      tags: [server]
+      summary: Liveness and counts (no names or paths)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, version, api, counts]
+                properties:
+                  status: { type: string, const: ok }
+                  version: { type: string }
+                  api: { type: integer, const: 1 }
+                  counts: { $ref: "#/components/schemas/Counts" }
+  /v1/server:
+    get:
+      tags: [server]
+      summary: Server identity and the limits that apply
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/pair:
+    post:
+      tags: [pairing]
+      summary: Exchange a one-time pairing token (from the QR code) for this device's key
+      description: |
+        The QR code holds `revealsync://pair?v=1&url=<server URL>&token=<token>&server=<serverId>`. Tokens are valid
+        for 10 minutes and once. The key in the answer is shown only here.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, deviceName]
+              properties:
+                token: { type: string, maxLength: 100 }
+                deviceName: { type: string, minLength: 1, maxLength: 100 }
+                platform: { type: string, maxLength: 40, examples: [android] }
+                appVersion: { type: string, maxLength: 40 }
+      responses:
+        "201":
+          description: Paired
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deviceId, apiKey, serverId, serverName]
+                properties:
+                  deviceId: { $ref: "#/components/schemas/Uuid" }
+                  apiKey: { type: string, pattern: "^rvk1_[0-9a-f]{16}_[A-Za-z0-9_-]{43}$" }
+                  serverId: { $ref: "#/components/schemas/Uuid" }
+                  serverName: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: "`invalid_pairing_token`: unknown, used or expired"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/changes:
+    get:
+      tags: [changes]
+      summary: Records changed since a cursor, oldest first, each once at its latest state
+      parameters:
+        - name: cursor
+          in: query
+          description: Opaque; empty or absent = from the start.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: A page of the feed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes, cursor, hasMore]
+                properties:
+                  changes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Record" }
+                  cursor: { type: string }
+                  hasMore: { type: boolean }
+        "400":
+          description: "`invalid_cursor` (pull from the start) or `invalid_request`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    post:
+      tags: [changes]
+      summary: Push up to 500 changes (all validated first; applied in order)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: "#/components/schemas/Change" }
+      responses:
+        "200":
+          description: One result per change, in order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/Result" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422":
+          description: "`invalid_change`; `details.index` names the change. Nothing was applied."
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/fingerprints/lookup:
+    post:
+      tags: [originals]
+      summary: Which of these files can the server already reach (NAS or backup)?
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprints]
+              properties:
+                fingerprints:
+                  type: array
+                  maxItems: 1000
+                  items: { $ref: "#/components/schemas/Fingerprint" }
+      responses:
+        "200":
+          description: Found and missing fingerprints
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [found, missing]
+                properties:
+                  found:
+                    type: array
+                    items:
+                      type: object
+                      required: [fingerprint, size, source]
+                      properties:
+                        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+                        size: { type: integer }
+                        source: { type: string, enum: [nas, backup] }
+                        sha256: { $ref: "#/components/schemas/Sha256" }
+                  missing:
+                    type: array
+                    items: { $ref: "#/components/schemas/Fingerprint" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/originals/{fingerprint}:
+    get:
+      tags: [originals]
+      summary: A photo file by fingerprint (NAS or uploaded); Range and HEAD supported
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Fingerprint" }
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200": { $ref: "#/components/responses/Bytes" }
+        "206": { $ref: "#/components/responses/PartialBytes" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503":
+          description: "`unavailable`: the NAS file changed since it was indexed or the share is offline (Retry-After)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/blobs/{sha256}:
+    get:
+      tags: [blobs]
+      summary: A blob by its SHA-256; Range and HEAD supported
+      parameters:
+        - name: sha256
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Sha256" }
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200": { $ref: "#/components/responses/Bytes" }
+        "206": { $ref: "#/components/responses/PartialBytes" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/uploads:
+    post:
+      tags: [blobs]
+      summary: Start (or find again) a chunked upload of a blob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sha256, size, kind]
+              properties:
+                sha256: { $ref: "#/components/schemas/Sha256" }
+                size: { type: integer, minimum: 1, maximum: 4294967296 }
+                kind: { type: string, enum: [original, preview] }
+                fingerprint:
+                  description: Required for an original, absent for a preview.
+                  $ref: "#/components/schemas/Fingerprint"
+      responses:
+        "200":
+          description: "`exists` (nothing to send) or `resume` (an unfinished upload of this device)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadState" }
+        "201":
+          description: "`created`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UploadState" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503":
+          description: "`storage_not_configured`: no backup folder chosen on the server"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/uploads/{uploadId}:
+    parameters:
+      - name: uploadId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+    head:
+      tags: [blobs]
+      summary: Where an upload stands
+      responses:
+        "204":
+          description: Upload-Offset and Upload-Length headers
+          headers:
+            Upload-Offset: { schema: { type: integer } }
+            Upload-Length: { schema: { type: integer } }
+        "404": { description: No such upload for this device }
+    patch:
+      tags: [blobs]
+      summary: Append the next chunk (at most chunkSize bytes) at Upload-Offset
+      parameters:
+        - name: Upload-Offset
+          in: header
+          required: true
+          schema: { type: integer, minimum: 0 }
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "204":
+          description: "Stored. `Upload-Complete: 1` when this chunk finished and verified the blob."
+          headers:
+            Upload-Offset: { schema: { type: integer } }
+            Upload-Length: { schema: { type: integer } }
+            Upload-Complete: { schema: { type: string, const: "1" } }
+        "400":
+          description: "`invalid_request`: missing header, or the chunk was interrupted (bytes that arrived are kept; HEAD and continue)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`offset_mismatch` (`details.offset` is the server's) or `upload_busy`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422":
+          description: "`checksum_mismatch`: the bytes do not match sha256 or fingerprint; the upload restarts at 0"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [blobs]
+      summary: Abandon an upload
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/nas/files:
+    get:
+      tags: [nas]
+      summary: The files the server indexes on its NAS folders, as a feed
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: A page of the NAS feed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [files, cursor, hasMore]
+                properties:
+                  files:
+                    type: array
+                    items: { $ref: "#/components/schemas/NasFile" }
+                  cursor: { type: string }
+                  hasMore: { type: boolean }
+        "400":
+          description: "`invalid_cursor`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+components:
+  securitySchemes:
+    deviceKey:
+      type: http
+      scheme: bearer
+      description: "Device key from POST /v1/pair: rvk1_<keyId>_<secret>."
+  parameters:
+    Range:
+      name: Range
+      in: header
+      schema: { type: string, examples: ["bytes=0-1048575"] }
+  responses:
+    Bytes:
+      description: The bytes (application/octet-stream; ETag, Accept-Ranges)
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    PartialBytes:
+      description: The requested range
+      content:
+        application/octet-stream:
+          schema: { type: string, format: binary }
+    BadRequest:
+      description: "`invalid_request` or `invalid_json`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: "`unauthorized`: missing, malformed, unknown or revoked key"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: "`not_found`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooLarge:
+      description: "`too_large`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: "`unsupported_media_type`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unprocessable:
+      description: "`invalid_request` or `checksum_mismatch`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: "`rate_limited`"
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Uuid:
+      type: string
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    Fingerprint:
+      type: string
+      pattern: "^v1:[0-9a-f]{64}$"
+      description: "v1: + SHA-256 over size (8 bytes BE), first 1 MiB, last 1 MiB (whole file when <= 2 MiB). ADR 0006."
+    Sha256:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    Kind:
+      type: string
+      enum: [photo, version, preset, setting]
+    Record:
+      type: object
+      required: [kind, id, rev, deleted, modifiedAt, deviceId, data]
+      properties:
+        kind: { $ref: "#/components/schemas/Kind" }
+        id: { type: string }
+        rev: { type: integer }
+        deleted: { type: boolean }
+        modifiedAt: { type: integer, description: Unix ms, device clock }
+        deviceId: { $ref: "#/components/schemas/Uuid" }
+        copyOf:
+          description: Version only; the version this one is the conflict copy of.
+          $ref: "#/components/schemas/Uuid"
+        data:
+          oneOf:
+            - type: object
+            - type: "null"
+    Change:
+      type: object
+      required: [kind, id, baseRev, modifiedAt]
+      properties:
+        kind: { $ref: "#/components/schemas/Kind" }
+        id:
+          type: string
+          description: A UUID for photo/version/preset; `[a-z0-9][a-z0-9._-]{0,63}` for a setting.
+        baseRev: { type: integer, minimum: 0, description: rev of the state edited; 0 for a new record }
+        modifiedAt: { type: integer, minimum: 1 }
+        deleted: { type: boolean, default: false }
+        data:
+          type: object
+          description: |
+            Required unless deleted; at most 2 MiB. A photo needs `fingerprint`; a version needs `photoId`
+            (and carries `position`, `name`, `recipe` (ADR 0003), `history`, `cursor`).
+    Result:
+      type: object
+      required: [kind, id, status, rev]
+      properties:
+        kind: { $ref: "#/components/schemas/Kind" }
+        id: { type: string }
+        status: { type: string, enum: [applied, conflict] }
+        rev: { type: integer, description: The record's current rev after this change }
+        winner: { type: string, enum: [incoming, server] }
+        copyId: { $ref: "#/components/schemas/Uuid" }
+    UploadState:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [exists, created, resume] }
+        uploadId: { $ref: "#/components/schemas/Uuid" }
+        offset: { type: integer }
+        chunkSize: { type: integer }
+        expiresAt: { type: integer, description: Unix ms }
+    NasFile:
+      type: object
+      required: [fingerprint, folderId, folderName, path, size, modifiedAt, removed]
+      properties:
+        fingerprint:
+          oneOf:
+            - $ref: "#/components/schemas/Fingerprint"
+            - type: "null"
+        folderId: { $ref: "#/components/schemas/Uuid" }
+        folderName: { type: string }
+        path: { type: string, description: "Relative to the folder, /-separated" }
+        size: { type: integer }
+        modifiedAt: { type: integer }
+        removed: { type: boolean }
+    Counts:
+      type: object
+      properties:
+        devices: { type: integer }
+        photos: { type: integer }
+        versions: { type: integer }
+        blobs: { type: integer }
+        nasFiles: { type: integer }
+        pendingUploads: { type: integer }
+    ServerInfo:
+      type: object
+      required: [serverId, serverName, version, api, deviceId, limits, storageConfigured]
+      properties:
+        serverId: { $ref: "#/components/schemas/Uuid" }
+        serverName: { type: string }
+        version: { type: string }
+        api: { type: integer, const: 1 }
+        deviceId: { $ref: "#/components/schemas/Uuid" }
+        storageConfigured: { type: boolean }
+        limits:
+          type: object
+          properties:
+            maxJsonBody: { type: integer }
+            maxRecordData: { type: integer }
+            maxPushChanges: { type: integer }
+            maxPullLimit: { type: integer }
+            maxLookup: { type: integer }
+            chunkSize: { type: integer }
+            maxBlobSize: { type: integer }
+            maxUploadsPerDevice: { type: integer }
+            requestsPerSecond: { type: integer }
+            requestBurst: { type: integer }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [invalid_request, invalid_cursor, invalid_json, unauthorized, invalid_pairing_token, forbidden, not_found,
+                method_not_allowed, offset_mismatch, upload_busy, conflict, too_large, unsupported_media_type,
+                invalid_change, checksum_mismatch, rate_limited, internal, storage_not_configured, unavailable]
+            message: { type: string }
+            details: { type: object }

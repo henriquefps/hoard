@@ -1,0 +1,35 @@
+version: "2"
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - staticcheck
+    - unconvert
+  settings:
+    errcheck:
+      # Closing read handles and printing usage cannot lose data; writes are synced (Sync) before their Close.
+      exclude-functions:
+        - (*os.File).Close
+        - (*os.Root).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - os.Remove
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*github.com/henriquefps/reveal/sync-server/internal/store.Store).Close
+        - (*github.com/henriquefps/reveal/sync-server/internal/blobstore.Store).Close
+    gosec:
+      excludes:
+        - G104 # unchecked errors are covered by errcheck where they matter
+        - G304 # paths are confined by mounts.Resolve / os.Root
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gosec, errcheck, bodyclose]
+formatters:
+  enable:
+    - gofmt
