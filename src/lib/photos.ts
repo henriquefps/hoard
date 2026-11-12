@@ -25,7 +25,12 @@ export function photoExtension(name: string): string {
   return dot <= 0 || dot === name.length - 1 ? "" : name.slice(dot + 1).toLowerCase()
 }
 
+/** Hidden file: the name starts with a dot (macOS `._X.ARW` AppleDouble, `.DS_Store`, `.X.xmp`). */
+export const isHiddenName = (name: string) => name.startsWith(".")
+
+/** Kind of a photo file; hidden files are never photos (like the native `ImageFormats.isPhoto`). */
 export function photoKind(name: string): PhotoKind | undefined {
+  if (isHiddenName(name)) return undefined
   return KINDS.get(photoExtension(name))
 }
 

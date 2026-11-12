@@ -25,7 +25,7 @@ object ShotPairing {
 
     /**
      * Groups a folder listing into shots by case-insensitive stem (`DSC07668.ARW` + `dsc07668.jpg`).
-     * Non-image files are ignored. When a stem has several RAWs or renderings, the first by
+     * Non-image and hidden files (`._X.ARW`, `.DS_Store`) are ignored. When a stem has several RAWs or renderings, the first by
      * preference (JPEG over HEIF over PNG/WebP; then name) wins and the rest go to [Shot.others].
      * Shots are returned sorted by stem (natural order); callers re-sort by capture time once EXIF is
      * known.
@@ -33,8 +33,8 @@ object ShotPairing {
     fun pair(files: List<ListedFile>): List<Shot> {
         val groups = LinkedHashMap<String, MutableList<Pair<ListedFile, ImageType>>>()
         for (file in files) {
+            if (!ImageFormats.isPhoto(file.name)) continue
             val type = ImageFormats.classify(file.name)
-            if (!type.isDisplayable) continue
             groups.getOrPut(ImageFormats.stem(file.name).lowercase()) { mutableListOf() }.add(file to type)
         }
         return groups.values.map { members ->

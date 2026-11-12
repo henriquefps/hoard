@@ -56,6 +56,15 @@ object ImageFormats {
         return if (dot <= 0) base else base.substring(0, dot)
     }
 
+    /**
+     * Hidden file: its name (without folders) starts with a dot. macOS AppleDouble copies (`._DSC1.ARW`),
+     * `.DS_Store` and Hoard's own hidden sidecars (`.DSC1.xmp`) are never photos of a folder.
+     */
+    fun isHidden(name: String): Boolean = name.substringAfterLast('/').substringAfterLast('\\').startsWith(".")
+
+    /** A photo of a folder to cull or hand off: a displayable image that is not hidden. */
+    fun isPhoto(name: String): Boolean = !isHidden(name) && classify(name).isDisplayable
+
     /** By extension only (listing a folder: no reads). */
     fun classify(name: String): ImageType = byExtension[extension(name)] ?: ImageType.OTHER
 

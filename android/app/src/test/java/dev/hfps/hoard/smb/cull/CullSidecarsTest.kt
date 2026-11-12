@@ -1,6 +1,7 @@
 package dev.hfps.hoard.smb.cull
 
 import dev.hfps.hoard.image.CullFileRef
+import dev.hfps.hoard.image.CullModel
 import dev.hfps.hoard.image.CullShotRef
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.HoardSmbException
@@ -49,6 +50,18 @@ class CullSidecarsTest {
         assertEquals(XmpFields(0, XmpFlag.REJECT), found[1].read!!.fields)
         assertNull(found[2].read)
         assertEquals("malformed", found[2].error)
+    }
+
+    @Test
+    fun `a folder with AppleDouble junk yields only real shots and still finds hidden sidecars`() {
+        val fs = MemoryFs("phone")
+        for (n in listOf("DSC1.ARW", "DSC1.JPG", "._DSC1.ARW", "._DSC1.JPG", ".DS_Store", "._.DS_Store")) fs.file("DCIM/$n", ByteArray(10))
+        fs.file("DCIM/.DSC1.xmp", xmp(3).toByteArray(), modified = 9_000)
+        val listed = listed(fs)
+        val found = CullModel.shots(listed.map { CullFileRef(it.name, "DCIM/${it.name}", 10, null, 0) })
+        assertEquals(listOf("dsc1"), found.map { it.id })
+        val sidecars = CullSidecars.read(fs, "DCIM", found, listed, mapOf("dsc1" to null))
+        assertEquals(".DSC1.xmp", sidecars.single().name)
     }
 
     @Test

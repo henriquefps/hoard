@@ -22,6 +22,13 @@ const entry = (path: string, isDirectory = false) => ({
 })
 
 describe("Edit in Reveal: what is sent", () => {
+  it("never sends hidden files (AppleDouble copies, .DS_Store)", () => {
+    expect(revealOrder(["D/a.ARW", "D/._a.ARW", "D/._a.JPG", "D/.DS_Store", "D/a.JPG"])).toEqual([
+      "D/a.ARW",
+      "D/a.JPG",
+    ])
+  })
+
   it("keeps a shot's files together, RAW first, at the place of the first one", () => {
     expect(
       revealOrder(["D/b.JPG", "D/a.ARW", "D/B.arw", "D/a.jpg", "D/c.heic", "D/c.JPG"])
