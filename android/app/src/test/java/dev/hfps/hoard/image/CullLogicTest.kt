@@ -14,6 +14,22 @@ class CullLogicTest {
     private fun file(name: String, size: Long = 100) = CullFileRef(name, "DCIM/$name", size, null, 0)
 
     @Test
+    fun `hidden files never become shots (AppleDouble, DS_Store, hidden sidecars)`() {
+        val shots = CullModel.shots(
+            listOf(
+                file("DSC1.ARW"), file("DSC1.JPG"), file("DSC2.ARW"), file("DSC2.JPG"),
+                file("._DSC1.ARW"), file("._DSC1.JPG"), file("._DSC2.ARW"), file("._DSC2.JPG"),
+                file(".DS_Store"), file("._.DS_Store"), file(".DSC1.xmp"), file(".hidden.jpg"),
+            ),
+        )
+        assertEquals(listOf("dsc1", "dsc2"), shots.map { it.id })
+        assertEquals(listOf("pair", "pair"), shots.map { it.kind })
+        assertEquals(emptyList<String>(), shots.flatMap { it.others })
+        assertEquals(true, dev.hfps.hoard.image.format.ImageFormats.isHidden("DCIM/._X.ARW"))
+        assertEquals(false, dev.hfps.hoard.image.format.ImageFormats.isHidden("DCIM/X.ARW"))
+    }
+
+    @Test
     fun `pairs a folder into shots with ids, kinds and extras`() {
         val shots = CullModel.shots(
             listOf(

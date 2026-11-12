@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.2
+
+- **Culling ignores hidden files**: macOS AppleDouble copies (`._DSC07845.ARW`, ~4 KB metadata files a Mac leaves on non-HFS disks and shares), `.DS_Store` and other dot-files no longer become shots. A folder of 14 RAW+JPEG pairs with 28 `._*` files opened 28 shots (14 grey tiles, "14 photos could not be analysed"); it now opens 14. The same rule applies to "Cull photos" counts, "Edit in Reveal" and the web mock. Hidden XMP sidecars (`.name.xmp`) are still read. The file browser is unchanged.
+
 ## 1.9.1
 
 - **Compact, collapsing page header** (landscape phones and short screens): scrolling a list down moves the page header (breadcrumbs, title, status line) and its toolbar out with the content; a compact bar stays on top with ←, the folder name on one line and the page's actions as icons (search expands into a field, one ⋯ menu holds filter, sort, new folder, refresh and the page's own items). Scrolling up brings the full header back at once (quick-return); it follows the finger, nothing animates by itself. Same behaviour on every page with this header: machine, phone and USB folders, the culling grid (its filter rows and analysis progress collapse too), machines, transfers, settings.

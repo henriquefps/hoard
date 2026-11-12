@@ -192,7 +192,7 @@ class RevealHandoff(private val context: Context, private val opener: Opener) {
             val groups = LinkedHashMap<String, MutableList<String>>()
             val seen = HashSet<String>()
             for (path in paths) {
-                if (!ImageFormats.classify(path).isDisplayable || !seen.add(path)) continue
+                if (!ImageFormats.isPhoto(path) || !seen.add(path)) continue
                 val parent = path.substringBeforeLast('/', "")
                 val key = parent + "/" + ImageFormats.stem(path).lowercase()
                 groups.getOrPut(key) { mutableListOf() }.add(path)

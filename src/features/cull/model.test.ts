@@ -72,7 +72,21 @@ describe("pairShots", () => {
     expect(shots.map((s) => s.stem)).toEqual(["IMG_9", "IMG_10"])
   })
 
+  it("ignores hidden files: AppleDouble copies, .DS_Store, hidden sidecars", () => {
+    const shots = pairShots([
+      entry("DSC1.ARW"),
+      entry("DSC1.JPG"),
+      entry("._DSC1.ARW"),
+      entry("._DSC1.JPG"),
+      entry(".DS_Store"),
+      entry("._.DS_Store"),
+      entry(".DSC1.xmp"),
+    ])
+    expect(shots.map((s) => [s.stem, s.kind, s.others.length])).toEqual([["DSC1", "pair", 0]])
+  })
+
   it("counts photos for the browser's Cull action", () => {
+    expect(countPhotos([entry("._a.ARW"), entry("._a.JPG"), entry(".DS_Store")])).toBe(0)
     expect(countPhotos([entry("a.ARW"), entry("a.JPG"), entry("b.mp4"), entry("c", 0, true)])).toBe(
       2
     )
