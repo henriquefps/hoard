@@ -16,7 +16,7 @@ func TestMigrationsAreIdempotentAndRefuseNewerSchemas(t *testing.T) {
 	}
 	ctx := context.Background()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 1 {
+	if err != nil || v != 2 {
 		t.Fatalf("schema %d %v", v, err)
 	}
 	var mode string
@@ -57,5 +57,35 @@ func TestReopenKeepsData(t *testing.T) {
 	recs, _, err := s.Changes(ctx, 0, 10)
 	if err != nil || len(recs) != 1 || string(recs[0].Data) != `{"x":1}` {
 		t.Fatalf("%v %v", recs, err)
+	}
+}
+
+func TestPreviewReferenceCheckUsesItsIndex(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "db.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	rows, err := s.db.QueryContext(ctx, `EXPLAIN QUERY PLAN SELECT 1 FROM records WHERE kind = 'photo' AND deleted = 0
+		AND data IS NOT NULL AND json_extract(data, '$.preview.sha256') = ? LIMIT 1`, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail + "\n")
+	}
+	if !strings.Contains(plan.String(), "records_preview") {
+		t.Fatalf("the reference check scans the records:\n%s", plan.String())
+	}
+	if ref, err := s.PreviewReferenced(ctx, "x"); err != nil || ref {
+		t.Fatalf("nothing names x: %v %v", ref, err)
 	}
 }

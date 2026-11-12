@@ -78,7 +78,8 @@ type Server struct {
 	setupMu   sync.Mutex
 	setupCode string
 
-	uploadLocks sync.Map // upload id -> *sync.Mutex
+	uploadLocks sync.Map   // upload id -> *sync.Mutex
+	completeMu  sync.Mutex // a preview upload completing vs a preview being dropped
 	touchMu     sync.Mutex
 	touched     map[string]time.Time
 

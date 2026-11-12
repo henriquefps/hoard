@@ -189,3 +189,64 @@ func (s *Store) LookupOriginal(ctx context.Context, fp string) (Original, error)
 	}
 	return o, err
 }
+
+// Reasons a device may not drop a blob.
+var (
+	// ErrNotPreview: the blob is an original (a backup is never dropped by a device).
+	ErrNotPreview = errors.New("not a preview")
+	// ErrNotUploader: another device uploaded the preview.
+	ErrNotUploader = errors.New("uploaded by another device")
+	// ErrReferenced: a live photo record still names the preview.
+	ErrReferenced = errors.New("still referenced")
+)
+
+// PreviewReferenced reports whether a live (not deleted) photo record names the blob as its smart preview.
+func (s *Store) PreviewReferenced(ctx context.Context, sha string) (bool, error) {
+	return previewReferenced(ctx, s.db, sha)
+}
+
+type queryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func previewReferenced(ctx context.Context, q queryer, sha string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM records WHERE kind = 'photo' AND deleted = 0 AND data IS NOT NULL
+		AND json_extract(data, '$.preview.sha256') = ? LIMIT 1`, sha).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DropPreview forgets a smart preview blob that deviceID uploaded and no live photo record names (ADR 0017 "Dropping
+// a smart preview"). The check and the delete are one transaction, so a record written meanwhile is seen. The caller
+// removes the file afterwards.
+func (s *Store) DropPreview(ctx context.Context, sha, deviceID string) error {
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var kind string
+		var owner sql.NullString
+		err := tx.QueryRowContext(ctx, "SELECT kind, device_id FROM blobs WHERE sha256 = ?", sha).Scan(&kind, &owner)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if kind != BlobPreview {
+			return ErrNotPreview
+		}
+		if !owner.Valid || owner.String != deviceID {
+			return ErrNotUploader
+		}
+		referenced, err := previewReferenced(ctx, tx, sha)
+		if err != nil {
+			return err
+		}
+		if referenced {
+			return ErrReferenced
+		}
+		_, err = tx.ExecContext(ctx, "DELETE FROM blobs WHERE sha256 = ?", sha)
+		return err
+	})
+}

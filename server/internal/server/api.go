@@ -31,6 +31,7 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/fingerprints/lookup", s.device(s.handleLookup))
 	mux.HandleFunc("GET /v1/originals/{fingerprint}", s.device(s.handleOriginal))
 	mux.HandleFunc("GET /v1/blobs/{sha256}", s.device(s.handleBlob))
+	mux.HandleFunc("DELETE /v1/blobs/{sha256}", s.device(s.handleBlobDelete))
 	mux.HandleFunc("POST /v1/uploads", s.device(s.handleUploadCreate))
 	mux.HandleFunc("HEAD /v1/uploads/{id}", s.device(s.handleUploadHead))
 	mux.HandleFunc("PATCH /v1/uploads/{id}", s.device(s.handleUploadPatch))
@@ -435,6 +436,48 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	serveFile(w, r, f, sha)
 }
 
+// handleBlobDelete drops a smart preview this device uploaded once no live photo record names it (ADR 0017 "Dropping
+// a smart preview"): its row first (one transaction with the reference check), then its file. Originals are never
+// dropped by a device.
+func (s *Server) handleBlobDelete(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha256")
+	if !blobstore.ValidSHA256(sha) {
+		fail(w, r, http.StatusNotFound, "not_found", "No such blob.", nil)
+		return
+	}
+	bs := s.blobStore()
+	if bs == nil {
+		fail(w, r, http.StatusNotFound, "not_found", "No such blob.", nil)
+		return
+	}
+	// Serialised with preview upload completions: a preview completed again right now must not lose its file.
+	s.completeMu.Lock()
+	defer s.completeMu.Unlock()
+	err := s.store.DropPreview(r.Context(), sha, info(r).device.ID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, r, http.StatusNotFound, "not_found", "No such blob.", nil)
+		return
+	case errors.Is(err, store.ErrNotPreview):
+		fail(w, r, http.StatusForbidden, "forbidden", "Only smart previews can be dropped.", map[string]any{"reason": "original"})
+		return
+	case errors.Is(err, store.ErrNotUploader):
+		fail(w, r, http.StatusForbidden, "forbidden", "Another device uploaded this preview.", map[string]any{"reason": "other_device"})
+		return
+	case errors.Is(err, store.ErrReferenced):
+		fail(w, r, http.StatusConflict, "conflict", "A photo record still names this preview; push it first.", map[string]any{"reason": "referenced"})
+		return
+	case err != nil:
+		s.internal(w, r, err)
+		return
+	}
+	if err := bs.Remove(sha); err != nil {
+		s.internal(w, r, fmt.Errorf("blob dropped but its file stays: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleOriginal(w http.ResponseWriter, r *http.Request) {
 	fp := r.PathValue("fingerprint")
 	if !fingerprint.Valid(fp) {
@@ -709,6 +752,11 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		uploadHeaders(w, u, newOffset)
 		w.WriteHeader(http.StatusNoContent)
 		return
+	}
+	if u.Kind == store.BlobPreview {
+		// Only previews can be dropped (handleBlobDelete): originals complete without waiting for each other.
+		s.completeMu.Lock()
+		defer s.completeMu.Unlock()
 	}
 	err = bs.Complete(u.ID, u.SHA256, u.Size, u.Fingerprint)
 	if errors.Is(err, blobstore.ErrChecksum) || errors.Is(err, blobstore.ErrFingerprint) {

@@ -195,6 +195,18 @@ func (s *Store) Abort(id string) error {
 	return err
 }
 
+// Remove deletes a stored blob's file (a dropped smart preview). A missing file is not an error.
+func (s *Store) Remove(sha string) error {
+	if !ValidSHA256(sha) {
+		return ErrInvalidName
+	}
+	err := s.root.Remove(blobPath(sha))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
 // HasAnyBlob reports whether the folder holds blobs (the backup root is then fixed).
 func HasAnyBlob(backupRoot string) bool {
 	entries, err := os.ReadDir(filepath.Join(backupRoot, Dir, "blobs"))

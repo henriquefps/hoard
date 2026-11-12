@@ -20,6 +20,7 @@ import (
 
 const (
 	photoA   = "11111111-1111-4111-8111-111111111111"
+	photoB   = "33333333-3333-4333-8333-333333333333"
 	versionA = "22222222-2222-4222-8222-222222222222"
 )
 
@@ -592,4 +593,109 @@ func TestDevicesListsNamesButNotRevokedOnesOrKeys(t *testing.T) {
 	if strings.Contains(w.Body.String(), tabletID) {
 		t.Fatalf("a revoked device is listed: %s", w.Body.String())
 	}
+}
+
+// uploadPreview sends a small preview in one chunk and returns its SHA-256.
+func uploadPreview(t *testing.T, hs *harness, key string, data []byte) string {
+	t.Helper()
+	sha := sum(data)
+	w := hs.do("POST", "/v1/uploads", map[string]any{"sha256": sha, "size": len(data), "kind": "preview"}, bearer(key))
+	if w.Code == 200 && decode(t, w)["status"] == "exists" {
+		return sha
+	}
+	expect(t, w, 201, "")
+	id := decode(t, w)["uploadId"].(string)
+	w = hs.do("PATCH", "/v1/uploads/"+id, data, bearer(key), header("Upload-Offset", "0"), header("Content-Type", "application/offset+octet-stream"))
+	expect(t, w, 204, "")
+	return sha
+}
+
+func photoWithPreview(sha string) map[string]any {
+	p := photo()
+	if sha != "" {
+		p["preview"] = map[string]any{"sha256": sha, "width": 2560, "height": 1707}
+	}
+	return p
+}
+
+func TestDroppingAPreview(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, _ := hs.pair("Phone")
+	tablet, _ := hs.pair("Tablet")
+	sha := uploadPreview(t, hs, phone, []byte("a smart preview"))
+	file := filepath.Join(hs.backup, "reveal-sync", "blobs", sha[:2], sha[2:4], sha)
+	r := push(t, hs, phone, change("photo", photoA, 0, 1000, photoWithPreview(sha)))
+	rev := int64(r[0]["rev"].(float64))
+
+	// A live photo record names it: kept, for its uploader too.
+	w := hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone))
+	expect(t, w, 409, "conflict")
+	if decode(t, w)["error"].(map[string]any)["details"].(map[string]any)["reason"] != "referenced" {
+		t.Fatal("reason")
+	}
+	// Another device may never drop it.
+	w = hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(tablet))
+	expect(t, w, 403, "forbidden")
+
+	// Once the record no longer names it, the uploader drops it: the row, the file, and every later read.
+	push(t, hs, phone, change("photo", photoA, rev, 2000, photoWithPreview("")))
+	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 204, "")
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("file still there: %v", err)
+	}
+	expect(t, hs.do("GET", "/v1/blobs/"+sha, nil, bearer(tablet)), 404, "not_found")
+	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 404, "not_found")
+	expect(t, hs.do("DELETE", "/v1/blobs/not-a-sha", nil, bearer(phone)), 404, "not_found")
+	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil), 401, "unauthorized")
+
+	// Uploaded again after a drop: a normal new blob.
+	if again := uploadPreview(t, hs, phone, []byte("a smart preview")); again != sha {
+		t.Fatal("same bytes, same address")
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Fatalf("re-uploaded file: %v", err)
+	}
+}
+
+func TestDroppingAPreviewOtherRecordsStillName(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, _ := hs.pair("Phone")
+	sha := uploadPreview(t, hs, phone, []byte("shared preview bytes"))
+	// Two photos name the same bytes (e.g. a duplicate file): the preview stays while either does.
+	push(t, hs, phone, change("photo", photoA, 0, 1000, photoWithPreview(sha)), change("photo", photoB, 0, 1000, photoWithPreview(sha)))
+	pa := pull(t, hs, phone, "", 0)
+	revA := int64(0)
+	for _, c := range pa.Changes {
+		if c.ID == photoA {
+			revA = c.Rev
+		}
+	}
+	push(t, hs, phone, change("photo", photoA, revA, 2000, photoWithPreview("")))
+	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 409, "conflict")
+	// A deleted photo (tombstone) no longer holds it.
+	revB := int64(0)
+	for _, c := range pull(t, hs, phone, "", 0).Changes {
+		if c.ID == photoB {
+			revB = c.Rev
+		}
+	}
+	push(t, hs, phone, change("photo", photoB, revB, 3000, nil))
+	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 204, "")
+}
+
+func TestOriginalsAreNeverDroppedByADevice(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, _ := hs.pair("Phone")
+	data := []byte("an original file")
+	sha, fp := sum(data), fingerprint.Bytes(data)
+	w := hs.do("POST", "/v1/uploads", map[string]any{"sha256": sha, "size": len(data), "kind": "original", "fingerprint": fp}, bearer(phone))
+	expect(t, w, 201, "")
+	id := decode(t, w)["uploadId"].(string)
+	expect(t, hs.do("PATCH", "/v1/uploads/"+id, data, bearer(phone), header("Upload-Offset", "0"), header("Content-Type", "application/offset+octet-stream")), 204, "")
+	w = hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone))
+	expect(t, w, 403, "forbidden")
+	if decode(t, w)["error"].(map[string]any)["details"].(map[string]any)["reason"] != "original" {
+		t.Fatal("reason")
+	}
+	expect(t, hs.do("GET", "/v1/originals/"+fp, nil, bearer(phone)), 200, "")
 }

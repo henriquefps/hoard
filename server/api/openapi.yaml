@@ -242,6 +242,32 @@ paths:
         "206": { $ref: "#/components/responses/PartialBytes" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [blobs]
+      summary: Drop a smart preview this device uploaded once no live photo record names it
+      description: >-
+        Only `preview` blobs, only by the device that uploaded them, and only when no photo record that is not deleted
+        names the blob in `data.preview.sha256` (push the record without it first). The check and the delete are
+        atomic. Originals are never dropped by a device.
+      parameters:
+        - name: sha256
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Sha256" }
+      responses:
+        "204": { description: The preview is gone }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "`forbidden`: `details.reason` is `original` (not a preview) or `other_device` (not this device's)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`, `details.reason` = `referenced`: a live photo record still names it"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/uploads:
     post:
       tags: [blobs]
