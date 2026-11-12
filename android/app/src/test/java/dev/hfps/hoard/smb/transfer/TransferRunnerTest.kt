@@ -25,6 +25,8 @@ class MemoryFs(
     val nodes = LinkedHashMap<String, Node>().apply { put("", Node(true)) }
     var free: Long? = null
     var canRename = true
+    /** [canWrite]'s answer for existing files (a sidecar Reveal may write). */
+    var writable = true
     /** Throw once from a read when this many bytes of the stream were read. */
     var dropReadAt: Long? = null
     /** Every write fails with this (an unplugged drive). */
@@ -114,6 +116,8 @@ class MemoryFs(
     }
 
     override fun freeBytes(path: String) = free
+
+    override fun canWrite(path: String) = writable
 
     override fun reconnect(addressIndex: Int) {
         reconnects++

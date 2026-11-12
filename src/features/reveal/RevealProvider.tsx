@@ -17,7 +17,7 @@ import { Label } from "@/components/ui/label"
 import { useDb } from "@/db/DbProvider"
 import { listCullDecisions } from "@/db/queries"
 import { revealCullingFor } from "@/features/cull/xmp"
-import { useSetting } from "@/features/settings/settings"
+import { SETTING_DEFAULTS, useSetting } from "@/features/settings/settings"
 import { formatNumber } from "@/lib/format"
 import { HoardSmb } from "@/plugins/smb"
 import { smbErrorCode } from "@/plugins/smb/definitions"
@@ -28,7 +28,8 @@ import { RevealContext, type RevealRequest } from "./revealContext"
  * "Edit in Reveal" (ADR 0010) for the whole app: whether Reveal is installed (asked at start and
  * whenever Hoard comes back to the foreground, so installing or uninstalling it shows or hides the
  * action), and the hand-off with its one confirmation (big batches; SMB photos, which Reveal reads
- * through Hoard while it runs).
+ * through Hoard: reopenable later while the machine is reachable). With the culling setting that writes sidecars,
+ * each shot's sidecar goes too, writable, so Reveal's ratings come back to Hoard (ADR 0010 "Write-back").
  */
 export function RevealProvider({ children }: { children: ReactNode }) {
   const { t, i18n } = useTranslation()
@@ -36,6 +37,9 @@ export function RevealProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<RevealRequest | null>(null)
   const [dontExplain, setDontExplain] = useState(false)
   const [streamNoteSeen, setStreamNoteSeen] = useSetting("revealStreamNoteSeen")
+  // Write-back (ADR 0010): sidecars go with the photos when culling writes sidecars.
+  const [saveXmp] = useSetting("cullSaveXmp")
+  const [xmpHidden] = useSetting("cullXmpHidden")
   const db = useDb()
 
   const check = useCallback(() => {
@@ -74,6 +78,9 @@ export function RevealProvider({ children }: { children: ReactNode }) {
           ...(request.title ? { title: request.title } : {}),
           ...(request.initialPath ? { initialPath: request.initialPath } : {}),
           ...(Object.keys(culling).length ? { culling } : {}),
+          ...((saveXmp ?? SETTING_DEFAULTS.cullSaveXmp)
+            ? { sidecars: { hidden: xmpHidden ?? SETTING_DEFAULTS.cullXmpHidden } }
+            : {}),
         })
       } catch (error) {
         const code = smbErrorCode(error)
@@ -88,7 +95,7 @@ export function RevealProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [db, t]
+    [db, t, saveXmp, xmpHidden]
   )
 
   const edit = useCallback(

@@ -22,6 +22,9 @@ import com.getcapacitor.annotation.PermissionCallback
 import dev.hfps.hoard.smb.share.IncomingShare
 import dev.hfps.hoard.smb.share.IncomingShares
 import dev.hfps.hoard.smb.share.RevealHandoff
+import dev.hfps.hoard.smb.handoff.HandoffMachine
+import dev.hfps.hoard.smb.handoff.HandoffServer
+import dev.hfps.hoard.smb.transfer.TransferAddress
 import dev.hfps.hoard.smb.share.ShareOut
 import dev.hfps.hoard.smb.stream.SmbSource
 import dev.hfps.hoard.smb.transfer.Endpoint
@@ -149,7 +152,9 @@ class HoardSmbPlugin : Plugin() {
         thumbnailer = Thumbnailer(context)
         streamer = Streamer(context, credentials)
         shareOut = ShareOut(context, opener)
-        reveal = RevealHandoff(context, opener)
+        reveal = RevealHandoff(context, opener, credentials)
+        HandoffServer.init(context)
+        scope.launch { runCatching { HandoffServer.prune(context) } }
         IncomingShares.init(context)
         IncomingShares.addListener(shareListener)
         // Launched (or relaunched) from another app's share sheet.
@@ -741,24 +746,56 @@ class HoardSmbPlugin : Plugin() {
                 path to RevealHandoff.Culling(value.optInt("rating", 0), value.optString("flag", "none"), value.optString("label").takeIf { it.isNotEmpty() })
             }.toMap()
         }.orEmpty()
+        // Writable sidecar items (ADR 0010 "Write-back"): only when the culling setting writes sidecars.
+        val sidecars = call.getObject("sidecars")?.let { RevealHandoff.SidecarOptions(it.optBoolean("hidden", false)) }
         val files = withContext(Dispatchers.IO) {
             if (location.optString("kind") == "smb") {
                 val request = streamRequest(call, paths[0])
-                reveal.smb({
-                    SmbSource(request.machineId, request.addresses, request.expectedServerGuid, request.share, credentials::get)
-                }, paths)
+                val guid = request.expectedServerGuid ?: smbFail(ErrorCode.UNKNOWN, "The machine's server GUID is not pinned yet")
+                val endpoint = Endpoint.Smb(request.machineId, request.addresses.map { TransferAddress(it.host, it.port) }, guid, request.share)
+                reveal.smb(endpoint, paths, sidecars, culling)
             } else {
-                reveal.local(volumes.fs(Location.parse(location) as Location.Local), paths)
+                val local = Location.parse(location) as Location.Local
+                reveal.local(local, volumes.fs(local), paths, sidecars, culling)
             }
         }
         val activity = activity ?: smbFail(ErrorCode.UNKNOWN, "No activity to open Reveal from")
-        try {
-            withContext(Dispatchers.Main) { reveal.launch(activity, files, call.getString("title"), call.getString("initialPath"), culling) }
-        } catch (e: Throwable) {
-            reveal.discard(files)
-            throw e
+        withContext(Dispatchers.Main) { reveal.launch(activity, files, call.getString("title"), call.getString("initialPath"), culling) }
+        JSObject().put("sent", files.count { !it.sidecar }).put("sidecars", files.count { it.sidecar })
+    }
+
+    /**
+     * The machines as the app knows them (ADR 0010 "Cold start"): addresses in priority order and the pinned GUID, so
+     * the stream provider can reach a share when Reveal reopens a photo and Hoard's UI is not running. No secrets.
+     */
+    @PluginMethod
+    fun syncMachines(call: PluginCall) = run(call) {
+        val array = call.getArray("machines") ?: smbFail(ErrorCode.UNKNOWN, "machines is required")
+        val machines = (0 until array.length()).map { i ->
+            val o = array.getJSONObject(i)
+            val addresses = o.optJSONArray("addresses")
+            HandoffMachine(
+                id = o.optString("machineId").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "machineId is required"),
+                serverGuid = o.optString("serverGuid").takeIf { !o.isNull("serverGuid") && it.isNotBlank() },
+                addresses = (0 until (addresses?.length() ?: 0)).mapNotNull { index ->
+                    val a = addresses!!.getJSONObject(index)
+                    runCatching { Net.requireValidAddress(a.optString("host"), if (a.has("port")) a.optInt("port") else null) }
+                        .getOrNull()?.let { (host, port) -> StreamAddress(host, port) }
+                },
+            )
         }
-        JSObject().put("sent", files.size)
+        HandoffServer.store(context).setMachines(machines)
+        null
+    }
+
+    @PluginMethod
+    fun revealLinks(call: PluginCall) = run(call) {
+        JSObject().put("count", HandoffServer.count(context))
+    }
+
+    @PluginMethod
+    fun revokeRevealLinks(call: PluginCall) = run(call) {
+        JSObject().put("revoked", HandoffServer.revokeAll(context))
     }
 
     @PluginMethod

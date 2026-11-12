@@ -731,11 +731,45 @@ export interface OpenInRevealOptions {
    * each file's URI. Shots without a decision are left out; a reject sends its stars as `rating`.
    */
   culling?: Record<string, { rating: number; flag: CullWireFlag }>
+  /**
+   * Send each shot's XMP sidecar as a writable item, so Reveal writes its rating / flag / label back (ADR 0010
+   * "Write-back"). Set when the culling setting writes sidecars (`cullSaveXmp`); `hidden` names new ones
+   * `.<stem>.xmp` (`cullXmpHidden`). Native sends the shot's existing sidecar (Hoard's naming rules) when it may be
+   * written, else creates `<stem>.xmp` with the shot's `culling` value; a folder Hoard cannot write sends none (the
+   * values still travel in `culling`). Only sidecar items get a write grant, never a photo.
+   */
+  sidecars?: { hidden: boolean }
 }
 
 export interface OpenInRevealResult {
-  /** Files sent (after de-duplication). */
+  /** Photos sent (after de-duplication). */
   sent: number
+  /** Writable sidecar items sent with them (0 without `sidecars`, or in read-only folders). */
+  sidecars: number
+}
+
+/** One machine as the native side mirrors it for cold-start hand-off serving (`syncMachines`, ADR 0010). */
+export interface NativeMachine {
+  machineId: string
+  /** The pinned GUID; native never connects to a machine without one. */
+  serverGuid: string | null
+  /** In the machine's priority order. */
+  addresses: SmbAddress[]
+}
+
+export interface SyncMachinesOptions {
+  /** Every saved machine: the mirror is replaced (machines left out are forgotten). */
+  machines: NativeMachine[]
+}
+
+export interface RevealLinksResult {
+  /** Links handed to Reveal that Hoard still knows (SMB photos and sidecars, files on the phone). */
+  count: number
+}
+
+export interface RevokeRevealLinksResult {
+  /** Links forgotten (their grants revoked). */
+  revoked: number
 }
 
 /** One file another app shared to Hoard. */
@@ -1409,14 +1443,31 @@ export interface HoardSmbPlugin {
   revealAvailable(): Promise<{ available: boolean }>
 
   /**
-   * "Edit in Reveal" (ADR 0010): one `dev.hfps.reveal.action.DEVELOP` intent with the photos as
-   * `ClipData` and a read grant on exactly those URIs. Local files go in place (FileProvider; SAF
-   * documents also allow Reveal a persistable grant); SMB files stream through the proxy file
-   * descriptor provider (never copied), readable while Hoard runs and for 60 min after their last
-   * read. Never a sidecar, never a write grant. Rejects `NO_APP` (Reveal not installed),
-   * `NOT_FOUND`, `UNKNOWN` (no photos among `paths`), and for SMB the connection errors.
+   * "Edit in Reveal" (ADR 0010): one `dev.hfps.reveal.action.DEVELOP` intent sent to Reveal's package explicitly (the
+   * release build when installed, else the debug one: never a chooser), the photos as `ClipData` with a read +
+   * **persistable** grant on exactly those URIs. Local files go in place (FileProvider or SAF document); SMB files go
+   * as stable links Hoard serves itself, also after a restart (it reconnects natively: `syncMachines`), never copied.
+   * With `sidecars`, writable XMP sidecar items too (write grant on those only). Rejects `NO_APP` (Reveal not
+   * installed), `NOT_FOUND`, `UNKNOWN` (no photos among `paths`, an SMB machine without a pinned GUID), and for SMB
+   * the connection errors.
    */
   openInReveal(options: OpenInRevealOptions): Promise<OpenInRevealResult>
+
+  /**
+   * Mirror the saved machines natively (addresses in priority order, pinned GUID; no secrets): Hoard's stream
+   * provider reaches SMB shares from them when Reveal reopens a handed-off photo and the app is not running
+   * (ADR 0010 "Cold start"). Called whenever machines or addresses change; replaces the whole mirror.
+   */
+  syncMachines(options: SyncMachinesOptions): Promise<void>
+
+  /** How many hand-off links Hoard keeps for Reveal (Settings → "Reveal links"). */
+  revealLinks(): Promise<RevealLinksResult>
+
+  /**
+   * "Revoke all": revokes every grant Hoard gave Reveal on its own links (SMB photos and sidecars, files on the phone,
+   * persisted ones included) and forgets them. Photos on SAF volumes are Android's to revoke (removed in Reveal).
+   */
+  revokeRevealLinks(): Promise<RevokeRevealLinksResult>
 
   /** What another app shared to Hoard and the UI has not handled yet (also the launch intent). */
   getSharedFiles(): Promise<GetSharedFilesResult>

@@ -58,6 +58,12 @@ interface TransferFs : Closeable {
      */
     fun rename(from: String, to: String, replace: Boolean): Boolean
 
+    /**
+     * The existing file at [path] may be written (a sidecar handed to Reveal with a write grant, ADR 0010). Checked
+     * without changing it; true when the endpoint cannot tell (a write then fails the usual way).
+     */
+    fun canWrite(path: String): Boolean = true
+
     /** Keep the source's modified time; false when the endpoint cannot. */
     fun setModified(path: String, millis: Long): Boolean = false
 

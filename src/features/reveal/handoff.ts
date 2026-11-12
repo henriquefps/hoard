@@ -82,7 +82,7 @@ export function selectionPaths(
 export const hasPhotos = (entries: readonly Pick<SmbEntry, "name" | "isDirectory">[]) =>
   entries.some((e) => !e.isDirectory && Boolean(photoKind(e.name)))
 
-/** Ask before sending: big batches, and always for SMB (the photos stream while Hoard runs). */
+/** Ask before sending: big batches, and SMB once (the photos are read through Hoard, while the machine is reachable). */
 export function needsConfirm(count: number, smb: boolean): boolean {
   return smb || count > REVEAL_CONFIRM_ABOVE
 }

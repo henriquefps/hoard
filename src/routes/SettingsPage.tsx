@@ -56,6 +56,7 @@ import {
 import { HoardSmb } from "@/plugins/smb"
 import type { DestinationFolder, TransferConflict } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
+import { RevealLinks } from "@/features/reveal/RevealLinks"
 import { useReveal } from "@/features/reveal/revealContext"
 
 const REPOSITORY = "https://github.com/henriquefps/hoard"
@@ -261,6 +262,7 @@ export function SettingsPage() {
             {reveal.available ? (
               <p className="text-[0.9375rem] text-muted-foreground">{t("reveal.about")}</p>
             ) : null}
+            <RevealLinks available={reveal.available} />
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" asChild>
                 <a href={REPOSITORY} target="_blank" rel="noreferrer">

@@ -38,7 +38,7 @@ class StreamEntry(
     val http: Boolean,
     /** The content:// URI handed out (FILE), to revoke grants when the token ends. */
     var contentUri: Uri? = null,
-    /** Idle time before the token ends, when not the kind's default (hand-offs to Reveal: longer). */
+    /** Idle time before the token ends, when not the kind's default (a hand-off link's lease: short). */
     val idleMs: Long? = null,
 ) {
     val openFds = AtomicInteger()
@@ -61,7 +61,7 @@ class StreamEntry(
  *  - never while a file descriptor or an HTTP response is open, or while an in-app viewer holds it;
  *  - FILE: [FILE_IDLE_MS] after the last use (VLC closes and reopens the FD on some seeks and when
  *    it comes back from the background; the chooser may also stay open for a while);
- *  - a hand-off to Reveal sets its own [StreamEntry.idleMs] (longer: an editor reopens files);
+ *  - a hand-off link's lease sets its own [StreamEntry.idleMs] (short: the service stops soon after Reveal reads);
  *  - FOLDER: [FOLDER_IDLE_MS] after the last request once no viewer holds it (a page handed to
  *    Chrome keeps working while the user reads it, and lazy assets still load).
  */
@@ -111,6 +111,30 @@ object StreamRegistry {
     }
 
     fun all(): List<StreamEntry> = entries.values.sortedBy { it.createdAt }
+
+    /**
+     * The live lease of a hand-off link (ADR 0010): [key] is `h-<id>`, never a well-formed token, so it is reachable
+     * neither over HTTP nor through [get]. [create] runs when there is none; the lease keeps the streaming service up while Reveal reads and ends [StreamEntry.idleMs] after the last read.
+     */
+    @Synchronized
+    fun lease(key: String, create: () -> StreamEntry): StreamEntry {
+        entries[key]?.let { current ->
+            current.touch()
+            return current
+        }
+        val entry = create()
+        require(entry.token == key && entry.contentUri == null) { "A lease is keyed by its link and revokes nothing" }
+        add(entry)
+        return entry
+    }
+
+    /** Ends every lease whose key starts with [prefix] (links revoked). */
+    fun removeLeases(prefix: String) {
+        val gone = entries.keys.filter { it.startsWith(prefix) }
+        if (gone.isEmpty()) return
+        gone.forEach { key -> entries.remove(key)?.let(::end) }
+        changed()
+    }
 
     fun hasHttp(): Boolean = entries.values.any { it.http }
 

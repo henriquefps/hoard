@@ -5,6 +5,7 @@ import type {
   ConnectResult,
   HoardSmbErrorCode,
   HoardSmbPlugin,
+  NativeMachine,
   ProbeResult,
 } from "@/plugins/smb/definitions"
 import { smbErrorCode } from "@/plugins/smb/definitions"
@@ -414,4 +415,19 @@ export async function nativeRoute(
       ...(a.port == null ? {} : { port: a.port }),
     })),
   }
+}
+
+/**
+ * The machines as the native mirror keeps them (`syncMachines`, ADR 0010 "Cold start"): id, pinned GUID and the
+ * addresses in priority order (port only when set). Pure (tested).
+ */
+export function nativeMachines(machines: readonly EngineMachine[]): NativeMachine[] {
+  return machines.map((m) => ({
+    machineId: m.id,
+    serverGuid: m.server_guid,
+    addresses: m.addresses.map((a) => ({
+      host: a.host,
+      ...(a.port == null ? {} : { port: a.port }),
+    })),
+  }))
 }

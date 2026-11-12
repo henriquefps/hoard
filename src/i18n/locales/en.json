@@ -1126,9 +1126,21 @@
       "title_one": "Open {{n}} file in Reveal?",
       "title_other": "Open {{n}} files in Reveal?",
       "many": "Reveal will list all {{n}} files in one batch.",
-      "stream": "Photos on a network share are read through Hoard: Reveal can open them while Hoard is running, and for an hour after it last read them. To keep editing them later, copy them to the phone first and open them from there.",
+      "stream": "Photos on a network share are read through Hoard: Reveal can reopen them later, even after the phone restarts and with Hoard closed, while this machine is reachable on the network.",
       "dontExplain": "Don't explain this again",
       "action": "Open in Reveal"
+    },
+    "links": {
+      "title": "Reveal links",
+      "none": "Reveal has no links to files from Hoard.",
+      "count_one": "Reveal can reopen {{n}} file handed over from Hoard, also after a restart.",
+      "count_other": "Reveal can reopen {{n}} files handed over from Hoard, also after a restart.",
+      "revoke": "Revoke all",
+      "confirmTitle": "Revoke Reveal's access?",
+      "confirmBody": "Reveal will no longer open the photos and sidecars Hoard handed to it (photos of drives opened through Android's folder access are not affected). Edits saved in Reveal stay there; hand the photos over again to reopen them.",
+      "revoked_one": "Revoked {{n}} link",
+      "revoked_other": "Revoked {{n}} links",
+      "failed": "Could not revoke the links"
     }
   }
 }

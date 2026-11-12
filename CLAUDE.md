@@ -37,9 +37,16 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   fields). Never overwrite a malformed sidecar; never write into a folder not opened for culling; opening a folder
   never writes. Precedence rule and `cull_sidecars` in `src/features/cull/xmp.ts`. E2E: `docs/testing/xmp-sidecars.md`.
 - Edit in Reveal (ADR 0010): `smb/share/RevealHandoff.kt` builds Reveal's `DEVELOP` intent (Reveal ADR
-  0011); `src/features/reveal/` decides what is sent. Read grant on exactly the URIs sent, never write,
-  never a sidecar item; decisions go as the `CULLING` extra (ADR 0011); SMB photos stream (`StreamEntry.idleMs`). Test with Reveal's debug APK on the
-  emulator only (`./gradlew :app:assembleDebug` in a copy of the reveal repo).
+  0011), sent to one package (`RevealPackages`: release, else debug; never a chooser); `src/features/reveal/` decides
+  what is sent. Read + **persistable** grant on exactly the URIs sent, never a write flag on the intent; write
+  (`grantUriPermission`) only on sidecar items (`openInReveal`'s `sidecars`, when `cullSaveXmp` is on); decisions go
+  as the `CULLING` extra (ADR 0011). SMB photos go as stable links `content://<app>.stream/h/<id>/<tag>%2F<name>`
+  (`smb/handoff/`: `HandoffStore` JSON in `noBackupFilesDir`, `HandoffServer` inside `StreamProvider`, served after a
+  cold start through the native machine mirror `syncMachines` + `NativeRoute`); the short-lived token URIs stay for
+  share-out and streaming. Settings › "Reveal links" (`revealLinks` / `revokeRevealLinks`). E2E:
+  `docs/testing/persistable-handoff.md`. Test with Reveal's debug APK on the emulator only
+  (`./gradlew :app:assembleDebug` in a copy of the reveal repo; its `release` variant did not compile in a clean clone
+  on 2026-11-12).
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules
