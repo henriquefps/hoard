@@ -57,22 +57,58 @@ type current struct {
 	data       []byte
 }
 
-// Push applies changes from deviceID in order, in one transaction, with the conflict rule of ADR 0017.
-func (s *Store) Push(ctx context.Context, deviceID string, changes []Change) ([]Result, error) {
+// Push applies changes from deviceID in order, in one transaction, with the conflict rule of ADR 0017. It also returns
+// the smart previews that photo tombstones released (ADR 0017 "A deleted photo releases its preview"): their rows are
+// gone, the caller removes their files.
+func (s *Store) Push(ctx context.Context, deviceID string, changes []Change) ([]Result, []string, error) {
 	results := make([]Result, 0, len(changes))
+	var released []string
 	now := s.nowMs()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		results = results[:0]
+		released = released[:0]
 		for _, c := range changes {
-			r, err := s.apply(ctx, tx, deviceID, c, now)
+			r, sha, err := s.apply(ctx, tx, deviceID, c, now)
 			if err != nil {
 				return err
 			}
 			results = append(results, r)
+			if sha != "" {
+				released = append(released, sha)
+			}
 		}
 		return nil
 	})
-	return results, err
+	return results, released, err
+}
+
+// releasePreview drops the smart preview a photo record named before it was deleted, when no live photo record names
+// it any more: nothing can reach it after that. Returns its sha256 when its row went (the file is the caller's).
+func releasePreview(ctx context.Context, tx *sql.Tx, before []byte) (string, error) {
+	if len(before) == 0 {
+		return "", nil
+	}
+	var named struct {
+		Preview *struct {
+			SHA256 string `json:"sha256"`
+		} `json:"preview"`
+	}
+	if json.Unmarshal(before, &named) != nil || named.Preview == nil || named.Preview.SHA256 == "" {
+		return "", nil
+	}
+	sha := named.Preview.SHA256
+	referenced, err := previewReferenced(ctx, tx, sha)
+	if err != nil || referenced {
+		return "", err
+	}
+	res, err := tx.ExecContext(ctx, "DELETE FROM blobs WHERE sha256 = ? AND kind = ?", sha, BlobPreview)
+	if err != nil {
+		return "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "", nil
+	}
+	return sha, nil
 }
 
 func dataOrNil(c Change) any {
@@ -82,7 +118,18 @@ func dataOrNil(c Change) any {
 	return string(c.Data)
 }
 
-func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change, now int64) (Result, error) {
+func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change, now int64) (Result, string, error) {
+	var before []byte
+	res, written, err := s.applyOne(ctx, tx, deviceID, c, now, &before)
+	if err != nil || !written || c.Kind != KindPhoto || !c.Deleted {
+		return res, "", err
+	}
+	sha, err := releasePreview(ctx, tx, before)
+	return res, sha, err
+}
+
+// applyOne applies one change; true when the record took the change's state. before gets the data it had until then.
+func (s *Store) applyOne(ctx context.Context, tx *sql.Tx, deviceID string, c Change, now int64, before *[]byte) (Result, bool, error) {
 	res := Result{Kind: c.Kind, ID: c.ID}
 	var cur current
 	var data sql.NullString
@@ -90,11 +137,12 @@ func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change
 		Scan(&cur.rev, &cur.deleted, &cur.modifiedAt, &cur.deviceID, &cur.copyOf, &data)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return res, err
+		return res, false, err
 	}
 	if data.Valid {
 		cur.data = []byte(data.String)
 	}
+	*before = cur.data
 
 	write := func() (int64, error) {
 		rev, err := next(ctx, tx, "records")
@@ -112,16 +160,16 @@ func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change
 	if !exists {
 		rev, err := write()
 		res.Status, res.Rev = "applied", rev
-		return res, err
+		return res, true, err
 	}
 	if cur.deleted == c.Deleted && cur.modifiedAt == c.ModifiedAt && cur.deviceID == deviceID && bytes.Equal(cur.data, c.Data) {
 		res.Status, res.Rev = "applied", cur.rev // a retried push: nothing new
-		return res, nil
+		return res, false, nil
 	}
 	if c.BaseRev == cur.rev {
 		rev, err := write()
 		res.Status, res.Rev = "applied", rev
-		return res, err
+		return res, true, err
 	}
 
 	// Conflict: last write wins on modifiedAt, then device id.
@@ -132,24 +180,24 @@ func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change
 		if c.Kind == KindVersion && !cur.deleted {
 			id, err := s.copy(ctx, tx, c.ID, cur.deviceID, cur.modifiedAt, cur.data, now)
 			if err != nil {
-				return res, err
+				return res, false, err
 			}
 			res.CopyID = id
 		}
 		rev, err := write()
 		res.Rev = rev
-		return res, err
+		return res, true, err
 	}
 	res.Winner = "server"
 	res.Rev = cur.rev
 	if c.Kind == KindVersion && !c.Deleted {
 		id, err := s.copy(ctx, tx, c.ID, deviceID, c.ModifiedAt, c.Data, now)
 		if err != nil {
-			return res, err
+			return res, false, err
 		}
 		res.CopyID = id
 	}
-	return res, nil
+	return res, false, nil
 }
 
 // copy keeps a losing version state as a new version record; a retried push reuses the copy it made before.

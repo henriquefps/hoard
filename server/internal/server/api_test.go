@@ -672,15 +672,16 @@ func TestDroppingAPreviewOtherRecordsStillName(t *testing.T) {
 	}
 	push(t, hs, phone, change("photo", photoA, revA, 2000, photoWithPreview("")))
 	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 409, "conflict")
-	// A deleted photo (tombstone) no longer holds it.
 	revB := int64(0)
 	for _, c := range pull(t, hs, phone, "", 0).Changes {
 		if c.ID == photoB {
 			revB = c.Rev
 		}
 	}
+	// A deleted photo (tombstone) no longer holds it: the tombstone released it already (ADR 0017).
 	push(t, hs, phone, change("photo", photoB, revB, 3000, nil))
-	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 204, "")
+	expect(t, hs.do("GET", "/v1/blobs/"+sha, nil, bearer(phone)), 404, "not_found")
+	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 404, "not_found")
 }
 
 func TestOriginalsAreNeverDroppedByADevice(t *testing.T) {
@@ -698,4 +699,122 @@ func TestOriginalsAreNeverDroppedByADevice(t *testing.T) {
 		t.Fatal("reason")
 	}
 	expect(t, hs.do("GET", "/v1/originals/"+fp, nil, bearer(phone)), 200, "")
+}
+
+// uploadOriginal uploads data as an original in one chunk; returns its sha256 and fingerprint.
+func uploadOriginal(t *testing.T, hs *harness, key string, data []byte) (string, string) {
+	t.Helper()
+	sha, fp := sum(data), fingerprint.Bytes(data)
+	w := hs.do("POST", "/v1/uploads", map[string]any{"sha256": sha, "size": len(data), "kind": "original", "fingerprint": fp}, bearer(key))
+	if w.Code == 200 && decode(t, w)["status"] == "exists" {
+		return sha, fp
+	}
+	expect(t, w, 201, "")
+	id := decode(t, w)["uploadId"].(string)
+	expect(t, hs.do("PATCH", "/v1/uploads/"+id, data, bearer(key), header("Upload-Offset", "0"), header("Content-Type", "application/offset+octet-stream")), 204, "")
+	return sha, fp
+}
+
+func reason(t *testing.T, w *httptest.ResponseRecorder) any {
+	t.Helper()
+	return decode(t, w)["error"].(map[string]any)["details"].(map[string]any)["reason"]
+}
+
+func TestDeletingAnOriginal(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, _ := hs.pair("Phone")
+	tablet, _ := hs.pair("Tablet")
+	raw, jpeg := []byte("the RAW of a pair"), []byte("the JPEG of a pair")
+	rawSha, rawFp := uploadOriginal(t, hs, phone, raw)
+	_, jpegFp := uploadOriginal(t, hs, phone, jpeg)
+	file := filepath.Join(hs.backup, "reveal-sync", "blobs", rawSha[:2], rawSha[2:4], rawSha)
+	data := map[string]any{"fingerprint": rawFp, "files": []any{
+		map[string]any{"fingerprint": rawFp, "role": "RAW", "name": "A.ARW", "size": len(raw)},
+		map[string]any{"fingerprint": jpegFp, "role": "RENDERED", "name": "A.JPG", "size": len(jpeg)},
+	}}
+	rev := int64(push(t, hs, phone, change("photo", photoA, 0, 1000, data))[0]["rev"].(float64))
+
+	// A live record names both files (the main one and the other file of the shot): kept.
+	w := hs.do("DELETE", "/v1/originals/"+rawFp, nil, bearer(tablet))
+	expect(t, w, 409, "conflict")
+	if reason(t, w) != "referenced" {
+		t.Fatal("reason")
+	}
+	expect(t, hs.do("DELETE", "/v1/originals/"+jpegFp, nil, bearer(tablet)), 409, "conflict")
+
+	// The tombstone first, then any paired device deletes them: the row, the file, every later read.
+	push(t, hs, phone, change("photo", photoA, rev, 2000, nil))
+	expect(t, hs.do("DELETE", "/v1/originals/"+rawFp, nil, bearer(tablet)), 204, "")
+	expect(t, hs.do("DELETE", "/v1/originals/"+jpegFp, nil, bearer(phone)), 204, "")
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("file still there: %v", err)
+	}
+	expect(t, hs.do("GET", "/v1/originals/"+rawFp, nil, bearer(phone)), 404, "not_found")
+	expect(t, hs.do("GET", "/v1/blobs/"+rawSha, nil, bearer(phone)), 404, "not_found")
+	w = hs.do("POST", "/v1/fingerprints/lookup", map[string]any{"fingerprints": []string{rawFp}}, bearer(phone))
+	if missing := decode(t, w)["missing"].([]any); len(missing) != 1 {
+		t.Fatalf("lookup after delete: %v", decode(t, w))
+	}
+	expect(t, hs.do("DELETE", "/v1/originals/"+rawFp, nil, bearer(phone)), 404, "not_found")
+	expect(t, hs.do("DELETE", "/v1/originals/v1:nope", nil, bearer(phone)), 404, "not_found")
+	expect(t, hs.do("DELETE", "/v1/originals/"+rawFp, nil), 401, "unauthorized")
+
+	// Uploaded again later (the photo backed up again): a normal original.
+	if again, _ := uploadOriginal(t, hs, phone, raw); again != rawSha {
+		t.Fatal("same bytes, same address")
+	}
+	expect(t, hs.do("GET", "/v1/originals/"+rawFp, nil, bearer(tablet)), 200, "")
+}
+
+func TestDeletingAnOriginalNeverTouchesNasFiles(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, _ := hs.pair("Phone")
+	data := []byte("a file on the NAS")
+	if err := os.WriteFile(filepath.Join(hs.nas, "IMG_1.JPG"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w := hs.do("POST", "/admin/api/nas", map[string]any{"path": hs.nas}, adminHeaders())
+	expect(t, w, 201, "")
+	f, _ := hs.st.NasFolder(t.Context(), decode(t, w)["id"].(string))
+	if err := hs.srv.indexer.Folder(t.Context(), f); err != nil {
+		t.Fatal(err)
+	}
+	fp := fingerprint.Bytes(data)
+	expect(t, hs.do("GET", "/v1/originals/"+fp, nil, bearer(phone)), 200, "")
+	w = hs.do("DELETE", "/v1/originals/"+fp, nil, bearer(phone))
+	expect(t, w, 403, "forbidden")
+	if reason(t, w) != "nas" {
+		t.Fatal("reason")
+	}
+	expect(t, hs.do("GET", "/v1/originals/"+fp, nil, bearer(phone)), 200, "")
+}
+
+func TestATombstoneReleasesItsPreview(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, _ := hs.pair("Phone")
+	tablet, _ := hs.pair("Tablet")
+	sha := uploadPreview(t, hs, phone, []byte("the preview of photo A"))
+	shared := uploadPreview(t, hs, phone, []byte("a preview two photos name"))
+	file := filepath.Join(hs.backup, "reveal-sync", "blobs", sha[:2], sha[2:4], sha)
+	r := push(t, hs, phone, change("photo", photoA, 0, 1000, photoWithPreview(sha)),
+		change("photo", photoB, 0, 1000, photoWithPreview(shared)))
+	revA, revB := int64(r[0]["rev"].(float64)), int64(r[1]["rev"].(float64))
+	push(t, hs, phone, change("photo", photoA, revA, 2000, photoWithPreview(sha)))
+
+	// A losing tombstone (the phone wrote later) releases nothing.
+	if lost := push(t, hs, tablet, change("photo", photoA, revA, 1500, nil)); lost[0]["winner"] != "server" {
+		t.Fatalf("expected a lost conflict: %v", lost)
+	}
+	expect(t, hs.do("GET", "/v1/blobs/"+sha, nil, bearer(tablet)), 200, "")
+
+	// Another device deletes the photo: nothing can reach its preview any more, so it goes with it.
+	push(t, hs, tablet, change("photo", photoA, revA, 3000, nil))
+	expect(t, hs.do("GET", "/v1/blobs/"+sha, nil, bearer(tablet)), 404, "not_found")
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("file still there: %v", err)
+	}
+	// A preview another live record still names stays.
+	push(t, hs, phone, change("photo", photoA, 0, 4000, photoWithPreview(shared)))
+	push(t, hs, tablet, change("photo", photoB, revB, 4000, nil))
+	expect(t, hs.do("GET", "/v1/blobs/"+shared, nil, bearer(tablet)), 200, "")
 }

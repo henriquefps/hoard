@@ -250,3 +250,68 @@ func (s *Store) DropPreview(ctx context.Context, sha, deviceID string) error {
 		return err
 	})
 }
+
+// ErrNasOnly: the fingerprint is an indexed NAS file, not an uploaded original (the server never deletes NAS files).
+var ErrNasOnly = errors.New("only a NAS file")
+
+// originalNamed reports whether a live photo record names fp (its main file or any file of the shot). A fingerprint
+// is `v1:` + 64 hex, so finding its text in the record's JSON is exact.
+func originalNamed(ctx context.Context, q queryer, fp string) (bool, error) {
+	var one int
+	err := q.QueryRowContext(ctx, `SELECT 1 FROM records WHERE kind = 'photo' AND deleted = 0 AND data IS NOT NULL
+		AND instr(data, ?) > 0 LIMIT 1`, `"`+fp+`"`).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DeleteOriginal forgets the uploaded original of fp once no live photo record names it (ADR 0017 "Deleting an
+// original"): the user deleted the photo from the server. The check and the delete are one transaction. It returns the
+// blob's sha256 when its row went too (no other fingerprint uses the bytes): the caller removes the file.
+func (s *Store) DeleteOriginal(ctx context.Context, fp string) (string, error) {
+	var removed string
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		removed = ""
+		var sha string
+		err := tx.QueryRowContext(ctx, "SELECT sha256 FROM originals WHERE fingerprint = ?", fp).Scan(&sha)
+		if errors.Is(err, sql.ErrNoRows) {
+			var one int
+			nasErr := tx.QueryRowContext(ctx, `SELECT 1 FROM nas_files f JOIN nas_folders d ON d.id = f.folder_id
+				WHERE f.fingerprint = ? AND f.removed = 0 AND d.enabled = 1 LIMIT 1`, fp).Scan(&one)
+			if nasErr == nil {
+				return ErrNasOnly
+			}
+			if !errors.Is(nasErr, sql.ErrNoRows) {
+				return nasErr
+			}
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		named, err := originalNamed(ctx, tx, fp)
+		if err != nil {
+			return err
+		}
+		if named {
+			return ErrReferenced
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM originals WHERE fingerprint = ?", fp); err != nil {
+			return err
+		}
+		var others int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM originals WHERE sha256 = ?", sha).Scan(&others); err != nil {
+			return err
+		}
+		if others > 0 {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM blobs WHERE sha256 = ?", sha); err != nil {
+			return err
+		}
+		removed = sha
+		return nil
+	})
+	return removed, err
+}

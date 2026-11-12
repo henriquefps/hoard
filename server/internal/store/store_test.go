@@ -45,7 +45,7 @@ func TestReopenKeepsData(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if _, err := s.Push(ctx, "dev", []Change{{Kind: KindSetting, ID: "a", ModifiedAt: 1, Data: []byte(`{"x":1}`)}}); err != nil {
+	if _, _, err := s.Push(ctx, "dev", []Change{{Kind: KindSetting, ID: "a", ModifiedAt: 1, Data: []byte(`{"x":1}`)}}); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

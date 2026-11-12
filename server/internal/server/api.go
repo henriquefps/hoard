@@ -30,6 +30,7 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/changes", s.device(s.handlePush))
 	mux.HandleFunc("POST /v1/fingerprints/lookup", s.device(s.handleLookup))
 	mux.HandleFunc("GET /v1/originals/{fingerprint}", s.device(s.handleOriginal))
+	mux.HandleFunc("DELETE /v1/originals/{fingerprint}", s.device(s.handleOriginalDelete))
 	mux.HandleFunc("GET /v1/blobs/{sha256}", s.device(s.handleBlob))
 	mux.HandleFunc("DELETE /v1/blobs/{sha256}", s.device(s.handleBlobDelete))
 	mux.HandleFunc("POST /v1/uploads", s.device(s.handleUploadCreate))
@@ -347,11 +348,20 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 		}
 		changes[i] = v
 	}
-	results, err := s.store.Push(r.Context(), info(r).device.ID, changes)
+	// A photo tombstone may release its smart preview (ADR 0017): serialised with preview uploads completing.
+	for _, c := range changes {
+		if c.Kind == store.KindPhoto && c.Deleted {
+			s.completeMu.Lock()
+			defer s.completeMu.Unlock()
+			break
+		}
+	}
+	results, released, err := s.store.Push(r.Context(), info(r).device.ID, changes)
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
+	s.removeBlobFiles(released)
 	s.touch(r.Context(), info(r).device.ID, true)
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
@@ -474,6 +484,56 @@ func (s *Server) handleBlobDelete(w http.ResponseWriter, r *http.Request) {
 	if err := bs.Remove(sha); err != nil {
 		s.internal(w, r, fmt.Errorf("blob dropped but its file stays: %w", err))
 		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeBlobFiles removes the files of blobs whose rows are gone; a file left behind is only logged (no row names it).
+func (s *Server) removeBlobFiles(shas []string) {
+	bs := s.blobStore()
+	if bs == nil {
+		return
+	}
+	for _, sha := range shas {
+		if err := bs.Remove(sha); err != nil {
+			s.log.Warn("a released blob's file stays", "err", err.Error())
+		}
+	}
+}
+
+// handleOriginalDelete deletes the uploaded original of a fingerprint (ADR 0017 "Deleting an original"): the user
+// deleted the photo from the server, and the device pushed its tombstones first. Any paired device may ask; a live
+// photo record that still names the fingerprint keeps it, and indexed NAS files are never touched.
+func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
+	fp := r.PathValue("fingerprint")
+	if !fingerprint.Valid(fp) {
+		fail(w, r, http.StatusNotFound, "not_found", "No file with this fingerprint.", nil)
+		return
+	}
+	s.completeMu.Lock()
+	defer s.completeMu.Unlock()
+	sha, err := s.store.DeleteOriginal(r.Context(), fp)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, r, http.StatusNotFound, "not_found", "No uploaded original with this fingerprint.", nil)
+		return
+	case errors.Is(err, store.ErrNasOnly):
+		fail(w, r, http.StatusForbidden, "forbidden", "This file is in a NAS folder; the server never deletes those.", map[string]any{"reason": "nas"})
+		return
+	case errors.Is(err, store.ErrReferenced):
+		fail(w, r, http.StatusConflict, "conflict", "A photo record still names this file; push its tombstone first.", map[string]any{"reason": "referenced"})
+		return
+	case err != nil:
+		s.internal(w, r, err)
+		return
+	}
+	if sha != "" {
+		if bs := s.blobStore(); bs != nil {
+			if err := bs.Remove(sha); err != nil {
+				s.internal(w, r, fmt.Errorf("original deleted but its file stays: %w", err))
+				return
+			}
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

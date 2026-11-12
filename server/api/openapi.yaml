@@ -227,6 +227,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      tags: [originals]
+      summary: Delete the uploaded original of a fingerprint once no live photo record names it
+      description: >-
+        The user deleted the photo from the server (0.5.3). Any paired device may ask, after pushing the photo's
+        tombstone: a photo record that is not deleted and names the fingerprint (its main file or any file of the shot)
+        keeps it. The check and the delete are atomic; the blob's file goes when no other fingerprint uses its bytes.
+        Indexed NAS files are never deleted.
+      parameters:
+        - name: fingerprint
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Fingerprint" }
+      responses:
+        "204": { description: The uploaded original is gone }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "`forbidden`, `details.reason` = `nas`: the file is in an indexed NAS folder"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`, `details.reason` = `referenced`: a live photo record still names it"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/blobs/{sha256}:
     get:
       tags: [blobs]
