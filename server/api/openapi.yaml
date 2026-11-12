@@ -339,6 +339,29 @@ paths:
       responses:
         "204": { description: Removed }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/devices:
+    get:
+      tags: [devices]
+      summary: The paired devices that are not revoked (to name the device of a conflict copy)
+      responses:
+        "200":
+          description: Devices, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [devices]
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, platform]
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        platform: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
   /v1/nas/files:
     get:
       tags: [nas]

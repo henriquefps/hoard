@@ -568,3 +568,28 @@ func TestLogsHoldNoSecretsOrNames(t *testing.T) {
 		t.Errorf("logs should name the route pattern: %s", logs)
 	}
 }
+
+func TestDevicesListsNamesButNotRevokedOnesOrKeys(t *testing.T) {
+	hs := newHarness(t, true)
+	phone, phoneID := hs.pair("Phone")
+	_, tabletID := hs.pair("Tablet")
+	expect(t, hs.do("GET", "/v1/devices", nil), 401, "unauthorized")
+	w := hs.do("GET", "/v1/devices", nil, bearer(phone))
+	expect(t, w, 200, "")
+	if strings.Contains(w.Body.String(), "rvk1_") || strings.Contains(w.Body.String(), "keyId") {
+		t.Fatalf("devices leak key material: %s", w.Body.String())
+	}
+	names := map[string]string{}
+	for _, d := range decode(t, w)["devices"].([]any) {
+		m := d.(map[string]any)
+		names[m["id"].(string)] = m["name"].(string)
+	}
+	if names[phoneID] != "Phone" || names[tabletID] != "Tablet" {
+		t.Fatalf("devices %v", names)
+	}
+	expect(t, hs.do("POST", "/admin/api/devices/"+tabletID+"/revoke", nil, adminHeaders()), 200, "")
+	w = hs.do("GET", "/v1/devices", nil, bearer(phone))
+	if strings.Contains(w.Body.String(), tabletID) {
+		t.Fatalf("a revoked device is listed: %s", w.Body.String())
+	}
+}

@@ -25,6 +25,7 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
 	mux.HandleFunc("POST /v1/pair", s.handlePair)
 	mux.HandleFunc("GET /v1/server", s.device(s.handleServerInfo))
+	mux.HandleFunc("GET /v1/devices", s.device(s.handleDeviceList))
 	mux.HandleFunc("GET /v1/changes", s.device(s.handlePull))
 	mux.HandleFunc("POST /v1/changes", s.device(s.handlePush))
 	mux.HandleFunc("POST /v1/fingerprints/lookup", s.device(s.handleLookup))
@@ -118,6 +119,24 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		"serverId": s.serverID, "serverName": name, "version": s.cfg.Version, "api": APIVersion,
 		"deviceId": info(r).device.ID, "limits": limits(), "storageConfigured": s.blobStore() != nil,
 	})
+}
+
+// handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device
+// of a conflict copy with it; ADR 0017 "Other endpoints").
+func (s *Server) handleDeviceList(w http.ResponseWriter, r *http.Request) {
+	devices, err := s.store.Devices(r.Context())
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(devices))
+	for _, d := range devices {
+		if d.RevokedAt != nil {
+			continue
+		}
+		out = append(out, map[string]any{"id": d.ID, "name": d.Name, "platform": d.Platform})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 }
 
 // --- pairing ----------------------------------------------------------------------------------------------------
