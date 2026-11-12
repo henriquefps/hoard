@@ -50,8 +50,12 @@ import type {
   VolumeState,
   MachineRef,
   OpenFileOptions,
+  NativeMachine,
   OpenInRevealOptions,
   OpenInRevealResult,
+  RevealLinksResult,
+  RevokeRevealLinksResult,
+  SyncMachinesOptions,
   OpenWebPageOptions,
   OpenWebPageResult,
   PathOptions,
@@ -91,7 +95,7 @@ import {
 import { detectAddressKind } from "@/lib/addressKind"
 import { canEncode, decodeTextPrefix, encodeText } from "@/lib/text/codec"
 import { isTextFile } from "@/lib/text/textFiles"
-import { pairShots } from "@/lib/photos"
+import { pairShots, photoStem } from "@/lib/photos"
 import { revealOrder } from "@/features/reveal/handoff"
 import { GENERATED_TEXT } from "./mockText"
 import {
@@ -889,8 +893,15 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
 
   /** Mock-only: Reveal is "installed" (`setRevealInstalled` from dev tools and tests). */
   revealInstalled = MOCK_REVEAL_INSTALLED
-  /** Mock-only: every hand-off as native would send it (order applied, paths checked). */
-  readonly revealCalls: OpenInRevealOptions[] = []
+  /**
+   * Mock-only: every hand-off as native would send it (order applied, paths checked; `sidecarPaths`: the writable
+   * sidecar items, when `sidecars` was asked for).
+   */
+  readonly revealCalls: (OpenInRevealOptions & { sidecarPaths?: string[] })[] = []
+  /** Mock-only: the native machine mirror (`syncMachines`). */
+  nativeMachines: NativeMachine[] = []
+  /** Mock-only: the hand-off links (one stable id per file, as native's store). */
+  private readonly revealLinkIds = new Map<string, string>()
 
   /** Dev tool: install or uninstall the mock Reveal (the app re-checks on resume). */
   setRevealInstalled(installed: boolean) {
@@ -907,21 +918,126 @@ export class HoardSmbWeb extends WebPlugin implements HoardSmbPlugin {
     if (!this.revealInstalled) throw fail("NO_APP", "Reveal is not installed")
     const ordered = revealOrder(paths)
     if (ordered.length === 0) throw fail("UNKNOWN", "No photos to edit")
+    if (location.kind === "smb" && !location.expectedServerGuid) {
+      throw fail("UNKNOWN", "The machine's server GUID is not pinned yet")
+    }
     for (const path of ordered) {
       const { node } = await this.streamSource({ location, path })
       if (node.children) throw fail("UNKNOWN", "Folders cannot be edited")
     }
+    const sidecarPaths = options.sidecars
+      ? await this.revealSidecars(location, ordered, options.sidecars.hidden, options.culling ?? {})
+      : undefined
+    const linkKey = (path: string) =>
+      location.kind === "smb"
+        ? `smb|${location.machineId}|${location.share.toLowerCase()}|${path.toLowerCase()}`
+        : `${location.kind}|${location.kind === "volume" ? location.uuid : ""}|${path}`
+    for (const path of [...ordered, ...(sidecarPaths ?? [])]) {
+      if (!this.revealLinkIds.has(linkKey(path))) {
+        this.revealLinkIds.set(linkKey(path), `mock-link-${this.nextId++}`)
+      }
+    }
     const cleanTitle = title?.trim().slice(0, 120).trim()
-    const call: OpenInRevealOptions = {
+    const call: OpenInRevealOptions & { sidecarPaths?: string[] } = {
       location,
       paths: ordered,
       ...(cleanTitle ? { title: cleanTitle } : {}),
       ...(initialPath && ordered.includes(initialPath) ? { initialPath } : {}),
       ...(options.culling ? { culling: revealCulling(ordered, options.culling) } : {}),
+      ...(options.sidecars ? { sidecars: options.sidecars, sidecarPaths } : {}),
     }
     this.revealCalls.push(call)
     console.info(`[HoardSmbWeb] would open Reveal with ${ordered.length} file(s)`, call)
-    return { sent: ordered.length }
+    return { sent: ordered.length, sidecars: sidecarPaths?.length ?? 0 }
+  }
+
+  /**
+   * Each shot's writable sidecar, as native finds or creates it (`RevealHandoff.writableSidecars`): the existing one
+   * when it may be written and is well-formed, else a new `<stem>.xmp` (hidden on request) with the shot's value; a
+   * read-only folder sends none.
+   */
+  private async revealSidecars(
+    location: OpenInRevealOptions["location"],
+    ordered: readonly string[],
+    hidden: boolean,
+    culling: NonNullable<OpenInRevealOptions["culling"]>
+  ): Promise<string[]> {
+    const parentOf = (path: string) =>
+      path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ""
+    const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1)
+    const shots = new Map<string, { folder: string; stem: string; files: string[] }>()
+    for (const path of ordered) {
+      const key = `${parentOf(path)}/${photoStem(nameOf(path)).toLowerCase()}`
+      const shot = shots.get(key)
+      if (shot) shot.files.push(path)
+      else shots.set(key, { folder: parentOf(path), stem: photoStem(nameOf(path)), files: [path] })
+    }
+    const out: string[] = []
+    const readOnlyFolders = new Set<string>()
+    for (const shot of shots.values()) {
+      if (readOnlyFolders.has(shot.folder)) continue
+      const { node: folder, readOnly } = await this.streamSource({ location, path: shot.folder })
+      const children = folder.children ?? []
+      const files = children.filter((c) => !c.children)
+      const existingName = findSidecar(
+        shot.stem,
+        shot.files.map(nameOf),
+        files.map((f) => f.name)
+      )
+      const join = (name: string) => (shot.folder ? `${shot.folder}/${name}` : name)
+      if (existingName) {
+        const existing = files.find((f) => f.name === existingName)!
+        if (!readOnly && !existing.readOnly && readMockXmp(HoardSmbWeb.textOf(existing))) {
+          out.push(join(existingName))
+        }
+        continue
+      }
+      if (readOnly) {
+        readOnlyFolders.add(shot.folder)
+        continue
+      }
+      const value = shot.files.map((f) => culling[f]).find(Boolean)
+      const text = writeMockXmp(
+        null,
+        { rating: value?.rating ?? 0, flag: value?.flag ?? "none" },
+        `Hoard ${__APP_VERSION__}`,
+        new Date().toISOString()
+      )!
+      const name = hidden ? `.${shot.stem}.xmp` : `${shot.stem}.xmp`
+      children.push({
+        name,
+        text,
+        size: new TextEncoder().encode(text).length,
+        modifiedAt: laterThan(undefined),
+      })
+      out.push(join(name))
+    }
+    return out
+  }
+
+  async syncMachines({ machines }: SyncMachinesOptions): Promise<void> {
+    if (!Array.isArray(machines)) throw fail("UNKNOWN", "machines is required")
+    for (const machine of machines) {
+      if (!machine.machineId) throw fail("UNKNOWN", "machineId is required")
+    }
+    this.nativeMachines = machines.map((m) => ({
+      machineId: m.machineId,
+      serverGuid: m.serverGuid ?? null,
+      addresses: m.addresses.map((a) => ({
+        host: a.host,
+        ...(a.port == null ? {} : { port: a.port }),
+      })),
+    }))
+  }
+
+  async revealLinks(): Promise<RevealLinksResult> {
+    return { count: this.revealLinkIds.size }
+  }
+
+  async revokeRevealLinks(): Promise<RevokeRevealLinksResult> {
+    const revoked = this.revealLinkIds.size
+    this.revealLinkIds.clear()
+    return { revoked }
   }
 
   /** Dev tool: pretend another app shared files to Hoard (emits `filesShared`). */

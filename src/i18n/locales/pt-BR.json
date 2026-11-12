@@ -1126,9 +1126,21 @@
       "title_one": "Abrir {{n}} arquivo no Reveal?",
       "title_other": "Abrir {{n}} arquivos no Reveal?",
       "many": "O Reveal vai listar os {{n}} arquivos em um único lote.",
-      "stream": "Fotos de um compartilhamento de rede são lidas através do Hoard: o Reveal consegue abri-las enquanto o Hoard estiver aberto, e por uma hora depois da última leitura. Para continuar editando depois, copie-as para o celular antes e abra a partir de lá.",
+      "stream": "Fotos de um compartilhamento de rede são lidas através do Hoard: o Reveal consegue reabri-las depois, mesmo após reiniciar o celular e com o Hoard fechado, enquanto esta máquina estiver acessível na rede.",
       "dontExplain": "Não explicar isso de novo",
       "action": "Abrir no Reveal"
+    },
+    "links": {
+      "title": "Links do Reveal",
+      "none": "O Reveal não tem links para arquivos do Hoard.",
+      "count_one": "O Reveal pode reabrir {{n}} arquivo enviado pelo Hoard, mesmo depois de reiniciar.",
+      "count_other": "O Reveal pode reabrir {{n}} arquivos enviados pelo Hoard, mesmo depois de reiniciar.",
+      "revoke": "Revogar todos",
+      "confirmTitle": "Revogar o acesso do Reveal?",
+      "confirmBody": "O Reveal não vai mais abrir as fotos e os sidecars que o Hoard enviou (fotos de unidades abertas pelo acesso a pastas do Android não são afetadas). As edições salvas no Reveal continuam lá; envie as fotos de novo para reabri-las.",
+      "revoked_one": "{{n}} link revogado",
+      "revoked_other": "{{n}} links revogados",
+      "failed": "Não foi possível revogar os links"
     }
   }
 }

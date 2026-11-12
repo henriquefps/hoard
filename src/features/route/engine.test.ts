@@ -6,7 +6,13 @@ import type {
   ProbeOptions,
   ProbeResult,
 } from "@/plugins/smb/definitions"
-import { type EngineMachine, orderForTransfer, RouteEngine, type SmbForEngine } from "./engine"
+import {
+  type EngineMachine,
+  nativeMachines,
+  orderForTransfer,
+  RouteEngine,
+  type SmbForEngine,
+} from "./engine"
 
 class FakeError extends Error {
   readonly code: HoardSmbErrorCode
@@ -315,5 +321,31 @@ describe("orderForTransfer", () => {
   })
   it("keeps the order without a route", () => {
     expect(orderForTransfer(addresses, undefined)).toEqual(addresses)
+  })
+})
+
+describe("nativeMachines", () => {
+  it("keeps the priority order, the pinned GUID, and ports only when set", () => {
+    expect(
+      nativeMachines([
+        {
+          id: "m1",
+          server_guid: "g",
+          addresses: [
+            { host: "192.168.1.2", port: 445 },
+            { host: "nas", port: null },
+            { host: "100.64.0.2" },
+          ],
+        },
+        { id: "m2", server_guid: null, addresses: [] },
+      ])
+    ).toEqual([
+      {
+        machineId: "m1",
+        serverGuid: "g",
+        addresses: [{ host: "192.168.1.2", port: 445 }, { host: "nas" }, { host: "100.64.0.2" }],
+      },
+      { machineId: "m2", serverGuid: null, addresses: [] },
+    ])
   })
 })

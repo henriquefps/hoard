@@ -1032,7 +1032,7 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
         title: `  ${"x".repeat(130)}  `,
         initialPath: pair.raw!.path,
       })
-      expect(result).toEqual({ sent: 3 })
+      expect(result).toEqual({ sent: 3, sidecars: 0 })
       expect(smb.revealCalls).toEqual([
         {
           location: usb,
@@ -1059,6 +1059,137 @@ describe("HoardSmbWeb culling (ADR 0008)", () => {
       smb.setRevealInstalled(false)
       expect(await smb.revealAvailable()).toEqual({ available: false })
       expect(await code(smb.openInReveal({ location: usb, paths: [jpeg] }))).toBe("NO_APP")
+    })
+  })
+
+  describe("persistable hand-offs (1.10.0)", () => {
+    const cachy = {
+      kind: "smb" as const,
+      machineId: CACHY,
+      addresses: [{ host: "192.168.1.155" }],
+      expectedServerGuid: MOCK_SERVERS.cachy.guid,
+    }
+    const shotPaths = async (share: string, folder: string) =>
+      (
+        await smb.list({
+          location: { kind: "smb", sessionId: await session(), share },
+          path: folder,
+        })
+      ).entries
+        .filter((e) => /\.(ARW|JPG)$/i.test(e.name))
+        .map((e) => e.path)
+        .slice(0, 6)
+    let sessionId: string | undefined
+    beforeEach(() => {
+      sessionId = undefined
+    })
+    const session = async () => {
+      sessionId ??= (
+        await smb.connect({
+          machineId: CACHY,
+          host: "192.168.1.155",
+          expectedServerGuid: MOCK_SERVERS.cachy.guid,
+        })
+      ).sessionId
+      return sessionId
+    }
+
+    it("sends a writable sidecar per shot from a writable share, creating it with the decision", async () => {
+      await smb.setCredentials({ machineId: CACHY, username: "henrique", password: "demo" })
+      const paths = await shotPaths("photos", "2026/2026-08-07 Park")
+      const first = paths[0]
+      const result = await smb.openInReveal({
+        location: { ...cachy, share: "photos" },
+        paths,
+        culling: { [first]: { rating: 4, flag: "pick" } },
+        sidecars: { hidden: false },
+      })
+      const call = smb.revealCalls.at(-1)!
+      expect(result.sidecars).toBeGreaterThan(0)
+      expect(result.sidecars).toBe(call.sidecarPaths!.length)
+      expect(call.sidecarPaths!.every((p) => p.endsWith(".xmp"))).toBe(true)
+      const listed = await smb.list({
+        location: { kind: "smb", sessionId: await session(), share: "photos" },
+        path: "2026/2026-08-07 Park",
+      })
+      const stem = first.slice(first.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "")
+      expect(listed.entries.some((e) => e.name === `${stem}.xmp`)).toBe(true)
+      // A second hand-off of the same files reuses their sidecars and links.
+      const before = (await smb.revealLinks()).count
+      const again = await smb.openInReveal({
+        location: { ...cachy, share: "photos" },
+        paths,
+        sidecars: { hidden: false },
+      })
+      expect(again.sidecars).toBe(result.sidecars)
+      expect((await smb.revealLinks()).count).toBe(before)
+    })
+
+    it("sends no sidecar from a read-only share, nor without the option", async () => {
+      await smb.setCredentials({ machineId: CACHY, username: "henrique", password: "demo" })
+      const folder = "mnt/crucial/Images/2026-08-07 Park shoot — Sintra"
+      const paths = await shotPaths("raiz", folder)
+      const readOnly = await smb.openInReveal({
+        location: { ...cachy, share: "raiz" },
+        paths,
+        sidecars: { hidden: true },
+      })
+      expect(readOnly).toEqual({ sent: paths.length, sidecars: 0 })
+      const plain = await smb.openInReveal({
+        location: { ...cachy, share: "photos" },
+        paths: await shotPaths("photos", "2026/2026-08-07 Park"),
+      })
+      expect(plain.sidecars).toBe(0)
+      expect(smb.revealCalls.at(-1)!.sidecarPaths).toBeUndefined()
+    })
+
+    it("refuses an SMB hand-off without a pinned GUID", async () => {
+      expect(
+        await code(
+          smb.openInReveal({
+            location: { ...cachy, share: "photos", expectedServerGuid: "" },
+            paths: ["a.jpg"],
+          })
+        )
+      ).toBe("UNKNOWN")
+    })
+
+    it("counts links and revokes them all", async () => {
+      smb.simulateStorageAccess(true)
+      const { shots } = await smb.cullOpen({ location: usb, path: "DCIM/102MSDCF" })
+      const jpeg = shots.find((s) => s.kind === "jpeg")!.rendered!.path
+      await smb.revokeRevealLinks()
+      await smb.openInReveal({ location: usb, paths: [jpeg] })
+      await smb.openInReveal({ location: usb, paths: [jpeg] })
+      expect(await smb.revealLinks()).toEqual({ count: 1 })
+      expect(await smb.revokeRevealLinks()).toEqual({ revoked: 1 })
+      expect(await smb.revealLinks()).toEqual({ count: 0 })
+    })
+
+    it("mirrors the machines natively, replacing the list", async () => {
+      await smb.syncMachines({
+        machines: [
+          {
+            machineId: "m1",
+            serverGuid: "g",
+            addresses: [{ host: "10.0.0.2", port: 445 }, { host: "nas" }],
+          },
+        ],
+      })
+      expect(smb.nativeMachines).toEqual([
+        {
+          machineId: "m1",
+          serverGuid: "g",
+          addresses: [{ host: "10.0.0.2", port: 445 }, { host: "nas" }],
+        },
+      ])
+      await smb.syncMachines({ machines: [] })
+      expect(smb.nativeMachines).toEqual([])
+      expect(
+        await code(
+          smb.syncMachines({ machines: [{ machineId: "", serverGuid: null, addresses: [] }] })
+        )
+      ).toBe("UNKNOWN")
     })
   })
 

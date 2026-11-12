@@ -168,6 +168,8 @@ class PathTransferFs(
 
     override fun setModified(path: String, millis: Long): Boolean = file(path).setLastModified(millis)
 
+    override fun canWrite(path: String): Boolean = !readOnly && file(path).canWrite()
+
     override fun freeBytes(path: String): Long? = runCatching { StatFs(root.path).availableBytes }.getOrNull()
 
     override fun mapError(error: Throwable): HoardSmbException {
@@ -274,6 +276,14 @@ class DocumentTransferFs private constructor(
         } catch (_: IllegalArgumentException) {
             null
         }
+    }
+
+    /** The document's own flags (`FLAG_SUPPORTS_WRITE`): what the storage provider allows. */
+    override fun canWrite(path: String): Boolean {
+        val uri = uri(path) ?: return false
+        return resolver.query(uri, arrayOf(Document.COLUMN_FLAGS), null, null, null)?.use { c ->
+            c.moveToFirst() && (c.getInt(0) and Document.FLAG_SUPPORTS_WRITE) != 0
+        } ?: false
     }
 
     override fun list(path: String): List<FileStat> {
@@ -590,6 +600,14 @@ abstract class SmbShareFs(final override val label: String) : TransferFs {
     }
 
     override fun freeBytes(path: String): Long? = runCatching { share().shareInformation.callerFreeSpace }.getOrNull()
+
+    /** Opened for writing and closed again (nothing written): the server says whether this login may. */
+    override fun canWrite(path: String): Boolean = try {
+        openFile(path, setOf(AccessMask.FILE_WRITE_DATA, AccessMask.FILE_READ_ATTRIBUTES), SMB2CreateDisposition.FILE_OPEN).closeNoWait()
+        true
+    } catch (e: SMBApiException) {
+        if (SmbErrors.codeForStatus(e.statusCode) == ErrorCode.ACCESS_DENIED) false else throw e
+    }
 
     /**
      * FSCTL_SRV_COPYCHUNK (smbj `remoteCopyTo`): the server copies inside the share, nothing

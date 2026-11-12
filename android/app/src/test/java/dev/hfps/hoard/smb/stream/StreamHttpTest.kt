@@ -200,9 +200,10 @@ class StreamHttpTest {
         assertFalse(StreamExpiry.isExpired(state(StreamKind.FOLDER, holders = 1, idleMs = 10 * StreamExpiry.FOLDER_IDLE_MS), now))
         assertFalse(StreamExpiry.isExpired(state(StreamKind.FOLDER, idleMs = StreamExpiry.FILE_IDLE_MS), now))
         assertTrue(StreamExpiry.isExpired(state(StreamKind.FOLDER, idleMs = StreamExpiry.FOLDER_IDLE_MS), now))
-        // A hand-off to Reveal sets its own, longer idle time.
-        val handoff = dev.hfps.hoard.smb.share.RevealHandoff.HANDOFF_IDLE_MS
-        assertFalse(StreamExpiry.isExpired(StreamExpiry.State(StreamKind.FILE, 0, 0, now - StreamExpiry.FILE_IDLE_MS, handoff), now))
-        assertTrue(StreamExpiry.isExpired(StreamExpiry.State(StreamKind.FILE, 0, 0, now - handoff, handoff), now))
+        // A hand-off link's lease (Reveal reading) sets its own, shorter idle time: the service stops soon after.
+        val lease = dev.hfps.hoard.smb.handoff.HandoffServer.LEASE_IDLE_MS
+        assertFalse(StreamExpiry.isExpired(StreamExpiry.State(StreamKind.FILE, 0, 0, now - lease + 1, lease), now))
+        assertTrue(StreamExpiry.isExpired(StreamExpiry.State(StreamKind.FILE, 0, 0, now - lease, lease), now))
+        assertFalse(StreamExpiry.isExpired(StreamExpiry.State(StreamKind.FILE, 1, 0, now - 10 * lease, lease), now))
     }
 }

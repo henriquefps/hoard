@@ -11,6 +11,7 @@ import dev.hfps.hoard.smb.SmbCredentials
 import dev.hfps.hoard.smb.SmbErrors
 import dev.hfps.hoard.smb.SmbHandle
 import dev.hfps.hoard.smb.SmbPaths
+import dev.hfps.hoard.smb.handoff.NativeRoute
 import dev.hfps.hoard.smb.smbFail
 import dev.hfps.hoard.smb.viewer.RemoteFileInfo
 import dev.hfps.hoard.smb.viewer.RemoteFiles
@@ -67,6 +68,11 @@ class SmbSource(
     private val expectedServerGuid: String?,
     val share: String,
     private val credentials: (String) -> SmbCredentials?,
+    /**
+     * Connect answers that stop the search across [addresses] ([FATAL] by default). A hand-off's cold-start source
+     * passes `NativeRoute.FINAL`, which skips an address with another server's GUID, like the JS route engine.
+     */
+    private val fatal: Set<ErrorCode> = FATAL,
 ) : StreamSource {
 
     override val label: String get() = share
@@ -85,6 +91,9 @@ class SmbSource(
     /** Host currently (or last) used. */
     val activeHost: String? get() = addresses.getOrNull(addressIndex)?.host
 
+    /** Address currently (or last) used. */
+    val activeAddress: StreamAddress? get() = addresses.getOrNull(addressIndex)
+
     init {
         require(addresses.isNotEmpty()) { "addresses must not be empty" }
     }
@@ -96,33 +105,29 @@ class SmbSource(
         val current = diskShare
         if (current != null && current.isConnected && handle?.isAlive == true) return current
         drop()
-        var last: Throwable? = null
-        repeat(addresses.size) { step ->
-            val index = (addressIndex + step) % addresses.size
-            val address = addresses[index]
+        val order = addresses.indices.map { (addressIndex + it) % addresses.size }
+        val (connected, step) = NativeRoute.first(order.map { addresses[it] }, fatal) { address ->
             try {
                 val opened = runBlocking {
                     SmbConnector.open(address.host, address.port, expectedServerGuid, CONNECT_TIMEOUT_MS) { credentials(machineId) }
                 }
-                val connected = try {
+                val disk = try {
                     opened.session.connectShare(share) as? DiskShare ?: smbFail(ErrorCode.NOT_FOUND, "$share is not a disk share")
                 } catch (e: Throwable) {
                     closeLater(opened)
                     throw e
                 }
-                handle = opened
-                diskShare = connected
-                addressIndex = index
-                return connected
+                opened to disk
             } catch (e: Throwable) {
                 val mapped = SmbErrors.map(e)
                 Log.w(TAG, "Stream connect via ${address.host}: ${mapped.code} ${mapped.message}")
-                // The server answered and refused: another address reaches the same server, same answer.
-                if (mapped.code in FATAL) throw mapped
-                last = mapped
+                throw mapped
             }
         }
-        throw last ?: HoardSmbException(ErrorCode.UNREACHABLE, "No address answered")
+        handle = connected.first
+        diskShare = connected.second
+        addressIndex = order[step]
+        return connected.second
     }
 
     /**

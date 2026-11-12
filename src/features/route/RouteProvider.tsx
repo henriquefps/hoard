@@ -9,10 +9,11 @@ import {
   type ReactNode,
 } from "react"
 import { useDb, useLiveQuery } from "@/db/DbProvider"
-import { setServerGuid } from "@/db/queries"
+import { listMachines, setServerGuid } from "@/db/queries"
 import { HoardSmb } from "@/plugins/smb"
 import { readSetting, SETTING_DEFAULTS } from "@/features/settings/settings"
-import { type EngineMachine, RouteEngine, type RouteState } from "./engine"
+import type { NativeMachine } from "@/plugins/smb/definitions"
+import { type EngineMachine, nativeMachines, RouteEngine, type RouteState } from "./engine"
 
 const EngineContext = createContext<RouteEngine | null>(null)
 
@@ -57,7 +58,24 @@ export function RouteProvider({ children }: { children: ReactNode }) {
     }
   }, [engine])
 
+  useNativeMachineMirror()
+
   return <EngineContext.Provider value={engine}>{children}</EngineContext.Provider>
+}
+
+/**
+ * Keeps the native machine mirror (`syncMachines`, ADR 0010 "Cold start") equal to the saved machines: addresses in
+ * priority order and the pinned GUID, so Hoard's stream provider reaches a share when Reveal reopens a photo while
+ * the app is not running. Sent whenever that part of the machines changes (never secrets).
+ */
+function useNativeMachineMirror() {
+  const machines = useLiveQuery((d) => listMachines(d))
+  const mirror = machines === undefined ? undefined : nativeMachines(machines)
+  const key = mirror === undefined ? undefined : JSON.stringify(mirror)
+  useEffect(() => {
+    if (key === undefined) return
+    void HoardSmb.syncMachines({ machines: JSON.parse(key) as NativeMachine[] }).catch(() => {})
+  }, [key])
 }
 
 export function useRouteEngine(): RouteEngine {

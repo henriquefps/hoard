@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.10.0
+
+- **Edit in Reveal: photos stay reopenable** ([ADR 0010](docs/adr/0010-edit-in-reveal.md)): every hand-off now gives Reveal a _persistable_ read grant, for photos on the phone, on drives and on SMB shares. Photos from a network share go as stable links that Hoard serves itself: Reveal can reopen them later, after the phone restarts and with Hoard closed, while the machine is reachable (before, they stopped working an hour after the last read or when Hoard closed: "Permission Denial" in Reveal). Hoard starts in the background to serve them, connects on its own (the address that last worked first, the pinned server checked before the password is sent), shows the "Streaming" notification while Reveal reads, and stops two minutes after. An unreachable share makes Reveal show its own preview.
+- **Ratings come back from Reveal**: with "Save ratings next to photos (XMP)" on, each shot's sidecar goes with the photos as a writable item (the existing one, or a new `<stem>.xmp` holding Hoard's decision), in folders Hoard can write. A rating, pick or label set in Reveal is written into it (on SMB atomically, through Hoard), and Hoard imports it when the folder opens for culling. Photos are never writable; read-only folders send no sidecar.
+- **No more double "Reveal" chooser**: with both Reveal and its debug build installed, Hoard opens the release one directly.
+- **Settings › About › Reveal links**: how many files Reveal can reopen, and **Revoke all**. Links unused for 180 days are forgotten.
+- The note before the first hand-off from a network share says what is now true.
+
 ## 1.9.2
 
 - **Culling ignores hidden files**: macOS AppleDouble copies (`._DSC07845.ARW`, ~4 KB metadata files a Mac leaves on non-HFS disks and shares), `.DS_Store` and other dot-files no longer become shots. A folder of 14 RAW+JPEG pairs with 28 `._*` files opened 28 shots (14 grey tiles, "14 photos could not be analysed"); it now opens 14. The same rule applies to "Cull photos" counts, "Edit in Reveal" and the web mock. Hidden XMP sidecars (`.name.xmp`) are still read. The file browser is unchanged.
