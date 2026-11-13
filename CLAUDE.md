@@ -51,7 +51,7 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
 
 ## Rules
 
-- **UI follows the `hfps-app-ui` skill** (type scale, single card surface, density, list → card list
+- **UI follows the `hfps-kit` skill (`react/GUIDE.md`)** (type scale, single card surface, density, list → card list
   below `@xl`, breadcrumbs via `Page` + `components/page/breadcrumbs.ts`, `ResponsiveDialog` for
   form dialogs (Drawer on phones), motion and gesture rules, no raw Tailwind colors). After any
   `shadcn add`: fix `from "cn"` imports, keep `sonner.tsx` without next-themes, re-apply the
