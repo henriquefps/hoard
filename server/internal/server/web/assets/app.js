@@ -204,17 +204,47 @@ async function renderDevices() {
   const { devices } = await api("GET", "devices");
   const status = await api("GET", "status");
   const pairArea = h("div");
-  const rows = devices.map((d) => h("div.row",
+  // ADR 0017: devices (app installations) grouped by the physical device they run on.
+  const groups = new Map();
+  for (const d of [...devices].reverse()) {
+    const id = d.physicalDeviceId || d.id;
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(d);
+  }
+  const groupName = (members) => (members.find((d) => !d.revokedAt) || members[0]).name;
+  const move = async (d, to) => {
+    try { await api("POST", `devices/${encodeURIComponent(d.id)}/physical`, { physicalDeviceId: to || null }); route(); }
+    catch (e) { toast(e.code === "conflict" ? t("moveSameApp") : e.message); route(); }
+  };
+  const moveSelect = (d) => {
+    const own = d.physicalDeviceId || d.id;
+    const others = [...groups.entries()].filter(([id, ms]) => id !== own && ms.some((m) => !m.revokedAt));
+    if (!others.length && groups.get(own).length < 2) return null;
+    const sel = h("select.select.compact", { "aria-label": t("moveTo"), onchange: () => move(d, sel.value === "__own" ? "" : sel.value) },
+      h("option", { value: own, selected: true }, t("moveTo")),
+      others.map(([id, ms]) => h("option", { value: id }, groupName(ms))),
+      groups.get(own).length > 1 ? h("option", { value: "__own" }, t("moveOwn")) : null);
+    return sel;
+  };
+  const appName = (d) => (d.app ? `${d.app[0].toUpperCase()}${d.app.slice(1)}` : null);
+  const deviceRow = (d) => h("div.row",
     icon("device-mobile"),
     h("div.main",
-      h("div.name", d.name),
+      h("div.name", [appName(d), d.name].filter(Boolean).join(" · ")),
       h("div.meta", [d.platform, d.appVersion].filter(Boolean).join(" · "), " · ", `${t("lastSync")}: ${when(d.lastSyncAt)}`, " · ", `${t("added")}: ${when(d.createdAt)}`)),
-    h("div.actions", d.revokedAt ? h("span.badge.idle", t("revoked")) : h("button.button.danger", {
+    h("div.actions", d.revokedAt ? h("span.badge.idle", t("revoked")) : [moveSelect(d), h("button.button.danger", {
       onclick: async () => {
         if (!confirm(t("revokeConfirm"))) return;
         try { await api("POST", `devices/${encodeURIComponent(d.id)}/revoke`); route(); } catch (e) { toast(e.message); }
       },
-    }, t("revoke")))));
+    }, t("revoke"))]));
+  const rows = [...groups.values()].reverse().map((members) => {
+    const live = members.find((d) => !d.revokedAt) || members[0];
+    const model = [live.manufacturer, live.model].filter(Boolean).join(" ");
+    return h("div.list",
+      h("div.group-head", h("span.eyebrow", t("physicalDevice")), h("span.name", groupName(members)), model ? h("span.muted", model) : null),
+      members.map(deviceRow));
+  });
   const url = h("input.input", { type: "url", value: status.settings.publicUrl || location.origin });
   const startPair = async () => {
     try {
@@ -237,7 +267,7 @@ async function renderDevices() {
     h("div.section",
       h("div.section-head", h("h2", t("devicesTitle"))),
       h("p.muted", t("devicesIntro")),
-      rows.length ? h("div.list", rows) : h("p.empty", t("noDevices"))),
+      rows.length ? h("div.groups", rows) : h("p.empty", t("noDevices"))),
     h("div.section", h("h2", t("pairTitle")),
       h("div.form", h("label", t("publicUrl")), url, h("p.hint", t("pairUrlHint")),
         h("button.button.primary", { onclick: startPair, icon: "qr-code" }, t("showQr"))),

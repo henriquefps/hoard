@@ -27,6 +27,8 @@ tags:
   - name: nas
   - name: items
   - name: previews
+  - name: culling
+  - name: devices
 paths:
   /v1/health:
     get:
@@ -78,6 +80,9 @@ paths:
                 deviceName: { type: string, minLength: 1, maxLength: 100 }
                 platform: { type: string, maxLength: 40, examples: [android] }
                 appVersion: { type: string, maxLength: 40 }
+                app: { $ref: "#/components/schemas/AppName" }
+                manufacturer: { type: string, maxLength: 64, description: "Build.MANUFACTURER (ADR 0017; 0.7.0)" }
+                model: { type: string, maxLength: 64, description: "Build.MODEL (ADR 0017; 0.7.0)" }
       responses:
         "201":
           description: Paired
@@ -91,6 +96,13 @@ paths:
                   apiKey: { type: string, pattern: "^rvk1_[0-9a-f]{16}_[A-Za-z0-9_-]{43}$" }
                   serverId: { $ref: "#/components/schemas/Uuid" }
                   serverName: { type: string }
+                  physicalDeviceId:
+                    $ref: "#/components/schemas/Uuid"
+                    description: The physical device this new device starts in (its own deviceId). ADR 0017; 0.7.0.
+                  candidates:
+                    type: array
+                    description: Physical devices this one may be (same model first). ADR 0017; 0.7.0.
+                    items: { $ref: "#/components/schemas/Candidate" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401":
           description: "`invalid_pairing_token`: unknown, used or expired"
@@ -416,7 +428,68 @@ paths:
                         id: { type: string }
                         name: { type: string }
                         platform: { type: string }
+                        physicalDeviceId: { type: string, description: "ADR 0017; 0.7.0" }
+                        app: { type: [string, "null"], description: "ADR 0017; 0.7.0" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/device:
+    get:
+      tags: [devices]
+      summary: This device, its physical device and the physical devices it may be (ADR 0017; hoard-server 0.7.0)
+      responses:
+        "200":
+          description: The device view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [devices]
+      summary: Report this device's app, manufacturer and model (ADR 0017; hoard-server 0.7.0)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                app: { $ref: "#/components/schemas/AppName" }
+                manufacturer: { type: string, maxLength: 64 }
+                model: { type: string, maxLength: 64 }
+      responses:
+        "200":
+          description: The device view
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/device/claim:
+    post:
+      tags: [devices]
+      summary: Move this device into a physical device, or (null) into one of its own (ADR 0017; hoard-server 0.7.0)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [physicalDeviceId]
+              properties:
+                physicalDeviceId: { type: [string, "null"], format: uuid }
+      responses:
+        "200":
+          description: The device view after the move
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceView" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict` with `details.reason = same_app`: that physical device already has a live device of this app"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/nas/files:
     get:
       tags: [nas]
@@ -455,7 +528,8 @@ paths:
       description: |
         Every item whose revision is greater than the cursor, once, at its latest state, oldest revision first.
         Tombstones (`deleted: true`) are kept forever. Own revision counter and cursors (not interchangeable with
-        `/v1/changes` or `/v1/nas/files`).
+        `/v1/changes` or `/v1/nas/files`). Since 0.7.0 (ADR 0016) culling records share the counter and come with
+        `include=culling`; `limit` then counts items plus culling records.
       parameters:
         - name: cursor
           in: query
@@ -463,6 +537,10 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+        - name: include
+          in: query
+          description: "Comma-separated `items`, `culling` (ADR 0016; 0.7.0). Absent = `items`."
+          schema: { type: string, default: items, examples: ["items,culling", culling] }
       responses:
         "200":
           description: A page of the items feed
@@ -475,6 +553,10 @@ paths:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/Item" }
+                  culling:
+                    type: array
+                    description: With include=culling only.
+                    items: { $ref: "#/components/schemas/Culling" }
                   cursor: { type: string }
                   hasMore: { type: boolean }
         "400":
@@ -723,6 +805,62 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/culling:
+    post:
+      tags: [culling]
+      summary: Push culling changes, one field each (ADR 0016; hoard-server 0.7.0)
+      description: |
+        Applied in order in one transaction; per field: same value = unchanged, `baseRev` equal to the field's rev =
+        applied, else last-writer-wins on `modifiedAt` then device id. A `modifiedAt` more than 10 minutes ahead of the
+        server is clipped. A change that fails validation (or names an unknown `itemId`) rejects the whole request with
+        `details.index`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: "#/components/schemas/CullChange" }
+      responses:
+        "200":
+          description: One result per change, in order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/CullResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/culling/{itemId}:
+    get:
+      tags: [culling]
+      summary: One item's culling record (ADR 0016; hoard-server 0.7.0)
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "200":
+          description: The record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Culling" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 components:
   securitySchemes:
     deviceKey:
@@ -937,8 +1075,9 @@ components:
           type: array
           description: >-
             Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
-            `previews` = ADR 0015 (0.6.0).
-          items: { type: string, enum: [items, previews] }
+            `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0). Clients
+            ignore names they do not know.
+          items: { type: string, enum: [items, previews, culling, device-identity] }
         previews:
           type: object
           description: Present when the server makes previews (ADR 0015). Not in limits, which is reveal-sync's.
@@ -1070,6 +1209,97 @@ components:
         files:
           type: array
           items: { $ref: "#/components/schemas/ItemFile" }
+    CullValue:
+      description: "rating: integer 0..5; flag: pick | reject | none; label: a string of at most 64 characters (\"\" = none)"
+      oneOf:
+        - { type: integer, minimum: 0, maximum: 5 }
+        - { type: string, maxLength: 64 }
+    CullChange:
+      type: object
+      description: Exactly one of itemId and fingerprint.
+      required: [field, value, baseRev, modifiedAt]
+      properties:
+        itemId: { $ref: "#/components/schemas/Uuid" }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        field: { type: string, enum: [rating, flag, label] }
+        value: { $ref: "#/components/schemas/CullValue" }
+        baseRev: { type: integer, minimum: 0, description: "The field's rev the device last saw; 0 = never seen." }
+        modifiedAt: { type: integer, description: "When the user made the change, Unix ms, the device's clock." }
+    CullResult:
+      type: object
+      required: [itemId, field, status, rev]
+      properties:
+        itemId: { $ref: "#/components/schemas/Uuid" }
+        field: { type: string, enum: [rating, flag, label] }
+        status: { type: string, enum: [applied, unchanged, conflict] }
+        winner: { type: string, enum: [incoming, server] }
+        rev: { type: integer }
+        clipped: { type: boolean }
+    CullField:
+      type: object
+      required: [value, rev, modifiedAt, deviceId]
+      properties:
+        value: { $ref: "#/components/schemas/CullValue" }
+        rev: { type: integer }
+        modifiedAt: { type: integer }
+        deviceId: { type: string, description: "A device id, or `nas` for a value imported from a NAS sidecar." }
+    Culling:
+      type: object
+      description: An item's culling record; fields never written are absent.
+      required: [itemId, rev]
+      properties:
+        itemId: { $ref: "#/components/schemas/Uuid" }
+        rev: { type: integer }
+        rating: { $ref: "#/components/schemas/CullField" }
+        flag: { $ref: "#/components/schemas/CullField" }
+        label: { $ref: "#/components/schemas/CullField" }
+    AppName:
+      type: string
+      pattern: "^[a-z0-9-]{1,32}$"
+      examples: [hoard, reveal]
+      description: Which app this device is (ADR 0017; 0.7.0).
+    DeviceEntry:
+      type: object
+      required: [id, name, app, platform, manufacturer, model]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        app: { type: [string, "null"] }
+        platform: { type: string }
+        manufacturer: { type: [string, "null"] }
+        model: { type: [string, "null"] }
+    Candidate:
+      type: object
+      required: [physicalDeviceId, name, match, devices]
+      properties:
+        physicalDeviceId: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        match: { type: string, enum: [model, other] }
+        devices:
+          type: array
+          items: { $ref: "#/components/schemas/DeviceEntry" }
+    DeviceView:
+      type: object
+      required: [deviceId, name, platform, app, manufacturer, model, physicalDevice, candidates]
+      properties:
+        deviceId: { $ref: "#/components/schemas/Uuid" }
+        name: { type: string }
+        platform: { type: string }
+        app: { type: [string, "null"] }
+        manufacturer: { type: [string, "null"] }
+        model: { type: [string, "null"] }
+        physicalDevice:
+          type: object
+          required: [id, name, devices]
+          properties:
+            id: { $ref: "#/components/schemas/Uuid" }
+            name: { type: string }
+            devices:
+              type: array
+              items: { $ref: "#/components/schemas/DeviceEntry" }
+        candidates:
+          type: array
+          items: { $ref: "#/components/schemas/Candidate" }
     Error:
       type: object
       required: [error]

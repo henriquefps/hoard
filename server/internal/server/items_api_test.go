@@ -175,7 +175,7 @@ func TestItemsFeedQueryAndLookup(t *testing.T) {
 	if c := decode(t, hs.do("GET", "/v1/health", nil))["counts"].(map[string]any); c["items"] != float64(13) {
 		t.Fatalf("health %v", c)
 	}
-	if f := decode(t, hs.do("GET", "/v1/server", nil, bearer(key)))["features"].([]any); len(f) != 1 || f[0] != "items" {
+	if f := decode(t, hs.do("GET", "/v1/server", nil, bearer(key)))["features"].([]any); len(f) != 3 || f[0] != "items" || f[1] != "culling" || f[2] != "device-identity" {
 		t.Fatalf("features %v", f)
 	}
 

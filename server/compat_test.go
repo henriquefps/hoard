@@ -172,8 +172,15 @@ func TestOpensRevealSyncDataDir(t *testing.T) {
 		}
 	}
 
+	// ADR 0017: every reveal-sync device is a physical device of its own, with its own id; no app reported yet.
+	res, b := call(m.PhoneKey, "GET", "/v1/device", "")
+	var dev map[string]any
+	if res.StatusCode != 200 || json.Unmarshal(b, &dev) != nil || dev["physicalDevice"].(map[string]any)["id"] != dev["deviceId"] || dev["app"] != nil {
+		t.Fatalf("device view after the upgrade: %d %s", res.StatusCode, b)
+	}
+
 	// The change feed is the one reveal-sync served.
-	res, b := call(m.PhoneKey, "GET", "/v1/changes?limit=500", "")
+	res, b = call(m.PhoneKey, "GET", "/v1/changes?limit=500", "")
 	if res.StatusCode != 200 {
 		t.Fatalf("changes: %d %s", res.StatusCode, b)
 	}

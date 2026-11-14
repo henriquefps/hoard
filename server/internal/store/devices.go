@@ -19,6 +19,11 @@ type Device struct {
 	LastSeenAt *int64 `json:"lastSeenAt"`
 	LastSyncAt *int64 `json:"lastSyncAt"`
 	RevokedAt  *int64 `json:"revokedAt"`
+	// ADR 0017: the physical device it runs on, and what it reported about itself (nil: not reported).
+	PhysicalID   string  `json:"physicalDeviceId"`
+	App          *string `json:"app"`
+	Manufacturer *string `json:"manufacturer"`
+	Model        *string `json:"model"`
 }
 
 // ErrInvalidToken is returned for an unknown, used or expired pairing token.
@@ -73,8 +78,14 @@ func (s *Store) RedeemPairing(ctx context.Context, tokenHash []byte, d Device) (
 		if subtle.ConstantTimeCompare(stored, tokenHash) != 1 || used != nil || expires <= now {
 			return ErrInvalidToken
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO devices (id, name, platform, app_version, key_id, key_hash, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, d.ID, d.Name, d.Platform, d.AppVersion, d.KeyID, d.KeyHash, now); err != nil {
+		// A new pairing starts a physical device of its own, with the device's id (ADR 0017).
+		d.PhysicalID = d.ID
+		if _, err := tx.ExecContext(ctx, "INSERT INTO physical_devices (id, created_at) VALUES (?, ?)", d.ID, now); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO devices (id, name, platform, app_version, key_id, key_hash, created_at, physical_id,
+			app, manufacturer, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, d.ID, d.Name, d.Platform, d.AppVersion, d.KeyID, d.KeyHash, now,
+			d.PhysicalID, d.App, d.Manufacturer, d.Model); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, "UPDATE pairing_tokens SET used_at = ?, device_id = ? WHERE id = ?", now, d.ID, id)
@@ -83,11 +94,14 @@ func (s *Store) RedeemPairing(ctx context.Context, tokenHash []byte, d Device) (
 	return d, err
 }
 
-const deviceCols = "id, name, platform, app_version, key_id, key_hash, created_at, last_seen_at, last_sync_at, revoked_at"
+const deviceCols = "id, name, platform, app_version, key_id, key_hash, created_at, last_seen_at, last_sync_at, revoked_at, physical_id, app, manufacturer, model"
 
 func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 	var d Device
-	err := row.Scan(&d.ID, &d.Name, &d.Platform, &d.AppVersion, &d.KeyID, &d.KeyHash, &d.CreatedAt, &d.LastSeenAt, &d.LastSyncAt, &d.RevokedAt)
+	var physical sql.NullString
+	err := row.Scan(&d.ID, &d.Name, &d.Platform, &d.AppVersion, &d.KeyID, &d.KeyHash, &d.CreatedAt, &d.LastSeenAt, &d.LastSyncAt, &d.RevokedAt,
+		&physical, &d.App, &d.Manufacturer, &d.Model)
+	d.PhysicalID = physical.String
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
 	}
@@ -147,4 +161,100 @@ func (s *Store) RevokeDevice(ctx context.Context, id string) error {
 		}
 		return nil
 	})
+}
+
+// --- physical devices (ADR 0017) -------------------------------------------------------------------------------------
+
+// ErrSameApp is returned when a physical device already has a live device of the same app.
+var ErrSameApp = errors.New("the physical device already has this app")
+
+// DeviceInfo is what a device reports about itself; nil fields are left as they are.
+type DeviceInfo struct {
+	App          *string
+	Manufacturer *string
+	Model        *string
+}
+
+// UpdateDeviceInfo stores what a device reported.
+func (s *Store) UpdateDeviceInfo(ctx context.Context, id string, info DeviceInfo) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE devices SET app = coalesce(?, app), manufacturer = coalesce(?, manufacturer),
+		model = coalesce(?, model) WHERE id = ?`, info.App, info.Manufacturer, info.Model, id)
+	return err
+}
+
+// PhysicalExists reports whether a physical device exists.
+func (s *Store) PhysicalExists(ctx context.Context, id string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM physical_devices WHERE id = ?", id).Scan(&n)
+	return n > 0, err
+}
+
+// MoveDevice moves a device into a physical device (to == "": one of its own, with the device's id when free). The
+// physical device it leaves is deleted when no device is left in it.
+func (s *Store) MoveDevice(ctx context.Context, deviceID, to string) (string, error) {
+	now := s.nowMs()
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		var from string
+		var app sql.NullString
+		err := tx.QueryRowContext(ctx, "SELECT physical_id, app FROM devices WHERE id = ?", deviceID).Scan(&from, &app)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if to == from {
+			return nil
+		}
+		if to == "" {
+			var n int
+			if from == deviceID {
+				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM devices WHERE physical_id = ? AND id != ?", from, deviceID).Scan(&n); err != nil {
+					return err
+				}
+				if n == 0 {
+					return nil // already alone
+				}
+				to = NewUUID()
+			} else {
+				if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM physical_devices WHERE id = ?", deviceID).Scan(&n); err != nil {
+					return err
+				}
+				to = deviceID
+				if n > 0 {
+					to = NewUUID()
+				}
+			}
+			if _, err := tx.ExecContext(ctx, "INSERT INTO physical_devices (id, created_at) VALUES (?, ?)", to, now); err != nil {
+				return err
+			}
+		} else {
+			var n int
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM physical_devices WHERE id = ?", to).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				return ErrNotFound
+			}
+			if app.Valid {
+				if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM devices WHERE physical_id = ? AND app = ? AND revoked_at IS NULL AND id != ?`,
+					to, app.String, deviceID).Scan(&n); err != nil {
+					return err
+				}
+				if n > 0 {
+					return ErrSameApp
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE devices SET physical_id = ? WHERE id = ?", to, deviceID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "DELETE FROM physical_devices WHERE id = ? AND NOT EXISTS (SELECT 1 FROM devices WHERE physical_id = ?)", from, from)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	d, err := s.DeviceByID(ctx, deviceID)
+	return d.PhysicalID, err
 }

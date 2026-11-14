@@ -15,7 +15,10 @@ it moved here ([ADR 0012](../docs/adr/0012-hoard-server.md)); an existing reveal
 - Gallery previews of every item, made on the server: thumbnails (512 px), screen previews (2560 px), video posters
   and low-bitrate H.264 proxies for phones, upright and sRGB, from the best source (a pair's camera JPEG, a RAW's
   embedded preview, HEIC/AVIF, HDR video tone-mapped), in a background queue ([ADR 0015](../docs/adr/0015-server-previews.md)).
-- Every device has its own revocable key (pair by QR code). There is no anonymous mode.
+- Ratings, pick / reject and colour labels in step between Hoard and Reveal, per field (a rating in one app and a
+  pick in the other both survive), and read from the XMP sidecars on the NAS ([ADR 0016](../docs/adr/0016-culling-sync.md)).
+- Every app has its own revocable key (pair by QR code); Hoard and Reveal on one phone are grouped as one device
+  ([ADR 0017](../docs/adr/0017-device-identity.md)). There is no anonymous mode.
 - Conflicts never lose an edit: the newer one wins and the other becomes a virtual copy.
 
 The protocol (for the apps and any other client) is [ADR 0013](../docs/adr/0013-server-protocol.md), with an OpenAPI
@@ -140,6 +143,16 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.7.0 (culling, one device per phone)
+
+0.7.0 adds culling records (ADR 0016) and physical devices (ADR 0017) with a database migration (schema 5) applied in
+place on start: no step to take, and nothing changes for Reveal. On the first start the ratings, picks and labels
+Reveal synced in its photo records become culling records (once); on the next walk the server reads the XMP sidecars
+of the NAS folders (it never writes them). Every paired device becomes a device of its own on the Devices page;
+apps on the same phone are grouped when the second app pairs (one tap in the app) or with **Move to…** there.
+
+**Back up `data/` before upgrading**: 0.6.x refuses to open a schema-5 database.
+
 ## Without Docker
 
 ```sh
@@ -161,7 +174,7 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
 - `/data/previews/` holds the gallery previews (`<key[0:2]>/<key>.thumb.jpg`, `.thumb.webp`, `.screen.jpg`,
   `.screen.webp`, `.proxy.mp4`); they
   can be deleted with the server stopped (with `DELETE FROM previews` in the database) and are made again.
-- Nothing is ever written to a NAS folder.
+- Nothing is ever written to a NAS folder (XMP sidecars there are read, never written).
 - Logs never contain keys, tokens, passwords, file names or paths of photos.
 
 ## Releases
@@ -186,7 +199,7 @@ Layout: `main.go` (flags, database file), `internal/server` (HTTP: `/v1` device 
 `internal/server/web`), `internal/store` (SQLite, migrations in `internal/store/migrations`: never edit a released
 one), `internal/blobstore`, `internal/nas` (indexer), `internal/mounts` (path confinement), `internal/fingerprint`
 (the `v1:` rule, vectors shared with Reveal in `testdata/fingerprint-vectors.txt`), `internal/auth`,
-`internal/ratelimit`, `internal/media` (metadata readers: EXIF/TIFF, JPEG, HEIF, CR3, RAF, motion photos, ffprobe,
+`internal/ratelimit`, `internal/xmp` (culling values of XMP sidecars, read only), `internal/media` (metadata readers: EXIF/TIFF, JPEG, HEIF, CR3, RAF, motion photos, ffprobe,
 RAW embedded previews; `mediatest` builds synthetic files), `internal/items` (pairing rule, item building, sync of
 sources and items), `internal/previews` (gallery previews: plan and keys, the queue manager, the CPU generator).
 `testdata/compat/` holds a reveal-sync data directory and a hoard-server 0.4.0 one (each with the program that made

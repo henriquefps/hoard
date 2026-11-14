@@ -7,12 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"path"
 	"sort"
 	"strings"
 
 	"github.com/henriquefps/hoard/server/internal/media"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 // Kinds of item.
@@ -150,10 +150,4 @@ func Signature(main string, members []Member) string {
 
 // ID is an item's id: a UUID derived from its main file's fingerprint (SHA-256 of "hoard-item\0" + fingerprint,
 // version 8, RFC 9562 variant), so the same shot has the same id on every walk, after a move and on every server.
-func ID(mainFingerprint string) string {
-	h := sha256.Sum256([]byte("hoard-item\x00" + mainFingerprint))
-	b := h[:16]
-	b[6] = b[6]&0x0f | 0x80
-	b[8] = b[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
+func ID(mainFingerprint string) string { return store.ItemID(mainFingerprint) }

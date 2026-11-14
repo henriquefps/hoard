@@ -3,6 +3,8 @@
 - **Date**: 2026-11-14
 - **Status**: Accepted (hoard-server 0.5.0, Hoard 2 phase 1b)
 - **Amends**: ADR 0013 (protocol additions under `/v1`, written there in "Items (hoard-server 0.5.0)")
+- **Amended by**: ADR 0016 (culling records share the items counter and travel in the items feed with
+  `include=culling`; an item's culling follows it when it is replaced)
 
 ## Context
 

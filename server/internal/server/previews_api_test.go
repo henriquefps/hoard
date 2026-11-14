@@ -216,7 +216,7 @@ func TestPreviewLifecycle(t *testing.T) {
 
 	// The server announces the feature.
 	f := decode(t, hs.do("GET", "/v1/server", nil, bearer(key)))["features"].([]any)
-	if len(f) != 2 || f[1] != "previews" {
+	if len(f) != 4 || f[0] != "items" || f[1] != "previews" || f[2] != "culling" || f[3] != "device-identity" {
 		t.Fatalf("features %v", f)
 	}
 }

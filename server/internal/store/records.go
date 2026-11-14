@@ -121,8 +121,12 @@ func dataOrNil(c Change) any {
 func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change, now int64) (Result, string, error) {
 	var before []byte
 	res, written, err := s.applyOne(ctx, tx, deviceID, c, now, &before)
-	if err != nil || !written || c.Kind != KindPhoto || !c.Deleted {
+	if err != nil || !written || c.Kind != KindPhoto {
 		return res, "", err
+	}
+	if !c.Deleted {
+		// Culling a released Reveal syncs inside its photo records reaches the culling records (ADR 0016).
+		return res, "", bridgePhoto(ctx, tx, deviceID, c.ModifiedAt, before, c.Data, now)
 	}
 	sha, err := releasePreview(ctx, tx, before)
 	return res, sha, err
