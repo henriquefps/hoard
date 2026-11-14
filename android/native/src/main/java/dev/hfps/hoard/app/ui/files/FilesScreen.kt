@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -173,7 +174,7 @@ private fun Tile(icon: ImageVector) {
 }
 
 @Composable
-private fun RowShell(onClick: (() -> Unit)?, menu: (@Composable () -> Unit)?, content: @Composable () -> Unit) {
+private fun RowShell(onClick: (() -> Unit)?, menu: (@Composable () -> Unit)?, content: @Composable RowScope.() -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()

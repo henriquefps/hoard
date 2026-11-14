@@ -53,7 +53,7 @@ class ShellBehaviourTest {
         compose.onNodeWithText("NAS").assertIsDisplayed()
         compose.onNodeWithText("192.168.1.10 and 2 more addresses").assertIsDisplayed()
         compose.onNodeWithText("No address").assertIsDisplayed()
-        compose.onNodeWithText("This phone").assertIsDisplayed()
+        compose.onNodeWithText("Internal storage").assertIsDisplayed()
         compose.onNodeWithText("SanDisk SD card").assertIsDisplayed()
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Lisboa"))
         compose.onNodeWithText("NAS · photos · 2026/Lisboa").assertIsDisplayed()
@@ -67,8 +67,10 @@ class ShellBehaviourTest {
                 FilesScreen(Samples.files.copy(machines = emptyList(), removable = emptyList(), favorites = emptyList()), {})
             }
         }
-        compose.onNodeWithText("No USB drive or SD card connected.").assertIsDisplayed()
+        compose.onNodeWithText("Plug in a USB drive or an SD card reader and it shows up here.").assertIsDisplayed()
         compose.onAllNodesWithText("Favorites").assertCountEquals(0)
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Add your first machine"))
+        compose.onNodeWithText("Add your first machine").assertIsDisplayed()
     }
 
     @Test fun aFailedImportOffersRetryAndContinue() {
