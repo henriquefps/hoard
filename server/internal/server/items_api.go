@@ -67,16 +67,12 @@ func (s *Server) handleItemChanges(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusBadRequest, "invalid_request", "limit must be a positive integer.", nil)
 		return
 	}
-	rows, more, err := s.store.ItemChanges(r.Context(), since, limit)
-	if err != nil {
-		s.internal(w, r, err)
+	withItems, withCulling, ok := feedInclude(r.URL.Query().Get("include"))
+	if !ok {
+		fail(w, r, http.StatusBadRequest, "invalid_request", "include is a comma-separated list of items and culling.", nil)
 		return
 	}
-	last := since
-	if len(rows) > 0 {
-		last = rows[len(rows)-1].Rev
-	}
-	writeItems(w, rows, fmt.Sprintf(`,"cursor":%s,"hasMore":%t`, jsonString(s.cursor("i", last)), more))
+	s.writeFeed(w, r, since, limit, withItems, withCulling)
 }
 
 var itemKinds = map[string]bool{items.KindPhoto: true, items.KindPair: true, items.KindVideo: true, items.KindMotion: true}

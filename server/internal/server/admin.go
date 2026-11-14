@@ -60,6 +60,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	authed("PUT /admin/api/password", s.handlePassword)
 	authed("GET /admin/api/devices", s.handleDevices)
 	authed("POST /admin/api/devices/{id}/revoke", s.handleRevoke)
+	authed("POST /admin/api/devices/{id}/physical", s.handleAdminMoveDevice)
 	authed("POST /admin/api/pairings", s.handleCreatePairing)
 	authed("GET /admin/api/pairings/{id}", s.handlePairingState)
 	authed("GET /admin/api/storage", s.handleStorage)

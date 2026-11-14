@@ -139,6 +139,12 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 	if _, err := st.EnsureSetting(ctx, settingServerName, "Hoard server"); err != nil {
 		return nil, err
 	}
+	// Once: the culling Reveal synced in its photo records before 0.7.0 becomes culling records (ADR 0016).
+	if done, err := st.BridgeExistingRecords(ctx); err != nil {
+		return nil, err
+	} else if done {
+		s.log.Info("culling: photo records bridged")
+	}
 	root, ok, err := st.Setting(ctx, settingBackupRoot)
 	if err != nil {
 		return nil, err

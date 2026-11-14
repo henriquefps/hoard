@@ -47,7 +47,7 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `docs/testing/persistable-handoff.md`. Test with Reveal's debug APK on the emulator only
   (`./gradlew :app:assembleDebug` in a copy of the reveal repo; its `release` variant did not compile in a clean clone
   on 2026-11-12).
-- **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014): Go +
+- **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and
   `TestRevealProtocolContract`; video tests need ffmpeg/ffprobe on PATH), `docker build -t hoard-server .`, `gofmt`/golangci-lint as in

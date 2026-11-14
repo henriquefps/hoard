@@ -50,6 +50,12 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/items/{itemId}/poster", s.previewDevice(s.handlePoster))
 	mux.HandleFunc("GET /v1/items/{itemId}/proxy", s.previewDevice(s.handleProxy))
 	mux.HandleFunc("POST /v1/items/previews", s.device(s.handleWarmPreviews))
+	// Culling and physical devices (ADRs 0016, 0017, hoard-server 0.7.0): additions.
+	mux.HandleFunc("POST /v1/culling", s.device(s.handleCullingPush))
+	mux.HandleFunc("GET /v1/culling/{itemId}", s.device(s.handleCulling))
+	mux.HandleFunc("GET /v1/device", s.device(s.handleDevice))
+	mux.HandleFunc("PATCH /v1/device", s.device(s.handleDeviceUpdate))
+	mux.HandleFunc("POST /v1/device/claim", s.device(s.handleDeviceClaim))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -154,13 +160,13 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
-// when enabled).
+// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0).
 func (s *Server) features() []string {
 	f := []string{"items"}
 	if s.prev != nil {
 		f = append(f, "previews")
 	}
-	return f
+	return append(f, "culling", "device-identity")
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device
@@ -176,7 +182,8 @@ func (s *Server) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 		if d.RevokedAt != nil {
 			continue
 		}
-		out = append(out, map[string]any{"id": d.ID, "name": d.Name, "platform": d.Platform})
+		// physicalDeviceId and app: ADR 0017 (0.7.0)
+		out = append(out, map[string]any{"id": d.ID, "name": d.Name, "platform": d.Platform, "physicalDeviceId": d.PhysicalID, "app": d.App})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"devices": out})
 }
@@ -206,8 +213,17 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		DeviceName string `json:"deviceName"`
 		Platform   string `json:"platform"`
 		AppVersion string `json:"appVersion"`
+		// ADR 0017 (0.7.0), optional
+		App          *string `json:"app"`
+		Manufacturer *string `json:"manufacturer"`
+		Model        *string `json:"model"`
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	di, ok := readDeviceInfo(req.App, req.Manufacturer, req.Model)
+	if !ok {
+		fail(w, r, http.StatusBadRequest, "invalid_request", deviceInfoProblem, nil)
 		return
 	}
 	name, ok1 := cleanText(req.DeviceName, 100)
@@ -220,6 +236,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 	key, keyID, keyHash := auth.NewKey()
 	d, err := s.store.RedeemPairing(r.Context(), auth.HashToken(req.Token), store.Device{
 		Name: name, Platform: platform, AppVersion: appVersion, KeyID: keyID, KeyHash: keyHash,
+		App: di.App, Manufacturer: di.Manufacturer, Model: di.Model,
 	})
 	if errors.Is(err, store.ErrInvalidToken) {
 		fail(w, r, http.StatusUnauthorized, "invalid_pairing_token", "The pairing code is unknown, used or expired. Show a new QR code.", nil)
@@ -232,7 +249,9 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 	info(r).device = d
 	s.log.Info("device paired", "device", d.ID, "platform", platform)
 	serverName, _, _ := s.store.Setting(r.Context(), settingServerName)
-	writeJSON(w, http.StatusCreated, map[string]any{"deviceId": d.ID, "apiKey": key, "serverId": s.serverID, "serverName": serverName})
+	all, _ := s.store.Devices(r.Context()) // best effort: the key is made, the answer must reach the device
+	writeJSON(w, http.StatusCreated, map[string]any{"deviceId": d.ID, "apiKey": key, "serverId": s.serverID, "serverName": serverName,
+		"physicalDeviceId": d.PhysicalID, "candidates": candidatesFor(d, all)}) // the last two: ADR 0017 (0.7.0)
 }
 
 // --- change feed --------------------------------------------------------------------------------------------------

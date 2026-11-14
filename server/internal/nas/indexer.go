@@ -59,6 +59,7 @@ type Stats struct {
 	Removed    int
 	Sources    int // item sources written or removed
 	Items      int // item revisions written
+	Culling    int // culling fields written from sidecars
 	DurationMs int64
 }
 
@@ -387,17 +388,25 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			current = append(current, items.Seen{Path: rel, Size: k.Size, MTime: k.MTime, Fingerprint: k.Fingerprint})
 		}
 	}
-	ist, err := ix.syncer(ctx).SyncFolder(ctx, f.ID, items.GroupFolder(current))
+	groups := items.GroupFolder(current)
+	ist, err := ix.syncer(ctx).SyncFolder(ctx, f.ID, groups)
 	if err != nil {
 		return fail("error", err)
 	}
 	stats.Sources, stats.Items = ist.Sources, ist.Items
+	// Culling from the folder's sidecars (ADR 0016): read only, and only the sidecars that changed.
+	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, groups); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fail("error", err)
+	}
 	stats.DurationMs = time.Since(start).Milliseconds()
 	ix.mu.Lock()
 	ix.last = stats
 	ix.mu.Unlock()
 	ix.Log.Info("nas: folder indexed", "folder", f.ID, "files", stats.Files, "hashed", stats.Hashed, "metadata", stats.MetaRead,
-		"probed", stats.Probed, "removed", stats.Removed, "itemSources", stats.Sources, "items", stats.Items, "ms", stats.DurationMs)
+		"probed", stats.Probed, "removed", stats.Removed, "itemSources", stats.Sources, "items", stats.Items, "culling", stats.Culling, "ms", stats.DurationMs)
 	return ix.Store.SetNasFolderState(ctx, f.ID, "ready", nil, true)
 }
 

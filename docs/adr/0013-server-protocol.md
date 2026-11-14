@@ -11,8 +11,9 @@
 > `<backup root>/reveal-sync/`) is unchanged and frozen for `/v1` (ADR 0012).
 
 Status: accepted (Reveal MS/1 server; Reveal MS/2 app side, Reveal ADR 0018, added `GET /v1/devices`). Date: 2026-11-11.
-Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below) and ADR 0015
-(gallery previews, hoard-server 0.6.0: "Previews" below).
+Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below), ADR 0015
+(gallery previews, 0.6.0: "Previews" below), ADR 0016 (culling, 0.7.0: "Culling" below) and ADR 0017 (physical
+devices, 0.7.0: "Physical devices" below).
 
 ## Context
 
@@ -349,13 +350,49 @@ The three GETs answer:
   again), `no_tools` (the server's vips/ffmpeg are missing).
 - **400** `invalid_request` (bad `size`), **401**, **429** (the preview bucket) as usual.
 
+## Culling (hoard-server 0.7.0)
+
+Added by ADR 0016 (the record, the per-field conflict rule, NAS sidecars, the bridge from `photo` records and the
+client rules). Additions only; `features` gains `"culling"`.
+
+A **culling record** belongs to an item id (ADR 0014) and has up to three fields, `rating` (0..5), `flag` (`pick` |
+`reject` | `none`) and `label` (≤ 64 characters, `""` = none), each `{"value", "rev", "modifiedAt", "deviceId"}`
+(`deviceId` `"nas"` = imported from a NAS sidecar). A reject keeps its stars (`rating` and `flag` are independent).
+Revisions come from the **items counter**.
+
+| Method and path | Answer |
+| --- | --- |
+| `POST /v1/culling` `{"changes": [{"itemId" \| "fingerprint", "field", "value", "baseRev", "modifiedAt"}]}` (≤ 500) | `{"results": [{"itemId", "field", "status": "applied" \| "unchanged" \| "conflict", "winner"?, "rev", "clipped"?}]}`. Per field: same value → `unchanged` (no revision; a later `modifiedAt` is remembered); `baseRev` equal to the field's `rev` (or a field never written) → `applied`; else last-writer-wins on `modifiedAt`, then device id. A `modifiedAt` more than 10 minutes ahead of the server's clock is clipped to it. A `fingerprint` names the live item that holds the file, else the id derived from it (a shot the server does not index yet); an `itemId` must be known (a tombstone's `replacedBy` is followed). One invalid change → `422 invalid_change` with `details.index`, nothing applied. |
+| `GET /v1/items/changes?…&include=items,culling` | `include` (comma-separated `items`, `culling`; absent = `items`, the 0.5.0 answer). With `culling`, the answer has a `culling` array of records changed since the cursor, merged with items in revision order (one cursor; `limit` counts both). |
+| `GET /v1/culling/{itemId}` | One record; `404 not_found` when no field was ever written. |
+
+Written by the server too: changed NAS sidecars (as `"nas"`, dated by the file's mtime; the server never writes a
+sidecar) and the culling fields a pushed `photo` record changes (its device and `modifiedAt`; once at the upgrade for
+every live photo record). `/v1/changes` is unchanged.
+
+## Physical devices (hoard-server 0.7.0)
+
+Added by ADR 0017 (why and the app flow). Additions only; `features` gains `"device-identity"`.
+
+A device (one app installation, one key) belongs to one **physical device** (`physicalDeviceId`, a UUID). A new
+pairing starts its own, with the device's id; devices paired before 0.7.0 got the same at the upgrade.
+
+| Method and path | Answer |
+| --- | --- |
+| `POST /v1/pair` | Request also takes optional `app` (`[a-z0-9-]{1,32}`), `manufacturer`, `model` (≤ 64); answer also has `physicalDeviceId` and `candidates`: `[{"physicalDeviceId", "name", "match": "model" \| "other", "devices": [{"id", "name", "app", "platform", "manufacturer", "model"}]}]`, the other physical devices on the same platform without a device of this app, model matches first. |
+| `GET /v1/device` | `{"deviceId", "name", "platform", "app", "manufacturer", "model", "physicalDevice": {"id", "name", "devices": [...]}, "candidates": [...]}` |
+| `PATCH /v1/device` `{"app"?, "manufacturer"?, "model"?}` | The same view after storing them; `400 invalid_request` when malformed. |
+| `POST /v1/device/claim` `{"physicalDeviceId": "<id>" \| null}` | Moves this device there (`null`: to one of its own); the same view. `404 not_found`, `409 conflict` (`details.reason = same_app`: a live device of the same app is there), `400 invalid_request`. |
+
+`GET /v1/devices` entries gain `physicalDeviceId` and `app`.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
 | --- | --- | --- |
 | `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads", "items" (0.5.0)}}`: counts only, no names or paths |
-| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "previews" (0.6.0)], "previews": {…} (0.6.0, when enabled)}` |
-| `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform"}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
+| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0)], "previews": {…} (0.6.0, when enabled)}` |
+| `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform", "physicalDeviceId" (0.7.0), "app" (0.7.0)}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
 | `POST /v1/pair` | pairing token | see "Pairing" |
 
 ## Limits

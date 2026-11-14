@@ -238,9 +238,23 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 	}
 	for _, id := range dead {
 		tomb := []byte("{}")
+		heir := "" // the live item that took the shot over: its culling moves there (ADR 0016)
 		if main, err := tx.ItemMain(id); err == nil && main != "" {
 			if other, err := tx.LiveItemWithFile(main, id, ""); err == nil && other != "" {
 				tomb, _ = json.Marshal(map[string]string{"replacedBy": other})
+				heir = other
+			}
+		}
+		if heir == "" {
+			fps, err := tx.ItemFileFingerprints(id)
+			if err != nil {
+				return n, err
+			}
+			for _, fp := range fps {
+				if other, err := tx.LiveItemWithFile(fp, id, ""); err == nil && other != "" {
+					heir = other
+					break
+				}
 			}
 		}
 		changed, err := tx.WriteItem(id, "", "", 0, nil, nil, tomb)
@@ -249,6 +263,9 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		}
 		if changed {
 			n++
+			if err := tx.CarryCulling(id, heir); err != nil {
+				return n, err
+			}
 		}
 	}
 	return n, nil
