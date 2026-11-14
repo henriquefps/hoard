@@ -90,8 +90,10 @@ func readSidecar(root *os.Root, m *items.Member) (store.SidecarRead, bool) {
 	if fi2, err := f.Stat(); err != nil || fi2.Size() != m.Size || fi2.ModTime().UnixNano() != m.MTime {
 		return store.SidecarRead{}, false
 	}
-	if ok { // a file that is not XMP is recorded with no values, so it is not read again until it changes
+	if ok {
 		r.Values = store.SidecarValues{Rating: c.Rating, Flag: c.Flag, Label: c.Label}
+	} else { // recorded (not read again until it changes), keeping what it held last time
+		r.Unreadable = true
 	}
 	return r, true
 }

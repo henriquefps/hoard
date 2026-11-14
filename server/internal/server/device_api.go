@@ -14,7 +14,12 @@ import (
 
 // Physical devices (ADR 0017, hoard-server 0.7.0): additions under /v1 (routed in routesAPI).
 
-var appPattern = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+// appPattern is an app id: the app's name, optionally followed by its build variant ("reveal", "reveal-debug",
+// "hoard-bench"); at most 32 characters (ADR 0017). Variants are distinct apps of one phone.
+var appPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// featurePattern is a capability name a device declares (ADR 0016).
+var featurePattern = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
 
 type deviceEntry struct {
 	ID           string  `json:"id"`
@@ -46,6 +51,7 @@ type deviceView struct {
 	App            *string      `json:"app"`
 	Manufacturer   *string      `json:"manufacturer"`
 	Model          *string      `json:"model"`
+	Features       []string     `json:"features"` // capabilities the device declared or was seen using (ADR 0016: "culling")
 	PhysicalDevice physicalView `json:"physicalDevice"`
 	Candidates     []candidate  `json:"candidates"`
 }
@@ -124,7 +130,11 @@ func (s *Server) deviceView(ctx context.Context, id string) (deviceView, error) 
 		return deviceView{}, err
 	}
 	v := deviceView{DeviceID: d.ID, Name: d.Name, Platform: d.Platform, App: d.App, Manufacturer: d.Manufacturer, Model: d.Model,
+		Features:       []string{},
 		PhysicalDevice: physicalView{ID: d.PhysicalID, Name: d.Name, Devices: []deviceEntry{}}, Candidates: candidatesFor(d, all)}
+	if d.CullingSince != nil {
+		v.Features = append(v.Features, featureCulling)
+	}
 	members := groups(all)[d.PhysicalID]
 	if len(members) > 0 {
 		v.PhysicalDevice.Name = members[0].Name
@@ -152,7 +162,7 @@ func (s *Server) handleDevice(w http.ResponseWriter, r *http.Request) {
 func readDeviceInfo(app, manufacturer, model *string) (store.DeviceInfo, bool) {
 	var out store.DeviceInfo
 	if app != nil {
-		if !appPattern.MatchString(*app) {
+		if len(*app) > 32 || !appPattern.MatchString(*app) {
 			return out, false
 		}
 		out.App = app
@@ -173,25 +183,53 @@ func readDeviceInfo(app, manufacturer, model *string) (store.DeviceInfo, bool) {
 	return out, true
 }
 
-const deviceInfoProblem = "app is [a-z0-9-]{1,32}; manufacturer and model are at most 64 characters."
+const deviceInfoProblem = "app is a lower-case name with an optional build variant (reveal, reveal-debug), at most 32 characters; manufacturer and model are at most 64 characters; features is a list of at most 16 names [a-z0-9-]{1,32}."
+
+// featureCulling is the capability of a device that syncs culling per field (ADR 0016 "Reveal's records").
+const featureCulling = "culling"
+
+// readFeatures validates the capabilities a device declares (unknown names are accepted and ignored) and reports
+// whether "culling" is among them.
+func readFeatures(features []string) (culling, ok bool) {
+	if len(features) > 16 {
+		return false, false
+	}
+	for _, f := range features {
+		if !featurePattern.MatchString(f) {
+			return false, false
+		}
+		culling = culling || f == featureCulling
+	}
+	return culling, true
+}
 
 func (s *Server) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		App          *string `json:"app"`
-		Manufacturer *string `json:"manufacturer"`
-		Model        *string `json:"model"`
+		App          *string  `json:"app"`
+		Manufacturer *string  `json:"manufacturer"`
+		Model        *string  `json:"model"`
+		Features     []string `json:"features"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	di, ok := readDeviceInfo(req.App, req.Manufacturer, req.Model)
-	if !ok {
+	culling, okFeatures := readFeatures(req.Features)
+	if !ok || !okFeatures {
 		fail(w, r, http.StatusBadRequest, "invalid_request", deviceInfoProblem, nil)
 		return
 	}
 	if err := s.store.UpdateDeviceInfo(r.Context(), info(r).device.ID, di); err != nil {
 		s.internal(w, r, err)
 		return
+	}
+	// Declared capabilities are added, never removed: a device that once synced culling per field keeps its photo
+	// records out of the bridge (ADR 0016).
+	if culling {
+		if err := s.store.MarkCullingAware(r.Context(), info(r).device.ID); err != nil {
+			s.internal(w, r, err)
+			return
+		}
 	}
 	s.writeDeviceView(w, r, info(r).device.ID)
 }

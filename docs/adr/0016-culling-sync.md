@@ -2,6 +2,12 @@
 
 - **Date**: 2026-11-14
 - **Status**: Accepted (hoard-server 0.7.0, Hoard 2 phase 1c)
+- **Amended**: 2026-11-14, before the 0.7.0 release, by Reveal's review (findings A–E): culling-aware devices are not
+  bridged (A); a released Reveal's reject keeps the stars (B); an invalid change, such as a label over 64 characters,
+  is a per-change result and never fails the batch, and a label cleared in a sidecar imports as `""` (C); records carry
+  their item's member fingerprints and `replacedBy`, and "Mapping a record" says how a client maps them (D); build
+  variants of an app share a phone (ADR 0017, E). Changed sections: "Wire format", "The NAS sidecars", "Reveal's
+  records", "Client rules", "Storage".
 - **Amends**: ADR 0013 (protocol additions under `/v1`, written there in "Culling (hoard-server 0.7.0)"), ADR 0014
   (the items feed can carry culling records). Read with Hoard ADR 0008/0009 (culling), ADR 0011 (culling sidecars) and
   Reveal ADR 0006 (library, XMP fields), 0011 (hand-off, `CULLING` extra), 0018 (sync in the app), 0025 (culling is
@@ -33,7 +39,7 @@ their photo's, Reveal ADR 0025). It has three independent **fields**:
 | --- | --- | --- |
 | `rating` | integer `0..5` | `0` = no stars |
 | `flag` | `"pick"` \| `"reject"` \| `"none"` | |
-| `label` | string, at most 64 characters (no control characters) | colour label as `xmp:Label` writes it (`"Red"`, …); `""` = no label |
+| `label` | string, at most 64 characters (no control characters) | colour label as `xmp:Label` writes it (`"Red"`, …); `""` = no label. A longer label (Lightroom lets users type free text) is not a value: it is refused per change, never for the whole push |
 
 Each field that was ever written carries its own **`value`, `rev`, `modifiedAt` and `deviceId`**: the value, the
 server revision of its last write, when the writer made that change (Unix ms, the writer's clock) and who wrote it
@@ -53,7 +59,7 @@ A write has an incoming value `v`, a `modifiedAt` `t` and a writer `d`; the fiel
 never written). In order:
 
 1. **Clock guard.** `t` more than **10 minutes** ahead of the server's clock is **clipped** to the server's clock
-   (the result says `clipped: true`). `t ≤ 0` or above 2^53 is invalid (`422`).
+   (the result says `clipped: true`). `t ≤ 0` or above 2^53 is invalid (result `invalid`, code `invalid_modified_at`).
 2. **Same value** (`v` equals `cur.value`): nothing changes in the feed (no revision). If `(t, d)` is later than
    `(cur.modifiedAt, cur.deviceId)` the field's `modifiedAt` and `deviceId` are moved forward in place (the latest
    intent is remembered, so an older write cannot win against it later). Result `unchanged`.
@@ -110,27 +116,48 @@ Table of the cases (each is a test in `internal/store/culling_test.go`):
 - The shot is named by **`itemId`** or by **`fingerprint`** (exactly one):
   - `itemId`: an item the server knows (live or tombstone). A tombstone with `replacedBy` is followed (the RAW of a
     JPEG-only shot appeared, ADR 0014 "Item id"): the change lands on the replacement, and the result says which.
-    An unknown `itemId` is `422 invalid_change` (`details.index`).
+    An unknown `itemId` is a result `invalid` with code `unknown_item`.
   - `fingerprint` (`v1:` + 64 hex): the live item that has this file as a member (the main file preferred); if no
     item has it yet (a photo that is only on a phone), the record is kept under the item id **derived** from it
     (ADR 0014: `uuid8(SHA-256("hoard-item\0" + fingerprint))`), which is the id the item will have once the server
     sees that file as a main file. Send the shot's **main** fingerprint (the RAW of a pair, else the rendering:
     `photo.data.fingerprint` in Reveal).
-- Applied in order, in one transaction. A change that fails validation makes the whole request
-  `422 invalid_change` with `details.index`; nothing is applied.
+- Applied in order, in one transaction. **A batch always succeeds as a whole**: a change that cannot be applied gets
+  a result with `status: "invalid"` and a `code`, and the other changes apply as if it were not there. The request is
+  refused only when it is not a push at all: malformed JSON (`400 invalid_json`), no `changes` or more than 500
+  (`422 invalid_change`).
+- Calling `POST /v1/culling` marks the device **culling-aware** (see "Reveal's records"), even when every change is
+  invalid.
 
-Answer `200`:
+Answer `200`, one result per change, in the order sent:
 
 ```json
 {"results": [
-  {"itemId": "0b6f…", "field": "rating", "status": "applied", "rev": 131},
-  {"itemId": "77d0…", "field": "flag", "status": "conflict", "winner": "server", "rev": 125},
-  {"itemId": "0b6f…", "field": "label", "status": "unchanged", "rev": 120, "clipped": true}
+  {"index": 0, "itemId": "0b6f…", "field": "rating", "status": "applied", "rev": 131},
+  {"index": 1, "itemId": "77d0…", "field": "flag", "status": "conflict", "winner": "server", "rev": 125},
+  {"index": 2, "itemId": "0b6f…", "field": "label", "status": "unchanged", "rev": 120, "clipped": true},
+  {"index": 3, "fingerprint": "v1:9c2e…", "field": "label", "status": "invalid", "code": "label_too_long",
+   "message": "A label is at most 64 characters."}
 ]}
 ```
 
-`status` is `applied`, `unchanged` or `conflict` (with `winner`); `rev` is the field's revision after the change;
-`clipped` only when the clock guard moved `modifiedAt`.
+`index` is the change's position in `changes`. `status` is `applied`, `unchanged`, `conflict` (with `winner`) or
+`invalid`; `rev` is the field's revision after the change (absent when invalid); `clipped` only when the clock guard
+moved `modifiedAt`. An `invalid` result echoes the `itemId` or `fingerprint` and `field` it was sent with and carries
+`code` (stable, for programs) and `message` (English, for logs):
+
+| `code` | The change |
+| --- | --- |
+| `invalid_target` | names no shot, both `itemId` and `fingerprint`, or a malformed one |
+| `invalid_field` | `field` is not `rating`, `flag` or `label` |
+| `invalid_value` | not a value of the field (rating outside 0..5, unknown flag, a label with control characters, not an object) |
+| `label_too_long` | a label over 64 characters |
+| `invalid_base_rev` | `baseRev` missing or negative |
+| `invalid_modified_at` | `modifiedAt` missing, ≤ 0 or above 2^53 |
+| `unknown_item` | an `itemId` the server does not know (send the `fingerprint` instead) |
+
+An invalid change is **dropped by the client** (it will never apply as sent): the client keeps its local value, does
+not retry it, and may log it. For `label_too_long`, the label stays local to that app.
 
 **Pull**: culling records travel in the **items feed**, as a sibling record kind:
 `GET /v1/items/changes?cursor=&limit=&include=items,culling`.
@@ -143,12 +170,24 @@ Answer `200`:
 ```json
 {"items": [ … ],
  "culling": [{"itemId": "0b6f…", "rev": 131,
+              "fingerprints": ["v1:3a7f…", "v1:9c2e…"],
               "rating": {"value": 4, "rev": 131, "modifiedAt": 1762851000000, "deviceId": "5c1d…"},
-              "flag": {"value": "reject", "rev": 96, "modifiedAt": 1762850000000, "deviceId": "nas"}}],
- "cursor": "858e1b9d:i131", "hasMore": false}
+              "flag": {"value": "reject", "rev": 96, "modifiedAt": 1762850000000, "deviceId": "nas"}},
+             {"itemId": "77d0…", "rev": 132, "fingerprints": [], "replacedBy": "0b6f…",
+              "rating": {"value": 2, "rev": 90, "modifiedAt": 1762800000000, "deviceId": "5c1d…"}}],
+ "cursor": "858e1b9d:i132", "hasMore": false}
 ```
 
   A field never written is left out. `limit` counts items plus culling records.
+- `fingerprints` lists the **member files** of the record's item (ADR 0014: the RAW, the rendering, the sidecar,
+  the video of a motion photo…), the main file first: everything a client needs to recognise the shot without
+  downloading items. It is `[]` when the server has no live item with this id: a shot only a phone has (the record
+  lives under the id derived from its main fingerprint), or a replaced item.
+- `replacedBy` (only on a replaced item) is the live item that took the shot over (ADR 0014 "Item id"), followed to
+  its end; that item's own record carries the fields carried over ("Items that change identity").
+- A record's `rev` is its newest change in the feed: a field write, **or a change of its item's member files, or the
+  item being replaced** (the record is sent again with the new `fingerprints` / `replacedBy`; its fields keep their
+  own `rev`).
 - A client that only needs culling (Reveal) asks `include=culling` and never downloads items.
 - `GET /v1/culling/{itemId}` returns one record (`404 not_found` when no field was ever written), for checks and
   tests.
@@ -159,6 +198,29 @@ the server has not indexed yet (a photo only a phone has). A filtered or separat
 cursors to keep in step for one library; sharing the counter keeps one cursor and one pull, and a filter by record
 **kind** is safe where ADR 0014 rejected a filter by folder: a record never leaves its kind, so a client asking for
 `culling` sees every culling change.
+
+### Mapping a record to a client's photos
+
+A client knows its photos by the fingerprints of its own files (Reveal: `photo.data.fingerprint`, its main file; Hoard:
+the files of a shot in a folder), and the server's item may be built from other files: a phone holds only the JPEG of
+a RAW + JPEG pair on the NAS, a RAW appears later and the item gets a new id (`replacedBy`), one file sits in two
+folders. Mapping by "my main fingerprint → derived item id" fails in all three. So a client maps a pulled record like
+this:
+
+1. **Any member matches.** A record applies to a local photo when **any** of the record's `fingerprints` equals the
+   fingerprint of any of the photo's files (Reveal: `photo.data.fingerprint`). Several local photos can match one
+   record (one file in two Reveal folders, virtual copies): the record applies to each.
+2. **Follow `replacedBy`.** A record with `replacedBy` no longer receives writes; its shot's fields are on the record
+   of `replacedBy` (sent in the same or a later page). A client that had mapped photos to the old id maps them to the
+   new one (and drops the old record), so later pushes use the new `itemId`.
+3. **Derived id.** A record with `fingerprints: []` and no `replacedBy` is a shot the server does not index: it
+   matches the photo whose main fingerprint `f` gives `itemId = uuid8(SHA-256("hoard-item\0" + f))` (ADR 0014; a
+   client that pushes by `fingerprint` never needs to compute this: the result tells it the id).
+4. **Fallback.** A photo that matches no record it has seen can be resolved with `POST /v1/items/lookup` (ADR 0014:
+   fingerprints → items), e.g. after a fresh install, before the first full pull is done.
+
+Pushing does not need the mapping: by `fingerprint`, the server finds the live item that has that file as a member,
+whatever its main file (the RAW of a pair for a phone-only JPEG), and the result says which `itemId` it is.
 
 ### The NAS sidecars: imported, never written by the server
 
@@ -177,7 +239,8 @@ device that has the folder, when the user decides.
   DTD, not XMP: ignored (never an error of the walk).
 - From a sidecar, `rating` comes from a non-negative `xmp:Rating`; a negative one sets `flag = reject` only (the stars
   stay as they are: "a reject keeps its stars"); `flag` comes from `digiKam:PickLabel` when present, else from a
-  negative rating, else from the Hoard creator rule; `label` from `xmp:Label` when present.
+  negative rating, else from the Hoard creator rule; `label` from `xmp:Label` when present. A label over 64
+  characters (or with control characters) is **skipped alone**: the other fields of the sidecar import.
 
 **When a sidecar is imported** (`culling_sidecars`, one row per sidecar file: its size, mtime and the values read the
 last time):
@@ -186,7 +249,10 @@ last time):
    clock against the same file clock: no cross-device comparison decides whether to read).
 2. Only the fields whose value **differs from what the server read in that sidecar last time** are candidate changes
    (the first read of a sidecar: every field it holds). So Lightroom changing a label does not re-assert a rating that
-   another device changed on the server since.
+   another device changed on the server since. A **label present last time and absent now** (cleared in Lightroom,
+   which removes `xmp:Label`) is a candidate change to `""`. (`culling_sidecars.label` already tells "present last
+   time": NULL = absent; a label over 64 characters is kept there as read, so clearing it also counts.) A file that is
+   not readable XMP when read keeps what it held last time (a half-written file is not "cleared").
 3. Each candidate is a write by `"nas"` with **`modifiedAt` = the sidecar's mtime** (ms; clipped like any write), and
    goes through the conflict rule (step 5: no `baseRev`). A sidecar newer than the server's field wins; one older
    loses. The values read are stored either way.
@@ -228,8 +294,22 @@ for a Reveal update, the server **bridges** them, without changing anything in `
   becomes a culling write by the record's `deviceId` with the record's `modifiedAt`, through step 5, on the item named
   by `data.fingerprint` (as a pushed `fingerprint`). Skipping defaults on a new record keeps a device that pairs late
   from clearing ratings with a record it just created.
-- Once, at the first start of 0.7.0, every live `photo` record is bridged the same way (setting
-  `culling.bridgedRecords`), so the owner's existing Reveal ratings appear in the culling feed.
+- **Culling-aware devices are not bridged** (finding A). A device is culling-aware once it declared the capability
+  (`PATCH /v1/device` with `"features": ["culling"]`, ADR 0017) or called `POST /v1/culling`; it stays so (stored per
+  device, that is per key and app installation: `devices.culling_since`). Its photo records still sync as records, but
+  their `rating`, `flag` and `label` are never bridged. Without this, a culling-aware Reveal, which keeps writing those
+  fields into its records for older devices, would double-write every decision (per field, then again through the
+  bridge with the record's time), and **any** touch of a record (an edit, `modifiedAt` = now) would re-push values it
+  pulled earlier as new decisions.
+- **A reject keeps its stars, also from released Reveal** (finding B, transitional). Reveal ≤ 0.7.1 reads
+  `xmp:Rating="-1"` as rating 0 + `REJECT`, so its records carry rating 0 for a rejected shot. In a record write by a
+  device that is not culling-aware, a change of `rating` to 0 that comes **together** with a change of `flag` to
+  `REJECT` is not bridged (the flag is). A rating cleared to 0 alone, or together with any other flag, is bridged. Once
+  Reveal declares `culling` the bridge ignores it anyway, and this rule stops mattering.
+- **Invalid values are skipped per field**: a label over 64 characters (or a rating that is not a number) in a record
+  is not bridged; the record's other fields are.
+- Once, at the first start of 0.7.0, every live `photo` record of a device that is not culling-aware is bridged the
+  same way (setting `culling.bridgedRecords`), so the owner's existing Reveal ratings appear in the culling feed.
 - The bridge never writes `photo` records: the record feed stays Reveal's (ADR 0013 "Records"). A record's
   `modifiedAt` dates the whole record, so the bridge is less precise than a per-field push; that is why culling-aware
   clients push per field.
@@ -244,23 +324,31 @@ for a Reveal update, the server **bridges** them, without changing anything in `
    queues `{field, value, baseRev = the cached server rev, modifiedAt}`. Offline, the queue waits; it is pushed later
    **with the original `modifiedAt`**. Several decisions on the same field before a push collapse to the last one
    (with its time).
-3. **Pull** `GET /v1/items/changes?include=culling` (Hoard: `include=items,culling`, one cursor). For each field in a
-   record: if no change of that field is pending locally, take the server's value, rev and time; if one is pending,
-   keep the local value and push it (step 5 decides; the next pull brings the winner). Same shape as Reveal ADR 0018's
-   `sync_inbox`.
+3. **Pull** `GET /v1/items/changes?include=culling` (Hoard: `include=items,culling`, one cursor). Map each record to
+   local photos as in "Mapping a record" (any member fingerprint; follow `replacedBy`; derived id; lookup as the
+   fallback). For each field in a record: if no change of that field is pending locally, take the server's value, rev
+   and time; if one is pending, keep the local value and push it (step 5 decides; the next pull brings the winner).
+   Same shape as Reveal ADR 0018's `sync_inbox`.
 4. **Sidecars.** A value taken from the server is **not written** to a sidecar. A local decision is written to the
    sidecar as today (Hoard ADR 0011, Reveal ADR 0006). An app that **imports** a sidecar (Hoard on folder open, Reveal
    on index) treats it as a local decision whose `modifiedAt` is the **sidecar's mtime**, not the time of the import,
    and pushes it: the conflict rule then compares the sidecar with the server like the server's own import does. A
    value pulled from the server counts, in Hoard's precedence rule (ADR 0011), as a decision made at its
    `modifiedAt`, so an old sidecar does not override a newer server value when a folder opens.
-5. **Reveal**: with `culling` listed, Reveal pushes culling per field to `POST /v1/culling` (by `fingerprint` =
-   `photo.data.fingerprint`, or the item id it learned from a pull), reads rating / flag / label **from the culling
-   records** and ignores those three fields of pulled `photo` records; it keeps writing them into its `photo` records
-   (other devices may run an older Reveal). Virtual copies share their photo's record (Reveal ADR 0025). Without
-   `culling` (an older server), nothing changes.
-6. **Hoard** (phase 2): decisions are per shot in a folder (ADR 0008); a shot maps to an item by its main file's
-   fingerprint (push with `fingerprint`, or the item id from `POST /v1/items/lookup`). The `CULLING` hand-off extra
+5. **Reveal**: with `culling` listed, Reveal **first declares the capability** — `PATCH /v1/device`
+   `{"features": ["culling"]}` (with `app`, `manufacturer`, `model`, ADR 0017) once, before its first push of `photo`
+   records under the new version — so that the server stops bridging its records from then on (a push to
+   `POST /v1/culling` also marks it, but a record pushed before that would still be bridged once). Then it pushes
+   culling per field to `POST /v1/culling` (by `fingerprint` = `photo.data.fingerprint`, or the item id it learned from
+   a pull), reads rating / flag / label **from the culling records** (mapped as in "Mapping a record") and ignores those
+   three fields of pulled `photo` records; it keeps writing them into its `photo` records (other devices may run an
+   older Reveal). A result `invalid` (e.g. `label_too_long` for a free-text label) is dropped from the queue, not
+   retried. Virtual copies share their photo's record (Reveal ADR 0025). Without `culling` (an older server), nothing
+   changes.
+6. **Hoard** (phase 2): decisions are per shot in a folder (ADR 0008); a pulled record maps to a shot when any of its
+   `fingerprints` is one of the shot's files ("Mapping a record"); a push names the shot by its main file's
+   `fingerprint` (or the item id from a pull or `POST /v1/items/lookup`). Hoard declares `"culling"` like Reveal (it
+   has no photo records, so it changes nothing for Hoard, but keeps the rule one for both apps). The `CULLING` hand-off extra
    (ADR 0011) is unchanged: it now carries the server's values (the local cache) plus pending ones.
 7. **Unpaired**, each app works as before on its own database and sidecars.
 
@@ -287,6 +375,8 @@ Migration `0005_culling_devices.sql` (schema 5; forward only, with ADR 0017's ta
 - `culling_sidecars (folder_id, rel_path, size, mtime, item_id, rating, flag, label)`: what each NAS sidecar held
   when last read (NULL = the field was absent from the file).
 - No new counter: culling uses `items`.
+- Migration `0006_culling_capability.sql` (schema 6, finding A): `devices.culling_since` (Unix ms, NULL = not
+  culling-aware). Finding C needs no column: `culling_sidecars.label` already records whether a label was present.
 
 ## Consequences
 
@@ -304,7 +394,11 @@ Migration `0005_culling_devices.sql` (schema 5; forward only, with ADR 0017's ta
   (it skips hidden names, ADR 0014), so the server does not import them; the app that wrote one pushes the decision
   anyway, so nothing is lost, only the import of other tools' hidden sidecars.
 - A Reveal device on a release without culling support keeps syncing culling through its records; the bridge carries
-  it to the culling records with the record's time (coarser than per field).
+  it to the culling records with the record's time (coarser than per field). Released Reveal still re-asserts its
+  record's values when it touches a record whose culling it changed (the bridge compares with the record's previous
+  state, so an untouched field is not re-sent); that is the transitional cost until it declares `culling`.
+- Tests per finding of Reveal's review: `TestReviewA_*`, `TestReviewB_*`, `TestReviewC_*`, `TestReviewD_*` in
+  `internal/store/culling_review_test.go` and `internal/server/culling_review_test.go`, `TestReviewE_*` in the latter.
 
 ## Alternatives considered
 

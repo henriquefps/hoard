@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -44,39 +45,59 @@ func ItemID(mainFingerprint string) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
+// Codes of a change that cannot be applied (ADR 0016 "Wire format": status "invalid").
+const (
+	CullInvalidTarget     = "invalid_target"      // no itemId or fingerprint, both, or a malformed one
+	CullInvalidField      = "invalid_field"       // not rating, flag or label
+	CullInvalidValue      = "invalid_value"       // not a value of the field
+	CullLabelTooLong      = "label_too_long"      // a label over MaxLabel characters (e.g. Lightroom free text)
+	CullInvalidBaseRev    = "invalid_base_rev"    // missing or negative
+	CullInvalidModifiedAt = "invalid_modified_at" // missing, ≤ 0 or above 2^53
+	CullUnknownItem       = "unknown_item"        // an itemId the server does not know
+)
+
 // CullValue validates a field's value and returns its canonical JSON (4, "pick", "Red").
 func CullValue(field string, raw json.RawMessage) (json.RawMessage, bool) {
+	v, code := CullValueCode(field, raw)
+	return v, code == ""
+}
+
+// CullValueCode is CullValue with the reason a value is refused ("" when valid).
+func CullValueCode(field string, raw json.RawMessage) (json.RawMessage, string) {
 	switch field {
 	case CullRating:
 		var n float64
 		if json.Unmarshal(raw, &n) != nil || n != float64(int(n)) || n < 0 || n > 5 {
-			return nil, false
+			return nil, CullInvalidValue
 		}
-		return json.RawMessage(fmt.Sprintf("%d", int(n))), true
+		return json.RawMessage(fmt.Sprintf("%d", int(n))), ""
 	case CullFlag:
 		var v string
 		if json.Unmarshal(raw, &v) != nil || (v != "pick" && v != "reject" && v != "none") {
-			return nil, false
+			return nil, CullInvalidValue
 		}
-		return json.RawMessage(`"` + v + `"`), true
+		return json.RawMessage(`"` + v + `"`), ""
 	case CullLabel:
 		var v string
 		if json.Unmarshal(raw, &v) != nil {
-			return nil, false
+			return nil, CullInvalidValue
 		}
 		v = strings.TrimSpace(v)
-		if !utf8.ValidString(v) || utf8.RuneCountInString(v) > MaxLabel {
-			return nil, false
+		if !utf8.ValidString(v) {
+			return nil, CullInvalidValue
 		}
 		for _, r := range v {
 			if r < 0x20 || r == 0x7f {
-				return nil, false
+				return nil, CullInvalidValue
 			}
 		}
+		if utf8.RuneCountInString(v) > MaxLabel {
+			return nil, CullLabelTooLong
+		}
 		b, _ := json.Marshal(v)
-		return b, true
+		return b, ""
 	}
-	return nil, false
+	return nil, CullInvalidField
 }
 
 // CullChange is one write of one field. BaseRev nil = a writer without a revision (sidecar import, bridge): last
@@ -90,14 +111,24 @@ type CullChange struct {
 	ModifiedAt  int64
 }
 
-// CullResult is the outcome of one change.
+// CullResult is the outcome of one change. An invalid change has Code and Message, no Rev, and echoes the itemId or
+// fingerprint and field it was sent with.
 type CullResult struct {
-	ItemID  string `json:"itemId"`
-	Field   string `json:"field"`
-	Status  string `json:"status"` // applied | unchanged | conflict
-	Winner  string `json:"winner,omitempty"`
-	Rev     int64  `json:"rev"`
-	Clipped bool   `json:"clipped,omitempty"`
+	Index       int    `json:"index"`
+	ItemID      string `json:"itemId,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Field       string `json:"field"`
+	Status      string `json:"status"` // applied | unchanged | conflict | invalid
+	Winner      string `json:"winner,omitempty"`
+	Rev         int64  `json:"rev,omitempty"`
+	Clipped     bool   `json:"clipped,omitempty"`
+	Code        string `json:"code,omitempty"`
+	Message     string `json:"message,omitempty"`
+}
+
+// InvalidCull is the result of a change that cannot be applied.
+func InvalidCull(index int, itemID, fingerprint, field, code, message string) CullResult {
+	return CullResult{Index: index, ItemID: itemID, Fingerprint: fingerprint, Field: field, Status: "invalid", Code: code, Message: message}
 }
 
 // CullField is a field's stored state.
@@ -108,17 +139,32 @@ type CullField struct {
 	DeviceID   string          `json:"deviceId"`
 }
 
-// CullRecord is an item's culling at its latest state.
+// CullRecord is an item's culling at its latest state, with what a client needs to map it to its own photos (ADR
+// 0016 "Mapping a record"): the item's member fingerprints (main first; none when the server has no live item with
+// this id) and, for an item that was replaced, the live item that took it over.
 type CullRecord struct {
-	ItemID string
-	Rev    int64
-	Fields map[string]CullField
+	ItemID       string
+	Rev          int64
+	Fields       map[string]CullField
+	Fingerprints []string
+	ReplacedBy   string
 }
 
-// MarshalJSON writes {"itemId", "rev", "rating"?, "flag"?, "label"?}.
+// MarshalJSON writes {"itemId", "rev", "fingerprints", "replacedBy"?, "rating"?, "flag"?, "label"?}.
 func (r CullRecord) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
-	fmt.Fprintf(&buf, `{"itemId":%q,"rev":%d`, r.ItemID, r.Rev)
+	fps := r.Fingerprints
+	if fps == nil {
+		fps = []string{}
+	}
+	b, err := json.Marshal(fps)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Fprintf(&buf, `{"itemId":%q,"rev":%d,"fingerprints":%s`, r.ItemID, r.Rev, b)
+	if r.ReplacedBy != "" {
+		fmt.Fprintf(&buf, `,"replacedBy":%q`, r.ReplacedBy)
+	}
 	for _, f := range CullFields {
 		v, ok := r.Fields[f]
 		if !ok {
@@ -135,32 +181,32 @@ func (r CullRecord) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// CullError names the change of a push that cannot be applied (its index).
-type CullError struct {
-	Index   int
-	Problem string
-}
-
-func (e *CullError) Error() string { return fmt.Sprintf("change %d: %s", e.Index, e.Problem) }
-
-// PushCulling applies changes from deviceID in order, in one transaction (ADR 0016 "Conflict rule").
+// PushCulling applies changes from deviceID in order, in one transaction (ADR 0016 "Conflict rule"), and marks the
+// device culling-aware (its photo records are no longer bridged). A change naming an unknown itemId is an "invalid"
+// result; the others apply. Results are in the changes' order, their Index the change's position in the slice.
 func (s *Store) PushCulling(ctx context.Context, deviceID string, changes []CullChange) ([]CullResult, error) {
 	var results []CullResult
 	now := s.nowMs()
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		results = make([]CullResult, 0, len(changes))
+		if _, err := tx.ExecContext(ctx, "UPDATE devices SET culling_since = coalesce(culling_since, ?) WHERE id = ?", now, deviceID); err != nil {
+			return err
+		}
 		for i, c := range changes {
 			id, err := resolveCullItem(ctx, tx, c.ItemID, c.Fingerprint)
 			if err != nil {
 				return err
 			}
 			if id == "" {
-				return &CullError{Index: i, Problem: "unknown itemId (send the fingerprint of a shot the server does not know)"}
+				results = append(results, InvalidCull(i, c.ItemID, c.Fingerprint, c.Field, CullUnknownItem,
+					"Unknown itemId: send the fingerprint of a shot the server does not know."))
+				continue
 			}
 			r, err := applyCull(ctx, tx, id, c.Field, c.Value, c.BaseRev, c.ModifiedAt, deviceID, now)
 			if err != nil {
 				return err
 			}
+			r.Index = i
 			results = append(results, r)
 		}
 		return nil
@@ -188,7 +234,11 @@ func resolveCullItem(ctx context.Context, tx *sql.Tx, itemID, fp string) (string
 	return followReplaced(ctx, tx, itemID, false)
 }
 
-func followReplaced(ctx context.Context, tx *sql.Tx, id string, derived bool) (string, error) {
+type rowQueryer interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func followReplaced(ctx context.Context, tx rowQueryer, id string, derived bool) (string, error) {
 	for range 8 {
 		var deleted bool
 		var data string
@@ -327,6 +377,8 @@ func (s *Store) CullingChanges(ctx context.Context, since int64, limit int) ([]C
 	return out, more, nil
 }
 
+// fillCulling reads the fields of each record, the member fingerprints of its item and, for a replaced item, the live
+// item that took it over.
 func (s *Store) fillCulling(ctx context.Context, recs []CullRecord) error {
 	for start := 0; start < len(recs); start += 500 {
 		part := recs[start:min(start+500, len(recs))]
@@ -345,8 +397,73 @@ func (s *Store) fillCulling(ctx context.Context, recs []CullRecord) error {
 		if err := scanCullFields(rows, byID); err != nil {
 			return err
 		}
+		//nolint:gosec // placeholders only; the ids are arguments
+		rows, err = s.db.QueryContext(ctx, `SELECT f.item_id, f.fingerprint FROM item_files f JOIN items i ON i.id = f.item_id
+			WHERE i.deleted = 0 AND f.item_id IN (`+placeholders(len(part))+`) ORDER BY f.item_id, (f.fingerprint = i.main_fp) DESC, f.fingerprint`, args...)
+		if err != nil {
+			return err
+		}
+		if err := scanRecordFingerprints(rows, byID); err != nil {
+			return err
+		}
+		//nolint:gosec // placeholders only; the ids are arguments
+		rows, err = s.db.QueryContext(ctx, "SELECT id FROM items WHERE deleted = 1 AND id IN ("+placeholders(len(part))+")", args...)
+		if err != nil {
+			return err
+		}
+		var tombs []string
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return err
+			}
+			tombs = append(tombs, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, id := range tombs {
+			to, err := followReplaced(ctx, s.db, id, false)
+			if err != nil {
+				return err
+			}
+			if to != id {
+				byID[id].ReplacedBy = to
+			}
+		}
 	}
 	return nil
+}
+
+func scanRecordFingerprints(rows *sql.Rows, into map[string]*CullRecord) error {
+	defer rows.Close()
+	for rows.Next() {
+		var id, fp string
+		if err := rows.Scan(&id, &fp); err != nil {
+			return err
+		}
+		if r := into[id]; r != nil {
+			r.Fingerprints = append(r.Fingerprints, fp)
+		}
+	}
+	return rows.Err()
+}
+
+// touchCulling gives an item's culling record a new revision without changing a field, so it is sent again in the
+// feed: its item's member files changed (or the item was replaced), and clients map records by them.
+func touchCulling(ctx context.Context, tx *sql.Tx, itemID string) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM culling WHERE item_id = ?", itemID).Scan(&n); err != nil || n == 0 {
+		return err
+	}
+	rev, err := next(ctx, tx, "items")
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE culling SET rev = ? WHERE item_id = ?", rev, itemID)
+	return err
 }
 
 // Culling returns one item's culling record (ErrNotFound when no field was ever written).
@@ -405,10 +522,14 @@ type SidecarRead struct {
 	MTime   int64 // ns
 	ItemID  string
 	Values  SidecarValues
+	// Unreadable: the file is not an XMP packet (now). Its size and mtime are recorded (not read again until it
+	// changes) and what it held the last time is kept, so a file caught half-written does not count as "cleared".
+	Unreadable bool
 }
 
 // ImportSidecars records what each sidecar holds and imports the fields that changed since the server last read it
-// as writes by "nas" dated by the file's mtime. It returns the number of fields written.
+// as writes by "nas" dated by the file's mtime. A label the sidecar held last time and no longer holds (cleared in
+// Lightroom) imports as "". It returns the number of fields written.
 func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []SidecarRead) (int, error) {
 	n := 0
 	now := s.nowMs()
@@ -424,6 +545,14 @@ func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []Sid
 			seen := err == nil
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
+			}
+			if r.Unreadable {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO culling_sidecars (folder_id, rel_path, size, mtime, item_id) VALUES (?, ?, ?, ?, ?)
+					ON CONFLICT (folder_id, rel_path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime, item_id = excluded.item_id`,
+					folderID, r.RelPath, r.Size, r.MTime, r.ItemID); err != nil {
+					return err
+				}
+				continue
 			}
 			type cand struct {
 				field string
@@ -442,6 +571,9 @@ func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []Sid
 				if b, ok := CullValue(CullLabel, mustJSON(*v.Label)); ok {
 					cands = append(cands, cand{CullLabel, b})
 				}
+			}
+			if v.Label == nil && seen && prev.label.Valid && prev.label.String != "" {
+				cands = append(cands, cand{CullLabel, json.RawMessage(`""`)}) // present last time, gone now: cleared
 			}
 			for _, c := range cands {
 				res, err := applyCull(ctx, tx, r.ItemID, c.field, c.value, nil, r.MTime/1e6, WriterNAS, now)
@@ -463,6 +595,8 @@ func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []Sid
 	})
 	return n, err
 }
+
+func contains(list []string, v string) bool { return slices.Contains(list, v) }
 
 func mustJSON(v any) json.RawMessage {
 	b, _ := json.Marshal(v)
@@ -492,69 +626,80 @@ type photoCulling struct {
 	Label       json.RawMessage `json:"label"`
 }
 
-// values returns the record's culling values with Reveal's defaults (0, NONE, null) and whether it parsed.
-func (p photoCulling) values() (map[string]json.RawMessage, bool) {
+// values returns the record's culling values with Reveal's defaults (0, NONE, null). A field whose value cannot be
+// read (a label over MaxLabel characters, a rating that is not a number) is left out, alone: the other fields still
+// bridge (ADR 0016 "Reveal's records").
+func (p photoCulling) values() map[string]json.RawMessage {
 	out := map[string]json.RawMessage{CullRating: json.RawMessage("0"), CullFlag: json.RawMessage(`"none"`), CullLabel: json.RawMessage(`""`)}
 	if len(p.Rating) > 0 && string(p.Rating) != "null" {
 		var n float64
 		if json.Unmarshal(p.Rating, &n) != nil {
-			return nil, false
+			delete(out, CullRating)
+		} else {
+			n = max(0, min(5, float64(int(n))))
+			out[CullRating] = json.RawMessage(fmt.Sprintf("%d", int(n)))
 		}
-		n = float64(int(n))
-		n = max(0, min(5, n))
-		out[CullRating] = json.RawMessage(fmt.Sprintf("%d", int(n)))
 	}
 	if len(p.Flag) > 0 && string(p.Flag) != "null" {
 		var f string
 		if json.Unmarshal(p.Flag, &f) != nil {
-			return nil, false
-		}
-		switch strings.ToUpper(f) {
-		case "PICK":
-			out[CullFlag] = json.RawMessage(`"pick"`)
-		case "REJECT":
-			out[CullFlag] = json.RawMessage(`"reject"`)
+			delete(out, CullFlag)
+		} else {
+			switch strings.ToUpper(f) {
+			case "PICK":
+				out[CullFlag] = json.RawMessage(`"pick"`)
+			case "REJECT":
+				out[CullFlag] = json.RawMessage(`"reject"`)
+			}
 		}
 	}
 	if len(p.Label) > 0 && string(p.Label) != "null" {
-		v, ok := CullValue(CullLabel, p.Label)
-		if !ok {
-			return nil, false
+		if v, ok := CullValue(CullLabel, p.Label); ok {
+			out[CullLabel] = v
+		} else {
+			delete(out, CullLabel)
 		}
-		out[CullLabel] = v
 	}
-	return out, true
+	return out
 }
 
 var cullDefaults = map[string]string{CullRating: "0", CullFlag: `"none"`, CullLabel: `""`}
 
 // bridgePhoto turns the culling fields a photo record changed into culling writes by its device, dated by the
-// record's modifiedAt. before is the record's previous data (nil: new or a tombstone).
+// record's modifiedAt. before is the record's previous data (nil: new or a tombstone). The caller skips devices that
+// are culling-aware (ADR 0016 "Reveal's records").
 func bridgePhoto(ctx context.Context, tx *sql.Tx, deviceID string, modifiedAt int64, before, after []byte, now int64) error {
 	var a photoCulling
 	if json.Unmarshal(after, &a) != nil || a.Fingerprint == "" {
 		return nil
 	}
-	av, ok := a.values()
-	if !ok {
-		return nil
-	}
+	av := a.values()
 	var bv map[string]json.RawMessage
 	if len(before) > 0 {
 		var b photoCulling
 		if json.Unmarshal(before, &b) == nil {
-			bv, _ = b.values()
+			bv = b.values()
 		}
 	}
 	var fields []string
 	for _, f := range CullFields {
-		if bv == nil {
-			if string(av[f]) != cullDefaults[f] {
+		v, ok := av[f]
+		switch {
+		case !ok: // unreadable in this record: skipped alone
+		case bv == nil:
+			if string(v) != cullDefaults[f] {
 				fields = append(fields, f)
 			}
-		} else if string(av[f]) != string(bv[f]) {
-			fields = append(fields, f)
+		default:
+			if prev, had := bv[f]; !had || string(v) != string(prev) {
+				fields = append(fields, f)
+			}
 		}
+	}
+	// Reveal ≤ 0.7.1 reads xmp:Rating="-1" as rating 0 + REJECT: a record that turns to reject and drops its stars to 0
+	// in the same write is that reading, not the user clearing the stars. A reject keeps its stars (finding B).
+	if bv != nil && contains(fields, CullFlag) && string(av[CullFlag]) == `"reject"` && contains(fields, CullRating) && string(av[CullRating]) == "0" {
+		fields = slices.DeleteFunc(fields, func(f string) bool { return f == CullRating })
 	}
 	if len(fields) == 0 {
 		return nil
@@ -603,7 +748,18 @@ func (s *Store) BridgeExistingRecords(ctx context.Context) (bool, error) {
 		if err := rows.Err(); err != nil {
 			return err
 		}
+		aware := map[string]bool{}
 		for _, r := range recs {
+			a, ok := aware[r.device]
+			if !ok {
+				if a, err = cullingAware(ctx, tx, r.device); err != nil {
+					return err
+				}
+				aware[r.device] = a
+			}
+			if a {
+				continue
+			}
 			if err := bridgePhoto(ctx, tx, r.device, r.at, nil, []byte(r.data), now); err != nil {
 				return err
 			}

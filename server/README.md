@@ -145,13 +145,18 @@ database, so going back to 0.4.0 means restoring that copy.
 
 ## Upgrading to 0.7.0 (culling, one device per phone)
 
-0.7.0 adds culling records (ADR 0016) and physical devices (ADR 0017) with a database migration (schema 5) applied in
+0.7.0 adds culling records (ADR 0016) and physical devices (ADR 0017) with database migrations (schema 6) applied in
 place on start: no step to take, and nothing changes for Reveal. On the first start the ratings, picks and labels
 Reveal synced in its photo records become culling records (once); on the next walk the server reads the XMP sidecars
-of the NAS folders (it never writes them). Every paired device becomes a device of its own on the Devices page;
-apps on the same phone are grouped when the second app pairs (one tap in the app) or with **Move to…** there.
+of the NAS folders (it never writes them; a label cleared in Lightroom is picked up as cleared). Every paired device
+becomes a device of its own on the Devices page; apps on the same phone are grouped when the second app pairs (one tap
+in the app) or with **Move to…** there. Debug and bench builds (`reveal-debug`, `hoard-debug`, …) count as apps of
+their own, so they can sit next to the release on one phone.
 
-**Back up `data/` before upgrading**: 0.6.x refuses to open a schema-5 database.
+Once a Reveal version that syncs culling per field declares it (`features: ["culling"]`), the server stops reading
+culling from that device's photo records; older Reveal versions keep being bridged (a reject from them keeps its stars).
+
+**Back up `data/` before upgrading**: 0.6.x refuses to open a schema-6 database.
 
 ## Without Docker
 

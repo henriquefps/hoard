@@ -2,6 +2,10 @@
 
 - **Date**: 2026-11-14
 - **Status**: Accepted (hoard-server 0.7.0, Hoard 2 phase 1d)
+- **Amended**: 2026-11-14, before the 0.7.0 release, by Reveal's review (finding E): the `app` id carries the build
+  variant (`reveal`, `reveal-debug`, `reveal-bench`; `hoard`, `hoard-debug`) and variants are distinct apps of one
+  phone, so a debug or bench build next to the release no longer gets `409 same_app`; and `PATCH /v1/device` takes
+  `features` (ADR 0016 finding A). Changed sections: "Model", "Client calls", "Storage".
 - **Amends**: ADR 0013 (additions under `/v1`, written there in "Physical devices (hoard-server 0.7.0)")
 
 This ADR is meant to be implemented from on its own: "Client calls" lists exactly what Hoard and Reveal send.
@@ -47,9 +51,15 @@ Constraints:
 - A new pairing starts a physical device of its own whose id **equals the new `deviceId`**. Existing devices get the
   same at the upgrade (migration 0005: one physical device per device, same id). So every device id is also a valid
   physical device id until it is grouped, and nothing about existing Reveal keys changes.
-- Each device also reports `app` (`"hoard"`, `"reveal"`, or another `[a-z0-9-]{1,32}` name), `manufacturer` and
-  `model` (`Build.MANUFACTURER`, `Build.MODEL`, at most 64 characters each). These are for matching and display; they
-  are never trusted for anything else.
+- Each device also reports `app`, `manufacturer` and `model` (`Build.MANUFACTURER`, `Build.MODEL`, at most 64
+  characters each). These are for matching and display; they are never trusted for anything else.
+- **`app` is the app id with its build variant**: the app's name, then `-<variant>` for any build that is not the
+  release — `reveal`, `reveal-debug`, `reveal-bench`; `hoard`, `hoard-debug` (lower-case `[a-z0-9]+(-[a-z0-9]+)*`, at
+  most 32 characters). Variants install side by side on one phone (each its own package, its own key), so they are
+  **distinct apps of the same physical device**: "one live device per app per phone" (`same_app`) compares the whole
+  id, and a release Reveal, a debug Reveal and a bench Reveal can share a phone with Hoard. Two installations of the
+  same variant still cannot (a reinstall: revoke the old one). Android: the release sends its name, other build types
+  append `BuildConfig.BUILD_TYPE` (or the flavour) — e.g. `"reveal-" + BUILD_TYPE` unless `BUILD_TYPE == "release"`.
 - A physical device with no device left (its last device moved away) is deleted. A revoked device stays in its
   physical device (shown as revoked): revoking does not regroup.
 
@@ -57,8 +67,8 @@ Constraints:
 
 1. The first app pairs as today (plus `app`, `manufacturer`, `model`). It is alone: no question.
 2. The second app pairs. The `POST /v1/pair` answer includes `candidates`: the other physical devices on the same
-   `platform` that have at least one live device and **no device of this app**, the ones with the same
-   `manufacturer` + `model` (case-insensitive) first, marked `match: "model"`.
+   `platform` that have at least one live device and **no device of this app id** (variant included), the ones with
+   the same `manufacturer` + `model` (case-insensitive) first, marked `match: "model"`.
 3. If exactly one candidate has `match: "model"`, the app shows **one question** right after pairing:
    "Is this the same phone as **Reveal** on **Pixel 8**?" → **Same phone** / **Another device**. "Same phone" calls
    `POST /v1/device/claim` with that candidate's `physicalDeviceId`; "Another device" calls nothing. Several model
@@ -98,14 +108,24 @@ All with the device's own key (`Authorization: Bearer rvk1_…`). `GET /v1/serve
                               "manufacturer": "Google", "model": "Pixel 8"}]}]}
 ```
 
-**2. Reporting app and model** (an already-paired app, once after updating, and whenever they change):
-`PATCH /v1/device` with any of `{"app", "manufacturer", "model"}` → `200` with the device view (below).
+**2. Reporting app, model and capabilities** (an already-paired app, once after updating, and whenever they change):
+`PATCH /v1/device` with any of `{"app", "manufacturer", "model", "features"}` → `200` with the device view (below).
+`features` lists the capabilities the app implements (at most 16 names `[a-z0-9-]{1,32}`); the server records the ones
+it knows (so far `"culling"`, ADR 0016: from then on it stops bridging this device's photo records), ignores the
+others, and never removes one (a later PATCH without it changes nothing). Reveal sends, with `culling` support:
+
+```json
+{"app": "reveal", "manufacturer": "Google", "model": "Pixel 8", "features": ["culling"]}
+```
+
+A device that paired with the wrong `app` (e.g. a debug build that reported `"reveal"` before this amendment) corrects
+it here; its `deviceId` and key are unchanged.
 
 **3. Reading** "this phone": `GET /v1/device` →
 
 ```json
 {"deviceId": "5c1d…", "name": "Pixel 8", "platform": "android", "app": "hoard",
- "manufacturer": "Google", "model": "Pixel 8",
+ "manufacturer": "Google", "model": "Pixel 8", "features": ["culling"],
  "physicalDevice": {"id": "a0e4…", "name": "Pixel 8",
                     "devices": [{"id": "a0e4…", "name": "Pixel 8", "app": "reveal", "platform": "android",
                                  "manufacturer": "Google", "model": "Pixel 8"},
@@ -120,8 +140,8 @@ live device. `candidates` as in pairing (empty once grouped, unless other groups
 **4. Claiming**: `POST /v1/device/claim` `{"physicalDeviceId": "a0e4…"}` moves **this** device into that physical
 device → `200` with the device view. `{"physicalDeviceId": null}` moves it out to a physical device of its own (id =
 its `deviceId` when free, else a new UUID). Errors: `404 not_found` (no such physical device), `409 conflict` with
-`details.reason = "same_app"` when the target already has a live device of the same `app` (two Hoards cannot share one
-phone; revoke the old one first), `400 invalid_request` for a malformed id. Claiming the group it is in is a no-op
+`details.reason = "same_app"` when the target already has a live device of the same `app` id, variant included (two
+release Hoards cannot share one phone, a `hoard` and a `hoard-debug` can; revoke the old one first), `400 invalid_request` for a malformed id. Claiming the group it is in is a no-op
 `200`.
 
 **5. Listing**: `GET /v1/devices` entries gain `physicalDeviceId` and `app` (`null` when not reported).
@@ -142,6 +162,8 @@ calls `POST /admin/api/devices/{id}/physical` `{"physicalDeviceId": "…" | null
 Migration `0005_culling_devices.sql` (with ADR 0016's tables): `physical_devices (id PRIMARY KEY, created_at)`, and
 `devices` gains `physical_id` (references `physical_devices`; set for every device by the backfill and by every
 pairing), `app`, `manufacturer`, `model` (nullable: not reported). Backfill: one physical device per existing device, with the device's id.
+Migration `0006_culling_capability.sql` adds `devices.culling_since` (ADR 0016 finding A). Finding E changes no data:
+existing `deviceId`s, physical device ids and `rvk1_` keys stay valid, and an `app` already stored keeps its value.
 
 ## Consequences
 
