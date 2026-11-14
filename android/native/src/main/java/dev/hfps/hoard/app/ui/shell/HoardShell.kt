@@ -274,6 +274,22 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
         files.storageGranted.value = StorageAccessIntents.granted(context)
     }
+    // A drive attached while the Files tab is open: "SD card connected · Open" (Hoard 1's VolumeNotices).
+    var knownDrives by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(state.removable, state.loading) {
+        if (state.loading) return@LaunchedEffect
+        val mounted = state.removable.filter { it.state == "mounted" || it.state == "mountedReadOnly" }
+        val before = knownDrives
+        knownDrives = mounted.mapNotNull { it.uuid }.toSet()
+        if (before == null) return@LaunchedEffect
+        mounted.filter { it.uuid !in before }.forEach { volume ->
+            toaster.show(
+                context.getString(if (volume.kind == "usb") R.string.t_locations_usb_connected else R.string.t_locations_sd_connected) + " · " + volume.label,
+                action = context.getString(R.string.t_locations_open),
+                onAction = { openLocation(volume.locationId, null, "") },
+            )
+        }
+    }
     // First run: the all files access screen, once (Hoard 1's storageIntroSeen).
     LaunchedEffect(Unit) {
         val seen = container.appSettings.files.first().storageIntroSeen

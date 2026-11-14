@@ -234,6 +234,11 @@ class BrowseViewModel(
         }
     }
 
+    /** Lists again quietly when a listing is already on screen (the screen came back). */
+    fun refreshIfShown() {
+        if (listing.value.entries != null || listing.value.shares != null) load(quiet = true)
+    }
+
     /** "Try again" on an error: a route failure forgets the machine so it is checked from scratch. */
     fun retry() {
         val loc = location.value ?: return

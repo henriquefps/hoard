@@ -160,8 +160,24 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
     val reveal = rememberReveal(actions)
 
     LaunchedEffect(location?.machine?.machine?.id) { viewModel.ensureRoute() }
+    // Back from a viewer, the editor or another app: the folder may have changed meanwhile.
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) { viewModel.refreshIfShown() }
 
     BackHandler(enabled = state.inSelection) { viewModel.clearSelection() }
+
+    // A USB drive or SD card pulled out while browsing it: say so and leave (Hoard 1's useLeaveWhenUnplugged).
+    var seenVolume by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(location?.volume?.state, location?.kind) {
+        val loc = location ?: return@LaunchedEffect
+        if (loc.kind != LocationKind.Volume) return@LaunchedEffect
+        val readable = loc.volume?.state.let { it == "mounted" || it == "mountedReadOnly" }
+        if (readable) {
+            seenVolume = loc.name
+        } else if (seenVolume != null) {
+            toaster.show(context.getString(R.string.t_locations_unplugged, seenVolume))
+            nav.home()
+        }
+    }
 
     // "Paste here" targets the folder on screen while it is open.
     val readOnlyReason = readOnlyReason(location, state.path)
