@@ -112,6 +112,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.serialization.json)
     implementation("androidx.core:core-ktx:${rootProject.extra["androidxCoreVersion"]}")
+    // WebViewerActivity (:core:smb) is an AppCompatActivity: its theme comes from here.
+    implementation("androidx.appcompat:appcompat:${rootProject.extra["androidxAppCompatVersion"]}")
 
     testImplementation("junit:junit:${rootProject.extra["junitVersion"]}")
     testImplementation(platform(libs.androidx.compose.bom))

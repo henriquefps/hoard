@@ -41,6 +41,7 @@ abstract class HoardDatabase : RoomDatabase() {
     abstract fun favorites(): FavoriteDao
     abstract fun manualShares(): ManualShareDao
     abstract fun transfers(): TransferDao
+    abstract fun cullDecisions(): CullDecisionDao
     abstract fun settings(): SettingsDao
     abstract fun legacyImports(): LegacyImportDao
 
@@ -263,6 +264,13 @@ interface TransferDao {
 
     @Query("DELETE FROM transfers WHERE state IN ('completed', 'failed', 'cancelled', 'skipped')")
     suspend fun clearFinished(): Int
+}
+
+@Dao
+interface CullDecisionDao {
+    /** A culled folder's decisions (ADR 0008), keyed by shot id (lowercase stem). */
+    @Query("SELECT * FROM cull_decisions WHERE location_id = :locationId AND share = :share AND path = :path")
+    suspend fun forFolder(locationId: String, share: String, path: String): List<CullDecisionEntity>
 }
 
 @Dao
