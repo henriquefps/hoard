@@ -50,10 +50,23 @@ restart clears it and native regenerates the thumbnails).
 
 ## Results on 1.10.1
 
-| Case                                                      | Result |
-| --------------------------------------------------------- | ------ |
-| Grid loaded, all thumbnails                               | 0 broken; `thumbs/` 13 MB |
-| Same culling run, leave and reopen, scroll                | **Not measured yet**: the emulator was stopped by the host's low-memory guard during the 1.10.1 culling run (see the PR) |
-| Thumbnail files deleted under a live grid (HTTP cache off) | Not measured yet |
-| Every thumbnail request failed (CDP `Fetch.failRequest`)   | Not measured yet |
-| Burst ✕ toast screenshot                                   | Not taken yet |
+| Case                                                       | Result |
+| ---------------------------------------------------------- | ------ |
+| Grid loaded on 1.10.1 (fresh image caches), all thumbnails | 0 broken; `thumbs/` 13 MB for ~800 thumbnails (64 MB cap: ~4,000) |
+| ✕ on a burst step (DSC00001–03, "View burst (3)", "1 of 3 decided") | Pass: toast "Rejected 3 photos of the burst" with Undo ([burst-reject-toast.png](burst-reject-thumbs/burst-reject-toast.png)); 211 → 214 rejected; auto-advance to the next step; the three sidecars on the share `xmp:Rating="-1" digiKam:PickLabel="1"` |
+| One Undo (Ctrl+Z) after it                                  | Pass: 214 → 211 rejected, 547 → 548 picked (the picked cover restored), back on the burst step |
+| Same culling run as on 1.10.0, leave and reopen, scroll     | **Not verified**: the host's low-memory guard stopped the emulator during the 1.10.1 culling run (another VM was using 16 GB); the run was not repeated |
+| Thumbnail files deleted under a live grid (`onError` → reload once) | **Not verified** on the device (Vitest covers `reloadThumbnail` / `thumbnailFailed` / `TaskQueue.forget`) |
+| Every thumbnail request failed (second failure → muted tile, no broken icon) | **Not verified** on the device (same unit coverage) |
+| Screenshot of the reopened 1.10.1 grid                      | **Not taken** (follows from the row above) |
+
+What still argues for the fix without the 1.10.1 reopen run: the eviction was measured directly (thumbnails gone from
+`screens/` while screen images filled it to the cap), and 1.10.1 no longer writes thumbnails there; the 64 MB
+`thumbs/` cache holds the whole 840-shot folder five times over.
+
+## Automated
+
+- Vitest: `burst.test.ts` (`rejectBurst`: every frame incl. picks, stars kept, one undo step restores each frame,
+  toggle back when all rejected, `set` never unmarks, after Keep this one), `images.test.ts` (reload once with a
+  fresh URL, second failure cached, no further native calls), `lib.test.ts` (`TaskQueue.forget` / `fail`).
+- JVM: `CullLogicTest` (sidecars of every naming never change shots).
