@@ -10,12 +10,14 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/henriquefps/hoard/server/internal/auth"
 	"github.com/henriquefps/hoard/server/internal/blobstore"
+	"github.com/henriquefps/hoard/server/internal/media"
 	"github.com/henriquefps/hoard/server/internal/mounts"
 	"github.com/henriquefps/hoard/server/internal/nas"
 	"github.com/henriquefps/hoard/server/internal/ratelimit"
@@ -61,6 +63,10 @@ type Config struct {
 	BackupRoot  string // initial backup root when none is stored yet (optional)
 	NasInterval time.Duration
 	Logger      *slog.Logger
+	// Video metadata (ADR 0014): the ffprobe binary, how many run at once and how long one may take.
+	FFprobe      string
+	ProbeWorkers int
+	ProbeTimeout time.Duration
 }
 
 // Server holds the state behind the handlers.
@@ -141,7 +147,11 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		s.setupCode = auth.SetupCode()
 		s.log.Warn("first run: open the setup page from your network and enter this one-time setup code", "setupCode", s.setupCode)
 	}
-	s.indexer = &nas.Indexer{Store: st, Roots: s.roots, Log: s.log, Interval: cfg.NasInterval}
+	s.indexer = &nas.Indexer{Store: st, Roots: s.roots, Log: s.log, Interval: cfg.NasInterval,
+		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob}
+	if !s.indexer.Prober.Available() {
+		s.log.Warn("ffprobe not found: videos are indexed, their metadata is read once it is installed")
+	}
 	return s, nil
 }
 
@@ -181,6 +191,22 @@ func (s *Server) sweep(ctx context.Context) {
 	if len(stale) > 0 {
 		s.log.Info("expired uploads removed", "count", len(stale))
 	}
+}
+
+// IndexNow runs one full indexing pass (every NAS folder, then uploaded originals) and returns the statistics of the
+// last folder walked. For tests and tools; the server indexes on its own in Run.
+func (s *Server) IndexNow(ctx context.Context) nas.Stats {
+	s.indexer.All(ctx)
+	return s.indexer.LastStats()
+}
+
+// openBlob opens a stored blob for the items indexer (uploaded originals).
+func (s *Server) openBlob(sha string) (*os.File, error) {
+	bs := s.blobStore()
+	if bs == nil {
+		return nil, fmt.Errorf("no backup root")
+	}
+	return bs.Open(sha)
 }
 
 func (s *Server) blobStore() *blobstore.Store {

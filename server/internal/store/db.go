@@ -177,6 +177,7 @@ type Counts struct {
 	Blobs          int `json:"blobs"`
 	NasFiles       int `json:"nasFiles"`
 	PendingUploads int `json:"pendingUploads"`
+	Items          int `json:"items"` // live items (ADR 0014)
 }
 
 // Counts returns row counts (live records only).
@@ -187,8 +188,9 @@ func (s *Store) Counts(ctx context.Context) (Counts, error) {
 		(SELECT count(*) FROM records WHERE kind = 'photo' AND deleted = 0),
 		(SELECT count(*) FROM records WHERE kind = 'version' AND deleted = 0),
 		(SELECT count(*) FROM blobs),
-		(SELECT count(*) FROM nas_files WHERE removed = 0 AND fingerprint IS NOT NULL),
-		(SELECT count(*) FROM uploads)`).Scan(&c.Devices, &c.Photos, &c.Versions, &c.Blobs, &c.NasFiles, &c.PendingUploads)
+		(SELECT count(*) FROM nas_files WHERE removed = 0 AND fingerprint IS NOT NULL AND media = 'image'),
+		(SELECT count(*) FROM uploads),
+		(SELECT count(*) FROM items WHERE deleted = 0)`).Scan(&c.Devices, &c.Photos, &c.Versions, &c.Blobs, &c.NasFiles, &c.PendingUploads, &c.Items)
 	return c, err
 }
 

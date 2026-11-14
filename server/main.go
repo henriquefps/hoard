@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -43,6 +44,9 @@ Flags (each falls back to the environment variable in brackets):
   --backup-root string    backup folder to use until one is chosen on the setup page [BACKUP_ROOT]
   --nas-interval duration how often NAS folders are walked again [NAS_INTERVAL] (default 30m)
   --log-format string     json or text [LOG_FORMAT] (default json)
+  --ffprobe string        ffprobe binary for video metadata [FFPROBE] (default ffprobe in PATH)
+  --probe-workers int     ffprobe runs at a time [PROBE_WORKERS] (default 2)
+  --probe-timeout duration  time limit of one ffprobe run [PROBE_TIMEOUT] (default 30s)
 
 On the first start the log shows a one-time setup code: open http://<server>:3071/admin/ from your
 network and enter it to set the admin password. The setup page only answers the local network and
@@ -102,8 +106,9 @@ func envOr(name, fallback string) string {
 }
 
 type options struct {
-	port, listen, dataDir, mounts, backupRoot, logFormat string
-	nasInterval                                          time.Duration
+	port, listen, dataDir, mounts, backupRoot, logFormat, ffprobe string
+	nasInterval, probeTimeout                                     time.Duration
+	probeWorkers                                                  int
 }
 
 func parseOptions(args []string, stderr io.Writer) (options, error) {
@@ -122,6 +127,17 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("NAS_INTERVAL: %w", err)
 	}
 	fs.DurationVar(&o.nasInterval, "nas-interval", interval, "")
+	fs.StringVar(&o.ffprobe, "ffprobe", envOr("FFPROBE", "ffprobe"), "")
+	probeTimeout, err := time.ParseDuration(envOr("PROBE_TIMEOUT", "30s"))
+	if err != nil {
+		return o, fmt.Errorf("PROBE_TIMEOUT: %w", err)
+	}
+	fs.DurationVar(&o.probeTimeout, "probe-timeout", probeTimeout, "")
+	probeWorkers, err := strconv.Atoi(envOr("PROBE_WORKERS", "2"))
+	if err != nil {
+		return o, fmt.Errorf("PROBE_WORKERS: %w", err)
+	}
+	fs.IntVar(&o.probeWorkers, "probe-workers", probeWorkers, "")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -130,6 +146,12 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	}
 	if o.nasInterval < time.Minute {
 		return o, fmt.Errorf("--nas-interval must be at least 1m")
+	}
+	if o.probeWorkers < 1 || o.probeWorkers > 16 {
+		return o, fmt.Errorf("--probe-workers must be 1 to 16")
+	}
+	if o.probeTimeout < time.Second {
+		return o, fmt.Errorf("--probe-timeout must be at least 1s")
 	}
 	return o, nil
 }
@@ -179,7 +201,7 @@ func serve(args []string, stderr io.Writer) int {
 		}
 	}
 	srv, err := server.New(ctx, server.Config{Version: version, Mounts: mountList, BackupRoot: o.backupRoot,
-		NasInterval: o.nasInterval, Logger: logger}, st)
+		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout}, st)
 	if err != nil {
 		logger.Error("cannot start", "err", err)
 		return 1

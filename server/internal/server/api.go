@@ -38,6 +38,11 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /v1/uploads/{id}", s.device(s.handleUploadPatch))
 	mux.HandleFunc("DELETE /v1/uploads/{id}", s.device(s.handleUploadDelete))
 	mux.HandleFunc("GET /v1/nas/files", s.device(s.handleNasFiles))
+	// Items (ADR 0014, hoard-server 0.5.0): additions.
+	mux.HandleFunc("GET /v1/items", s.device(s.handleItems))
+	mux.HandleFunc("GET /v1/items/changes", s.device(s.handleItemChanges))
+	mux.HandleFunc("GET /v1/items/{itemId}", s.device(s.handleItem))
+	mux.HandleFunc("POST /v1/items/lookup", s.device(s.handleItemLookup))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -121,6 +126,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"serverId": s.serverID, "serverName": name, "version": s.cfg.Version, "api": APIVersion,
 		"deviceId": info(r).device.ID, "limits": limits(), "storageConfigured": s.blobStore() != nil,
+		"features": []string{"items"}, // ADR 0014; absent before hoard-server 0.5.0
 	})
 }
 
@@ -528,6 +534,7 @@ func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	s.indexer.TriggerBackup()
 	if sha != "" {
 		if bs := s.blobStore(); bs != nil {
 			if err := bs.Remove(sha); err != nil {
@@ -652,7 +659,9 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.Fingerprint != "" {
-			if err := s.registerFingerprint(ctx, bs, b, req.Fingerprint, dev.ID); err != nil {
+			if err := s.registerFingerprint(ctx, bs, b, req.Fingerprint, dev.ID); err == nil {
+				s.indexer.TriggerBackup()
+			} else {
 				if errors.Is(err, blobstore.ErrFingerprint) {
 					fail(w, r, http.StatusUnprocessableEntity, "checksum_mismatch", "The stored blob does not have this fingerprint.", nil)
 					return
@@ -843,6 +852,9 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.uploadLocks.Delete(u.ID)
+	if u.Kind == store.BlobOriginal {
+		s.indexer.TriggerBackup() // the original becomes (part of) an item (ADR 0014)
+	}
 	uploadHeaders(w, u, u.Size)
 	w.Header().Set("Upload-Complete", "1")
 	w.WriteHeader(http.StatusNoContent)

@@ -1,0 +1,173 @@
+{
+  "adminPassword": "fixture admin password",
+  "changes": {
+    "changes": [
+      {
+        "data": {
+          "files": [
+            {
+              "fingerprint": "v1:2a8ed9fd76714b85e9a9d93547b5c6478963f7688bdd460c0e3264439592e499",
+              "name": "DSC00001.JPG",
+              "role": "rendered"
+            }
+          ],
+          "fingerprint": "v1:77658ba33c37f9843dbae5c7966b2de3257c94e91b3d7c79c5714211622691bf",
+          "preview": {
+            "height": 1365,
+            "sha256": "25be4dc42e791ae05a846fc3c18cf7594b4802082df47fa1fca73a2d101f0089",
+            "width": 2048
+          },
+          "rating": 4
+        },
+        "deleted": false,
+        "deviceId": "29d8b9f1-48df-4c7a-982e-5dd112e49326",
+        "id": "22222222-0000-4000-8000-000000000001",
+        "kind": "photo",
+        "modifiedAt": 1000,
+        "rev": 1
+      },
+      {
+        "data": {
+          "cursor": 0,
+          "history": [],
+          "photoId": "22222222-0000-4000-8000-000000000001",
+          "position": 0,
+          "recipe": {
+            "v": 1
+          }
+        },
+        "deleted": false,
+        "deviceId": "29d8b9f1-48df-4c7a-982e-5dd112e49326",
+        "id": "22222222-0000-4000-8000-000000000002",
+        "kind": "version",
+        "modifiedAt": 1000,
+        "rev": 2
+      },
+      {
+        "data": {
+          "fingerprint": "v1:1a98d219301cf78cb87c8757f4e6acfe786cac27e6f316ce54e892bd69890099",
+          "rating": 5
+        },
+        "deleted": false,
+        "deviceId": "2f7a9cc8-bbc7-4e23-b91f-be0114cc4352",
+        "id": "22222222-0000-4000-8000-000000000003",
+        "kind": "photo",
+        "modifiedAt": 2000,
+        "rev": 4
+      }
+    ],
+    "cursor": "62f33e70:4",
+    "hasMore": false
+  },
+  "createdBy": "hoard-server 0.4.0 built from github.com/henriquefps/hoard 0c401bf (server/)",
+  "health": {
+    "api": 1,
+    "counts": {
+      "blobs": 2,
+      "devices": 2,
+      "nasFiles": 4,
+      "pendingUploads": 0,
+      "photos": 2,
+      "versions": 1
+    },
+    "status": "ok",
+    "version": "0.4.0"
+  },
+  "lookup": {
+    "found": [
+      {
+        "fingerprint": "v1:77658ba33c37f9843dbae5c7966b2de3257c94e91b3d7c79c5714211622691bf",
+        "size": 504,
+        "source": "nas"
+      },
+      {
+        "fingerprint": "v1:1a98d219301cf78cb87c8757f4e6acfe786cac27e6f316ce54e892bd69890099",
+        "sha256": "c6cdc3d7b5f4a7b810708477fd9e8a71324f9a6e70e7da38534e05701a9ac5dc",
+        "size": 327,
+        "source": "backup"
+      }
+    ],
+    "missing": [
+      "v1:15e48e1c5f6326053f5e479ddcb90ee2997b2ee223b75482e5d05ea7619631cb"
+    ]
+  },
+  "mtimes": {
+    "2024/.DS_Store": 1714737600000000000,
+    "2024/._DSC00001.ARW": 1714737600000000000,
+    "2024/DSC00001.ARW": 1714737600000000000,
+    "2024/DSC00001.ARW.xmp": 1714737600000000000,
+    "2024/DSC00001.JPG": 1714737600000000000,
+    "2024/DSC00002.JPG": 1714737600000000000,
+    "2024/IMG_0003.HEIC": 1714737600000000000,
+    "clips/VID_0004.mp4": 1714737600000000000
+  },
+  "nasFiles": {
+    "cursor": "62f33e70:n4",
+    "files": [
+      {
+        "fingerprint": "v1:77658ba33c37f9843dbae5c7966b2de3257c94e91b3d7c79c5714211622691bf",
+        "folderId": "b2d5370d-46b7-449e-9b39-9d5d26409ad5",
+        "folderName": "nas",
+        "modifiedAt": 1714737600000,
+        "path": "2024/DSC00001.ARW",
+        "removed": false,
+        "size": 504
+      },
+      {
+        "fingerprint": "v1:2a8ed9fd76714b85e9a9d93547b5c6478963f7688bdd460c0e3264439592e499",
+        "folderId": "b2d5370d-46b7-449e-9b39-9d5d26409ad5",
+        "folderName": "nas",
+        "modifiedAt": 1714737600000,
+        "path": "2024/DSC00001.JPG",
+        "removed": false,
+        "size": 512
+      },
+      {
+        "fingerprint": "v1:6c67a282e6038593ce93ffdd9f660aaedbc63d4a8d763e702c8481cd07e0f4fc",
+        "folderId": "b2d5370d-46b7-449e-9b39-9d5d26409ad5",
+        "folderName": "nas",
+        "modifiedAt": 1714737600000,
+        "path": "2024/DSC00002.JPG",
+        "removed": false,
+        "size": 512
+      },
+      {
+        "fingerprint": "v1:e1c00176703b2f9d4cf3ce96220ceeecd620f87ace14a62c2c8deaf492c2b807",
+        "folderId": "b2d5370d-46b7-449e-9b39-9d5d26409ad5",
+        "folderName": "nas",
+        "modifiedAt": 1714737600000,
+        "path": "2024/IMG_0003.HEIC",
+        "removed": false,
+        "size": 723
+      }
+    ],
+    "hasMore": false
+  },
+  "nasPath": "/tmp/claude-1000/-home-henriquefps-orca-workspaces-hoard-hoard-server-items/80dd7150-9bbf-46cf-9f24-b60355561e61/scratchpad/fx/mnt/nas",
+  "phoneFingerprint": "v1:1a98d219301cf78cb87c8757f4e6acfe786cac27e6f316ce54e892bd69890099",
+  "phoneId": "29d8b9f1-48df-4c7a-982e-5dd112e49326",
+  "phoneKey": "rvk1_2e2dad8c62e69979_theZDZok0Z5-_gNIgK9uqqvpqDJSHIQOtP1KEjSR2Oc",
+  "phoneSha256": "c6cdc3d7b5f4a7b810708477fd9e8a71324f9a6e70e7da38534e05701a9ac5dc",
+  "previewSha256": "25be4dc42e791ae05a846fc3c18cf7594b4802082df47fa1fca73a2d101f0089",
+  "server": {
+    "api": 1,
+    "deviceId": "29d8b9f1-48df-4c7a-982e-5dd112e49326",
+    "limits": {
+      "chunkSize": 8388608,
+      "maxBlobSize": 4294967296,
+      "maxJsonBody": 8388608,
+      "maxLookup": 1000,
+      "maxPullLimit": 500,
+      "maxPushChanges": 500,
+      "maxRecordData": 2097152,
+      "maxUploadsPerDevice": 32,
+      "requestBurst": 120,
+      "requestsPerSecond": 30
+    },
+    "serverId": "62f33e70-d0f9-46c3-9766-d4cff4172653",
+    "serverName": "Hoard server",
+    "storageConfigured": true,
+    "version": "0.4.0"
+  },
+  "tabletKey": "rvk1_c39f0f23c5d4a276_qZYlVZ2MGdOkDhMWMUYtZo1k1HHpfF5oXwPOmmLP5ps"
+}

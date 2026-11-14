@@ -103,10 +103,11 @@ func (s *Store) RemoveNasFolder(ctx context.Context, id string) error {
 
 // SetNasFolderState records indexing progress.
 func (s *Store) SetNasFolderState(ctx context.Context, id, state string, errMsg *string, indexed bool) error {
-	q := "UPDATE nas_folders SET state = ?, error = ?, file_count = (SELECT count(*) FROM nas_files WHERE folder_id = ? AND removed = 0) WHERE id = ?"
+	// file_count counts photos and videos (sidecars are not shots of their own).
+	q := "UPDATE nas_folders SET state = ?, error = ?, file_count = (SELECT count(*) FROM nas_files WHERE folder_id = ? AND removed = 0 AND media != 'sidecar') WHERE id = ?"
 	args := []any{state, errMsg, id, id}
 	if indexed {
-		q = "UPDATE nas_folders SET state = ?, error = ?, indexed_at = ?, file_count = (SELECT count(*) FROM nas_files WHERE folder_id = ? AND removed = 0) WHERE id = ?"
+		q = "UPDATE nas_folders SET state = ?, error = ?, indexed_at = ?, file_count = (SELECT count(*) FROM nas_files WHERE folder_id = ? AND removed = 0 AND media != 'sidecar') WHERE id = ?"
 		args = []any{state, errMsg, s.nowMs(), id, id}
 	}
 	_, err := s.db.ExecContext(ctx, q, args...)
@@ -120,11 +121,12 @@ type NasFileState struct {
 	MTime       int64
 	Fingerprint string
 	Removed     bool
+	Media       string // image | video | sidecar
 }
 
 // NasFileStates loads every known file of a folder, keyed by relative path.
 func (s *Store) NasFileStates(ctx context.Context, folderID string) (map[string]NasFileState, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id, rel_path, size, mtime, coalesce(fingerprint, ''), removed FROM nas_files WHERE folder_id = ?", folderID)
+	rows, err := s.db.QueryContext(ctx, "SELECT id, rel_path, size, mtime, coalesce(fingerprint, ''), removed, media FROM nas_files WHERE folder_id = ?", folderID)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +135,7 @@ func (s *Store) NasFileStates(ctx context.Context, folderID string) (map[string]
 	for rows.Next() {
 		var st NasFileState
 		var p string
-		if err := rows.Scan(&st.ID, &p, &st.Size, &st.MTime, &st.Fingerprint, &st.Removed); err != nil {
+		if err := rows.Scan(&st.ID, &p, &st.Size, &st.MTime, &st.Fingerprint, &st.Removed, &st.Media); err != nil {
 			return nil, err
 		}
 		out[p] = st
@@ -148,6 +150,7 @@ type NasFileUpdate struct {
 	MTime       int64
 	Fingerprint string // "" = could not be read
 	Removed     bool
+	Media       string // image (default) | video | sidecar
 }
 
 // ApplyNasUpdates writes a batch of walk results, each with a new NAS feed revision.
@@ -162,12 +165,16 @@ func (s *Store) ApplyNasUpdates(ctx context.Context, folderID string, updates []
 			if u.Fingerprint != "" {
 				fp = u.Fingerprint
 			}
+			mediaClass := u.Media
+			if mediaClass == "" {
+				mediaClass = "image"
+			}
 			if u.Removed {
 				_, err = tx.ExecContext(ctx, "UPDATE nas_files SET removed = 1, rev = ? WHERE folder_id = ? AND rel_path = ?", rev, folderID, u.RelPath)
 			} else {
-				_, err = tx.ExecContext(ctx, `INSERT INTO nas_files (folder_id, rel_path, size, mtime, fingerprint, removed, rev) VALUES (?, ?, ?, ?, ?, 0, ?)
+				_, err = tx.ExecContext(ctx, `INSERT INTO nas_files (folder_id, rel_path, size, mtime, fingerprint, removed, rev, media) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
 					ON CONFLICT (folder_id, rel_path) DO UPDATE SET size = excluded.size, mtime = excluded.mtime,
-						fingerprint = excluded.fingerprint, removed = 0, rev = excluded.rev`, folderID, u.RelPath, u.Size, u.MTime, fp, rev)
+						fingerprint = excluded.fingerprint, removed = 0, rev = excluded.rev, media = excluded.media`, folderID, u.RelPath, u.Size, u.MTime, fp, rev, mediaClass)
 			}
 			if err != nil {
 				return err
@@ -189,10 +196,11 @@ type NasFile struct {
 	Rev         int64   `json:"-"`
 }
 
-// NasChanges returns NAS feed entries with rev > since.
+// NasChanges returns NAS feed entries with rev > since. The feed lists photos only, as it always did (ADR 0013):
+// videos and sidecars are indexed for items (ADR 0014) and skipped here.
 func (s *Store) NasChanges(ctx context.Context, since int64, limit int) ([]NasFile, bool, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT f.fingerprint, f.folder_id, d.name, f.rel_path, f.size, f.mtime, f.removed, f.rev
-		FROM nas_files f JOIN nas_folders d ON d.id = f.folder_id WHERE f.rev > ? ORDER BY f.rev LIMIT ?`, since, limit+1)
+		FROM nas_files f JOIN nas_folders d ON d.id = f.folder_id WHERE f.rev > ? AND f.media = 'image' ORDER BY f.rev LIMIT ?`, since, limit+1)
 	if err != nil {
 		return nil, false, err
 	}
