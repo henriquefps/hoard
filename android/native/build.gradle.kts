@@ -123,6 +123,8 @@ dependencies {
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.truth)
+    // Real org.json for the plain JVM tests (android.jar only has stubs).
+    testImplementation("org.json:json:20250517")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${rootProject.extra["coroutinesVersion"]}")
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 

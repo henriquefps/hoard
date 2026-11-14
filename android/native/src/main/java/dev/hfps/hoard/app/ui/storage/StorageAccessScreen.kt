@@ -54,7 +54,7 @@ import kotlinx.coroutines.launch
 
 /** "All files access" (ADR 0005): Android 11+ is a Settings switch, Android 10 and older the storage permissions. */
 object StorageAccessIntents {
-    fun granted(context: Context) = StorageAccess.granted(context)
+    fun granted(context: Context) = runCatching { StorageAccess.granted(context) }.getOrDefault(false)
 
     /** Opens Android's switch for Hoard (Android 11+). Older versions ask through [rememberStoragePermission]. */
     fun open(context: Context) {
