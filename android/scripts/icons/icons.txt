@@ -98,3 +98,19 @@ wifi-high
 play
 spinner-gap
 question
+# Culling (phase 2c)
+sparkle
+stack
+flag-checkered
+crown-simple
+eye-closed
+scan
+columns
+arrow-counter-clockwise
+crosshair-simple
+user-focus
+dots-six-vertical
+translate
+text-aa
+arrows-out
+aperture

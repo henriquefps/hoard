@@ -95,6 +95,20 @@ class AppContainer(context: Context) {
 
     val files: FileService by lazy { FileService(appContext, routes, gateway, volumeRegistry) }
 
+    /** Culling's native side (ADR 0008): one image core per process, the sidecar writer, open folders. */
+    val cull: dev.hfps.hoard.smb.cull.CullService by lazy {
+        dev.hfps.hoard.smb.cull.CullService(appContext, gateway.sessions, volumeRegistry, gateway.credentials)
+    }
+    private val cullStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** The culling service, marking that it exists (so leaving the app flushes its sidecar writes). */
+    fun cullService(): dev.hfps.hoard.smb.cull.CullService = cull.also { cullStarted.set(true) }
+
+    /** Hoard leaves the screen: culling's pending sidecar writes go out now (ADR 0011 "Flush"). */
+    fun onStop() {
+        if (cullStarted.get()) runCatching { cull.sidecars.flushAll() }
+    }
+
     val transfers: TransferService by lazy {
         TransferService(scope, NativeTransferManager(TransferManager.get(appContext)), database.transfers(), ::endpointOf)
     }

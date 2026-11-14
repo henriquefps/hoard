@@ -31,7 +31,43 @@ data class FilesSettings(
     val cullXmpHidden: Boolean = false,
 )
 
+/** Culling's settings (settings.ts): the viewer, assisted culling (ADR 0009) and the sidecars (ADR 0011). */
+data class CullSettings(
+    val autoAdvance: Boolean = true,
+    val swipeDecide: Boolean = false,
+    val blur: dev.hfps.hoard.app.cull.Sensitivity = dev.hfps.hoard.app.cull.Sensitivity.Medium,
+    val eyes: dev.hfps.hoard.app.cull.Sensitivity = dev.hfps.hoard.app.cull.Sensitivity.Medium,
+    val burstGapMs: Long = 1000,
+    val saveXmp: Boolean = true,
+    val xmpHidden: Boolean = false,
+) {
+    val assist: dev.hfps.hoard.app.cull.AssistSettings get() = dev.hfps.hoard.app.cull.AssistSettings(blur, eyes, burstGapMs)
+}
+
 class AppSettings(private val store: SettingsStore) {
+
+    val cull: Flow<CullSettings> = combine(
+        listOf(
+            store.observeJson(CULL_AUTO_ADVANCE),
+            store.observeJson(CULL_SWIPE_DECIDE),
+            store.observeJson(CULL_BLUR),
+            store.observeJson(CULL_EYES),
+            store.observeJson(CULL_BURST_GAP),
+            store.observeJson(CULL_SAVE_XMP),
+            store.observeJson(CULL_XMP_HIDDEN),
+        ),
+    ) { values -> parseCull(values.toList()) }
+
+    suspend fun setCullAutoAdvance(value: Boolean) = store.putJson(CULL_AUTO_ADVANCE, value.toString())
+    suspend fun setCullSwipeDecide(value: Boolean) = store.putJson(CULL_SWIPE_DECIDE, value.toString())
+    suspend fun setCullBlur(value: dev.hfps.hoard.app.cull.Sensitivity) = store.putJson(CULL_BLUR, JSONObject.quote(value.id))
+    suspend fun setCullEyes(value: dev.hfps.hoard.app.cull.Sensitivity) = store.putJson(CULL_EYES, JSONObject.quote(value.id))
+    suspend fun setCullBurstGap(ms: Long) {
+        require(ms in 100..10_000)
+        store.putJson(CULL_BURST_GAP, ms.toString())
+    }
+    suspend fun setCullSaveXmp(value: Boolean) = store.putJson(CULL_SAVE_XMP, value.toString())
+    suspend fun setCullXmpHidden(value: Boolean) = store.putJson(CULL_XMP_HIDDEN, value.toString())
 
     val files: Flow<FilesSettings> = combine(
         listOf(
@@ -73,6 +109,25 @@ class AppSettings(private val store: SettingsStore) {
         const val REVEAL_STREAM_NOTE_SEEN = "revealStreamNoteSeen"
         const val CULL_SAVE_XMP = "cullSaveXmp"
         const val CULL_XMP_HIDDEN = "cullXmpHidden"
+        const val CULL_AUTO_ADVANCE = "cullAutoAdvance"
+        const val CULL_SWIPE_DECIDE = "cullSwipeDecide"
+        const val CULL_BLUR = "cullBlurSensitivity"
+        const val CULL_EYES = "cullEyesSensitivity"
+        const val CULL_BURST_GAP = "cullBurstGapMs"
+
+        /** Pure: the culling settings from their stored JSON texts, in the order of [cull]'s keys (JVM-tested). */
+        fun parseCull(values: List<String?>): CullSettings {
+            val d = CullSettings()
+            return CullSettings(
+                autoAdvance = bool(values[0]) ?: d.autoAdvance,
+                swipeDecide = bool(values[1]) ?: d.swipeDecide,
+                blur = dev.hfps.hoard.app.cull.Sensitivity.of(string(values[2])) ?: d.blur,
+                eyes = dev.hfps.hoard.app.cull.Sensitivity.of(string(values[3])) ?: d.eyes,
+                burstGapMs = number(values[4])?.takeIf { it in 100.0..10_000.0 }?.toLong() ?: d.burstGapMs,
+                saveXmp = bool(values[5]) ?: d.saveXmp,
+                xmpHidden = bool(values[6]) ?: d.xmpHidden,
+            )
+        }
 
         /** The probe timeouts Settings offers (ms). */
         val PROBE_TIMEOUTS = listOf(800L, 1500L, 3000L, 5000L)

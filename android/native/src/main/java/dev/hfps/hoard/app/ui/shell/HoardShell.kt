@@ -186,7 +186,20 @@ fun HoardShell(container: AppContainer) {
                                         image = { loc, path -> navController.navigate(ImageViewerRoute(loc.id, loc.share, path)) },
                                         text = { loc, path, edit -> navController.navigate(TextViewerRoute(loc.id, loc.share, path, edit)) },
                                         transfers = { navController.navigate(TransfersRoute) },
+                                        cull = { loc, path -> navController.navigate(CullRoute(loc.id, loc.share, path)) },
                                     ),
+                                )
+                            }
+                            composable<CullRoute> { entry ->
+                                val route = entry.toRoute<CullRoute>()
+                                dev.hfps.hoard.app.ui.cull.CullScreen(
+                                    container = container,
+                                    locationId = route.locationId,
+                                    share = route.share,
+                                    path = route.path,
+                                    onBack = { navController.popBackStack() },
+                                    onTransfers = { navController.navigate(TransfersRoute) },
+                                    onOpenSettings = { navController.navigate(SettingsRoute) },
                                 )
                             }
                             composable<MachineFormRoute> { entry ->

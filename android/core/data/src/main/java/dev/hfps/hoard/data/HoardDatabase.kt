@@ -41,7 +41,7 @@ abstract class HoardDatabase : RoomDatabase() {
     abstract fun favorites(): FavoriteDao
     abstract fun manualShares(): ManualShareDao
     abstract fun transfers(): TransferDao
-    abstract fun cullDecisions(): CullDecisionDao
+    abstract fun cull(): CullDao
     abstract fun settings(): SettingsDao
     abstract fun legacyImports(): LegacyImportDao
 
@@ -267,10 +267,130 @@ interface TransferDao {
 }
 
 @Dao
-interface CullDecisionDao {
-    /** A culled folder's decisions (ADR 0008), keyed by shot id (lowercase stem). */
+abstract class CullDao {
+    // --- Sessions (queries.ts getCullSession / touchCullSession) ---
+
+    @Query("SELECT * FROM cull_sessions WHERE location_id = :locationId AND share = :share AND path = :path")
+    abstract suspend fun session(locationId: String, share: String, path: String): CullSessionEntity?
+
+    @Upsert
+    abstract suspend fun putSession(session: CullSessionEntity)
+
+    /**
+     * Starts or continues a folder's culling session: created on the first visit, `last_visited_at` (and the shot count
+     * and the last shot when given) updated on every later one.
+     */
+    @Transaction
+    open suspend fun touchSession(locationId: String, share: String, path: String, shotCount: Int? = null, lastShotId: String? = null, setLastShot: Boolean = false) {
+        val at = dev.hfps.hoard.data.legacy.isoNow()
+        val existing = session(locationId, share, path)
+        putSession(
+            CullSessionEntity(
+                locationId = locationId,
+                share = share,
+                path = path,
+                startedAt = existing?.startedAt ?: at,
+                lastVisitedAt = at,
+                lastShotId = if (setLastShot) lastShotId else existing?.lastShotId,
+                shotCount = shotCount ?: existing?.shotCount ?: 0,
+            ),
+        )
+    }
+
+    // --- Decisions (ADR 0008), keyed by shot id (lowercase stem) ---
+
     @Query("SELECT * FROM cull_decisions WHERE location_id = :locationId AND share = :share AND path = :path")
-    suspend fun forFolder(locationId: String, share: String, path: String): List<CullDecisionEntity>
+    abstract suspend fun forFolder(locationId: String, share: String, path: String): List<CullDecisionEntity>
+
+    @Upsert
+    abstract suspend fun putDecision(decision: CullDecisionEntity)
+
+    @Query("DELETE FROM cull_decisions WHERE location_id = :locationId AND share = :share AND path = :path AND shot_id = :shotId")
+    abstract suspend fun deleteDecision(locationId: String, share: String, path: String, shotId: String)
+
+    /** One transaction for a pick, an undo or a bulk change; an unmarked shot's row is deleted (saveCullDecisions). */
+    @Transaction
+    open suspend fun saveDecisions(locationId: String, share: String, path: String, decisions: List<Triple<String, String?, Int>>) {
+        val at = dev.hfps.hoard.data.legacy.isoNow()
+        for ((shotId, flag, rating) in decisions) {
+            val stars = rating.coerceIn(0, 5)
+            if (flag == null && stars == 0) {
+                deleteDecision(locationId, share, path, shotId)
+            } else {
+                putDecision(CullDecisionEntity(locationId, share, path, shotId, flag, stars, at))
+            }
+        }
+    }
+
+    // --- Sidecars (ADR 0011) ---
+
+    @Query("SELECT * FROM cull_sidecars WHERE location_id = :locationId AND share = :share AND path = :path")
+    abstract suspend fun sidecars(locationId: String, share: String, path: String): List<CullSidecarEntity>
+
+    @Query("SELECT * FROM cull_sidecars WHERE location_id = :locationId AND share = :share AND path = :path AND shot_id = :shotId")
+    abstract suspend fun sidecar(locationId: String, share: String, path: String, shotId: String): CullSidecarEntity?
+
+    @Upsert
+    abstract suspend fun putSidecar(row: CullSidecarEntity)
+
+    /** A sidecar row update; a field left null keeps its stored value (saveCullSidecars). */
+    data class SidecarUpdate(
+        val shotId: String,
+        val decidedAt: Long? = null,
+        val setDecidedAt: Boolean = false,
+        val sidecarMtime: Long? = null,
+        val setSidecarMtime: Boolean = false,
+        val synced: Boolean? = null,
+    )
+
+    @Transaction
+    open suspend fun saveSidecars(locationId: String, share: String, path: String, rows: List<SidecarUpdate>) {
+        for (row in rows) {
+            val existing = sidecar(locationId, share, path, row.shotId)
+            putSidecar(
+                CullSidecarEntity(
+                    locationId = locationId,
+                    share = share,
+                    path = path,
+                    shotId = row.shotId,
+                    decidedAt = if (row.setDecidedAt) row.decidedAt else existing?.decidedAt,
+                    sidecarMtime = if (row.setSidecarMtime) row.sidecarMtime else existing?.sidecarMtime,
+                    synced = row.synced?.let { if (it) 1 else 0 } ?: existing?.synced ?: 0,
+                ),
+            )
+        }
+    }
+
+    @Query("DELETE FROM cull_sidecars WHERE location_id = :locationId AND share = :share AND path = :path AND shot_id = :shotId")
+    abstract suspend fun deleteSidecar(locationId: String, share: String, path: String, shotId: String)
+
+    /** Forgets shots that no longer exist (after "Delete rejects"). */
+    @Transaction
+    open suspend fun forgetShots(locationId: String, share: String, path: String, shotIds: List<String>) {
+        for (id in shotIds) {
+            deleteDecision(locationId, share, path, id)
+            deleteSidecar(locationId, share, path, id)
+        }
+    }
+
+    // --- "Copy picks" destination per source location ---
+
+    @Query("SELECT * FROM cull_destinations WHERE source_location_id = :locationId AND source_share = :share")
+    abstract suspend fun destination(locationId: String, share: String): CullDestinationEntity?
+
+    @Upsert
+    abstract suspend fun putDestination(destination: CullDestinationEntity)
+
+    // --- Assisted culling cache (ADR 0009) ---
+
+    @Query("SELECT * FROM cull_analysis WHERE location_id = :locationId AND share = :share AND folder = :folder")
+    abstract suspend fun analyses(locationId: String, share: String, folder: String): List<CullAnalysisEntity>
+
+    @Upsert
+    abstract suspend fun putAnalyses(rows: List<CullAnalysisEntity>)
+
+    @Query("DELETE FROM cull_analysis")
+    abstract suspend fun clearAnalyses(): Int
 }
 
 @Dao

@@ -107,6 +107,9 @@ fun DestinationPicker(
     entries: List<PickedEntry>,
     onDismiss: () -> Unit,
     onPick: suspend (FolderPlace, String, String) -> Unit,
+    /** Culling's "Copy picks" names the picker and its action itself ("Destination", "Use this folder"). */
+    titleText: String? = null,
+    actionText: String? = null,
 ) {
     val context = LocalContext.current
     val res = androidx.compose.ui.platform.LocalResources.current
@@ -168,14 +171,14 @@ fun DestinationPicker(
         }
     }
 
-    val title = when (intent) {
+    val title = titleText ?: when (intent) {
         TransferIntent.Copy -> pluralStringResource(R.plurals.t_transfer_title_copy, count, count.toString())
         TransferIntent.Move -> pluralStringResource(R.plurals.t_transfer_title_move, count, count.toString())
         TransferIntent.Download -> pluralStringResource(R.plurals.t_transfer_title_download, count, count.toString())
         TransferIntent.Upload -> pluralStringResource(R.plurals.t_transfer_title_upload, count, count.toString())
         TransferIntent.Save -> pluralStringResource(R.plurals.t_save_picker_title, count, count.toString())
     }
-    val actionLabel = stringResource(
+    val actionLabel = actionText ?: stringResource(
         when (intent) {
             TransferIntent.Move -> R.string.t_transfer_move_here
             TransferIntent.Save -> R.string.t_save_here

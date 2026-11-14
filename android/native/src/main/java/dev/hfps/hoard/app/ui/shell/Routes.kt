@@ -28,3 +28,6 @@ import kotlinx.serialization.Serializable
 @Serializable data class ImageViewerRoute(val locationId: String, val share: String? = null, val path: String)
 
 @Serializable data class TextViewerRoute(val locationId: String, val share: String? = null, val path: String, val edit: Boolean = false)
+
+/** A folder of any location opened for culling (ADR 0008). */
+@Serializable data class CullRoute(val locationId: String, val share: String? = null, val path: String = "")

@@ -274,11 +274,21 @@ class TransferService(
                 finishedAt = null,
             ),
         )
-        run(id, request.op, source, request.paths, destination, request.conflict, resume = false)
+        run(id, request.op, source, request.paths, destination, request.conflict, resume = false, request.sidecars, request.hiddenSidecars)
         return id
     }
 
-    private suspend fun run(id: String, op: String, source: TransferPlace, paths: List<String>, destination: FolderPlace, conflict: String, resume: Boolean) {
+    private suspend fun run(
+        id: String,
+        op: String,
+        source: TransferPlace,
+        paths: List<String>,
+        destination: FolderPlace,
+        conflict: String,
+        resume: Boolean,
+        sidecars: Map<String, dev.hfps.hoard.xmp.XmpFields> = emptyMap(),
+        hiddenSidecars: Boolean = false,
+    ) {
         _live.update { it + (id to (it[id] ?: LiveTransfer(TransferStates.QUEUED)).copy(state = TransferStates.QUEUED, errorCode = null, errorMessage = null)) }
         try {
             val from = resolve(source)
@@ -292,6 +302,8 @@ class TransferService(
                     destPath = destination.path,
                     conflict = conflict,
                     resume = resume,
+                    sidecars = if (op == "copy") sidecars else emptyMap(),
+                    hiddenSidecars = hiddenSidecars,
                 ),
             )
         } catch (e: Throwable) {

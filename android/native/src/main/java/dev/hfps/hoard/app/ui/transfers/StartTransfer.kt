@@ -27,10 +27,19 @@ import kotlinx.coroutines.flow.first
 class StartTransfer(private val container: AppContainer, private val context: Context, private val toaster: Toaster, private val onView: () -> Unit) {
     private val res get() = context.resources
 
-    suspend operator fun invoke(op: String, source: TransferPlace, entries: List<PickedEntry>, destination: FolderPlace, label: String, conflict: String): Boolean {
+    suspend operator fun invoke(
+        op: String,
+        source: TransferPlace,
+        entries: List<PickedEntry>,
+        destination: FolderPlace,
+        label: String,
+        conflict: String,
+        sidecars: Map<String, dev.hfps.hoard.xmp.XmpFields> = emptyMap(),
+        hiddenSidecars: Boolean = false,
+    ): Boolean {
         NotificationsPermission.askOnce()
         try {
-            container.transfers.transfer(transferRequest(op, source, entries, destination, conflict))
+            container.transfers.transfer(transferRequest(op, source, entries, destination, conflict).copy(sidecars = sidecars, hiddenSidecars = hiddenSidecars))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {

@@ -127,6 +127,195 @@
     <string name="t_conflict_rename_hint">Salva a nova cópia como “nome (1)”.</string>
     <string name="t_conflict_skip">Pular</string>
     <string name="t_conflict_skip_hint">Deixa o arquivo existente como está.</string>
+    <string name="t_cull_assist_accept">Aceitar</string>
+    <string name="t_cull_assist_accept_burst">Aceitar para a sequência toda</string>
+    <string name="t_cull_assist_analysed">Todas as fotos analisadas</string>
+    <string name="t_cull_assist_analysing">Analisando %1$s de %2$s</string>  <!-- args: 1=done, 2=total -->
+    <string name="t_cull_assist_best">Melhor da sequência</string>
+    <string name="t_cull_assist_blur_hint">Mais alto marca também fotos um pouco suaves; mais baixo só as claramente desfocadas.</string>
+    <string name="t_cull_assist_blur_setting">Fotos desfocadas</string>
+    <string name="t_cull_assist_burst_gap">Intervalo da sequência</string>
+    <string name="t_cull_assist_burst_gap_hint">Fotos tiradas com menos que isso de diferença começam uma sequência (uma cena nova a divide). Quadros quase idênticos até quatro vezes mais distantes entram nela.</string>
+    <string name="t_cull_assist_collapse">Empilhar esta sequência de novo</string>
+    <string name="t_cull_assist_dismiss">Ocultar</string>
+    <string name="t_cull_assist_expand_hint">Toque para abrir a sequência; toque no selo ou segure para ver os quadros</string>
+    <string name="t_cull_assist_eyes_closed">olhos fechados</string>
+    <string name="t_cull_assist_eyes_hint">Mais alto marca também olhos semicerrados. Só contam rostos grandes o bastante para importar.</string>
+    <string name="t_cull_assist_eyes_open">olhos abertos</string>
+    <string name="t_cull_assist_eyes_setting">Olhos fechados</string>
+    <string name="t_cull_assist_eyes_unknown">olhos não visíveis</string>
+    <string name="t_cull_assist_faces_unavailable">Detecção de rostos indisponível</string>
+    <string name="t_cull_assist_filter_any">Qualquer análise</string>
+    <string name="t_cull_assist_filter_blurry">Desfocadas</string>
+    <string name="t_cull_assist_filter_clean">Sem problemas</string>
+    <string name="t_cull_assist_filter_eyes_closed">Olhos fechados</string>
+    <string name="t_cull_assist_filter_flagged">Com problema</string>
+    <string name="t_cull_assist_filter_label">Análise</string>
+    <string name="t_cull_assist_filter_overexposed">Superexpostas</string>
+    <string name="t_cull_assist_filter_underexposed">Subexpostas</string>
+    <string name="t_cull_assist_flag_blurry">Desfocada</string>
+    <string name="t_cull_assist_flag_eyes_closed">Olhos fechados</string>
+    <string name="t_cull_assist_flag_overexposed">Superexposta</string>
+    <string name="t_cull_assist_flag_underexposed">Subexposta</string>
+    <string name="t_cull_assist_highlights">%1$s de altas luzes estouradas</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_histogram">Histograma de brilho</string>
+    <string name="t_cull_assist_jump_to_face">Ampliar o rosto</string>
+    <string name="t_cull_assist_keep_short">Manter?</string>
+    <string name="t_cull_assist_measured_on">Medida em: %1$s, %2$s</string>  <!-- args: 1=source, 2=size -->
+    <string name="t_cull_assist_no_faces">Nenhum rosto</string>
+    <string name="t_cull_assist_not_analysed">Ainda não analisada</string>
+    <string name="t_cull_assist_reason_all_flagged">todos os quadros desta sequência têm algum problema</string>
+    <string name="t_cull_assist_reason_blurrier_than">Mais desfocada que %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_assist_reason_eyes_open">olhos abertos</string>
+    <string name="t_cull_assist_reason_not_best">%1$s é um quadro melhor</string>  <!-- args: 1=name -->
+    <string name="t_cull_assist_reason_sharpest">Melhor quadro da sequência</string>
+    <string name="t_cull_assist_reject_short">Rejeitar?</string>
+    <string name="t_cull_assist_seconds">%1$s s</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_sensitivity_high">Alta</string>
+    <string name="t_cull_assist_sensitivity_low">Baixa</string>
+    <string name="t_cull_assist_sensitivity_medium">Média</string>
+    <string name="t_cull_assist_settings">Ajustes da assistência</string>
+    <string name="t_cull_assist_settings_hint">Como o Hoard marca fotos e agrupa sequências. Marcas e sugestões nunca decidem por você.</string>
+    <string name="t_cull_assist_settings_title">Assistência na seleção</string>
+    <string name="t_cull_assist_shadows">%1$s de sombras sem detalhe</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_sharpness">Nitidez %1$s</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_sort_label">Ordenar</string>
+    <string name="t_cull_assist_sort_sharpness">Mais nítidas</string>
+    <string name="t_cull_assist_sort_time">Hora</string>
+    <string name="t_cull_assist_stack">Empilhar sequências</string>
+    <string name="t_cull_assist_subject_face">no rosto</string>
+    <string name="t_cull_assist_subject_tile">na área mais nítida</string>
+    <string name="t_cull_assist_suggest">Sugerir</string>
+    <string name="t_cull_assist_suggest_hint">O melhor quadro de cada sequência e as fotos com algum problema. Nada muda até você aceitar.</string>
+    <string name="t_cull_assist_suggest_keep">Sugestão: manter</string>
+    <string name="t_cull_assist_suggest_none">Nenhuma sugestão agora</string>
+    <string name="t_cull_assist_suggest_partial">Ainda analisando: mais sugestões vão aparecer. Nada muda até você aceitar.</string>
+    <string name="t_cull_assist_suggest_reject">Sugestão: rejeitar</string>
+    <string name="t_cull_assist_suggest_summary">Sugestões: manter %1$s, rejeitar %2$s</string>  <!-- args: 1=keep, 2=reject -->
+    <string name="t_cull_auto_advance">Ir para a próxima foto após escolher ou descartar</string>
+    <string name="t_cull_burst">Sequência, quadro %1$s de %2$s</string>  <!-- args: 1=index, 2=size -->
+    <string name="t_cull_burst_mode_accept_suggestion">Aceitar sugestão da sequência</string>
+    <string name="t_cull_burst_mode_already_kept">Já escolhida: os outros quadros já estão decididos</string>
+    <string name="t_cull_burst_mode_compare">Comparar com a melhor</string>
+    <string name="t_cull_burst_mode_exit">Voltar à pasta</string>
+    <string name="t_cull_burst_mode_keep">Ficar com esta</string>
+    <string name="t_cull_burst_mode_pending">%1$s de %2$s decididas</string>  <!-- args: 1=decided, 2=size -->
+    <string name="t_cull_burst_mode_position">Sequência · %1$s de %2$s</string>  <!-- args: 1=index, 2=total -->
+    <string name="t_cull_burst_mode_resolved">%1$s de %2$s escolhidas</string>  <!-- args: 1=kept, 2=size -->
+    <string name="t_cull_burst_mode_resolved_short">%1$s/%2$s</string>  <!-- args: 1=kept, 2=size -->
+    <string name="t_cull_burst_mode_view">Ver sequência (%1$s)</string>  <!-- args: 1=count -->
+    <string name="t_cull_cell_label">%1$s, %2$s, %3$s</string>  <!-- args: 1=name, 2=kind, 3=state -->
+    <string name="t_cull_compare_close">Voltar para uma foto</string>
+    <string name="t_cull_compare_focus">Foco %1$s</string>  <!-- args: 1=value -->
+    <string name="t_cull_compare_focus_help">Nota de foco (a área mais nítida). Compare fotos da mesma sequência; maior é mais nítida.</string>
+    <string name="t_cull_compare_keep">Ficar com esta</string>
+    <string name="t_cull_compare_next">Próxima foto à direita</string>
+    <string name="t_cull_compare_open">Comparar</string>
+    <string name="t_cull_compare_previous">Foto anterior à direita</string>
+    <string name="t_cull_compare_sharpness">Nitidez %1$s</string>  <!-- args: 1=value -->
+    <string name="t_cull_compare_sharpness_help">Nitidez do assunto (um rosto, senão a área mais nítida), de 0 a 100. A coroa marca o quadro melhor: mais nítido, olhos abertos, bem exposto.</string>
+    <string name="t_cull_compare_title">Comparar</string>
+    <string name="t_cull_copy_change">Alterar</string>
+    <string name="t_cull_copy_choose_destination">Escolher uma pasta</string>
+    <string name="t_cull_copy_destination">Destino</string>
+    <string name="t_cull_copy_destination_help">Qualquer pasta deste celular, de um pendrive, de um cartão SD ou de uma máquina.</string>
+    <string name="t_cull_copy_files">Arquivos de cada foto</string>
+    <string name="t_cull_copy_files_both">RAW e JPEG</string>
+    <string name="t_cull_copy_files_jpeg">Só JPEG</string>
+    <string name="t_cull_copy_files_raw">Só RAW</string>
+    <string name="t_cull_copy_folder">Pasta</string>
+    <string name="t_cull_copy_folder_keep">Numa pasta chamada %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_copy_folder_new">Numa pasta nova</string>
+    <string name="t_cull_copy_folder_none">Direto no destino</string>
+    <string name="t_cull_copy_subfolder_name">Nome da pasta</string>
+    <string name="t_cull_copy_title">Copiar escolhidas</string>
+    <string name="t_cull_copy_use_folder">Usar esta pasta</string>
+    <string name="t_cull_copy_xmp_note">Cada foto copiada leva um arquivo XMP com as estrelas e a marca de escolhida (Configurações › Seleção de fotos).</string>
+    <string name="t_cull_delete_deleting">Apagando…</string>
+    <string name="t_cull_delete_permanent">Isto é permanente: não há lixeira para restaurá-las.</string>
+    <string name="t_cull_delete_read_only">Apagar descartadas (pasta somente leitura)</string>
+    <string name="t_cull_delete_refused">O local recusou apagar (somente leitura).</string>
+    <string name="t_cull_delete_where_drive">em %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_delete_where_phone">neste celular</string>
+    <string name="t_cull_delete_where_smb">em %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_details_analysis">Análise</string>
+    <string name="t_cull_details_burst">Sequência</string>
+    <string name="t_cull_details_burst_value">Quadro %1$s de %2$s</string>  <!-- args: 1=index, 2=size -->
+    <string name="t_cull_details_camera">Câmera</string>
+    <string name="t_cull_details_close">Esconder detalhes</string>
+    <string name="t_cull_details_exposure">Exposição</string>
+    <string name="t_cull_details_exposure_label">Exposição</string>
+    <string name="t_cull_details_exposure_ok">Bem exposta</string>
+    <string name="t_cull_details_face">Rosto %1$s</string>  <!-- args: 1=index -->
+    <string name="t_cull_details_faces">Rostos</string>
+    <string name="t_cull_details_file">Arquivo</string>
+    <string name="t_cull_details_focal">Distância focal</string>
+    <string name="t_cull_details_highlights">%1$s de altas luzes estouradas (%2$s em áreas grandes)</string>  <!-- args: 1=value, 2=area -->
+    <string name="t_cull_details_lens">Lente</string>
+    <string name="t_cull_details_open">Mostrar detalhes</string>
+    <string name="t_cull_details_over_blown_area">Superexposta: %1$s da foto estourada em áreas grandes</string>  <!-- args: 1=value -->
+    <string name="t_cull_details_over_face">Superexposta: %1$s de um rosto estourado</string>  <!-- args: 1=value -->
+    <string name="t_cull_details_over_mean">Superexposta: clara demais no geral</string>
+    <string name="t_cull_details_sharpness">Nitidez</string>
+    <string name="t_cull_details_shown">Mostrando</string>
+    <string name="t_cull_details_suggestion">Sugestão</string>
+    <string name="t_cull_details_taken">Tirada</string>
+    <string name="t_cull_details_title">Detalhes</string>
+    <string name="t_cull_details_toggle">Detalhes</string>
+    <string name="t_cull_details_under_mean">Subexposta: escura demais no geral</string>
+    <string name="t_cull_details_under_shadows">Subexposta: %1$s de sombras sem detalhe</string>  <!-- args: 1=value -->
+    <string name="t_cull_empty_body">Esta pasta não tem arquivos RAW, JPEG ou HEIF para selecionar.</string>
+    <string name="t_cull_empty_title">Nenhuma foto aqui</string>
+    <string name="t_cull_exif_equivalent">(%1$s equivalente)</string>  <!-- args: 1=value -->
+    <string name="t_cull_exif_none">Sem dados da câmera</string>
+    <string name="t_cull_filmstrip">Tira de miniaturas</string>
+    <string name="t_cull_filter_all">Todas</string>
+    <string name="t_cull_filter_any_stars">Qualquer nota</string>
+    <string name="t_cull_filter_label">Mostrar</string>
+    <string name="t_cull_filter_picked">Escolhidas</string>
+    <string name="t_cull_filter_rejected">Descartadas</string>
+    <string name="t_cull_filter_stars">Estrelas</string>
+    <string name="t_cull_filter_unmarked">Não decididas</string>
+    <string name="t_cull_finish">Concluir</string>
+    <string name="t_cull_flag_picked">Escolhida</string>
+    <string name="t_cull_flag_rejected">Descartada</string>
+    <string name="t_cull_flag_unmarked">Não decidida</string>
+    <string name="t_cull_grid">Fotos</string>
+    <string name="t_cull_kind_jpeg">JPG</string>
+    <string name="t_cull_kind_pair">RAW+JPG</string>
+    <string name="t_cull_kind_raw">RAW</string>
+    <string name="t_cull_no_match_body">Mude o filtro para ver as outras fotos.</string>
+    <string name="t_cull_no_match_title">Nenhuma foto corresponde</string>
+    <string name="t_cull_open">Selecionar fotos</string>
+    <string name="t_cull_pick">Escolher</string>
+    <string name="t_cull_progress">%1$s de %2$s decididas · %3$s escolhidas · %4$s descartadas</string>  <!-- args: 1=decided, 2=total, 3=picked, 4=rejected -->
+    <string name="t_cull_progress_label">Progresso da seleção</string>
+    <string name="t_cull_rating">Estrelas</string>
+    <string name="t_cull_reading_exif">Lendo horários de captura…</string>
+    <string name="t_cull_reject">Descartar</string>
+    <string name="t_cull_resume">Continuar</string>
+    <string name="t_cull_save_failed">Não foi possível salvar essa decisão. Tente de novo.</string>
+    <string name="t_cull_source_screen_raw_half">RAW, metade do tamanho</string>
+    <string name="t_cull_source_screen_raw_preview">Prévia embutida</string>
+    <string name="t_cull_source_screen_rendered">JPEG da câmera</string>
+    <string name="t_cull_source_zoom_raw_full" formatted="false">100%% do RAW (LibRaw)</string>
+    <string name="t_cull_source_zoom_raw_preview" formatted="false">100%% do JPEG embutido em tamanho real</string>
+    <string name="t_cull_source_zoom_rendered" formatted="false">100%% do JPEG da câmera</string>
+    <string name="t_cull_start">Começar a seleção</string>
+    <string name="t_cull_title">Seleção</string>
+    <string name="t_cull_undo">Desfazer</string>
+    <string name="t_cull_viewer_image_failed">Não foi possível mostrar esta foto.</string>
+    <string name="t_cull_viewer_info">Dados da câmera</string>
+    <string name="t_cull_viewer_loading_full" formatted="false">Carregando 100%%…</string>
+    <string name="t_cull_viewer_position">%1$s de %2$s</string>  <!-- args: 1=index, 2=total -->
+    <string name="t_cull_viewer_rendering_raw" formatted="false">Revelando o RAW em 100%%…</string>
+    <string name="t_cull_viewer_swipe_decide">Deslizar para cima e para baixo para escolher e descartar</string>
+    <string name="t_cull_viewer_title">Vendo %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_xmp_hidden">Gravar o XMP como arquivo oculto (.nome.xmp)</string>
+    <string name="t_cull_xmp_hidden_hint">Os novos arquivos começam com um ponto e ficam escondidos. O Reveal e o digiKam leem esses arquivos; o Lightroom não.</string>
+    <string name="t_cull_xmp_read_only">As notas desta pasta ficam salvas só no Hoard</string>
+    <string name="t_cull_xmp_save">Salvar as notas junto às fotos (XMP)</string>
+    <string name="t_cull_xmp_save_hint">Estrelas, escolhidas e rejeitadas vão para um arquivo .xmp ao lado de cada foto nas pastas em que o Hoard pode gravar, e junto das cópias de \"Copiar escolhidas\". O Lightroom, o darktable, o digiKam e o Reveal leem esses arquivos; notas dadas neles aparecem aqui quando a pasta abre.</string>
     <string name="t_download_choose_folder">Escolher pasta…</string>
     <string name="t_download_conflict">Se o arquivo já existir</string>
     <string name="t_download_destination">Salvar em</string>
@@ -642,6 +831,126 @@
         <item quantity="one">%1$s selecionado</item>
         <item quantity="many">%1$s selecionados</item>
         <item quantity="other">%1$s selecionados</item>
+    </plurals>
+    <plurals name="t_cull_assist_accept_all">  <!-- args: 1=count -->
+        <item quantity="one">Aceitar %1$s</item>
+        <item quantity="many">Aceitar todas (%1$s)</item>
+        <item quantity="other">Aceitar todas (%1$s)</item>
+    </plurals>
+    <plurals name="t_cull_assist_accepted">  <!-- args: 1=count -->
+        <item quantity="one">%1$s sugestão aceita</item>
+        <item quantity="many">%1$s sugestões aceitas</item>
+        <item quantity="other">%1$s sugestões aceitas</item>
+    </plurals>
+    <plurals name="t_cull_assist_expand">  <!-- args: 1=count -->
+        <item quantity="one">Mostrar o %1$s quadro desta sequência</item>
+        <item quantity="many">Mostrar os %1$s quadros desta sequência</item>
+        <item quantity="other">Mostrar os %1$s quadros desta sequência</item>
+    </plurals>
+    <plurals name="t_cull_assist_faces">  <!-- args: 1=count -->
+        <item quantity="one">%1$s rosto</item>
+        <item quantity="many">%1$s rostos</item>
+        <item quantity="other">%1$s rostos</item>
+    </plurals>
+    <plurals name="t_cull_assist_failed">  <!-- args: 1=count -->
+        <item quantity="one">%1$s foto não pôde ser analisada</item>
+        <item quantity="many">%1$s fotos não puderam ser analisadas</item>
+        <item quantity="other">%1$s fotos não puderam ser analisadas</item>
+    </plurals>
+    <plurals name="t_cull_burst_mode_kept">  <!-- args: 1=name, 2=count -->
+        <item quantity="one">Ficou com %1$s; %2$s outro quadro descartado</item>
+        <item quantity="many">Ficou com %1$s; %2$s outros quadros descartados</item>
+        <item quantity="other">Ficou com %1$s; %2$s outros quadros descartados</item>
+    </plurals>
+    <plurals name="t_cull_burst_mode_rejected">  <!-- args: 1=count -->
+        <item quantity="one">%1$s foto da sequência descartada</item>
+        <item quantity="many">%1$s fotos da sequência descartadas</item>
+        <item quantity="other">%1$s fotos da sequência descartadas</item>
+    </plurals>
+    <plurals name="t_cull_chips_eyes_open">  <!-- args: 1=count -->
+        <item quantity="one">Olhos abertos</item>
+        <item quantity="many">Olhos abertos em %1$s rostos</item>
+        <item quantity="other">Olhos abertos em %1$s rostos</item>
+    </plurals>
+    <plurals name="t_cull_copy_fallback_jpeg">  <!-- args: 1=count -->
+        <item quantity="one">%1$s escolhida não tem JPEG: o RAW dela é copiado no lugar.</item>
+        <item quantity="many">%1$s escolhidas não têm JPEG: os RAWs delas são copiados no lugar.</item>
+        <item quantity="other">%1$s escolhidas não têm JPEG: os RAWs delas são copiados no lugar.</item>
+    </plurals>
+    <plurals name="t_cull_copy_fallback_raw">  <!-- args: 1=count -->
+        <item quantity="one">%1$s escolhida não tem RAW: o JPEG dela é copiado no lugar.</item>
+        <item quantity="many">%1$s escolhidas não têm RAW: os JPEGs delas são copiados no lugar.</item>
+        <item quantity="other">%1$s escolhidas não têm RAW: os JPEGs delas são copiados no lugar.</item>
+    </plurals>
+    <plurals name="t_cull_copy_menu">  <!-- args: 1=count -->
+        <item quantity="one">Copiar %1$s escolhida para…</item>
+        <item quantity="many">Copiar %1$s escolhidas para…</item>
+        <item quantity="other">Copiar %1$s escolhidas para…</item>
+    </plurals>
+    <plurals name="t_cull_copy_start">  <!-- args: 1=count -->
+        <item quantity="one">Copiar %1$s arquivo</item>
+        <item quantity="many">Copiar %1$s arquivos</item>
+        <item quantity="other">Copiar %1$s arquivos</item>
+    </plurals>
+    <plurals name="t_cull_copy_summary">  <!-- args: 1=shots, 2=files, 3=size -->
+        <item quantity="one">%1$s fotos escolhidas, %2$s arquivo, %3$s</item>
+        <item quantity="many">%1$s fotos escolhidas, %2$s arquivos, %3$s</item>
+        <item quantity="other">%1$s fotos escolhidas, %2$s arquivos, %3$s</item>
+    </plurals>
+    <plurals name="t_cull_delete_body">  <!-- args: 1=shots, 2=files, 3=size, 4=where -->
+        <item quantity="one">%1$s fotos, %2$s arquivo (%3$s) %4$s. Um par RAW + JPEG apaga os dois arquivos.</item>
+        <item quantity="many">%1$s fotos, %2$s arquivos (%3$s) %4$s. Um par RAW + JPEG apaga os dois arquivos.</item>
+        <item quantity="other">%1$s fotos, %2$s arquivos (%3$s) %4$s. Um par RAW + JPEG apaga os dois arquivos.</item>
+    </plurals>
+    <plurals name="t_cull_delete_confirm">  <!-- args: 1=count -->
+        <item quantity="one">Apagar %1$s arquivo</item>
+        <item quantity="many">Apagar %1$s arquivos</item>
+        <item quantity="other">Apagar %1$s arquivos</item>
+    </plurals>
+    <plurals name="t_cull_delete_done">  <!-- args: 1=count -->
+        <item quantity="one">%1$s foto descartada apagada.</item>
+        <item quantity="many">%1$s fotos descartadas apagadas.</item>
+        <item quantity="other">%1$s fotos descartadas apagadas.</item>
+    </plurals>
+    <plurals name="t_cull_delete_menu">  <!-- args: 1=count -->
+        <item quantity="one">Apagar %1$s descartada…</item>
+        <item quantity="many">Apagar %1$s descartadas…</item>
+        <item quantity="other">Apagar %1$s descartadas…</item>
+    </plurals>
+    <plurals name="t_cull_delete_partial">  <!-- args: 1=count -->
+        <item quantity="one">%1$s foto foi apagada antes de parar.</item>
+        <item quantity="many">%1$s fotos foram apagadas antes de parar.</item>
+        <item quantity="other">%1$s fotos foram apagadas antes de parar.</item>
+    </plurals>
+    <plurals name="t_cull_delete_title">  <!-- args: 1=count -->
+        <item quantity="one">Apagar %1$s foto descartada?</item>
+        <item quantity="many">Apagar %1$s fotos descartadas?</item>
+        <item quantity="other">Apagar %1$s fotos descartadas?</item>
+    </plurals>
+    <plurals name="t_cull_details_more_faces">  <!-- args: 1=count -->
+        <item quantity="one">e mais %1$s rosto</item>
+        <item quantity="many">e mais %1$s rostos</item>
+        <item quantity="other">e mais %1$s rostos</item>
+    </plurals>
+    <plurals name="t_cull_filter_min_stars">  <!-- args: 1=count -->
+        <item quantity="one">%1$s estrela ou mais</item>
+        <item quantity="many">%1$s estrelas ou mais</item>
+        <item quantity="other">%1$s estrelas ou mais</item>
+    </plurals>
+    <plurals name="t_cull_showing">  <!-- args: 1=shown -->
+        <item quantity="one">%1$s foto</item>
+        <item quantity="many">%1$s fotos</item>
+        <item quantity="other">%1$s fotos</item>
+    </plurals>
+    <plurals name="t_cull_stars">  <!-- args: 1=count -->
+        <item quantity="one">%1$s estrela</item>
+        <item quantity="many">%1$s estrelas</item>
+        <item quantity="other">%1$s estrelas</item>
+    </plurals>
+    <plurals name="t_cull_xmp_not_written">  <!-- args: 1=count -->
+        <item quantity="one">A nota de %1$s foto não foi salva ao lado dela: fica só no Hoard</item>
+        <item quantity="many">As notas de %1$s fotos não foram salvas ao lado delas: ficam só no Hoard</item>
+        <item quantity="other">As notas de %1$s fotos não foram salvas ao lado delas: ficam só no Hoard</item>
     </plurals>
     <plurals name="t_download_folders_skipped">  <!-- args: 1=count -->
         <item quantity="one">%1$s pasta fica de fora (ainda não dá para baixar pastas).</item>

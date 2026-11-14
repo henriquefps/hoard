@@ -54,6 +54,11 @@ class MainActivity : ComponentActivity() {
         receiveShare(intent)
     }
 
+    override fun onStop() {
+        (application as HoardApplication).container.onStop()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         (application as HoardApplication).container.onResume()

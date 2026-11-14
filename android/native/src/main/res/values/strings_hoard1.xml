@@ -127,6 +127,195 @@
     <string name="t_conflict_rename_hint">Saves the new copy as “name (1)”.</string>
     <string name="t_conflict_skip">Skip</string>
     <string name="t_conflict_skip_hint">Leaves the existing file alone.</string>
+    <string name="t_cull_assist_accept">Accept</string>
+    <string name="t_cull_assist_accept_burst">Accept for the whole burst</string>
+    <string name="t_cull_assist_analysed">All shots analysed</string>
+    <string name="t_cull_assist_analysing">Analysing %1$s of %2$s</string>  <!-- args: 1=done, 2=total -->
+    <string name="t_cull_assist_best">Best in burst</string>
+    <string name="t_cull_assist_blur_hint">Higher flags slightly soft shots too; lower only clearly blurred ones.</string>
+    <string name="t_cull_assist_blur_setting">Blurry shots</string>
+    <string name="t_cull_assist_burst_gap">Burst gap</string>
+    <string name="t_cull_assist_burst_gap_hint">Shots taken closer than this start a burst (a new scene splits it). Near-identical frames up to four times further apart join it.</string>
+    <string name="t_cull_assist_collapse">Stack this burst again</string>
+    <string name="t_cull_assist_dismiss">Hide</string>
+    <string name="t_cull_assist_expand_hint">Tap to open this burst; tap the badge or long-press to show its frames</string>
+    <string name="t_cull_assist_eyes_closed">eyes closed</string>
+    <string name="t_cull_assist_eyes_hint">Higher also flags half-closed eyes. Only faces big enough to matter count.</string>
+    <string name="t_cull_assist_eyes_open">eyes open</string>
+    <string name="t_cull_assist_eyes_setting">Closed eyes</string>
+    <string name="t_cull_assist_eyes_unknown">eyes not visible</string>
+    <string name="t_cull_assist_faces_unavailable">Face detection unavailable</string>
+    <string name="t_cull_assist_filter_any">Any analysis</string>
+    <string name="t_cull_assist_filter_blurry">Blurry</string>
+    <string name="t_cull_assist_filter_clean">No problems</string>
+    <string name="t_cull_assist_filter_eyes_closed">Eyes closed</string>
+    <string name="t_cull_assist_filter_flagged">Any problem</string>
+    <string name="t_cull_assist_filter_label">Analysis</string>
+    <string name="t_cull_assist_filter_overexposed">Overexposed</string>
+    <string name="t_cull_assist_filter_underexposed">Underexposed</string>
+    <string name="t_cull_assist_flag_blurry">Blurry</string>
+    <string name="t_cull_assist_flag_eyes_closed">Eyes closed</string>
+    <string name="t_cull_assist_flag_overexposed">Overexposed</string>
+    <string name="t_cull_assist_flag_underexposed">Underexposed</string>
+    <string name="t_cull_assist_highlights">%1$s blown highlights</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_histogram">Brightness histogram</string>
+    <string name="t_cull_assist_jump_to_face">Zoom to face</string>
+    <string name="t_cull_assist_keep_short">Keep?</string>
+    <string name="t_cull_assist_measured_on">Measured on: %1$s, %2$s</string>  <!-- args: 1=source, 2=size -->
+    <string name="t_cull_assist_no_faces">No faces</string>
+    <string name="t_cull_assist_not_analysed">Not analysed yet</string>
+    <string name="t_cull_assist_reason_all_flagged">every frame of this burst has a problem</string>
+    <string name="t_cull_assist_reason_blurrier_than">Blurrier than %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_assist_reason_eyes_open">eyes open</string>
+    <string name="t_cull_assist_reason_not_best">%1$s is a better frame</string>  <!-- args: 1=name -->
+    <string name="t_cull_assist_reason_sharpest">Best frame of the burst</string>
+    <string name="t_cull_assist_reject_short">Reject?</string>
+    <string name="t_cull_assist_seconds">%1$s s</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_sensitivity_high">High</string>
+    <string name="t_cull_assist_sensitivity_low">Low</string>
+    <string name="t_cull_assist_sensitivity_medium">Medium</string>
+    <string name="t_cull_assist_settings">Assist settings</string>
+    <string name="t_cull_assist_settings_hint">How Hoard flags shots and groups bursts. Flags and suggestions never decide for you.</string>
+    <string name="t_cull_assist_settings_title">Culling assist</string>
+    <string name="t_cull_assist_shadows">%1$s crushed shadows</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_sharpness">Sharpness %1$s</string>  <!-- args: 1=value -->
+    <string name="t_cull_assist_sort_label">Sort</string>
+    <string name="t_cull_assist_sort_sharpness">Sharpest</string>
+    <string name="t_cull_assist_sort_time">Time</string>
+    <string name="t_cull_assist_stack">Stack bursts</string>
+    <string name="t_cull_assist_subject_face">on the face</string>
+    <string name="t_cull_assist_subject_tile">on the sharpest area</string>
+    <string name="t_cull_assist_suggest">Suggest</string>
+    <string name="t_cull_assist_suggest_hint">The best frame of each burst, and shots with a problem. Nothing changes until you accept.</string>
+    <string name="t_cull_assist_suggest_keep">Suggested: keep</string>
+    <string name="t_cull_assist_suggest_none">No suggestions right now</string>
+    <string name="t_cull_assist_suggest_partial">Still analysing: more suggestions will appear. Nothing changes until you accept.</string>
+    <string name="t_cull_assist_suggest_reject">Suggested: reject</string>
+    <string name="t_cull_assist_suggest_summary">Suggestions: keep %1$s, reject %2$s</string>  <!-- args: 1=keep, 2=reject -->
+    <string name="t_cull_auto_advance">Move to the next shot after a pick or reject</string>
+    <string name="t_cull_burst">Burst, frame %1$s of %2$s</string>  <!-- args: 1=index, 2=size -->
+    <string name="t_cull_burst_mode_accept_suggestion">Accept burst suggestion</string>
+    <string name="t_cull_burst_mode_already_kept">Already kept: the other frames are decided</string>
+    <string name="t_cull_burst_mode_compare">Compare with the best</string>
+    <string name="t_cull_burst_mode_exit">Back to the folder</string>
+    <string name="t_cull_burst_mode_keep">Keep this one</string>
+    <string name="t_cull_burst_mode_pending">%1$s of %2$s decided</string>  <!-- args: 1=decided, 2=size -->
+    <string name="t_cull_burst_mode_position">Burst · %1$s of %2$s</string>  <!-- args: 1=index, 2=total -->
+    <string name="t_cull_burst_mode_resolved">%1$s of %2$s kept</string>  <!-- args: 1=kept, 2=size -->
+    <string name="t_cull_burst_mode_resolved_short">%1$s/%2$s</string>  <!-- args: 1=kept, 2=size -->
+    <string name="t_cull_burst_mode_view">View burst (%1$s)</string>  <!-- args: 1=count -->
+    <string name="t_cull_cell_label">%1$s, %2$s, %3$s</string>  <!-- args: 1=name, 2=kind, 3=state -->
+    <string name="t_cull_compare_close">Back to one shot</string>
+    <string name="t_cull_compare_focus">Focus %1$s</string>  <!-- args: 1=value -->
+    <string name="t_cull_compare_focus_help">Focus score (sharpest area). Compare shots of the same burst; higher is sharper.</string>
+    <string name="t_cull_compare_keep">Keep</string>
+    <string name="t_cull_compare_next">Next shot on the right</string>
+    <string name="t_cull_compare_open">Compare</string>
+    <string name="t_cull_compare_previous">Previous shot on the right</string>
+    <string name="t_cull_compare_sharpness">Sharpness %1$s</string>  <!-- args: 1=value -->
+    <string name="t_cull_compare_sharpness_help">Sharpness of the subject (a face, else the sharpest area), 0 to 100. The crown marks the better frame: sharper, eyes open, well exposed.</string>
+    <string name="t_cull_compare_title">Compare</string>
+    <string name="t_cull_copy_change">Change</string>
+    <string name="t_cull_copy_choose_destination">Choose a folder</string>
+    <string name="t_cull_copy_destination">Destination</string>
+    <string name="t_cull_copy_destination_help">Any folder on this phone, a USB drive, an SD card or a machine.</string>
+    <string name="t_cull_copy_files">Files of each shot</string>
+    <string name="t_cull_copy_files_both">RAW and JPEG</string>
+    <string name="t_cull_copy_files_jpeg">JPEG only</string>
+    <string name="t_cull_copy_files_raw">RAW only</string>
+    <string name="t_cull_copy_folder">Folder</string>
+    <string name="t_cull_copy_folder_keep">Into a folder named %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_copy_folder_new">Into a new folder</string>
+    <string name="t_cull_copy_folder_none">Straight into the destination</string>
+    <string name="t_cull_copy_subfolder_name">Folder name</string>
+    <string name="t_cull_copy_title">Copy picks</string>
+    <string name="t_cull_copy_use_folder">Use this folder</string>
+    <string name="t_cull_copy_xmp_note">Each copied shot gets an XMP sidecar with its stars and pick (Settings › Culling).</string>
+    <string name="t_cull_delete_deleting">Deleting…</string>
+    <string name="t_cull_delete_permanent">This is permanent: there is no trash to restore them from.</string>
+    <string name="t_cull_delete_read_only">Delete rejects (read-only folder)</string>
+    <string name="t_cull_delete_refused">The location refused to delete (read-only).</string>
+    <string name="t_cull_delete_where_drive">on %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_delete_where_phone">on this phone</string>
+    <string name="t_cull_delete_where_smb">on %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_details_analysis">Analysis</string>
+    <string name="t_cull_details_burst">Burst</string>
+    <string name="t_cull_details_burst_value">Frame %1$s of %2$s</string>  <!-- args: 1=index, 2=size -->
+    <string name="t_cull_details_camera">Camera</string>
+    <string name="t_cull_details_close">Hide details</string>
+    <string name="t_cull_details_exposure">Exposure</string>
+    <string name="t_cull_details_exposure_label">Exposure</string>
+    <string name="t_cull_details_exposure_ok">Well exposed</string>
+    <string name="t_cull_details_face">Face %1$s</string>  <!-- args: 1=index -->
+    <string name="t_cull_details_faces">Faces</string>
+    <string name="t_cull_details_file">File</string>
+    <string name="t_cull_details_focal">Focal length</string>
+    <string name="t_cull_details_highlights">%1$s blown highlights (%2$s in large areas)</string>  <!-- args: 1=value, 2=area -->
+    <string name="t_cull_details_lens">Lens</string>
+    <string name="t_cull_details_open">Show details</string>
+    <string name="t_cull_details_over_blown_area">Overexposed: %1$s of the frame blown in large areas</string>  <!-- args: 1=value -->
+    <string name="t_cull_details_over_face">Overexposed: %1$s of a face blown out</string>  <!-- args: 1=value -->
+    <string name="t_cull_details_over_mean">Overexposed: very bright overall</string>
+    <string name="t_cull_details_sharpness">Sharpness</string>
+    <string name="t_cull_details_shown">Showing</string>
+    <string name="t_cull_details_suggestion">Suggestion</string>
+    <string name="t_cull_details_taken">Taken</string>
+    <string name="t_cull_details_title">Details</string>
+    <string name="t_cull_details_toggle">Details</string>
+    <string name="t_cull_details_under_mean">Underexposed: very dark overall</string>
+    <string name="t_cull_details_under_shadows">Underexposed: %1$s crushed shadows</string>  <!-- args: 1=value -->
+    <string name="t_cull_empty_body">This folder has no RAW, JPEG or HEIF files to cull.</string>
+    <string name="t_cull_empty_title">No photos here</string>
+    <string name="t_cull_exif_equivalent">(%1$s equivalent)</string>  <!-- args: 1=value -->
+    <string name="t_cull_exif_none">No camera data</string>
+    <string name="t_cull_filmstrip">Filmstrip</string>
+    <string name="t_cull_filter_all">All</string>
+    <string name="t_cull_filter_any_stars">Any stars</string>
+    <string name="t_cull_filter_label">Show</string>
+    <string name="t_cull_filter_picked">Picked</string>
+    <string name="t_cull_filter_rejected">Rejected</string>
+    <string name="t_cull_filter_stars">Stars</string>
+    <string name="t_cull_filter_unmarked">Not decided</string>
+    <string name="t_cull_finish">Finish</string>
+    <string name="t_cull_flag_picked">Picked</string>
+    <string name="t_cull_flag_rejected">Rejected</string>
+    <string name="t_cull_flag_unmarked">Not decided</string>
+    <string name="t_cull_grid">Shots</string>
+    <string name="t_cull_kind_jpeg">JPG</string>
+    <string name="t_cull_kind_pair">RAW+JPG</string>
+    <string name="t_cull_kind_raw">RAW</string>
+    <string name="t_cull_no_match_body">Change the filter to see the other shots.</string>
+    <string name="t_cull_no_match_title">No shots match</string>
+    <string name="t_cull_open">Cull photos</string>
+    <string name="t_cull_pick">Pick</string>
+    <string name="t_cull_progress">%1$s of %2$s decided · %3$s picked · %4$s rejected</string>  <!-- args: 1=decided, 2=total, 3=picked, 4=rejected -->
+    <string name="t_cull_progress_label">Culling progress</string>
+    <string name="t_cull_rating">Rating</string>
+    <string name="t_cull_reading_exif">Reading capture times…</string>
+    <string name="t_cull_reject">Reject</string>
+    <string name="t_cull_resume">Continue</string>
+    <string name="t_cull_save_failed">Could not save that decision. Try again.</string>
+    <string name="t_cull_source_screen_raw_half">RAW, half size</string>
+    <string name="t_cull_source_screen_raw_preview">Embedded preview</string>
+    <string name="t_cull_source_screen_rendered">Camera JPEG</string>
+    <string name="t_cull_source_zoom_raw_full" formatted="false">100%% from the RAW (LibRaw)</string>
+    <string name="t_cull_source_zoom_raw_preview" formatted="false">100%% from the embedded full-size JPEG</string>
+    <string name="t_cull_source_zoom_rendered" formatted="false">100%% from the camera JPEG</string>
+    <string name="t_cull_start">Start culling</string>
+    <string name="t_cull_title">Cull</string>
+    <string name="t_cull_undo">Undo</string>
+    <string name="t_cull_viewer_image_failed">This shot could not be shown.</string>
+    <string name="t_cull_viewer_info">Camera data</string>
+    <string name="t_cull_viewer_loading_full" formatted="false">Loading 100%%…</string>
+    <string name="t_cull_viewer_position">%1$s of %2$s</string>  <!-- args: 1=index, 2=total -->
+    <string name="t_cull_viewer_rendering_raw" formatted="false">Rendering the RAW at 100%%…</string>
+    <string name="t_cull_viewer_swipe_decide">Swipe up and down to pick and reject</string>
+    <string name="t_cull_viewer_title">Viewing %1$s</string>  <!-- args: 1=name -->
+    <string name="t_cull_xmp_hidden">Write XMP as hidden file (.name.xmp)</string>
+    <string name="t_cull_xmp_hidden_hint">New sidecars start with a dot so they stay out of sight. Reveal and digiKam read them; Lightroom does not.</string>
+    <string name="t_cull_xmp_read_only">Ratings are saved only in Hoard for this folder</string>
+    <string name="t_cull_xmp_save">Save ratings next to photos (XMP)</string>
+    <string name="t_cull_xmp_save_hint">Stars, picks and rejects go into a .xmp file next to each shot in folders Hoard can write, and with the copies of \"Copy picks\". Lightroom, darktable, digiKam and Reveal read them; ratings made there show here when the folder opens.</string>
     <string name="t_download_choose_folder">Choose folder…</string>
     <string name="t_download_conflict">If the file already exists</string>
     <string name="t_download_destination">Save to</string>
@@ -636,6 +825,102 @@
     <plurals name="t_browse_selected">  <!-- args: 1=count -->
         <item quantity="one">%1$s selected</item>
         <item quantity="other">%1$s selected</item>
+    </plurals>
+    <plurals name="t_cull_assist_accept_all">  <!-- args: 1=count -->
+        <item quantity="one">Accept %1$s</item>
+        <item quantity="other">Accept all %1$s</item>
+    </plurals>
+    <plurals name="t_cull_assist_accepted">  <!-- args: 1=count -->
+        <item quantity="one">%1$s suggestion accepted</item>
+        <item quantity="other">%1$s suggestions accepted</item>
+    </plurals>
+    <plurals name="t_cull_assist_expand">  <!-- args: 1=count -->
+        <item quantity="one">Show the %1$s frame of this burst</item>
+        <item quantity="other">Show the %1$s frames of this burst</item>
+    </plurals>
+    <plurals name="t_cull_assist_faces">  <!-- args: 1=count -->
+        <item quantity="one">%1$s face</item>
+        <item quantity="other">%1$s faces</item>
+    </plurals>
+    <plurals name="t_cull_assist_failed">  <!-- args: 1=count -->
+        <item quantity="one">%1$s shot could not be analysed</item>
+        <item quantity="other">%1$s shots could not be analysed</item>
+    </plurals>
+    <plurals name="t_cull_burst_mode_kept">  <!-- args: 1=name, 2=count -->
+        <item quantity="one">Kept %1$s and rejected %2$s other frame</item>
+        <item quantity="other">Kept %1$s and rejected %2$s other frames</item>
+    </plurals>
+    <plurals name="t_cull_burst_mode_rejected">  <!-- args: 1=count -->
+        <item quantity="one">Rejected %1$s photo of the burst</item>
+        <item quantity="other">Rejected %1$s photos of the burst</item>
+    </plurals>
+    <plurals name="t_cull_chips_eyes_open">  <!-- args: 1=count -->
+        <item quantity="one">Eyes open</item>
+        <item quantity="other">Eyes open on %1$s faces</item>
+    </plurals>
+    <plurals name="t_cull_copy_fallback_jpeg">  <!-- args: 1=count -->
+        <item quantity="one">%1$s pick has no JPEG: its RAW is copied instead.</item>
+        <item quantity="other">%1$s picks have no JPEG: their RAWs are copied instead.</item>
+    </plurals>
+    <plurals name="t_cull_copy_fallback_raw">  <!-- args: 1=count -->
+        <item quantity="one">%1$s pick has no RAW: its JPEG is copied instead.</item>
+        <item quantity="other">%1$s picks have no RAW: their JPEGs are copied instead.</item>
+    </plurals>
+    <plurals name="t_cull_copy_menu">  <!-- args: 1=count -->
+        <item quantity="one">Copy %1$s pick to…</item>
+        <item quantity="other">Copy %1$s picks to…</item>
+    </plurals>
+    <plurals name="t_cull_copy_start">  <!-- args: 1=count -->
+        <item quantity="one">Copy %1$s file</item>
+        <item quantity="other">Copy %1$s files</item>
+    </plurals>
+    <plurals name="t_cull_copy_summary">  <!-- args: 1=shots, 2=files, 3=size -->
+        <item quantity="one">%1$s picked shots, %2$s file, %3$s</item>
+        <item quantity="other">%1$s picked shots, %2$s files, %3$s</item>
+    </plurals>
+    <plurals name="t_cull_delete_body">  <!-- args: 1=shots, 2=files, 3=size, 4=where -->
+        <item quantity="one">%1$s shots, %2$s file (%3$s) %4$s. A RAW + JPEG pair deletes both files.</item>
+        <item quantity="other">%1$s shots, %2$s files (%3$s) %4$s. A RAW + JPEG pair deletes both files.</item>
+    </plurals>
+    <plurals name="t_cull_delete_confirm">  <!-- args: 1=count -->
+        <item quantity="one">Delete %1$s file</item>
+        <item quantity="other">Delete %1$s files</item>
+    </plurals>
+    <plurals name="t_cull_delete_done">  <!-- args: 1=count -->
+        <item quantity="one">%1$s rejected shot deleted.</item>
+        <item quantity="other">%1$s rejected shots deleted.</item>
+    </plurals>
+    <plurals name="t_cull_delete_menu">  <!-- args: 1=count -->
+        <item quantity="one">Delete %1$s reject…</item>
+        <item quantity="other">Delete %1$s rejects…</item>
+    </plurals>
+    <plurals name="t_cull_delete_partial">  <!-- args: 1=count -->
+        <item quantity="one">%1$s shot was deleted before it stopped.</item>
+        <item quantity="other">%1$s shots were deleted before it stopped.</item>
+    </plurals>
+    <plurals name="t_cull_delete_title">  <!-- args: 1=count -->
+        <item quantity="one">Delete %1$s rejected shot?</item>
+        <item quantity="other">Delete %1$s rejected shots?</item>
+    </plurals>
+    <plurals name="t_cull_details_more_faces">  <!-- args: 1=count -->
+        <item quantity="one">and %1$s more face</item>
+        <item quantity="other">and %1$s more faces</item>
+    </plurals>
+    <plurals name="t_cull_filter_min_stars">  <!-- args: 1=count -->
+        <item quantity="one">%1$s star or more</item>
+        <item quantity="other">%1$s stars or more</item>
+    </plurals>
+    <plurals name="t_cull_showing">  <!-- args: 1=shown -->
+        <item quantity="one">%1$s shot</item>
+        <item quantity="other">%1$s shots</item>
+    </plurals>
+    <plurals name="t_cull_stars">  <!-- args: 1=count -->
+        <item quantity="one">%1$s star</item>
+        <item quantity="other">%1$s stars</item>
+    </plurals>
+    <plurals name="t_cull_xmp_not_written">  <!-- args: 1=count -->
+        <item quantity="one">The rating of %1$s photo was not saved next to it: kept in Hoard only</item>
+        <item quantity="other">The ratings of %1$s photos were not saved next to them: kept in Hoard only</item>
     </plurals>
     <plurals name="t_download_folders_skipped">  <!-- args: 1=count -->
         <item quantity="one">%1$s folder is skipped (folders can\'t be downloaded yet).</item>

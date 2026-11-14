@@ -107,7 +107,7 @@ class FileActions(private val container: AppContainer) {
         if (!revealAvailable()) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
         val settings = container.appSettings
         val current = settings.files.first()
-        val decisions = container.database.cullDecisions()
+        val decisions = container.database.cull()
             .forFolder(location.id, if (location.isSmb) location.share.orEmpty() else "", folderPath)
             .associateBy { it.shotId }
         val culling = paths.mapNotNull { path ->

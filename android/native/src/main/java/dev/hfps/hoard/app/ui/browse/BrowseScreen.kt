@@ -72,6 +72,7 @@ import dev.hfps.hoard.app.files.SortKey
 import dev.hfps.hoard.app.files.SortOrder
 import dev.hfps.hoard.app.files.fileKind
 import dev.hfps.hoard.app.files.hasPhotos
+import dev.hfps.hoard.app.files.CULL_MIN_PHOTOS
 import dev.hfps.hoard.app.files.hasThumbnail
 import dev.hfps.hoard.app.files.isTextFile
 import dev.hfps.hoard.app.files.isValidName
@@ -129,6 +130,8 @@ class BrowseNav(
     val image: (BrowseLocation, String) -> Unit,
     val text: (BrowseLocation, String, Boolean) -> Unit,
     val transfers: () -> Unit,
+    /** The folder in culling mode (ADR 0008). */
+    val cull: (BrowseLocation, String) -> Unit = { _, _ -> },
 )
 
 fun Context.findActivity(): Activity? = when (this) {
@@ -313,6 +316,14 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
                 )
             } else {
                 HfpsTopBar(title = state.title, onBack = nav.back, titleIsFileName = state.path.isNotEmpty()) {
+                    if (location != null && !state.showsShares && state.photos >= CULL_MIN_PHOTOS) {
+                        HfpsIconButton(
+                            icon = PhosphorRegular.Aperture,
+                            contentDescription = stringResource(R.string.t_cull_open),
+                            onClick = { nav.cull(location, state.path) },
+                            modifier = Modifier.testTag("browse-cull"),
+                        )
+                    }
                     val canPin = location != null && !state.showsShares
                     if (canPin) {
                         val pinned = state.favorite != null
