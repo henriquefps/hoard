@@ -20,7 +20,12 @@ class VolumesSource(context: Context) {
     private val registry = VolumeRegistry(appContext)
 
     fun observe(): Flow<List<VolumeInfo>> = callbackFlow {
-        suspend fun refresh() = send(withContext(Dispatchers.IO) { registry.list() })
+        // A volume query that fails (a storage service hiccup) keeps the last list rather than ending the flow.
+        var last = emptyList<VolumeInfo>()
+        suspend fun refresh() {
+            last = withContext(Dispatchers.IO) { runCatching { registry.list() }.getOrDefault(last) }
+            send(last)
+        }
         refresh()
         val monitor = VolumeMonitor(appContext) { launch { refresh() } }
         monitor.start()

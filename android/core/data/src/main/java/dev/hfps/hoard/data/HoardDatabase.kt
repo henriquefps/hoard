@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Embedded
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Relation
 import androidx.room.Room
@@ -37,6 +39,9 @@ import kotlinx.coroutines.flow.Flow
 abstract class HoardDatabase : RoomDatabase() {
     abstract fun machines(): MachineDao
     abstract fun favorites(): FavoriteDao
+    abstract fun manualShares(): ManualShareDao
+    abstract fun transfers(): TransferDao
+    abstract fun cullDecisions(): CullDecisionDao
     abstract fun settings(): SettingsDao
     abstract fun legacyImports(): LegacyImportDao
 
@@ -71,17 +76,201 @@ data class MachineWithAddresses(
 @Dao
 interface MachineDao {
     @Transaction
-    @Query("SELECT * FROM machines ORDER BY sort_order, name")
+    @Query("SELECT * FROM machines ORDER BY sort_order, created_at")
     fun observeAll(): Flow<List<MachineWithAddresses>>
+
+    @Transaction
+    @Query("SELECT * FROM machines ORDER BY sort_order, created_at")
+    suspend fun all(): List<MachineWithAddresses>
+
+    @Transaction
+    @Query("SELECT * FROM machines WHERE id = :id")
+    suspend fun get(id: String): MachineWithAddresses?
+
+    @Transaction
+    @Query("SELECT * FROM machines WHERE id = :id")
+    fun observe(id: String): Flow<MachineWithAddresses?>
 
     @Query("SELECT COUNT(*) FROM machines")
     suspend fun count(): Int
+
+    @Query("SELECT COALESCE(MAX(sort_order) + 1, 0) FROM machines")
+    suspend fun nextSortOrder(): Int
+
+    @Insert
+    suspend fun insert(machine: MachineEntity)
+
+    @Query("UPDATE machines SET name = :name, icon = :icon, color = :color, username = :username, domain = :domain WHERE id = :id")
+    suspend fun update(id: String, name: String, icon: String?, color: String?, username: String, domain: String?): Int
+
+    @Query("DELETE FROM machine_addresses WHERE machine_id = :machineId")
+    suspend fun deleteAddresses(machineId: String)
+
+    @Insert
+    suspend fun insertAddresses(addresses: List<MachineAddressEntity>)
+
+    @Query("UPDATE machines SET server_guid = :guid WHERE id = :id")
+    suspend fun setServerGuid(id: String, guid: String?)
+
+    @Query("UPDATE machines SET sort_order = :order WHERE id = :id")
+    suspend fun setSortOrder(id: String, order: Int)
+
+    @Query("DELETE FROM machines WHERE id = :id")
+    suspend fun delete(id: String)
+
+    // Culling rows have no foreign key (local locations are not rows): `deleteMachine` clears them by hand, as
+    // src/db/queries.ts does.
+    @Query("DELETE FROM cull_decisions WHERE location_id = :id")
+    suspend fun deleteCullDecisions(id: String)
+
+    @Query("DELETE FROM cull_sidecars WHERE location_id = :id")
+    suspend fun deleteCullSidecars(id: String)
+
+    @Query("DELETE FROM cull_sessions WHERE location_id = :id")
+    suspend fun deleteCullSessions(id: String)
+
+    @Query("DELETE FROM cull_analysis WHERE location_id = :id")
+    suspend fun deleteCullAnalysis(id: String)
+
+    @Query("DELETE FROM cull_destinations WHERE source_location_id = :id OR location_id = :id")
+    suspend fun deleteCullDestinations(id: String)
+
+    /** Deletes a machine with its addresses, favorites, manual shares and transfers (cascade) and its culling rows. */
+    @Transaction
+    suspend fun deleteMachine(id: String) {
+        delete(id)
+        deleteCullDecisions(id)
+        deleteCullSidecars(id)
+        deleteCullSessions(id)
+        deleteCullAnalysis(id)
+        deleteCullDestinations(id)
+    }
+
+    /** Creates ([create]) or updates a machine and replaces its addresses atomically (src/db/queries.ts `saveMachine`). */
+    @Transaction
+    suspend fun save(machine: MachineEntity, addresses: List<MachineAddressEntity>, create: Boolean) {
+        if (create) {
+            insert(machine.copy(sortOrder = nextSortOrder()))
+        } else {
+            val updated = update(machine.id, machine.name, machine.icon, machine.color, machine.username, machine.domain)
+            check(updated == 1) { "Machine ${machine.id} not found" }
+            deleteAddresses(machine.id)
+        }
+        insertAddresses(addresses)
+    }
+
+    @Transaction
+    suspend fun reorder(ids: List<String>) {
+        ids.forEachIndexed { index, id -> setSortOrder(id, index) }
+    }
 }
 
 @Dao
 interface FavoriteDao {
-    @Query("SELECT * FROM favorites ORDER BY sort_order, label")
+    @Query("SELECT * FROM favorites ORDER BY sort_order, created_at")
     fun observeAll(): Flow<List<FavoriteEntity>>
+
+    @Query("SELECT * FROM favorites WHERE location_id = :locationId AND share = :share AND path = :path")
+    fun observeAt(locationId: String, share: String, path: String): Flow<FavoriteEntity?>
+
+    @Query("SELECT * FROM favorites WHERE location_id = :locationId AND share = :share AND path = :path")
+    suspend fun find(locationId: String, share: String, path: String): FavoriteEntity?
+
+    @Query("SELECT COALESCE(MAX(sort_order) + 1, 0) FROM favorites")
+    suspend fun nextSortOrder(): Int
+
+    @Insert
+    suspend fun insert(favorite: FavoriteEntity)
+
+    @Query("UPDATE favorites SET label = :label WHERE id = :id")
+    suspend fun rename(id: String, label: String)
+
+    @Query("DELETE FROM favorites WHERE id = :id")
+    suspend fun remove(id: String)
+
+    @Query("UPDATE favorites SET sort_order = :order WHERE id = :id")
+    suspend fun setSortOrder(id: String, order: Int)
+
+    /** Pins a folder; pinning the same place again only renames it (src/db/queries.ts `addFavorite`). Returns the id. */
+    @Transaction
+    suspend fun add(favorite: FavoriteEntity): String {
+        val existing = find(favorite.locationId, favorite.share, favorite.path)
+        if (existing != null) {
+            rename(existing.id, favorite.label)
+            return existing.id
+        }
+        insert(favorite.copy(sortOrder = nextSortOrder()))
+        return favorite.id
+    }
+
+    @Transaction
+    suspend fun reorder(ids: List<String>) {
+        ids.forEachIndexed { index, id -> setSortOrder(id, index) }
+    }
+}
+
+@Dao
+interface ManualShareDao {
+    @Query("SELECT * FROM manual_shares WHERE machine_id = :machineId ORDER BY name")
+    fun observe(machineId: String): Flow<List<ManualShareEntity>>
+
+    /** Adding a share again (any letter case) keeps the first entry. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun add(share: ManualShareEntity)
+
+    @Query("DELETE FROM manual_shares WHERE machine_id = :machineId AND name = :name")
+    suspend fun remove(machineId: String, name: String)
+}
+
+@Dao
+interface TransferDao {
+    @Query("SELECT * FROM transfers ORDER BY created_at DESC")
+    fun observeAll(): Flow<List<TransferEntity>>
+
+    @Query("SELECT * FROM transfers")
+    suspend fun all(): List<TransferEntity>
+
+    @Query("SELECT * FROM transfers WHERE id = :id")
+    suspend fun get(id: String): TransferEntity?
+
+    @Insert
+    suspend fun insert(transfer: TransferEntity)
+
+    /** A native progress event (or a `reported()` job) applied to the row (src/db/queries.ts `applyTransferProgress`). */
+    @Query(
+        """UPDATE transfers SET bytes_done = :bytesDone, size = :totalBytes, state = :state, error_code = :errorCode,
+           error = :error, items_total = :itemsTotal, items_done = :itemsDone, items_failed = :itemsFailed,
+           items_skipped = :itemsSkipped,
+           finished_at = CASE WHEN :finished THEN COALESCE(finished_at, :now) ELSE NULL END
+           WHERE id = :id""",
+    )
+    suspend fun applyProgress(
+        id: String,
+        state: String,
+        bytesDone: Long,
+        totalBytes: Long,
+        itemsTotal: Int,
+        itemsDone: Int,
+        itemsFailed: Int,
+        itemsSkipped: Int,
+        errorCode: String?,
+        error: String?,
+        finished: Boolean,
+        now: String,
+    )
+
+    @Query("DELETE FROM transfers WHERE id = :id")
+    suspend fun delete(id: String)
+
+    @Query("DELETE FROM transfers WHERE state IN ('completed', 'failed', 'cancelled', 'skipped')")
+    suspend fun clearFinished(): Int
+}
+
+@Dao
+interface CullDecisionDao {
+    /** A culled folder's decisions (ADR 0008), keyed by shot id (lowercase stem). */
+    @Query("SELECT * FROM cull_decisions WHERE location_id = :locationId AND share = :share AND path = :path")
+    suspend fun forFolder(locationId: String, share: String, path: String): List<CullDecisionEntity>
 }
 
 @Dao
@@ -91,6 +280,9 @@ interface SettingsDao {
 
     @Query("SELECT value FROM settings WHERE `key` = :key")
     suspend fun get(key: String): String?
+
+    @Query("SELECT * FROM settings")
+    fun observeAll(): Flow<List<SettingEntity>>
 
     @Upsert
     suspend fun put(setting: SettingEntity)

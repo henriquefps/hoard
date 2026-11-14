@@ -63,6 +63,8 @@ android {
         }
     }
     compileOptions {
+        // java.time (ISO dates of rows and listings) on minSdk 24.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
@@ -96,6 +98,7 @@ kotlin { jvmToolchain(21) }
 apply(from = "../app/mlkit-packaging.gradle")
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(project(":core:designsystem"))
     implementation(project(":core:data"))
     implementation(project(":core:smb"))
@@ -112,6 +115,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.serialization.json)
     implementation("androidx.core:core-ktx:${rootProject.extra["androidxCoreVersion"]}")
+    // WebViewerActivity (:core:smb) is an AppCompatActivity: its theme comes from here.
+    implementation("androidx.appcompat:appcompat:${rootProject.extra["androidxAppCompatVersion"]}")
 
     testImplementation("junit:junit:${rootProject.extra["junitVersion"]}")
     testImplementation(platform(libs.androidx.compose.bom))
@@ -121,6 +126,9 @@ dependencies {
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.truth)
+    // Real org.json for the plain JVM tests (android.jar only has stubs).
+    testImplementation("org.json:json:20250517")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${rootProject.extra["coroutinesVersion"]}")
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))

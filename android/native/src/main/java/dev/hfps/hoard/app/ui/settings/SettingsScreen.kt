@@ -27,7 +27,7 @@ import dev.hfps.hoard.designsystem.icons.PhosphorRegular
 import dev.hfps.hoard.designsystem.theme.HfpsPalette
 import dev.hfps.hoard.designsystem.theme.ThemeMode
 
-/** Settings of phase 2a: appearance (theme, palette), about (version, the Hoard 1 import, licences). */
+/** Settings: appearance (theme, palette), the Files side ([files]), about (version, the Hoard 1 import, licences). */
 @Composable
 fun SettingsScreen(
     state: SettingsUiState,
@@ -36,6 +36,8 @@ fun SettingsScreen(
     onPalette: (HfpsPalette) -> Unit,
     onOpenLicences: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The Files side's settings (Hoard 1's browsing, transfers, network, storage, Reveal links). */
+    files: (@Composable () -> Unit)? = null,
 ) {
     HfpsScaffold(
         modifier = modifier,
@@ -68,6 +70,7 @@ fun SettingsScreen(
                     }
                 }
                 HfpsRowDivider(Modifier.padding(top = 8.dp))
+                files?.invoke()
                 Section(R.string.settings_about)
                 HfpsListRow(
                     title = stringResource(R.string.settings_version),
