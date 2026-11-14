@@ -104,6 +104,7 @@ private sealed interface Loaded {
 @Composable
 fun ImageViewerScreen(locationId: String, share: String?, path: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val container = (context.applicationContext as HoardApplication).container
     val actions = remember { FileActions(container) }
     val toaster = LocalToaster.current
@@ -177,7 +178,7 @@ fun ImageViewerScreen(locationId: String, share: String?, path: String, onBack: 
                                 val activity = context.findActivity() ?: return@IconButton
                                 scope.launch {
                                     runCatching { actions.share(activity, location, listOf(current.path)) }
-                                        .onFailure { toaster.show(context.getString(openErrorText(errorCodeOf(it)))) }
+                                        .onFailure { toaster.show(res.getString(openErrorText(errorCodeOf(it)))) }
                                 }
                             }) { Icon(PhosphorRegular.ShareNetwork, stringResource(R.string.t_transfer_share), tint = Color.White) }
                             var menu by remember { mutableStateOf(false) }
@@ -189,7 +190,7 @@ fun ImageViewerScreen(locationId: String, share: String?, path: String, onBack: 
                                         val activity = context.findActivity() ?: return@MenuItem
                                         scope.launch {
                                             runCatching { actions.open(activity, location, current, chooser = true) }
-                                                .onFailure { toaster.show(context.getString(openErrorText(errorCodeOf(it)))) }
+                                                .onFailure { toaster.show(res.getString(openErrorText(errorCodeOf(it)))) }
                                         }
                                     })
                                     if (reveal.available) {

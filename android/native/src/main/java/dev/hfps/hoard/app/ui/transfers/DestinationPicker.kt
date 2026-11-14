@@ -109,6 +109,7 @@ fun DestinationPicker(
     onPick: suspend (FolderPlace, String, String) -> Unit,
 ) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val container = (context.applicationContext as HoardApplication).container
     val scope = rememberCoroutineScope()
     val settings by container.appSettings.files.collectAsState(initial = null)
@@ -317,8 +318,8 @@ fun DestinationPicker(
             onDismiss = { newFolder = false },
             validate = { v ->
                 when {
-                    !isValidName(v) -> context.getString(R.string.t_browse_name_invalid)
-                    listing.folders.orEmpty().any { it.equals(v.trim(), ignoreCase = true) } -> context.getString(R.string.t_browse_name_taken)
+                    !isValidName(v) -> res.getString(R.string.t_browse_name_invalid)
+                    listing.folders.orEmpty().any { it.equals(v.trim(), ignoreCase = true) } -> res.getString(R.string.t_browse_name_taken)
                     else -> null
                 }
             },
@@ -329,7 +330,7 @@ fun DestinationPicker(
                     folder = current.copy(path = joinPath(current.path, name))
                     null
                 } catch (e: Throwable) {
-                    context.getString(errorTitle(errorCodeOf(e)))
+                    res.getString(errorTitle(errorCodeOf(e)))
                 }
             },
         )

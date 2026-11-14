@@ -134,6 +134,7 @@ fun HoardShell(container: AppContainer) {
     val toaster = rememberToaster(snackbar)
     val actions = remember { FileActions(container) }
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val phoneName = stringResource(R.string.t_locations_internal)
     val driveName = stringResource(R.string.t_locations_drive)
     val openSave by ShellRequests.openSave.collectAsState()
@@ -258,13 +259,13 @@ fun HoardShell(container: AppContainer) {
 /** A breadcrumb or "up": back to that folder when it is on the back stack, a new entry otherwise. */
 private fun navigateToFolder(nav: NavHostController, locationId: String, share: String?, path: String) {
     val target = BrowseRoute(locationId, share, path)
-    val onStack = nav.currentBackStack.value.any { e -> e.destination.hasRoute<BrowseRoute>() && runCatching { e.toRoute<BrowseRoute>() }.getOrNull() == target }
-    if (onStack) nav.popBackStack(target, inclusive = false) else nav.navigate(target)
+    if (!nav.popBackStack(target, inclusive = false)) nav.navigate(target)
 }
 
 @Composable
 private fun FilesTab(container: AppContainer, files: FilesViewModel, navController: NavHostController, openLocation: (String, String?, String) -> Unit) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
     val state by files.state.collectAsStateWithLifecycle()
@@ -284,8 +285,8 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
         if (before == null) return@LaunchedEffect
         mounted.filter { it.uuid !in before }.forEach { volume ->
             toaster.show(
-                context.getString(if (volume.kind == "usb") R.string.t_locations_usb_connected else R.string.t_locations_sd_connected) + " · " + volume.label,
-                action = context.getString(R.string.t_locations_open),
+                res.getString(if (volume.kind == "usb") R.string.t_locations_usb_connected else R.string.t_locations_sd_connected) + " · " + volume.label,
+                action = res.getString(R.string.t_locations_open),
                 onAction = { openLocation(volume.locationId, null, "") },
             )
         }
@@ -303,7 +304,7 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
         // Android 11+ refuses a volume's root here, so any folder on this volume is accepted.
         val picked = SafVolumes.grantOf(runCatching { DocumentsContract.getTreeDocumentId(uri) }.getOrNull())
         if (picked == null || !picked.first.equals(uuid, ignoreCase = true)) {
-            toaster.show(context.getString(R.string.t_errors_access_denied_title))
+            toaster.show(res.getString(R.string.t_errors_access_denied_title))
             return@rememberLauncherForActivityResult
         }
         context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
@@ -326,7 +327,7 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
             removeFavorite = { f ->
                 scope.launch {
                     container.database.favorites().remove(f.id)
-                    toaster.show(context.getString(R.string.t_favorites_removed, f.label))
+                    toaster.show(res.getString(R.string.t_favorites_removed, f.label))
                 }
             },
             moveFavorite = { f, delta ->
@@ -362,7 +363,7 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
             initialValue = favorite.label,
             submitLabel = stringResource(R.string.t_common_save),
             onDismiss = { renaming = null },
-            validate = { if (it.isBlank()) context.getString(R.string.t_favorites_label_required) else null },
+            validate = { if (it.isBlank()) res.getString(R.string.t_favorites_label_required) else null },
             onSubmit = { label ->
                 container.database.favorites().rename(favorite.id, label)
                 null
@@ -380,7 +381,7 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
                 container.database.machines().deleteMachine(machine.id)
                 container.gateway.deleteCredentials(machine.id)
                 container.routes.forget(machine.id)
-                toaster.show(context.getString(R.string.t_machines_delete_done, machine.name))
+                toaster.show(res.getString(R.string.t_machines_delete_done, machine.name))
             },
         )
     }

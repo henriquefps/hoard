@@ -1,7 +1,7 @@
 # ADR 0019: Hoard 2, a native app built next to the Capacitor app
 
 - **Date**: 2026-11-14
-- **Status**: Accepted (phase 2a: foundations)
+- **Status**: Accepted (phase 2a: foundations; phase 2b: the Files tab)
 
 ## Context
 
@@ -132,6 +132,40 @@ analysis (ML Kit)
 - **Fixtures** come from the real JS code: `scripts/legacy-db/fixtures.ts` runs `src/db/migrations.ts` and the
   `src/db/queries.ts` writers over sql.js. It writes a v7 database with rows in every table, a v1 database, the same
   v1 after the JS `migrate()` (the native upgrade must produce an identical database), and a "v99" database.
+
+### Phase 2b: the Files tab
+
+The Files side of Hoard 1 (machines, routes, browsing any location, file operations, transfers, share in / out, the
+viewers, Edit in Reveal and their settings) is ported to `:native` over the unchanged `:core:smb`. The Capacitor `:app`
+does not change.
+
+- **What moved from TypeScript to Kotlin** (`:native`, each with its tests ported): the route engine
+  (`route/RouteEngine.kt`, from `src/features/route/engine.ts`: same rules, coroutines on the main thread, probes and
+  connects on IO), "Test connection", address kinds and host input; the transfer bookkeeping (`transfers/TransferService.kt`,
+  from `service.ts`: the `transfers` row first, then `TransferManager.start` with the same id; progress live at full rate
+  and in Room at most once a second; reconcile and retry with resume); the browser's rules (`files/FileLogic.kt`) and
+  the paste / picker rules (`transfers/Places.kt`); the settings with Hoard 1's validators (`data/AppSettings.kt`).
+- **What the plugin did, `:native` does directly**: `SmbGateway` (probes, smbj sessions, Keystore credentials),
+  `FileService` (`HoardFs` on any location through the route engine's session), `FileActions` (`Opener`, `Streamer`,
+  `ShareOut`, `RevealHandoff`). The manifest components of the Files side come to `:native` (FileProvider,
+  `StreamProvider`, `StreamService`, `WebViewerActivity`, WorkManager's foreground service, the cancel receiver, the
+  share targets, the permissions and `<queries>`); their authorities follow the application id, so `.next` and the
+  Capacitor app live side by side.
+- **One engine still**: every byte goes through `TransferManager` / `TransferRunner` (ADR 0007), from the clipboard,
+  the destination picker and "Save to Hoard" alike.
+- **The words are Hoard 1's**: `android/scripts/strings/export_strings.py` turns `src/i18n/locales/{en,pt-BR}.json`
+  (all namespaces but culling's) into `strings_hoard1.xml` (`t_` names, positional arguments, plurals with pt-BR's
+  `many`). `src/i18n/nativeStrings.test.ts` fails when the copy is stale. At the swap the JSON files go and the XML
+  becomes the source.
+- **Navigation**: each folder is a `BrowseRoute(locationId, share, path)` entry, so back goes up the way the user came
+  and each folder keeps its list position; tapping the Files tab again returns to its home. Viewers, the machine form,
+  Transfers, "Save to Hoard" and the storage screen are full-screen destinations.
+- **New in Hoard 2**: a built-in image viewer (pager over the folder's photos, zoom), where Hoard 1 handed images to
+  another app.
+- **`java.time` on minSdk 24**: core library desugaring in `:native`.
+- **Not yet at parity** (tracked in `docs/testing/native-2b.md`): the text viewer's previews and editor extras, the
+  per-address attempts in the route error state, the compact header search, drag reorder (up / down buttons instead),
+  machine reordering, the transfers progress ring, the in-app language setting.
 
 ### UI stack
 

@@ -91,6 +91,7 @@ fun machineIconName(id: String): Int = when (id) {
 @Composable
 fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, onBack: () -> Unit, onSaved: (String) -> Unit, onDeleted: () -> Unit) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
     var showPassword by remember { mutableStateOf(false) }
@@ -101,10 +102,10 @@ fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, 
     val save: () -> Unit = {
         scope.launch {
             if (viewModel.save()) {
-                toaster.show(context.getString(if (state.isNew) R.string.t_machines_form_created else R.string.t_machines_form_saved))
+                toaster.show(res.getString(if (state.isNew) R.string.t_machines_form_created else R.string.t_machines_form_saved))
                 onSaved(state.id)
             } else if (viewModel.state.value.errors.ok) {
-                toaster.show(context.getString(R.string.t_errors_unknown_title))
+                toaster.show(res.getString(R.string.t_errors_unknown_title))
             }
         }
     }
@@ -268,7 +269,7 @@ fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, 
             onDismiss = { deleting = false },
             onConfirm = {
                 viewModel.delete()
-                toaster.show(context.getString(R.string.t_machines_delete_done, draft.name))
+                toaster.show(res.getString(R.string.t_machines_delete_done, draft.name))
                 onDeleted()
             },
         )
@@ -281,7 +282,7 @@ fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, 
             onDismiss = { repinning = false },
             onConfirm = {
                 viewModel.repin()
-                toaster.show(context.getString(R.string.t_machines_identity_repin_done))
+                toaster.show(res.getString(R.string.t_machines_identity_repin_done))
             },
         )
     }

@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.first
  * after its own error message, so callers can stay open.
  */
 class StartTransfer(private val container: AppContainer, private val context: Context, private val toaster: Toaster, private val onView: () -> Unit) {
+    private val res get() = context.resources
+
     suspend operator fun invoke(op: String, source: TransferPlace, entries: List<PickedEntry>, destination: FolderPlace, label: String, conflict: String): Boolean {
         NotificationsPermission.askOnce()
         try {
@@ -32,7 +34,7 @@ class StartTransfer(private val container: AppContainer, private val context: Co
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            toaster.show(context.getString(R.string.t_transfer_start_failed) + "\n" + context.getString(problemText(errorCodeOf(e))), long = true)
+            toaster.show(res.getString(R.string.t_transfer_start_failed) + "\n" + res.getString(problemText(errorCodeOf(e))), long = true)
             return false
         }
         runCatching {
@@ -41,13 +43,13 @@ class StartTransfer(private val container: AppContainer, private val context: Co
                 rememberDestination(recent, RecentDestination(destination.place.locationId, destination.place.share, destination.path, label, destination.place.treeUri)),
             )
         }
-        val text = context.resources.getQuantityString(
+        val text = res.getQuantityString(
             if (op == "move") R.plurals.t_transfer_started_move else R.plurals.t_transfer_started_copy,
             entries.size,
             entries.size.toString(),
             label,
         )
-        toaster.show(text, action = context.getString(R.string.t_transfers_view), onAction = onView)
+        toaster.show(text, action = res.getString(R.string.t_transfers_view), onAction = onView)
         return true
     }
 }

@@ -83,6 +83,7 @@ private sealed interface TextState {
 @Composable
 fun TextViewerScreen(locationId: String, share: String?, path: String, startEditing: Boolean, onBack: () -> Unit) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val container = (context.applicationContext as HoardApplication).container
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
@@ -134,11 +135,11 @@ fun TextViewerScreen(locationId: String, share: String?, path: String, startEdit
                 }
                 state = TextState.Ready(read.copy(text = draft, modifiedAt = entry.modifiedAt, size = entry.size))
                 editing = false
-                toaster.show(context.getString(R.string.t_text_saved, name))
+                toaster.show(res.getString(R.string.t_text_saved, name))
             } catch (e: Throwable) {
                 when (val code = errorCodeOf(e)) {
                     ErrorCode.CONFLICT -> conflict = true
-                    else -> toaster.show(context.getString(R.string.t_text_save_failed, name) + "\n" + context.getString(errorTitle(code)))
+                    else -> toaster.show(res.getString(R.string.t_text_save_failed, name) + "\n" + res.getString(errorTitle(code)))
                 }
             } finally {
                 saving = false

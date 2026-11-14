@@ -238,12 +238,14 @@ class FilesTabTest {
         ),
     )
 
-    @Test fun machineFormPhoneLight() = shoot("machine_form_phone_light", PHONE, dark = false) {
-        Samples2b.Toasts { MachineFormScreen(MachineFormViewModel(Samples2b.container, "m1"), formState(), {}, {}, {}) }
+    @Test fun machineFormPhoneLight() {
+        val vm = MachineFormViewModel(Samples2b.container, "m1")
+        shoot("machine_form_phone_light", PHONE, dark = false) { Samples2b.Toasts { MachineFormScreen(vm, formState(), {}, {}, {}) } }
     }
 
-    @Test fun machineFormTabletDark() = shoot("machine_form_tablet_dark", TABLET, dark = true) {
-        Samples2b.Toasts { MachineFormScreen(MachineFormViewModel(Samples2b.container, "m1"), formState(), {}, {}, {}) }
+    @Test fun machineFormTabletDark() {
+        val vm = MachineFormViewModel(Samples2b.container, "m1")
+        shoot("machine_form_tablet_dark", TABLET, dark = true) { Samples2b.Toasts { MachineFormScreen(vm, formState(), {}, {}, {}) } }
     }
 
     @Test fun storageAccessPhoneLight() = shoot("storage_access_phone_light", PHONE, dark = false) { Samples2b.Toasts { StorageAccessScreen {} } }

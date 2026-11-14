@@ -615,190 +615,237 @@
     <string name="t_transfers_view">Ver</string>
     <plurals name="t_browse_count">  <!-- args: 1=formatted -->
         <item quantity="one">%1$s item</item>
+        <item quantity="many">%1$s itens</item>
         <item quantity="other">%1$s itens</item>
     </plurals>
     <plurals name="t_browse_delete_failed">  <!-- args: 1=count -->
         <item quantity="one">%1$s item não pôde ser excluído</item>
+        <item quantity="many">%1$s itens não puderam ser excluídos</item>
         <item quantity="other">%1$s itens não puderam ser excluídos</item>
     </plurals>
     <plurals name="t_browse_delete_folder_body">  <!-- args: 1=count -->
         <item quantity="one">A pasta e tudo o que há dentro dela são excluídos na máquina. Não dá para desfazer.</item>
+        <item quantity="many">Estas %1$s pastas e tudo o que há dentro delas são excluídos na máquina. Não dá para desfazer.</item>
         <item quantity="other">Estas %1$s pastas e tudo o que há dentro delas são excluídos na máquina. Não dá para desfazer.</item>
     </plurals>
     <plurals name="t_browse_delete_many">  <!-- args: 1=count -->
         <item quantity="one">Excluir %1$s item?</item>
+        <item quantity="many">Excluir %1$s itens?</item>
         <item quantity="other">Excluir %1$s itens?</item>
     </plurals>
     <plurals name="t_browse_deleted">  <!-- args: 1=count -->
         <item quantity="one">Excluído</item>
+        <item quantity="many">%1$s itens excluídos</item>
         <item quantity="other">%1$s itens excluídos</item>
     </plurals>
     <plurals name="t_browse_selected">  <!-- args: 1=count -->
         <item quantity="one">%1$s selecionado</item>
+        <item quantity="many">%1$s selecionados</item>
         <item quantity="other">%1$s selecionados</item>
     </plurals>
     <plurals name="t_download_folders_skipped">  <!-- args: 1=count -->
         <item quantity="one">%1$s pasta fica de fora (ainda não dá para baixar pastas).</item>
+        <item quantity="many">%1$s pastas ficam de fora (ainda não dá para baixar pastas).</item>
         <item quantity="other">%1$s pastas ficam de fora (ainda não dá para baixar pastas).</item>
     </plurals>
     <plurals name="t_download_summary">  <!-- args: 1=count, 2=size -->
         <item quantity="one">%1$s arquivo · %2$s</item>
+        <item quantity="many">%1$s arquivos · %2$s</item>
         <item quantity="other">%1$s arquivos · %2$s</item>
     </plurals>
     <plurals name="t_download_title">  <!-- args: 1=count -->
         <item quantity="one">Baixar %1$s arquivo</item>
+        <item quantity="many">Baixar %1$s arquivos</item>
         <item quantity="other">Baixar %1$s arquivos</item>
     </plurals>
     <plurals name="t_machines_address_count">  <!-- args: 1=count -->
         <item quantity="one">%1$s endereço</item>
+        <item quantity="many">%1$s endereços</item>
         <item quantity="other">%1$s endereços</item>
     </plurals>
     <plurals name="t_machines_test_summary_ok">  <!-- args: 1=count, 2=total -->
         <item quantity="one">%1$s de %2$s endereços funciona.</item>
+        <item quantity="many">%1$s de %2$s endereços funcionam.</item>
         <item quantity="other">%1$s de %2$s endereços funcionam.</item>
     </plurals>
     <plurals name="t_page_earlier_levels">  <!-- args: 1=count -->
         <item quantity="one">Mostrar %1$s nível anterior</item>
+        <item quantity="many">Mostrar %1$s níveis anteriores</item>
         <item quantity="other">Mostrar %1$s níveis anteriores</item>
     </plurals>
     <plurals name="t_reveal_confirm_title">  <!-- args: 1=n -->
         <item quantity="one">Abrir %1$s arquivo no Reveal?</item>
+        <item quantity="many">Abrir %1$s arquivos no Reveal?</item>
         <item quantity="other">Abrir %1$s arquivos no Reveal?</item>
     </plurals>
     <plurals name="t_reveal_edit_picks">  <!-- args: 1=count -->
         <item quantity="one">Editar %1$s escolhida no Reveal</item>
+        <item quantity="many">Editar %1$s escolhidas no Reveal</item>
         <item quantity="other">Editar %1$s escolhidas no Reveal</item>
     </plurals>
     <plurals name="t_reveal_edit_shown">  <!-- args: 1=count -->
         <item quantity="one">Editar a %1$s exibida no Reveal</item>
+        <item quantity="many">Editar as %1$s exibidas no Reveal</item>
         <item quantity="other">Editar as %1$s exibidas no Reveal</item>
     </plurals>
     <plurals name="t_reveal_links_count">  <!-- args: 1=n -->
         <item quantity="one">O Reveal pode reabrir %1$s arquivo enviado pelo Hoard, mesmo depois de reiniciar.</item>
+        <item quantity="many">O Reveal pode reabrir %1$s arquivos enviados pelo Hoard, mesmo depois de reiniciar.</item>
         <item quantity="other">O Reveal pode reabrir %1$s arquivos enviados pelo Hoard, mesmo depois de reiniciar.</item>
     </plurals>
     <plurals name="t_reveal_links_revoked">  <!-- args: 1=n -->
         <item quantity="one">%1$s link revogado</item>
+        <item quantity="many">%1$s links revogados</item>
         <item quantity="other">%1$s links revogados</item>
     </plurals>
     <plurals name="t_save_all_rejected">  <!-- args: 1=count -->
         <item quantity="one">O item compartilhado não pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento.</item>
+        <item quantity="many">Nenhum dos %1$s itens compartilhados pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento.</item>
         <item quantity="other">Nenhum dos %1$s itens compartilhados pôde ser recebido: o Hoard só aceita arquivos que outro app compartilha do próprio armazenamento.</item>
     </plurals>
     <plurals name="t_save_picker_title">  <!-- args: 1=count -->
         <item quantity="one">Salvar %1$s arquivo em…</item>
+        <item quantity="many">Salvar %1$s arquivos em…</item>
         <item quantity="other">Salvar %1$s arquivos em…</item>
     </plurals>
     <plurals name="t_save_rejected">  <!-- args: 1=count -->
         <item quantity="one">1 item não pôde ser recebido</item>
+        <item quantity="many">%1$s itens não puderam ser recebidos</item>
         <item quantity="other">%1$s itens não puderam ser recebidos</item>
     </plurals>
     <plurals name="t_save_summary">  <!-- args: 1=count, 2=size -->
         <item quantity="one">%1$s arquivo · %2$s</item>
+        <item quantity="many">%1$s arquivos · %2$s</item>
         <item quantity="other">%1$s arquivos · %2$s</item>
     </plurals>
     <plurals name="t_text_lines">  <!-- args: 1=formatted -->
         <item quantity="one">%1$s linha</item>
+        <item quantity="many">%1$s linhas</item>
         <item quantity="other">%1$s linhas</item>
     </plurals>
     <plurals name="t_transfer_clipboard_copied">  <!-- args: 1=count -->
         <item quantity="one">%1$s item pronto para copiar</item>
+        <item quantity="many">%1$s itens prontos para copiar</item>
         <item quantity="other">%1$s itens prontos para copiar</item>
     </plurals>
     <plurals name="t_transfer_clipboard_copy">  <!-- args: 1=count -->
         <item quantity="one">%1$s item para copiar</item>
+        <item quantity="many">%1$s itens para copiar</item>
         <item quantity="other">%1$s itens para copiar</item>
     </plurals>
     <plurals name="t_transfer_clipboard_cut">  <!-- args: 1=count -->
         <item quantity="one">%1$s item pronto para mover</item>
+        <item quantity="many">%1$s itens prontos para mover</item>
         <item quantity="other">%1$s itens prontos para mover</item>
     </plurals>
     <plurals name="t_transfer_clipboard_move">  <!-- args: 1=count -->
         <item quantity="one">%1$s item para mover</item>
+        <item quantity="many">%1$s itens para mover</item>
         <item quantity="other">%1$s itens para mover</item>
     </plurals>
     <plurals name="t_transfer_conflict_dialog_apply_all">  <!-- args: 1=count -->
         <item quantity="one">Fazer o mesmo com o outro %1$s arquivo</item>
+        <item quantity="many">Fazer o mesmo com os outros %1$s arquivos</item>
         <item quantity="other">Fazer o mesmo com os outros %1$s arquivos</item>
     </plurals>
     <plurals name="t_transfer_share_folders_skipped">  <!-- args: 1=count -->
         <item quantity="one">%1$s pasta ficou de fora</item>
+        <item quantity="many">%1$s pastas ficaram de fora</item>
         <item quantity="other">%1$s pastas ficaram de fora</item>
     </plurals>
     <plurals name="t_transfer_started_copy">  <!-- args: 1=count, 2=name -->
         <item quantity="one">Copiando %1$s item para %2$s</item>
+        <item quantity="many">Copiando %1$s itens para %2$s</item>
         <item quantity="other">Copiando %1$s itens para %2$s</item>
     </plurals>
     <plurals name="t_transfer_started_move">  <!-- args: 1=count, 2=name -->
         <item quantity="one">Movendo %1$s item para %2$s</item>
+        <item quantity="many">Movendo %1$s itens para %2$s</item>
         <item quantity="other">Movendo %1$s itens para %2$s</item>
     </plurals>
     <plurals name="t_transfer_summary">  <!-- args: 1=count, 2=size -->
         <item quantity="one">%1$s item · %2$s</item>
+        <item quantity="many">%1$s itens · %2$s</item>
         <item quantity="other">%1$s itens · %2$s</item>
     </plurals>
     <plurals name="t_transfer_title_copy">  <!-- args: 1=count -->
         <item quantity="one">Copiar %1$s item para…</item>
+        <item quantity="many">Copiar %1$s itens para…</item>
         <item quantity="other">Copiar %1$s itens para…</item>
     </plurals>
     <plurals name="t_transfer_title_download">  <!-- args: 1=count -->
         <item quantity="one">Baixar %1$s item</item>
+        <item quantity="many">Baixar %1$s itens</item>
         <item quantity="other">Baixar %1$s itens</item>
     </plurals>
     <plurals name="t_transfer_title_move">  <!-- args: 1=count -->
         <item quantity="one">Mover %1$s item para…</item>
+        <item quantity="many">Mover %1$s itens para…</item>
         <item quantity="other">Mover %1$s itens para…</item>
     </plurals>
     <plurals name="t_transfer_title_upload">  <!-- args: 1=count -->
         <item quantity="one">Enviar %1$s item</item>
+        <item quantity="many">Enviar %1$s itens</item>
         <item quantity="other">Enviar %1$s itens</item>
     </plurals>
     <plurals name="t_transfers_active">  <!-- args: 1=count -->
         <item quantity="one">Em andamento · %1$s</item>
+        <item quantity="many">Em andamento · %1$s</item>
         <item quantity="other">Em andamento · %1$s</item>
     </plurals>
     <plurals name="t_transfers_active_summary">  <!-- args: 1=count, 2=percent -->
         <item quantity="one">%1$s transferência · %2$s%%</item>
+        <item quantity="many">%1$s transferências · %2$s%%</item>
         <item quantity="other">%1$s transferências · %2$s%%</item>
     </plurals>
     <plurals name="t_transfers_conflicts">  <!-- args: 1=count -->
         <item quantity="one">%1$s arquivo já existe no destino</item>
+        <item quantity="many">%1$s arquivos já existem no destino</item>
         <item quantity="other">%1$s arquivos já existem no destino</item>
     </plurals>
     <plurals name="t_transfers_indicator">  <!-- args: 1=count, 2=percent -->
         <item quantity="one">%1$s transferência em andamento, %2$s%%</item>
+        <item quantity="many">%1$s transferências em andamento, %2$s%%</item>
         <item quantity="other">%1$s transferências em andamento, %2$s%%</item>
     </plurals>
     <plurals name="t_transfers_items_done">  <!-- args: 1=done, 2=total -->
         <item quantity="one">%1$s de %2$s arquivo</item>
+        <item quantity="many">%1$s de %2$s arquivos</item>
         <item quantity="other">%1$s de %2$s arquivos</item>
     </plurals>
     <plurals name="t_transfers_items_progress">  <!-- args: 1=done, 2=total -->
         <item quantity="one">%1$s de %2$s arquivo</item>
+        <item quantity="many">%1$s de %2$s arquivos</item>
         <item quantity="other">%1$s de %2$s arquivos</item>
     </plurals>
     <plurals name="t_transfers_more">  <!-- args: 1=count -->
         <item quantity="one">Mais %1$s na página Transferências</item>
+        <item quantity="many">Mais %1$s na página Transferências</item>
         <item quantity="other">Mais %1$s na página Transferências</item>
     </plurals>
     <plurals name="t_transfers_more_failed">  <!-- args: 1=count -->
         <item quantity="one">e mais %1$s</item>
+        <item quantity="many">e mais %1$s</item>
         <item quantity="other">e mais %1$s</item>
     </plurals>
     <plurals name="t_transfers_name_more">  <!-- args: 1=name, 2=count -->
         <item quantity="one">%1$s e mais %2$s</item>
+        <item quantity="many">%1$s e mais %2$s</item>
         <item quantity="other">%1$s e mais %2$s</item>
     </plurals>
     <plurals name="t_transfers_scanning">  <!-- args: 1=formatted -->
         <item quantity="one">Contando arquivos… %1$s até agora</item>
+        <item quantity="many">Contando arquivos… %1$s até agora</item>
         <item quantity="other">Contando arquivos… %1$s até agora</item>
     </plurals>
     <plurals name="t_transfers_show_failed">  <!-- args: 1=count -->
         <item quantity="one">Ver o arquivo que falhou</item>
+        <item quantity="many">Ver %1$s arquivos que falharam</item>
         <item quantity="other">Ver %1$s arquivos que falharam</item>
     </plurals>
     <plurals name="t_transfers_some_failed">  <!-- args: 1=count -->
         <item quantity="one">%1$s arquivo falhou; o resto foi copiado</item>
+        <item quantity="many">%1$s arquivos falharam; o resto foi copiado</item>
         <item quantity="other">%1$s arquivos falharam; o resto foi copiado</item>
     </plurals>
 </resources>

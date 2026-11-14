@@ -150,6 +150,7 @@ private sealed interface BrowseDialog {
 @Composable
 fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: FileActions, nav: BrowseNav, clipboard: dev.hfps.hoard.app.transfers.Clipboard) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
     val location = state.location
@@ -174,7 +175,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         if (readable) {
             seenVolume = loc.name
         } else if (seenVolume != null) {
-            toaster.show(context.getString(R.string.t_locations_unplugged, seenVolume))
+            toaster.show(res.getString(R.string.t_locations_unplugged, seenVolume))
             nav.home()
         }
     }
@@ -199,7 +200,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
     fun openEntry(entry: SmbEntry, chooser: Boolean = false) {
         val loc = location ?: return
         if (entry.restricted) {
-            toaster.show(context.getString(R.string.t_locations_restricted_title))
+            toaster.show(res.getString(R.string.t_locations_restricted_title))
             return
         }
         if (entry.isDirectory) {
@@ -218,7 +219,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
                         actions.open(activity, loc, entry, chooser)
                     } catch (e: Throwable) {
                         val code = errorCodeOf(e)
-                        if (code != ErrorCode.CANCELLED) toaster.show(context.getString(openErrorText(code)) + " · " + entry.name)
+                        if (code != ErrorCode.CANCELLED) toaster.show(res.getString(openErrorText(code)) + " · " + entry.name)
                     } finally {
                         viewModel.setOpening(null)
                     }
@@ -233,19 +234,19 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         if (picked.isEmpty()) return
         clipboard.set(ClipboardContent(op, place, state.title, picked))
         viewModel.clearSelection()
-        val text = context.resources.getQuantityString(
+        val text = res.getQuantityString(
             if (op == "move") R.plurals.t_transfer_clipboard_cut else R.plurals.t_transfer_clipboard_copied,
             picked.size,
             picked.size.toString(),
         )
-        toaster.show(text + "\n" + context.getString(R.string.t_transfer_clipboard_hint))
+        toaster.show(text + "\n" + res.getString(R.string.t_transfer_clipboard_hint))
     }
 
     fun shareOut(entries: List<SmbEntry>) {
         val loc = location ?: return
         val filesOnly = entries.filter { !it.isDirectory }
         if (filesOnly.isEmpty()) {
-            toaster.show(context.getString(R.string.t_transfer_share_folders_only))
+            toaster.show(res.getString(R.string.t_transfer_share_folders_only))
             return
         }
         val activity = context.findActivity() ?: return
@@ -254,11 +255,11 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
                 actions.share(activity, loc, filesOnly.map { it.path })
                 if (filesOnly.size < entries.size) {
                     val skipped = entries.size - filesOnly.size
-                    toaster.show(context.resources.getQuantityString(R.plurals.t_transfer_share_folders_skipped, skipped, skipped.toString()))
+                    toaster.show(res.getQuantityString(R.plurals.t_transfer_share_folders_skipped, skipped, skipped.toString()))
                 }
             } catch (e: Throwable) {
                 val code = errorCodeOf(e)
-                if (code != ErrorCode.CANCELLED) toaster.show(context.getString(openErrorText(code)))
+                if (code != ErrorCode.CANCELLED) toaster.show(res.getString(openErrorText(code)))
             }
         }
     }
@@ -276,10 +277,10 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         val text = viewModel.displayPath(path)
         val manager = context.getSystemService(ClipboardManager::class.java)
         if (manager == null) {
-            toaster.show(context.getString(R.string.t_browse_copy_failed))
+            toaster.show(res.getString(R.string.t_browse_copy_failed))
         } else {
             manager.setPrimaryClip(ClipData.newPlainText(text, text))
-            toaster.show(context.getString(R.string.t_browse_path_copied) + "\n" + text)
+            toaster.show(res.getString(R.string.t_browse_path_copied) + "\n" + text)
         }
     }
 
@@ -291,7 +292,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         transferTo = { intent, list -> dialog = BrowseDialog.TransferTo(intent, list) },
         share = ::shareOut,
         reveal = if (reveal.available) ::editInReveal else null,
-        favorite = { e -> scope.launch { viewModel.addFavorite(e.path, e.name); toaster.show(context.getString(R.string.t_favorites_added, e.name)) } },
+        favorite = { e -> scope.launch { viewModel.addFavorite(e.path, e.name); toaster.show(res.getString(R.string.t_favorites_added, e.name)) } },
         copyPath = { copyPath(it.path) },
         rename = { dialog = BrowseDialog.Rename(it) },
         select = { viewModel.startSelection(it) },
@@ -322,7 +323,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
                             onClick = {
                                 scope.launch {
                                     val now = viewModel.toggleFavorite(state.title)
-                                    toaster.show(context.getString(if (now) R.string.t_favorites_added else R.string.t_favorites_removed, state.title))
+                                    toaster.show(res.getString(if (now) R.string.t_favorites_added else R.string.t_favorites_removed, state.title))
                                 }
                             },
                         )
@@ -371,8 +372,8 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
             onDismiss = { dialog = null },
             validate = nameValidator(context, state.listing.entries.orEmpty(), null),
             onSubmit = { name ->
-                viewModel.createFolder(name)?.let { context.getString(errorTitle(it)) }
-                    ?: null.also { toaster.show(context.getString(R.string.t_browse_folder_created, name)) }
+                viewModel.createFolder(name)?.let { res.getString(errorTitle(it)) }
+                    ?: null.also { toaster.show(res.getString(R.string.t_browse_folder_created, name)) }
             },
         )
         BrowseDialog.NewTextFile -> NameDialog(
@@ -386,9 +387,9 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
             onSubmit = { name ->
                 val (created, error) = viewModel.createTextFile(name)
                 if (error != null) {
-                    context.getString(errorTitle(error))
+                    res.getString(errorTitle(error))
                 } else {
-                    toaster.show(context.getString(R.string.t_browse_file_created, name))
+                    toaster.show(res.getString(R.string.t_browse_file_created, name))
                     location?.let { loc -> created?.let { nav.text(loc, it, true) } }
                     null
                 }
@@ -401,15 +402,15 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
             initialValue = "",
             submitLabel = stringResource(R.string.t_browse_open),
             onDismiss = { dialog = null },
-            validate = { if (isValidShareName(it)) null else context.getString(R.string.t_browse_share_name_invalid) },
+            validate = { if (isValidShareName(it)) null else res.getString(R.string.t_browse_share_name_invalid) },
             onSubmit = { name ->
                 when (val error = viewModel.openShareByName(name)) {
                     null -> {
                         location?.let { nav.open(it.id, name, "") }
                         null
                     }
-                    ErrorCode.NOT_FOUND -> context.getString(R.string.t_browse_share_not_found)
-                    else -> context.getString(errorTitle(error))
+                    ErrorCode.NOT_FOUND -> res.getString(R.string.t_browse_share_not_found)
+                    else -> res.getString(errorTitle(error))
                 }
             },
         )
@@ -422,7 +423,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
             selectBaseName = !d.entry.isDirectory,
             onDismiss = { dialog = null },
             validate = nameValidator(context, state.listing.entries.orEmpty(), d.entry.name),
-            onSubmit = { name -> viewModel.rename(d.entry, name)?.let { context.getString(errorTitle(it)) } },
+            onSubmit = { name -> viewModel.rename(d.entry, name)?.let { res.getString(errorTitle(it)) } },
         )
         is BrowseDialog.Delete -> {
             val one = d.entries.singleOrNull()
@@ -438,8 +439,8 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
                 onConfirm = {
                     val failed = viewModel.delete(d.entries)
                     toaster.show(
-                        if (failed > 0) context.resources.getQuantityString(R.plurals.t_browse_delete_failed, failed, failed.toString())
-                        else context.resources.getQuantityString(R.plurals.t_browse_deleted, d.entries.size, d.entries.size.toString()),
+                        if (failed > 0) res.getQuantityString(R.plurals.t_browse_delete_failed, failed, failed.toString())
+                        else res.getQuantityString(R.plurals.t_browse_deleted, d.entries.size, d.entries.size.toString()),
                     )
                 },
             )
@@ -533,6 +534,7 @@ fun readOnlyReason(location: BrowseLocation?, path: String): String {
 @Composable
 private fun HeaderMenu(location: BrowseLocation, showHidden: Boolean, nav: BrowseNav, viewModel: BrowseViewModel) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
     val settings = (context.applicationContext as dev.hfps.hoard.app.HoardApplication).container.appSettings
@@ -901,6 +903,7 @@ private fun FileRow(
     onLongPress: () -> Unit,
 ) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val kind = fileKind(entry)
     val container = (context.applicationContext as dev.hfps.hoard.app.HoardApplication).container
     val thumbnailKey = if (hasThumbnail(entry)) "${location.cacheKey}/${entry.path}:${entry.size}:${entry.modifiedAt}" else null
@@ -1092,6 +1095,7 @@ private fun LocationError(
     onEditMachine: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val title = when (code) {
         ErrorCode.UNAVAILABLE -> stringResource(R.string.t_locations_unavailable_title, location.name)
         else -> stringResource(errorTitle(code))

@@ -58,6 +58,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun FilesSettingsSection() {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val container = (context.applicationContext as HoardApplication).container
     val settings by container.appSettings.files.collectAsState(initial = FilesSettings())
     FilesSettingsContent(settings, container.appSettings)
@@ -66,6 +67,7 @@ fun FilesSettingsSection() {
 @Composable
 fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val container = (context.applicationContext as? HoardApplication)?.container
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
@@ -179,7 +181,7 @@ fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
                 GhostButton(stringResource(R.string.t_settings_release), {
                     scope.launch {
                         withContext(Dispatchers.IO) { runCatching { container?.destinations?.release(uri) } }
-                        toaster.show(context.getString(R.string.t_settings_released, name))
+                        toaster.show(res.getString(R.string.t_settings_released, name))
                         reload++
                     }
                 })
@@ -207,8 +209,8 @@ fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
             onConfirm = {
                 val revoked = withContext(Dispatchers.IO) { runCatching { HandoffServer.revokeAll(context) }.getOrNull() }
                 toaster.show(
-                    if (revoked == null) context.getString(R.string.t_reveal_links_failed)
-                    else context.resources.getQuantityString(R.plurals.t_reveal_links_revoked, revoked, revoked.toString()),
+                    if (revoked == null) res.getString(R.string.t_reveal_links_failed)
+                    else res.getQuantityString(R.plurals.t_reveal_links_revoked, revoked, revoked.toString()),
                 )
                 reload++
             },

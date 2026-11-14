@@ -50,6 +50,7 @@ class RevealController internal constructor(val available: Boolean, val edit: (B
 @Composable
 fun rememberReveal(actions: FileActions): RevealController {
     val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
     val container = (context.applicationContext as HoardApplication).container
@@ -71,9 +72,9 @@ fun rememberReveal(actions: FileActions): RevealController {
                     ErrorCode.CANCELLED -> Unit
                     ErrorCode.NO_APP -> {
                         available = false
-                        toaster.show(context.getString(R.string.t_reveal_not_installed))
+                        toaster.show(res.getString(R.string.t_reveal_not_installed))
                     }
-                    else -> toaster.show(context.getString(R.string.t_reveal_failed) + "\n" + context.getString(errorTitle(code)))
+                    else -> toaster.show(res.getString(R.string.t_reveal_failed) + "\n" + res.getString(errorTitle(code)))
                 }
             }
         }

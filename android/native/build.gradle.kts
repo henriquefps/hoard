@@ -63,6 +63,8 @@ android {
         }
     }
     compileOptions {
+        // java.time (ISO dates of rows and listings) on minSdk 24.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
@@ -96,6 +98,7 @@ kotlin { jvmToolchain(21) }
 apply(from = "../app/mlkit-packaging.gradle")
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation(project(":core:designsystem"))
     implementation(project(":core:data"))
     implementation(project(":core:smb"))

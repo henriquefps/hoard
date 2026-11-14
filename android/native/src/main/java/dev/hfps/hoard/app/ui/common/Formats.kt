@@ -3,7 +3,6 @@ package dev.hfps.hoard.app.ui.common
 import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
 import dev.hfps.hoard.app.files.formatBytes
 import java.time.Instant
 import java.time.ZoneId
@@ -38,7 +37,7 @@ fun formatFullDate(context: Context, iso: String?): String {
 fun bytes(value: Long): String = formatBytes(value, locale())
 
 @Composable
-fun locale(): Locale = LocalContext.current.resources.configuration.locales[0] ?: Locale.getDefault()
+fun locale(): Locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
 
 fun formatNumber(value: Number, locale: Locale): String = java.text.NumberFormat.getNumberInstance(locale).format(value)
 
