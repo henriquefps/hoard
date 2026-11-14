@@ -2,7 +2,7 @@ import { existsSync, rmSync } from "node:fs"
 import { readState, statePath } from "./server"
 
 export default async function globalTeardown() {
-  for (const name of ["state", "bench"]) {
+  for (const name of ["state", "bench", "tailscale"]) {
     if (!existsSync(statePath(name))) continue
     try {
       process.kill(readState(name).pid, "SIGTERM")

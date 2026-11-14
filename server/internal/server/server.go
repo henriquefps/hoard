@@ -3,6 +3,8 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -74,9 +77,15 @@ type Config struct {
 	PreviewWorkers int    // image jobs at a time
 	ProxyWorkers   int    // video proxy jobs at a time
 	PreviewThreads int    // threads per vips/ffmpeg run
+	FullCacheBytes int64  // bound of the full-resolution stills kept (ADR 0018; 0 = the default)
 	PreviewBacklog []string
 	// PreviewGenerator replaces the CPU generator (tests; a GPU worker later).
 	PreviewGenerator previews.Generator
+	// TrustTailscaleServe (TRUST_TAILSCALE_SERVE=1) lets the LAN/Tailscale-only pages (the gallery, the setup page)
+	// answer requests `tailscale serve` proxies: from a TailscaleServePeers address (loopback always), with one
+	// tailnet address in X-Forwarded-For and no other proxy's header (ADR 0018 "HTTPS with tailscale serve").
+	TrustTailscaleServe bool
+	TailscaleServePeers []netip.Addr
 }
 
 // Server holds the state behind the handlers.
@@ -186,7 +195,8 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 			backlog[j] = true
 		}
 		s.prev, err = previews.New(previews.Config{Dir: cfg.PreviewsDir, ImageWorkers: cfg.PreviewWorkers, ProxyWorkers: cfg.ProxyWorkers,
-			Backlog: backlog, Generator: gen, Store: st, Open: s.openSource, Log: s.log})
+			FullCacheBytes: cfg.FullCacheBytes,
+			Backlog:        backlog, Generator: gen, Store: st, Open: s.openSource, Log: s.log})
 		if err != nil {
 			return nil, fmt.Errorf("previews directory: %w", err)
 		}
@@ -310,7 +320,7 @@ func (s *Server) Handler() http.Handler {
 	s.routesAdmin(mux)
 	s.routesWeb(mux)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if directLocal(r) { // the web gallery (ADR 0018)
+		if s.localRequest(r) { // the web gallery (ADR 0018)
 			s.serveWebApp(w, r)
 			return
 		}
@@ -363,8 +373,9 @@ const keyInfo ctxKey = 0
 
 // reqInfo is filled by handlers for the access log (the device id, never its key).
 type reqInfo struct {
-	device store.Device
-	code   string
+	device  store.Device
+	code    string
+	tailnet string // the tailnet address of a request `tailscale serve` proxied (TRUST_TAILSCALE_SERVE)
 }
 
 func info(r *http.Request) *reqInfo {
@@ -556,6 +567,94 @@ func viaProxy(r *http.Request) bool {
 	return false
 }
 
+// tailnetV6 is Tailscale's IPv6 range (its IPv4 range is cgnat).
+var tailnetV6 = netip.MustParsePrefix("fd7a:115c:a1e0::/48")
+
+// localRequest reports a request the LAN/Tailscale-only pages answer: direct from the LAN or Tailscale, or proxied by
+// `tailscale serve` for a tailnet address when TRUST_TAILSCALE_SERVE is on.
+func (s *Server) localRequest(r *http.Request) bool {
+	return directLocal(r) || s.viaTailscaleServe(r)
+}
+
+// viaTailscaleServe reports a request `tailscale serve` proxied, and records the tailnet address it was made from.
+// tailscale serve connects from this host (loopback; in a container, the bridge's gateway), sets X-Forwarded-For to
+// the one tailnet address the request came from (it replaces any value the client sent), X-Forwarded-Proto and
+// X-Forwarded-Host, and marks Funnel (public) requests with Tailscale-Funnel-Request: those are refused, as is anything
+// carrying another proxy's header (Cloudflare's tunnel sets Cf-Connecting-Ip).
+func (s *Server) viaTailscaleServe(r *http.Request) bool {
+	if !s.cfg.TrustTailscaleServe {
+		return false
+	}
+	peer, ok := remoteIP(r)
+	if !ok || !peer.IsLoopback() && !slices.Contains(s.cfg.TailscaleServePeers, peer) {
+		return false
+	}
+	for _, h := range []string{"Cf-Connecting-Ip", "X-Real-Ip", "Forwarded", "Tailscale-Funnel-Request"} {
+		if len(r.Header.Values(h)) > 0 {
+			return false
+		}
+	}
+	xff := r.Header.Values("X-Forwarded-For")
+	if len(xff) != 1 || strings.Contains(xff[0], ",") {
+		return false
+	}
+	a, err := netip.ParseAddr(strings.TrimSpace(xff[0]))
+	if err != nil {
+		return false
+	}
+	if a = a.Unmap(); !cgnat.Contains(a) && !tailnetV6.Contains(a) {
+		return false
+	}
+	info(r).tailnet = a.String()
+	return true
+}
+
+// publicHost is the host the browser addressed: X-Forwarded-Host behind tailscale serve (it connects to
+// 127.0.0.1:3071), else the request's Host. Origin checks compare with it.
+func publicHost(r *http.Request) string {
+	if info(r).tailnet != "" {
+		if h := r.Header.Get("X-Forwarded-Host"); h != "" {
+			return h
+		}
+	}
+	return r.Host
+}
+
+// ContainerGateway returns the default IPv4 gateway when the server runs in a container (Docker, Podman): there,
+// `tailscale serve` on the host reaches a published port from the bridge's gateway address, not from loopback.
+func ContainerGateway() (netip.Addr, bool) {
+	inContainer := false
+	for _, f := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(f); err == nil {
+			inContainer = true
+		}
+	}
+	if !inContainer {
+		return netip.Addr{}, false
+	}
+	b, err := os.ReadFile("/proc/net/route")
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return defaultGateway(string(b))
+}
+
+// defaultGateway reads the default route's gateway from /proc/net/route (little-endian hex).
+func defaultGateway(table string) (netip.Addr, bool) {
+	for _, line := range strings.Split(table, "\n")[1:] {
+		f := strings.Fields(line)
+		if len(f) < 3 || f[1] != "00000000" {
+			continue
+		}
+		b, err := hex.DecodeString(f[2]) // the address as a little-endian number: its bytes reversed
+		if err != nil || len(b) != 4 || binary.LittleEndian.Uint32(b) == 0 {
+			continue
+		}
+		return netip.AddrFrom4([4]byte{b[3], b[2], b[1], b[0]}), true
+	}
+	return netip.Addr{}, false
+}
+
 // directLocal reports a request from the LAN/Tailscale that did not pass through a proxy.
 func directLocal(r *http.Request) bool {
 	ip, ok := remoteIP(r)
@@ -565,6 +664,9 @@ func directLocal(r *http.Request) bool {
 // clientKey is the rate-limit key of an unauthenticated request: the address the tunnel reports when the TCP peer is
 // a local connector, else the TCP peer.
 func clientKey(r *http.Request) string {
+	if a := info(r).tailnet; a != "" {
+		return a
+	}
 	ip, ok := remoteIP(r)
 	if ok && isLocal(ip) {
 		if cf := r.Header.Get("Cf-Connecting-Ip"); cf != "" {

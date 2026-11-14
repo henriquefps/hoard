@@ -55,6 +55,9 @@ func (g *fakeGen) Generate(_ context.Context, j previews.Job, src *os.File, dir 
 	if j.Job == previews.JobProxy {
 		return res, write(previews.FileProxy, 1280, 720)
 	}
+	if j.Job == previews.JobFull {
+		return res, write(previews.FileFull, 6000, 4000)
+	}
 	for _, f := range []struct {
 		name string
 		w, h int

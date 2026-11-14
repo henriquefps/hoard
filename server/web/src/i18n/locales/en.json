@@ -112,6 +112,10 @@
     "started_other": "Downloading {{count}} files ({{size}})",
     "failed": "The download could not start."
   },
+  "https": {
+    "hint": "Chrome blocks downloads from this plain-HTTP address. Open the gallery at its HTTPS address (tailscale serve, see the server's README) to download.",
+    "dismiss": "Dismiss"
+  },
   "viewer": {
     "close": "Back to the gallery",
     "back": "Back to the gallery",
@@ -128,7 +132,18 @@
     "stopMotion": "Show the still",
     "videoPreparing": "Preparing the video on the server",
     "videoUnavailable": "This video cannot be played.",
-    "layer": { "thumb": "Thumbnail", "screen": "Preview", "original": "Original" }
+    "layer": {
+      "thumb": "Thumbnail",
+      "screen": "Preview",
+      "original": "Original",
+      "originalRaw": "Original (rendered from the RAW)",
+      "originalConverted": "Original (converted from HEIF)"
+    },
+    "full": {
+      "rendering": "Rendering full resolution on the server…",
+      "loading": "Loading full resolution…",
+      "loadingPercent": "Loading full resolution… {{percent}}%"
+    }
   },
   "info": {
     "when": "Taken",

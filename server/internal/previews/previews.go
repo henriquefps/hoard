@@ -25,6 +25,10 @@ const Version = 1
 const (
 	JobImage = "image" // thumb and screen, JPEG and WebP (a still's, or a video's poster frame)
 	JobProxy = "proxy" // proxy.mp4 (a video, or the video of a motion photo)
+	// JobFull is the full-resolution still the web gallery shows at 100 % (ADR 0018 "Full resolution") for items whose
+	// own file a browser cannot show: a HEIF rendering converted, a lone RAW rendered. Made only when asked (never in
+	// the backlog), kept in a bounded cache.
+	JobFull = "full"
 )
 
 // Output files.
@@ -34,6 +38,7 @@ const (
 	FileThumbWebP  = "thumb.webp"
 	FileScreenWebP = "screen.webp"
 	FileProxy      = "proxy.mp4"
+	FileFull       = "full.jpg"
 )
 
 // Sizes (long edge, pixels) and encoder settings. Part of the key: changing one regenerates.
@@ -50,6 +55,12 @@ const (
 	ProxyCRF          = 23
 	ProxyMaxRate      = 2500 // kb/s
 	ProxyAudio        = 128  // kb/s AAC
+	// FullQuality: the full-resolution JPEG (baseline: it decodes faster than a progressive one, and the gallery
+	// downloads it whole before showing it).
+	FullQuality = 90
+	// FullEmbeddedShare: a RAW's embedded JPEG is used as its full-resolution still when its long edge is at least this
+	// share of the RAW's (Canon, Nikon and Apple embed a full-size rendering); else LibRaw decodes the RAW.
+	FullEmbeddedShare = 0.9
 )
 
 // recipes name what a job makes; they are hashed into every key.
@@ -57,6 +68,7 @@ var recipes = map[string]string{
 	JobImage: fmt.Sprintf("jpeg+webp srgb thumb=%d/q%d/w%d screen=%d/q%d/w%d poster=10%%,non-dark tonemap=hable", ThumbEdge, ThumbQuality,
 		ThumbWebPQuality, ScreenEdge, ScreenQuality, ScreenWebPQuality),
 	JobProxy: fmt.Sprintf("h264 high crf=%d maxrate=%dk short=%d fps<=%d gop=2s aac=%dk faststart tonemap=hable", ProxyCRF, ProxyMaxRate, ProxyEdge, ProxyMaxFPS, ProxyAudio),
+	JobFull:  fmt.Sprintf("jpeg srgb full q%d baseline embedded-as-is>=%.2f else libraw", FullQuality, FullEmbeddedShare),
 }
 
 // Source is the file a job reads.
@@ -116,6 +128,9 @@ func Plan(id string, d items.Data) map[string]Job {
 			add(JobImage, Source{Fingerprint: raw.Fingerprint, Role: media.RoleRaw, Format: raw.Format, Orientation: d.Orientation,
 				LongEdge: max(d.Width, d.Height)})
 		}
+		if img, ok := out[JobImage]; ok && FullOriginal(d) == nil {
+			add(JobFull, img.Source)
+		}
 	}
 	if d.Kind == items.KindMotion && d.Motion != nil {
 		switch d.Motion.Source {
@@ -129,6 +144,35 @@ func Plan(id string, d items.Data) map[string]Job {
 		}
 	}
 	return out
+}
+
+// BrowserShowable reports a still a browser shows as it is (JPEG, PNG, WebP, AVIF, GIF): the web gallery's
+// full-resolution layer is then the file itself, and no JobFull is planned.
+func BrowserShowable(f items.File) bool {
+	switch f.Format {
+	case "jpeg", "png", "webp", "avif", "gif":
+		return true
+	case "":
+		switch media.Ext(f.Name) {
+		case "jpg", "jpeg", "jpe", "jfif", "png", "webp", "avif", "gif":
+			return true
+		}
+	}
+	return false
+}
+
+// FullOriginal is the file the web gallery shows at full resolution as it is (a pair's camera JPEG, a JPEG photo),
+// or nil when the item needs a JobFull (a HEIF, a lone RAW) or has no still (a video).
+func FullOriginal(d items.Data) *items.File {
+	if d.Kind == items.KindVideo {
+		return nil
+	}
+	for i := range d.Files {
+		if f := &d.Files[i]; f.Role == media.RoleRendered && BrowserShowable(*f) {
+			return f
+		}
+	}
+	return nil
 }
 
 // Key is a job's content key: SHA-256 (first 16 bytes, hex) of Version, the job's recipe and what it reads. Two

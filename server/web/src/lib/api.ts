@@ -56,5 +56,22 @@ export const previewUrl = (id: string, size: "thumb" | "screen", v?: string, for
 
 export const proxyUrl = (id: string) => `/web/items/${id}/proxy`
 
-export const fileUrl = (id: string, fingerprint: string, download = false) =>
-  `/web/items/${id}/files/${encodeURIComponent(fingerprint)}${download ? "?download=1" : ""}`
+/**
+ * One member file. The URL ends in the file's name (the server ignores it): a browser that names a download by its
+ * URL (a blocked download, "Save link as") keeps the name and extension.
+ */
+export const fileUrl = (id: string, fingerprint: string, download = false, name?: string) =>
+  `/web/items/${id}/files/${encodeURIComponent(fingerprint)}${name ? `/${encodeURIComponent(name)}` : ""}${download ? "?download=1" : ""}`
+
+/** The still at full resolution (the original, or a JPEG the server makes from a RAW or HEIF; 202 while it does). */
+export const fullUrl = (id: string) => `/web/items/${id}/full`
+
+/**
+ * Chrome blocks downloads from a plain-HTTP page that is not on this computer ("Insecure download blocked"). The
+ * gallery says so, and points at its HTTPS address (tailscale serve, ADR 0018).
+ */
+export function insecureDownloads(loc: { protocol: string; hostname: string }): boolean {
+  if (loc.protocol !== "http:") return false
+  const h = loc.hostname.replace(/^\[|\]$/g, "")
+  return !(h === "localhost" || h.endsWith(".localhost") || /^127\./.test(h) || h === "::1")
+}

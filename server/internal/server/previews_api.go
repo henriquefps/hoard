@@ -140,6 +140,7 @@ func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, row store.Item
 		return
 	}
 	defer f.Close()
+	s.prev.Served(ctx, row.ID, job)
 	h := w.Header()
 	h.Set("Content-Type", contentType)
 	h.Set("ETag", `"`+st.Key+"-"+file+`"`)

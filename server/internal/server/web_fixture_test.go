@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -132,6 +133,29 @@ func ffmpegClip(t *testing.T, out string, seconds int, size, created string, rot
 	}
 }
 
+// rawWithPreview is a synthetic RAW (mediatest.RAW's tags) with a JPEG embedded through JPEGInterchangeFormat in
+// IFD0. LibRaw cannot decode it; the server's RAW readers find the embedded JPEG by content (ADR 0015 "Sources").
+func rawWithPreview(s mediatest.Shot, jpg []byte) []byte {
+	build := func(off uint32) []byte {
+		d := s.IFD0()
+		d.Tags = append(d.Tags, mediatest.Tag{ID: 0x0100, Val: []uint32{160}}, mediatest.Tag{ID: 0x0101, Val: []uint32{120}},
+			mediatest.Tag{ID: 0x0201, Val: []uint32{off}}, mediatest.Tag{ID: 0x0202, Val: []uint32{uint32(len(jpg))}})
+		d.Subs = []*mediatest.IFD{{Tags: []mediatest.Tag{{ID: 0x0100, Val: []uint32{s.Width}}, {ID: 0x0101, Val: []uint32{s.Height}}}}}
+		ex := *d.Exif
+		ex.Tags = nil
+		for _, t := range d.Exif.Tags {
+			if t.ID != 0xA002 && t.ID != 0xA003 {
+				ex.Tags = append(ex.Tags, t)
+			}
+		}
+		d.Exif = &ex
+		return mediatest.TIFF(d, binary.LittleEndian, 42)
+	}
+	head := build(0)
+	head = build(uint32(len(head)))
+	return append(head, jpg...)
+}
+
 func TestWriteWebFixture(t *testing.T) {
 	dir := os.Getenv("HOARD_WEB_FIXTURE")
 	if dir == "" {
@@ -166,6 +190,10 @@ func TestWriteWebFixture(t *testing.T) {
 			f.write(name+".ARW", mediatest.RAW(r))
 		}
 	}
+	// A lone RAW whose camera JPEG is embedded at full size (as Canon and Nikon store theirs): the viewer's 100 % zoom
+	// shows it through /web/items/{id}/full (ADR 0018 "Full resolution").
+	rs := shot("2023:11:20", 7, 30, 0, 6000, 4000)
+	f.write("2023/2023-11-20 Raw/DSC03000.ARW", rawWithPreview(rs, drawPhoto(6000, 4000, 140, 7)))
 	// A sidecar written by another tool: 5 stars, picked (imported by the server, ADR 0016).
 	f.write("2024/2024-05-03 Trip/DSC01001.xmp", []byte(`<?xpacket begin=""?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">`+
 		`<rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmlns:digiKam="http://www.digikam.org/ns/1.0/" xmp:Rating="5" digiKam:PickLabel="3"/>`+

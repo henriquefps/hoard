@@ -59,7 +59,9 @@ function reapplyPending(lib: Library): Library {
       const d = decisionOf(r)
       return withDecision(
         r,
-        c.field === "rating" ? { ...d, rating: c.value as number } : { ...d, flag: c.value === "none" ? null : (c.value as Decision["flag"]) }
+        c.field === "rating"
+          ? { ...d, rating: c.value as number }
+          : { ...d, flag: c.value === "none" ? null : (c.value as Decision["flag"]) }
       )
     })
   }
@@ -169,10 +171,15 @@ async function flush(): Promise<void> {
   const rest = collapse(queue).filter((c) => !sent.has(c))
   queue = rest
   try {
-    const ans = await api<{ results: { itemId: string; field: "rating" | "flag" | "label"; status: string; winner?: string; rev: number }[] }>(
-      "/web/culling",
-      { method: "POST", json: { changes: inflight } }
-    )
+    const ans = await api<{
+      results: {
+        itemId: string
+        field: "rating" | "flag" | "label"
+        status: string
+        winner?: string
+        rev: number
+      }[]
+    }>("/web/culling", { method: "POST", json: { changes: inflight } })
     let lib = state.library
     let lost = false
     ans.results.forEach((r, i) => {
@@ -210,15 +217,16 @@ export async function downloadZip(ids: string[]): Promise<{ name: string; files:
     method: "POST",
     json: { items: ids },
   })
-  startDownload(ans.url)
+  startDownload(ans.url, ans.name)
   return ans
 }
 
-export function startDownload(url: string) {
+/** Starts a same-origin download with the browser's own download manager, named (the server names it too). */
+export function startDownload(url: string, name = "") {
   const a = document.createElement("a")
   a.href = url
   a.rel = "noopener"
-  a.download = ""
+  a.download = name
   document.body.appendChild(a)
   a.click()
   a.remove()

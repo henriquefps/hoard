@@ -10,8 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -19,6 +19,7 @@ import (
 
 	"github.com/henriquefps/hoard/server/internal/items"
 	"github.com/henriquefps/hoard/server/internal/media"
+	"github.com/henriquefps/hoard/server/internal/previews"
 	"github.com/henriquefps/hoard/server/internal/store"
 )
 
@@ -141,34 +142,70 @@ func contentType(name string) string {
 	return "application/octet-stream"
 }
 
-func disposition(kind, name string) string {
+// contentDisposition names a response's file for the browser (RFC 6266): an ASCII fallback in filename (non-ASCII and
+// quoting characters as "_") and the exact name, UTF-8 and percent-encoded (RFC 8187), in filename*. Browsers use
+// filename* and keep the original name and extension.
+func contentDisposition(kind, name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, name)
 	if name == "" {
 		return kind
 	}
-	if v := mime.FormatMediaType(kind, map[string]string{"filename": name}); v != "" {
-		return v
+	var ascii, enc strings.Builder
+	for _, r := range name {
+		if r > 0x7e || r == '"' || r == '%' {
+			ascii.WriteByte('_')
+		} else {
+			ascii.WriteRune(r)
+		}
 	}
-	return kind
+	for _, b := range []byte(name) {
+		if b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || strings.IndexByte("!#$&+-.^_`|~", b) >= 0 {
+			enc.WriteByte(b)
+		} else {
+			fmt.Fprintf(&enc, "%%%02X", b)
+		}
+	}
+	return kind + `; filename="` + ascii.String() + `"; filename*=UTF-8''` + enc.String()
 }
 
-// handleWebFile serves one member file of an item (inline, or as an attachment with ?download=1), with ranges.
+// memberFile finds a member file of an item by fingerprint.
+func memberFile(d items.Data, fp string) *items.File {
+	for i := range d.Files {
+		if d.Files[i].Fingerprint == fp {
+			return &d.Files[i]
+		}
+	}
+	return nil
+}
+
+// handleWebFile serves one member file of an item (inline, or as an attachment with ?download=1), with ranges. The
+// route has a variant ending in the file's name (/files/{fingerprint}/{name}) so that a browser that names a download
+// by its URL (a blocked download, "Save link as") still gets the name and extension; the name in the path is ignored.
 func (s *Server) handleWebFile(w http.ResponseWriter, r *http.Request) {
 	_, d, ok := s.liveItem(w, r)
 	if !ok {
 		return
 	}
-	fp := r.PathValue("fingerprint")
-	var file *items.File
-	for i := range d.Files {
-		if d.Files[i].Fingerprint == fp {
-			file = &d.Files[i]
-		}
-	}
+	file := memberFile(d, r.PathValue("fingerprint"))
 	if file == nil {
 		fail(w, r, http.StatusNotFound, "not_found", "The item has no such file.", nil)
 		return
 	}
-	f, err := s.openSource(r.Context(), fp)
+	kind := "inline"
+	if r.URL.Query().Get("download") == "1" {
+		kind = "attachment"
+	}
+	s.serveMember(w, r, *file, kind)
+}
+
+// serveMember answers a member file with ranges, its type by extension and its name.
+func (s *Server) serveMember(w http.ResponseWriter, r *http.Request, file items.File, kind string) {
+	f, err := s.openSource(r.Context(), file.Fingerprint)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, r, http.StatusNotFound, "not_found", "No file with this fingerprint.", nil)
 		return
@@ -182,13 +219,39 @@ func (s *Server) handleWebFile(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", contentType(file.Name))
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
-	h.Set("ETag", `"`+fp+`"`)
-	kind := "inline"
-	if r.URL.Query().Get("download") == "1" {
-		kind = "attachment"
-	}
-	h.Set("Content-Disposition", disposition(kind, file.Name))
+	h.Set("ETag", `"`+file.Fingerprint+`"`)
+	h.Set("Content-Disposition", contentDisposition(kind, file.Name))
 	http.ServeContent(w, r, "", time.Time{}, f)
+}
+
+// handleWebFull answers the item's still at full resolution for the viewer's 100 % zoom (ADR 0018 "Full resolution"):
+// the file itself when a browser shows it (X-Hoard-Full: original — a JPEG, a pair's camera JPEG), else a JPEG the
+// server makes on demand and caches (X-Hoard-Full: converted for a HEIF, raw for a lone RAW: its full-size embedded
+// rendering or a LibRaw decode), 202 with Retry-After while it is being made.
+func (s *Server) handleWebFull(w http.ResponseWriter, r *http.Request) {
+	row, d, ok := s.liveItem(w, r)
+	if !ok {
+		return
+	}
+	if d.Kind == items.KindVideo {
+		fail(w, r, http.StatusNotFound, "preview_unavailable", "Videos have no full-resolution still.", map[string]any{"reason": "not_applicable"})
+		return
+	}
+	if f := previews.FullOriginal(d); f != nil {
+		w.Header().Set("X-Hoard-Full", "original")
+		s.serveMember(w, r, *f, "inline")
+		return
+	}
+	if s.prev == nil {
+		fail(w, r, http.StatusServiceUnavailable, "unavailable", "Previews are not enabled on this server.", nil)
+		return
+	}
+	source := "converted"
+	if j, ok := previews.Plan(row.ID, d)[previews.JobFull]; ok && j.Source.Role == media.RoleRaw {
+		source = "raw"
+	}
+	w.Header().Set("X-Hoard-Full", source)
+	s.serveJob(w, r, row, previews.JobFull, previews.FileFull, "image/jpeg", 2)
 }
 
 type webDownload struct {
@@ -213,6 +276,7 @@ func (s *Server) handleWebDownloadCreate(w http.ResponseWriter, r *http.Request)
 	seen := map[string]bool{}
 	var ids []string
 	files, size := 0, int64(0)
+	var namer zipNamer
 	for i, id := range req.Items {
 		if !itemIDPattern.MatchString(id) {
 			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "items are item ids.", map[string]any{"index": i})
@@ -240,6 +304,7 @@ func (s *Server) handleWebDownloadCreate(w http.ResponseWriter, r *http.Request)
 			files++
 			size += f.Size
 		}
+		namer.add(d)
 		ids = append(ids, id)
 	}
 	var b [16]byte
@@ -248,11 +313,93 @@ func (s *Server) handleWebDownloadCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	token := hex.EncodeToString(b[:])
-	name := fmt.Sprintf("hoard-%s-%d.zip", time.Now().Format("2006-01-02"), len(ids))
+	name := namer.name(time.Now())
 	s.web.dlMu.Lock()
 	s.web.downloads[token] = webDownload{writer: info(r).device.ID, items: ids, name: name, expires: time.Now().Add(downloadTTL)}
 	s.web.dlMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"url": "/web/downloads/" + token, "name": name, "items": len(ids), "files": files, "bytes": size})
+	// The name ends the URL too (ignored by the route), for browsers that name a download by its URL.
+	writeJSON(w, http.StatusOK, map[string]any{"url": "/web/downloads/" + token + "/" + url.PathEscape(name), "name": name, "items": len(ids), "files": files, "bytes": size})
+}
+
+// zipNamer names a zip after what it holds (ADR 0018 "Downloads"): one item → its main file's stem ("DSC01000.zip");
+// several from one directory → "<directory>-<n> photos.zip"; else the capture day, or the first and last days
+// ("2024-05-03–2024-05-10-<n> photos.zip").
+type zipNamer struct {
+	n          int
+	stem       string
+	dir        string
+	mixedDirs  bool
+	first, end string
+}
+
+func (z *zipNamer) add(d items.Data) {
+	z.n++
+	dir := ""
+	for _, f := range d.Files {
+		if f.Fingerprint != d.MainFingerprint {
+			continue
+		}
+		z.stem = media.Stem(f.Name)
+		for _, l := range f.Locations {
+			if l.Source == "nas" {
+				dir = path.Base(path.Dir(l.Path))
+				if dir == "." || dir == "/" {
+					dir = l.FolderName
+				}
+				break
+			}
+		}
+	}
+	switch {
+	case z.n == 1:
+		z.dir = dir
+	case dir != z.dir:
+		z.mixedDirs = true
+	}
+	day := ""
+	if d.Capture != nil && len(d.Capture.Local) >= 10 {
+		day = d.Capture.Local[:10]
+	} else if d.SortTime > 0 {
+		day = time.UnixMilli(d.SortTime).UTC().Format("2006-01-02")
+	}
+	if day != "" {
+		if z.first == "" || day < z.first {
+			z.first = day
+		}
+		if day > z.end {
+			z.end = day
+		}
+	}
+}
+
+func (z *zipNamer) name(now time.Time) string {
+	clean := func(s string) string {
+		return strings.TrimSpace(strings.Map(func(r rune) rune {
+			if r < 0x20 || strings.ContainsRune(`/\:*?"<>|`, r) {
+				return '_'
+			}
+			return r
+		}, s))
+	}
+	if z.n == 1 && clean(z.stem) != "" {
+		return clean(z.stem) + ".zip"
+	}
+	label := ""
+	switch {
+	case !z.mixedDirs && clean(z.dir) != "":
+		label = clean(z.dir)
+	case z.first != "" && z.first == z.end:
+		label = z.first
+	case z.first != "":
+		label = z.first + "–" + z.end
+	default:
+		label = now.Format("2006-01-02")
+	}
+	unit := "photos"
+	if z.n == 1 {
+		unit = "photo"
+	}
+	return fmt.Sprintf("%s-%d %s.zip", label, z.n, unit)
 }
 
 // zipName makes names unique inside one archive: "DSC0001.JPG", then "DSC0001 (2).JPG".
@@ -287,7 +434,7 @@ func (s *Server) handleWebDownload(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", "application/zip")
 	h.Set("Cache-Control", "no-store")
-	h.Set("Content-Disposition", disposition("attachment", dl.name))
+	h.Set("Content-Disposition", contentDisposition("attachment", dl.name))
 	zw := zip.NewWriter(w)
 	names := zipNames{}
 	var missing []string

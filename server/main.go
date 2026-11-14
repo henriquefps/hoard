@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -55,6 +56,10 @@ Flags (each falls back to the environment variable in brackets):
   --preview-threads int   threads of one vips/ffmpeg run [PREVIEW_THREADS] (default 2)
   --preview-backlog list  previews made for every item ahead of requests: image, proxy, none
                           [PREVIEW_BACKLOG] (default image,proxy)
+  --full-cache-mb int     disk kept for the web gallery's full-resolution stills of RAW and HEIF
+                          photos, made on demand [FULL_CACHE_MB] (default 4096)
+  --trust-tailscale-serve accept LAN/Tailscale-only pages (web gallery, setup page) proxied by
+                          "tailscale serve" on this host [TRUST_TAILSCALE_SERVE=1] (default off)
 
 On the first start the log shows a one-time setup code: open http://<server>:3071/admin/ from your
 network and enter it to set the admin password. The setup page only answers the local network and
@@ -118,7 +123,8 @@ type options struct {
 	nasInterval, probeTimeout                                     time.Duration
 	probeWorkers                                                  int
 	previewsDir, vips, ffmpeg, previewBacklog                     string
-	previewWorkers, proxyWorkers, previewThreads                  int
+	previewWorkers, proxyWorkers, previewThreads, fullCacheMB     int
+	trustTailscaleServe                                           bool
 }
 
 // intOption reads an integer flag whose default comes from an environment variable.
@@ -167,11 +173,16 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 		name, env string
 		def       int
 	}{{&o.previewWorkers, "preview-workers", "PREVIEW_WORKERS", 2}, {&o.proxyWorkers, "proxy-workers", "PROXY_WORKERS", 1},
-		{&o.previewThreads, "preview-threads", "PREVIEW_THREADS", 2}} {
+		{&o.previewThreads, "preview-threads", "PREVIEW_THREADS", 2}, {&o.fullCacheMB, "full-cache-mb", "FULL_CACHE_MB", 4096}} {
 		if err := intOption(fs, opt.dst, opt.name, opt.env, opt.def); err != nil {
 			return o, err
 		}
 	}
+	trust, err := strconv.ParseBool(envOr("TRUST_TAILSCALE_SERVE", "0"))
+	if err != nil {
+		return o, fmt.Errorf("TRUST_TAILSCALE_SERVE: %w", err)
+	}
+	fs.BoolVar(&o.trustTailscaleServe, "trust-tailscale-serve", trust, "")
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -189,6 +200,9 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	}
 	if o.previewWorkers < 1 || o.previewWorkers > 16 || o.proxyWorkers < 1 || o.proxyWorkers > 8 || o.previewThreads < 1 || o.previewThreads > 32 {
 		return o, fmt.Errorf("--preview-workers must be 1 to 16, --proxy-workers 1 to 8, --preview-threads 1 to 32")
+	}
+	if o.fullCacheMB < 64 {
+		return o, fmt.Errorf("--full-cache-mb must be at least 64")
 	}
 	if _, err := backlogJobs(o.previewBacklog); err != nil {
 		return o, err
@@ -260,10 +274,19 @@ func serve(args []string, stderr io.Writer) int {
 		previewsDir = filepath.Join(dir, "previews")
 	}
 	backlog, _ := backlogJobs(o.previewBacklog)
+	var peers []netip.Addr
+	if o.trustTailscaleServe {
+		// In a container, tailscale serve on the host reaches the published port from the bridge's gateway.
+		if gw, ok := server.ContainerGateway(); ok {
+			peers = append(peers, gw)
+		}
+		logger.Info("trusting tailscale serve for the gallery and the setup page", "peers", append([]string{"loopback"}, addrStrings(peers)...))
+	}
 	srv, err := server.New(ctx, server.Config{Version: version, Mounts: mountList, BackupRoot: o.backupRoot,
 		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout,
 		PreviewsDir: previewsDir, Vips: o.vips, FFmpeg: o.ffmpeg, PreviewWorkers: o.previewWorkers, ProxyWorkers: o.proxyWorkers,
-		PreviewThreads: o.previewThreads, PreviewBacklog: backlog}, st)
+		PreviewThreads: o.previewThreads, PreviewBacklog: backlog, FullCacheBytes: int64(o.fullCacheMB) << 20,
+		TrustTailscaleServe: o.trustTailscaleServe, TailscaleServePeers: peers}, st)
 	if err != nil {
 		logger.Error("cannot start", "err", err)
 		return 1
@@ -300,4 +323,12 @@ func serve(args []string, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func addrStrings(a []netip.Addr) []string {
+	out := make([]string, len(a))
+	for i, x := range a {
+		out[i] = x.String()
+	}
+	return out
 }

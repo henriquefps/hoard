@@ -73,7 +73,7 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 
 // adminAllowed: the setup page answers direct LAN/Tailscale requests, or any request once the admin allowed proxies.
 func (s *Server) adminAllowed(r *http.Request) bool {
-	if directLocal(r) {
+	if s.localRequest(r) {
 		return true
 	}
 	v, _, _ := s.store.Setting(r.Context(), settingAdminViaProxy)
@@ -100,7 +100,7 @@ func (s *Server) csrf(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if o := r.Header.Get("Origin"); o != "" {
 			u, err := url.Parse(o)
-			if err != nil || u.Host != r.Host {
+			if err != nil || u.Host != publicHost(r) {
 				fail(w, r, http.StatusForbidden, "forbidden", "Cross-origin request refused.", nil)
 				return
 			}
@@ -140,7 +140,8 @@ func (s *Server) session(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func secureRequest(r *http.Request) bool {
-	return r.TLS != nil || (viaProxy(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
+	return r.TLS != nil || (viaProxy(r) && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")) ||
+		(info(r).tailnet != "" && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"))
 }
 
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request) error {
@@ -322,7 +323,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.cfg.Version, "serverId": s.serverID, "counts": counts, "blobs": blobs, "revision": head,
 		"storageConfigured": s.blobStore() != nil, "indexing": s.indexer.Running(), "folderErrors": folderErrors,
-		"errors": s.recentErrors(), "settings": s.settings(ctx), "direct": directLocal(r),
+		"errors": s.recentErrors(), "settings": s.settings(ctx), "direct": s.localRequest(r),
 	})
 }
 
@@ -359,7 +360,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.AdminViaProxy != nil {
-		if !directLocal(r) {
+		if !s.localRequest(r) {
 			fail(w, r, http.StatusForbidden, "forbidden", "This setting can only be changed from your local network.", nil)
 			return
 		}

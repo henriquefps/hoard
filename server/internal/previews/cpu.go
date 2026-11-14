@@ -68,6 +68,11 @@ const videoFormats = "mov,mp4,m4a,3gp,3g2,mj2,mpegts,matroska,webm,avi"
 // Generate implements Generator.
 func (c *CPU) Generate(ctx context.Context, j Job, src *os.File, dir string) (Result, error) {
 	switch {
+	case j.Job == JobFull:
+		if c.vips == "" {
+			return nil, ErrNoTools
+		}
+		return c.full(ctx, j, src, dir)
 	case j.Job == JobProxy:
 		if c.ffmpeg == "" {
 			return nil, ErrNoTools
@@ -268,6 +273,76 @@ func (c *CPU) decodeRaw(ctx context.Context, src *os.File, dir string) (Result, 
 		return nil, err
 	}
 	return c.still(ctx, decoded, nil, dir, false) // LibRaw is not among libvips' fuzzed loaders; its output is ours
+}
+
+// --- full resolution -------------------------------------------------------------------------------------------------
+
+// fullEdge is larger than any photo: vips thumbnail with --size down then keeps the size and only applies the
+// orientation and the sRGB conversion.
+const fullEdge = 100000
+
+// full makes the full-resolution JPEG of a still a browser cannot show itself (ADR 0018 "Full resolution"): a HEIF
+// rendering converted, or a lone RAW rendered — its embedded JPEG as it is when that is (nearly) full size, else
+// decoded by LibRaw, else (LibRaw failed) the largest embedded JPEG when it is larger than the screen preview.
+func (c *CPU) full(ctx context.Context, j Job, src *os.File, dir string) (Result, error) {
+	timeout := 2 * c.timeout // a 60 MP LibRaw decode with two threads takes seconds; leave room on a busy machine
+	encode := func(input string, src *os.File, blockUntrusted bool) (Result, error) {
+		var env []string
+		if blockUntrusted {
+			env = append(env, "VIPS_BLOCK_UNTRUSTED=1")
+		}
+		out := fmt.Sprintf("%s[Q=%d,optimize_coding,keep=none]", filepath.Join(dir, FileFull), FullQuality)
+		if err := c.run(ctx, timeout, src, env, nil, c.vips, "thumbnail", input, out, strconv.Itoa(fullEdge),
+			"--size", "down", "--export-profile", "srgb", "--intent", "perceptual"); err != nil {
+			return nil, err
+		}
+		return jpegOutputs(dir, FileFull)
+	}
+	if j.Source.Role != media.RoleRaw {
+		return encode(fdInput(), src, true)
+	}
+	fi, err := src.Stat()
+	if err != nil {
+		return nil, err
+	}
+	previews := media.RawPreviews(src, fi.Size())
+	// The camera's own JPEG is kept as it is (no second encode): the orientation of the RAW goes into a minimal EXIF
+	// in front of it, and the browser turns it upright.
+	embedded := func(e media.Embedded) (Result, error) {
+		if e.Length > maxEmbedded {
+			return nil, ErrUnsupported
+		}
+		b := make([]byte, e.Length)
+		if _, err := src.ReadAt(b, e.Offset); err != nil {
+			return nil, err
+		}
+		b = media.WithOrientation(b, j.Source.Orientation)
+		//nolint:gosec // the job's own temporary directory plus a fixed name
+		if err := os.WriteFile(filepath.Join(dir, FileFull), b, 0o600); err != nil {
+			return nil, err
+		}
+		w, h := e.Width, e.Height
+		if j.Source.Orientation >= 5 && j.Source.Orientation <= 8 {
+			w, h = h, w
+		}
+		return Result{FileFull: {Width: w, Height: h, Bytes: int64(len(b))}}, nil
+	}
+	if len(previews) > 0 && j.Source.LongEdge > 0 && float64(previews[0].LongEdge()) >= FullEmbeddedShare*float64(j.Source.LongEdge) {
+		return embedded(previews[0])
+	}
+	decoded := filepath.Join(dir, "decoded.v")
+	defer os.Remove(decoded)
+	err = c.run(ctx, timeout, src, nil, nil, c.vips, "dcrawload", fdInput(), decoded)
+	if err == nil {
+		return encode(decoded, nil, false) // LibRaw's output, written here
+	}
+	if ctx.Err() != nil {
+		return nil, err
+	}
+	if len(previews) > 0 && previews[0].LongEdge() > ScreenEdge {
+		return embedded(previews[0])
+	}
+	return nil, fmt.Errorf("%w: %w", ErrUnsupported, err)
 }
 
 // --- video ---------------------------------------------------------------------------------------------------------

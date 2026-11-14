@@ -87,6 +87,15 @@ and a RAW's orientation. The same bytes read the same way give the same key on e
   gets 304). The warm endpoint returns `v` for every ready preview, so a gallery builds immutable URLs and never asks
   twice; an item whose preview changes gets a new `v`.
 
+### Full resolution (hoard-server 0.8.1)
+
+The web gallery's 100 % zoom (ADR 0018 "Full resolution") adds a third job, **`full`**: a full-size JPEG (`full.jpg`,
+q90, sRGB, upright) of an item whose still a browser cannot show as it is — a HEIF rendering, or a lone RAW (its
+embedded JPEG as it is when that is at least 90 % of the RAW's size, else a LibRaw decode). JPEG items have none:
+their file is shown. It uses the same queue, keys and states, in its own lane (one worker), is made only when asked
+(never in the backlog) and its files are bounded by `--full-cache-mb` (least recently served dropped first). No other
+recipe changed: no preview is made again on upgrade.
+
 ### Queue
 
 One SQLite row per item and job (`previews`, migration 0004) is both the queue entry and the record of the files:
