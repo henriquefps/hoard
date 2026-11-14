@@ -1,4 +1,4 @@
-// Package mounts confines reveal-sync to its mount roots: the directories the setup page may offer as the backup
+// Package mounts confines hoard-server to its mount roots: the directories the setup page may offer as the backup
 // root and NAS folders (Docker: the volumes mounted under /mnt). Every path from a request, the database or the setup
 // page goes through Resolve.
 package mounts
@@ -122,7 +122,7 @@ func describe(p, name string) Candidate {
 
 // Writable reports whether a file can be created in dir.
 func Writable(dir string) bool {
-	f, err := os.CreateTemp(dir, ".reveal-sync-probe-*")
+	f, err := os.CreateTemp(dir, ".hoard-server-probe-*")
 	if err != nil {
 		return false
 	}

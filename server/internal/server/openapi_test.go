@@ -49,3 +49,29 @@ func TestOpenAPIListsEveryRoute(t *testing.T) {
 		}
 	}
 }
+
+// TestFrozenV1Routes: every /v1 route reveal-sync served is still routed (ADR 0012, "/v1 is frozen"). New routes are
+// additions; this list never shrinks.
+func TestFrozenV1Routes(t *testing.T) {
+	frozen, err := os.ReadFile("../../testdata/v1-routes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(frozen), "\n") {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		n++
+		if !strings.Contains(string(src), `mux.HandleFunc("`+line+`"`) {
+			t.Errorf("frozen route %q is no longer routed", line)
+		}
+	}
+	if n < 16 {
+		t.Fatalf("only %d frozen routes read", n)
+	}
+}

@@ -1,10 +1,10 @@
 // Strings of the setup page: English and Brazilian Portuguese, always together.
 export const STRINGS = {
   en: {
-    title: "Reveal sync", theme: "Theme", themeSystem: "System", themeLight: "Light", themeDark: "Dark", signOut: "Sign out",
+    title: "Hoard server", theme: "Theme", themeSystem: "System", themeLight: "Light", themeDark: "Dark", signOut: "Sign out",
     tabStatus: "Status", tabDevices: "Devices", tabStorage: "Storage", tabNas: "NAS folders",
     setupTitle: "Set up this server", setupIntro: "Enter the one-time setup code from the server's log and choose an admin password.",
-    setupCode: "Setup code", setupCodeHint: "Docker: docker compose logs reveal-sync | grep setupCode",
+    setupCode: "Setup code", setupCodeHint: "Docker: docker compose logs hoard-server | grep setupCode",
     password: "Password", passwordHint: "At least 12 characters.", passwordAgain: "Repeat the password", passwordsDiffer: "The passwords differ.",
     setupButton: "Set password", signInTitle: "Sign in", signInIntro: "This page manages the server: devices, storage and NAS folders.",
     signIn: "Sign in",
@@ -24,7 +24,7 @@ export const STRINGS = {
     storageTitle: "Backup folder", storageIntro: "Uploaded originals and smart previews are stored here. Only folders mounted into the server are offered.",
     current: "Current", choose: "Use this folder", readOnly: "read-only", free: "{free} free of {total}",
     storageLocked: "This folder holds uploads, so it stays fixed. To move it, see the server's README.", noCandidates: "No mounted folders found. Mount one under /mnt (see docker-compose.yml).",
-    used: "Used by Reveal", unavailable: "unavailable",
+    used: "Used by this server", unavailable: "unavailable",
     nasTitle: "NAS folders", nasIntro: "Folders the server indexes (read-only). Photos found here are never uploaded by devices, and devices away from home can still open them.",
     indexed: "Indexed folders", add: "Add", remove: "Stop indexing", reindex: "Index now", files: "{n} files",
     stateReady: "ready", statePending: "waiting", stateIndexing: "indexing", stateError: "error", stateUnavailable: "unavailable",
@@ -32,10 +32,10 @@ export const STRINGS = {
     errorGeneric: "Something went wrong ({code}).", errorNetwork: "The server did not answer.",
   },
   "pt-BR": {
-    title: "Reveal sync", theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Escuro", signOut: "Sair",
+    title: "Hoard server", theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Escuro", signOut: "Sair",
     tabStatus: "Status", tabDevices: "Dispositivos", tabStorage: "Armazenamento", tabNas: "Pastas do NAS",
     setupTitle: "Configurar este servidor", setupIntro: "Digite o código de configuração único que aparece no log do servidor e escolha uma senha de administrador.",
-    setupCode: "Código de configuração", setupCodeHint: "Docker: docker compose logs reveal-sync | grep setupCode",
+    setupCode: "Código de configuração", setupCodeHint: "Docker: docker compose logs hoard-server | grep setupCode",
     password: "Senha", passwordHint: "Pelo menos 12 caracteres.", passwordAgain: "Repita a senha", passwordsDiffer: "As senhas são diferentes.",
     setupButton: "Definir senha", signInTitle: "Entrar", signInIntro: "Esta página gerencia o servidor: dispositivos, armazenamento e pastas do NAS.",
     signIn: "Entrar",
@@ -55,7 +55,7 @@ export const STRINGS = {
     storageTitle: "Pasta de backup", storageIntro: "Os originais enviados e as prévias inteligentes ficam aqui. Só aparecem pastas montadas no servidor.",
     current: "Atual", choose: "Usar esta pasta", readOnly: "somente leitura", free: "{free} livres de {total}",
     storageLocked: "Esta pasta já tem envios, então fica fixa. Para movê-la, veja o README do servidor.", noCandidates: "Nenhuma pasta montada. Monte uma em /mnt (veja o docker-compose.yml).",
-    used: "Usado pelo Reveal", unavailable: "indisponível",
+    used: "Usado por este servidor", unavailable: "indisponível",
     nasTitle: "Pastas do NAS", nasIntro: "Pastas que o servidor indexa (somente leitura). Fotos encontradas aqui nunca são enviadas pelos dispositivos, e dispositivos fora de casa ainda conseguem abri-las.",
     indexed: "Pastas indexadas", add: "Adicionar", remove: "Parar de indexar", reindex: "Indexar agora", files: "{n} arquivos",
     stateReady: "pronta", statePending: "aguardando", stateIndexing: "indexando", stateError: "erro", stateUnavailable: "indisponível",

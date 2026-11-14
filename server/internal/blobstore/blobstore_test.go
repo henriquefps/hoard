@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
 )
 
 const upload = "0f8fad5b-d9cb-469f-a165-70867728950e"

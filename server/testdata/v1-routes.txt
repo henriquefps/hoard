@@ -1,0 +1,17 @@
+# The /v1 routes reveal-sync 0.5.3 served (Reveal 94fbfe7). Frozen (ADR 0012): never removed or changed; add new ones to the router only.
+GET /v1/health
+POST /v1/pair
+GET /v1/server
+GET /v1/devices
+GET /v1/changes
+POST /v1/changes
+POST /v1/fingerprints/lookup
+GET /v1/originals/{fingerprint}
+DELETE /v1/originals/{fingerprint}
+GET /v1/blobs/{sha256}
+DELETE /v1/blobs/{sha256}
+POST /v1/uploads
+HEAD /v1/uploads/{id}
+PATCH /v1/uploads/{id}
+DELETE /v1/uploads/{id}
+GET /v1/nas/files

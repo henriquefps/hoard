@@ -1,4 +1,4 @@
-// Package fingerprint computes Reveal's content fingerprint of a file (ADR 0006 "Identity").
+// Package fingerprint computes Reveal's content fingerprint of a file (Reveal ADR 0006 "Identity", Hoard ADR 0013).
 //
 // v1: "v1:" + lower-case hex SHA-256 over the size as 8 bytes (big-endian), then the first Edge bytes, then the last
 // Edge bytes; a file of at most 2*Edge bytes is hashed whole after its size instead (no byte twice). It must agree

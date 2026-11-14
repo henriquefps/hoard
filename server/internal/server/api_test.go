@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henriquefps/reveal/sync-server/internal/auth"
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/auth"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
 )
 
 const (
@@ -678,7 +678,7 @@ func TestDroppingAPreviewOtherRecordsStillName(t *testing.T) {
 			revB = c.Rev
 		}
 	}
-	// A deleted photo (tombstone) no longer holds it: the tombstone released it already (ADR 0017).
+	// A deleted photo (tombstone) no longer holds it: the tombstone released it already (ADR 0013).
 	push(t, hs, phone, change("photo", photoB, revB, 3000, nil))
 	expect(t, hs.do("GET", "/v1/blobs/"+sha, nil, bearer(phone)), 404, "not_found")
 	expect(t, hs.do("DELETE", "/v1/blobs/"+sha, nil, bearer(phone)), 404, "not_found")

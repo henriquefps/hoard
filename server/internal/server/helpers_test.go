@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 type syncBuffer struct {
@@ -90,7 +90,7 @@ func remote(addr string) reqOpt { return func(r *http.Request) { r.RemoteAddr = 
 func header(k, v string) reqOpt { return func(r *http.Request) { r.Header.Set(k, v) } }
 func bearer(key string) reqOpt  { return header("Authorization", "Bearer "+key) }
 func adminHeaders() reqOpt {
-	return func(r *http.Request) { r.Header.Set("X-Reveal-Admin", "1"); r.RemoteAddr = "127.0.0.1:5000" }
+	return func(r *http.Request) { r.Header.Set(adminHeader, "1"); r.RemoteAddr = "127.0.0.1:5000" }
 }
 
 func (hs *harness) do(method, path string, body any, opts ...reqOpt) *httptest.ResponseRecorder {

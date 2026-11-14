@@ -20,8 +20,8 @@ linters:
         - fmt.Fprint
         - fmt.Fprintf
         - fmt.Fprintln
-        - (*github.com/henriquefps/reveal/sync-server/internal/store.Store).Close
-        - (*github.com/henriquefps/reveal/sync-server/internal/blobstore.Store).Close
+        - (*github.com/henriquefps/hoard/server/internal/store.Store).Close
+        - (*github.com/henriquefps/hoard/server/internal/blobstore.Store).Close
     gosec:
       excludes:
         - G104 # unchecked errors are covered by errcheck where they matter

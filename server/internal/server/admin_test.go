@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func TestAdminSetupLoginAndCSRF(t *testing.T) {
 func TestAdminViaProxySetting(t *testing.T) {
 	hs := newHarness(t, true)
 	hs.signIn()
-	tunnel := []reqOpt{remote("172.18.0.3:1"), header("Cf-Connecting-Ip", "198.51.100.7"), header("X-Reveal-Admin", "1")}
+	tunnel := []reqOpt{remote("172.18.0.3:1"), header("Cf-Connecting-Ip", "198.51.100.7"), header(adminHeader, "1")}
 	expect(t, hs.do("GET", "/admin/api/status", nil, tunnel...), 404, "")
 	expect(t, hs.do("PUT", "/admin/api/settings", map[string]any{"adminViaProxy": true}, adminHeaders()), 200, "")
 	expect(t, hs.do("GET", "/admin/api/status", nil, tunnel...), 200, "")
@@ -97,4 +98,30 @@ func TestStorageChoiceAndLock(t *testing.T) {
 	expect(t, hs.do("PUT", "/admin/api/storage", map[string]any{"path": hs.backup}, adminHeaders()), 200, "")
 	// The backup folder cannot be indexed as a NAS folder.
 	expect(t, hs.do("POST", "/admin/api/nas", map[string]any{"path": hs.backup}, adminHeaders()), 422, "invalid_request")
+}
+
+// TestAdminLegacyNames: a browser signed in to reveal-sync (its cookie, its header) keeps working after the upgrade
+// (ADR 0012); new sessions use the hoard-server cookie.
+func TestAdminLegacyNames(t *testing.T) {
+	hs := newHarness(t, true)
+	hs.signIn()
+	if hs.cookie.Name != "hoard_server_admin" {
+		t.Fatalf("new sessions use %q", hs.cookie.Name)
+	}
+	hs.cookie = &http.Cookie{Name: "reveal_sync_admin", Value: hs.cookie.Value}
+	w := hs.do("POST", "/admin/api/pairings", map[string]any{"url": "https://x.test"},
+		remote("127.0.0.1:1"), header("X-Reveal-Admin", "1"))
+	if w.Code >= 300 {
+		t.Fatalf("legacy cookie and header: %d %s", w.Code, w.Body.String())
+	}
+	w = hs.do("POST", "/admin/api/logout", nil, adminHeaders())
+	expect(t, w, 200, "")
+	cleared := map[string]bool{}
+	for _, c := range w.Result().Cookies() {
+		cleared[c.Name] = c.MaxAge < 0
+	}
+	if !cleared["hoard_server_admin"] || !cleared["reveal_sync_admin"] {
+		t.Fatalf("logout clears both cookies: %v", cleared)
+	}
+	expect(t, hs.do("GET", "/admin/api/devices", nil, adminHeaders()), 401, "unauthorized")
 }

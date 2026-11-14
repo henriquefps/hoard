@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
-	"github.com/henriquefps/reveal/sync-server/internal/mounts"
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/mounts"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 // extensions are the image files Reveal opens (ImageFormats in :core:image): RAW, JPEG, HEIF.

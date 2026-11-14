@@ -219,7 +219,7 @@ func previewReferenced(ctx context.Context, q queryer, sha string) (bool, error)
 	return err == nil, err
 }
 
-// DropPreview forgets a smart preview blob that deviceID uploaded and no live photo record names (ADR 0017 "Dropping
+// DropPreview forgets a smart preview blob that deviceID uploaded and no live photo record names (ADR 0013 "Dropping
 // a smart preview"). The check and the delete are one transaction, so a record written meanwhile is seen. The caller
 // removes the file afterwards.
 func (s *Store) DropPreview(ctx context.Context, sha, deviceID string) error {
@@ -266,7 +266,7 @@ func originalNamed(ctx context.Context, q queryer, fp string) (bool, error) {
 	return err == nil, err
 }
 
-// DeleteOriginal forgets the uploaded original of fp once no live photo record names it (ADR 0017 "Deleting an
+// DeleteOriginal forgets the uploaded original of fp once no live photo record names it (ADR 0013 "Deleting an
 // original"): the user deleted the photo from the server. The check and the delete are one transaction. It returns the
 // blob's sha256 when its row went too (no other fingerprint uses the bytes): the caller removes the file.
 func (s *Store) DeleteOriginal(ctx context.Context, fp string) (string, error) {

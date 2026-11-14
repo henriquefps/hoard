@@ -1,4 +1,4 @@
-// Package auth holds reveal-sync's secrets: device API keys, pairing tokens, admin passwords and sessions.
+// Package auth holds hoard-server's secrets: device API keys, pairing tokens, admin passwords and sessions.
 package auth
 
 import (
@@ -66,7 +66,7 @@ func HashToken(token string) []byte {
 	return h[:]
 }
 
-// Argon2id parameters (ADR 0017 "Admin").
+// Argon2id parameters (ADR 0013 "Admin").
 const (
 	argonTime    = 3
 	argonMemory  = 64 * 1024

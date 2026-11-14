@@ -15,10 +15,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/henriquefps/reveal/sync-server/internal/auth"
-	"github.com/henriquefps/reveal/sync-server/internal/blobstore"
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/auth"
+	"github.com/henriquefps/hoard/server/internal/blobstore"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 func (s *Server) routesAPI(mux *http.ServeMux) {
@@ -77,6 +77,7 @@ func (s *Server) unauthorized(w http.ResponseWriter, r *http.Request) {
 		rateLimited(w, r, wait)
 		return
 	}
+	// The realm keeps its reveal-sync name: part of the frozen /v1 API (ADR 0012).
 	w.Header().Set("WWW-Authenticate", `Bearer realm="reveal-sync"`)
 	fail(w, r, http.StatusUnauthorized, "unauthorized", "Missing, invalid or revoked device key.", nil)
 }
@@ -124,7 +125,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device
-// of a conflict copy with it; ADR 0017 "Other endpoints").
+// of a conflict copy with it; ADR 0013 "Other endpoints").
 func (s *Server) handleDeviceList(w http.ResponseWriter, r *http.Request) {
 	devices, err := s.store.Devices(r.Context())
 	if err != nil {
@@ -273,7 +274,7 @@ type pushChange struct {
 	Data       json.RawMessage `json:"data"`
 }
 
-// validateChange checks one pushed change (ADR 0017 "Records") and returns it ready for the store.
+// validateChange checks one pushed change (ADR 0013 "Records") and returns it ready for the store.
 func validateChange(c pushChange) (store.Change, string) {
 	out := store.Change{Kind: c.Kind, ID: c.ID, Deleted: c.Deleted}
 	switch c.Kind {
@@ -348,7 +349,7 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 		}
 		changes[i] = v
 	}
-	// A photo tombstone may release its smart preview (ADR 0017): serialised with preview uploads completing.
+	// A photo tombstone may release its smart preview (ADR 0013): serialised with preview uploads completing.
 	for _, c := range changes {
 		if c.Kind == store.KindPhoto && c.Deleted {
 			s.completeMu.Lock()
@@ -446,7 +447,7 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 	serveFile(w, r, f, sha)
 }
 
-// handleBlobDelete drops a smart preview this device uploaded once no live photo record names it (ADR 0017 "Dropping
+// handleBlobDelete drops a smart preview this device uploaded once no live photo record names it (ADR 0013 "Dropping
 // a smart preview"): its row first (one transaction with the reference check), then its file. Originals are never
 // dropped by a device.
 func (s *Server) handleBlobDelete(w http.ResponseWriter, r *http.Request) {
@@ -501,7 +502,7 @@ func (s *Server) removeBlobFiles(shas []string) {
 	}
 }
 
-// handleOriginalDelete deletes the uploaded original of a fingerprint (ADR 0017 "Deleting an original"): the user
+// handleOriginalDelete deletes the uploaded original of a fingerprint (ADR 0013 "Deleting an original"): the user
 // deleted the photo from the server, and the device pushed its tombstones first. Any paired device may ask; a live
 // photo record that still names the fingerprint keeps it, and indexed NAS files are never touched.
 func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {

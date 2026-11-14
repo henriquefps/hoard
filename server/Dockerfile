@@ -1,6 +1,6 @@
-# reveal-sync image: a static binary on distroless, non-root. Build from sync-server/:
-#   docker build -t reveal-sync .
-#   docker build --build-arg VERSION=0.1.0 -t reveal-sync .
+# hoard-server image: a static binary on distroless, non-root. Build from server/:
+#   docker build -t hoard-server .
+#   docker build --build-arg VERSION=0.4.0 -t hoard-server .
 
 # BuildKit sets BUILDPLATFORM/TARGETOS/TARGETARCH; the legacy builder needs them as --build-arg (README, "Docker").
 ARG BUILDPLATFORM
@@ -14,11 +14,17 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/reveal-sync . \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hoard-server . \
  && mkdir -p /out/data /out/mnt
 
 FROM gcr.io/distroless/static-debian13:nonroot
-COPY --from=build /out/reveal-sync /usr/local/bin/reveal-sync
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="hoard-server" \
+      org.opencontainers.image.description="Self-hosted photo server for Hoard and Reveal (formerly reveal-sync)" \
+      org.opencontainers.image.source="https://github.com/henriquefps/hoard" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=build /out/hoard-server /usr/local/bin/hoard-server
 # Owned by the image's user (65532), so fresh named volumes are writable. Bind mounts keep their host
 # ownership: chown them to 65532 (README, "Docker").
 COPY --from=build --chown=65532:65532 /out/data /data
@@ -29,5 +35,5 @@ ENV PORT=3071 \
 EXPOSE 3071
 VOLUME /data
 USER 65532:65532
-ENTRYPOINT ["/usr/local/bin/reveal-sync"]
+ENTRYPOINT ["/usr/local/bin/hoard-server"]
 CMD ["serve"]

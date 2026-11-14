@@ -1,4 +1,4 @@
-// Package server is reveal-sync's HTTP layer: the device API (/v1, ADR 0017) and the setup page (/admin).
+// Package server is hoard-server's HTTP layer: the device API (/v1, ADR 0013) and the setup page (/admin).
 package server
 
 import (
@@ -14,15 +14,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/henriquefps/reveal/sync-server/internal/auth"
-	"github.com/henriquefps/reveal/sync-server/internal/blobstore"
-	"github.com/henriquefps/reveal/sync-server/internal/mounts"
-	"github.com/henriquefps/reveal/sync-server/internal/nas"
-	"github.com/henriquefps/reveal/sync-server/internal/ratelimit"
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/auth"
+	"github.com/henriquefps/hoard/server/internal/blobstore"
+	"github.com/henriquefps/hoard/server/internal/mounts"
+	"github.com/henriquefps/hoard/server/internal/nas"
+	"github.com/henriquefps/hoard/server/internal/ratelimit"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
-// API version and limits (ADR 0017 "Limits").
+// API version and limits (ADR 0013 "Limits").
 const (
 	APIVersion        = 1
 	maxJSONBody       = 8 << 20
@@ -37,7 +37,12 @@ const (
 	pairingTTL        = 10 * time.Minute
 	sessionTTL        = 12 * time.Hour
 	uploadExpiry      = 7 * 24 * time.Hour
-	sessionCookieName = "reveal_sync_admin"
+	sessionCookieName = "hoard_server_admin"
+
+	// Accepted from setup pages and browsers of the reveal-sync days (ADR 0012); never sent.
+	legacySessionCookieName = "reveal_sync_admin"
+	legacyAdminHeader       = "X-Reveal-Admin"
+	adminHeader             = "X-Hoard-Admin"
 )
 
 // Settings keys.
@@ -113,7 +118,7 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		return nil, err
 	}
 	s.serverID = id
-	if _, err := st.EnsureSetting(ctx, settingServerName, "Reveal sync"); err != nil {
+	if _, err := st.EnsureSetting(ctx, settingServerName, "Hoard server"); err != nil {
 		return nil, err
 	}
 	root, ok, err := st.Setting(ctx, settingBackupRoot)

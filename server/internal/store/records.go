@@ -8,7 +8,7 @@ import (
 	"errors"
 )
 
-// Record kinds (ADR 0017 "Records").
+// Record kinds (ADR 0013 "Records").
 const (
 	KindPhoto   = "photo"
 	KindVersion = "version"
@@ -57,8 +57,8 @@ type current struct {
 	data       []byte
 }
 
-// Push applies changes from deviceID in order, in one transaction, with the conflict rule of ADR 0017. It also returns
-// the smart previews that photo tombstones released (ADR 0017 "A deleted photo releases its preview"): their rows are
+// Push applies changes from deviceID in order, in one transaction, with the conflict rule of ADR 0013. It also returns
+// the smart previews that photo tombstones released (ADR 0013 "A deleted photo releases its preview"): their rows are
 // gone, the caller removes their files.
 func (s *Store) Push(ctx context.Context, deviceID string, changes []Change) ([]Result, []string, error) {
 	results := make([]Result, 0, len(changes))

@@ -1,0 +1,61 @@
+name: Server
+
+# hoard-server (server/, ADR 0012): format, vet, lint, unit + end-to-end tests (including the reveal-sync data
+# directory compatibility test), static binaries and the image. The Hoard app is not built here.
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - ".github/workflows/server*.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - ".github/workflows/server*.yml"
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: go mod tidy is clean
+        run: go mod tidy && git diff --exit-code go.mod go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint (staticcheck, gosec, errcheck, …)
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+
+      - name: go test -race (unit + end-to-end + reveal-sync compatibility)
+        run: go test -race -count=1 ./...
+
+      - name: Static binaries (linux amd64 + arm64)
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w" -o /tmp/hoard-server-$arch .
+          done
+          file /tmp/hoard-server-* || true
+
+      - name: Docker image builds
+        run: docker build -t hoard-server:ci .

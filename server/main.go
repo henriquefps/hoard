@@ -1,5 +1,6 @@
-// Command reveal-sync is the self-hosted sync server for Reveal: edits and library metadata, smart previews and
-// original backups for every paired device, plus read-only NAS folders it indexes and serves (ADR 0017).
+// Command hoard-server is the self-hosted photo server of Hoard and Reveal (formerly Reveal's reveal-sync, ADR 0012):
+// edits and library metadata, smart previews and original backups for every paired device, plus read-only NAS
+// folders it indexes and serves (protocol: ADR 0013).
 package main
 
 import (
@@ -18,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/henriquefps/reveal/sync-server/internal/server"
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/server"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 // Set at build time with -ldflags "-X main.version=... -X main.commit=...".
@@ -28,11 +29,11 @@ var (
 	commit  = "none"
 )
 
-const usage = `reveal-sync: self-hosted sync server for Reveal
+const usage = `hoard-server: self-hosted photo server for Hoard and Reveal
 
 Usage:
-  reveal-sync [serve] [flags]   run the server (default)
-  reveal-sync version           print the version
+  hoard-server [serve] [flags]   run the server (default)
+  hoard-server version           print the version
 
 Flags (each falls back to the environment variable in brackets):
   --port string           port to listen on [PORT] (default 3071)
@@ -61,7 +62,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "serve":
 		return serve(args, stderr)
 	case "version":
-		fmt.Fprintf(stdout, "reveal-sync %s (commit %s)\n", version, commit)
+		fmt.Fprintf(stdout, "hoard-server %s (commit %s)\n", version, commit)
 		return 0
 	case "help":
 		fmt.Fprint(stdout, usage)
@@ -70,6 +71,27 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usage)
 		return 2
 	}
+}
+
+// Database file names in the data directory. A data directory made by reveal-sync keeps its file name (no rename, so
+// rolling back to the reveal-sync image stays possible); a new one gets the hoard-server name (ADR 0012).
+const (
+	databaseFile       = "hoard-server.db"
+	legacyDatabaseFile = "reveal-sync.db"
+)
+
+// databasePath picks the database in dir: hoard-server.db if it exists, else reveal-sync.db if that exists, else a new
+// hoard-server.db. legacy reports the reveal-sync name.
+func databasePath(dir string) (path string, legacy bool) {
+	current := filepath.Join(dir, databaseFile)
+	if _, err := os.Stat(current); err == nil {
+		return current, false
+	}
+	old := filepath.Join(dir, legacyDatabaseFile)
+	if _, err := os.Stat(old); err == nil {
+		return old, true
+	}
+	return current, false
 }
 
 func envOr(name, fallback string) string {
@@ -136,7 +158,11 @@ func serve(args []string, stderr io.Writer) int {
 		logger.Error("data directory", "dir", o.dataDir, "err", err)
 		return 1
 	}
-	st, err := store.Open(filepath.Join(dir, "reveal-sync.db"))
+	dbPath, legacy := databasePath(dir)
+	if legacy {
+		logger.Info("using the reveal-sync database file name: kept so the old image can still open it", "file", filepath.Base(dbPath))
+	}
+	st, err := store.Open(dbPath)
 	if err != nil {
 		logger.Error("cannot open the database", "dir", dir, "err", err,
 			"hint", "the server's user must own the data directory, e.g. for the Docker image: sudo chown -R 65532:65532 ./data")
@@ -172,7 +198,7 @@ func serve(args []string, stderr io.Writer) int {
 		logger.Error("cannot listen", "addr", httpSrv.Addr, "err", err)
 		return 1
 	}
-	logger.Info("reveal-sync listening", "version", version, "addr", ln.Addr().String(), "data", dir, "mounts", mountList)
+	logger.Info("hoard-server listening", "version", version, "addr", ln.Addr().String(), "data", dir, "mounts", mountList)
 	srv.Run(ctx)
 	errc := make(chan error, 1)
 	go func() { errc <- httpSrv.Serve(ln) }()

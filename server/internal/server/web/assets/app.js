@@ -1,4 +1,4 @@
-// Reveal sync setup page: plain modules, no build step. Every server value goes into the DOM as text, never as HTML.
+// hoard-server setup page: plain modules, no build step. Every server value goes into the DOM as text, never as HTML.
 import { ICONS } from "./icons.js";
 import { STRINGS } from "./i18n.js";
 
@@ -41,7 +41,7 @@ function h(tag, attrs, ...children) {
 }
 
 async function api(method, path, body) {
-  const opts = { method, headers: { "X-Reveal-Admin": "1" }, credentials: "same-origin" };
+  const opts = { method, headers: { "X-Hoard-Admin": "1" }, credentials: "same-origin" };
   if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
   let res;
   try { res = await fetch("api/" + path, opts); } catch { throw new Error(t("errorNetwork")); }
@@ -249,12 +249,12 @@ async function renderDevices() {
 async function renderStorage() {
   const s = await api("GET", "storage");
   const b = s.blobs || {};
-  const usedByReveal = (b.originalBytes || 0) + (b.previewBytes || 0);
+  const usedByServer = (b.originalBytes || 0) + (b.previewBytes || 0);
   const current = s.backupRoot
     ? h("div.list", h("div.row", icon("hard-drives"),
       h("div.main", h("div.name.mono", s.backupRoot),
         s.available ? null : h("span.badge.bad", t("unavailable")),
-        s.totalBytes ? [h("div.bar", h("span")), h("div.meta", t("free", { free: bytes(s.freeBytes), total: bytes(s.totalBytes) }), " · ", `${t("used")}: ${bytes(usedByReveal)}`)] : null)))
+        s.totalBytes ? [h("div.bar", h("span")), h("div.meta", t("free", { free: bytes(s.freeBytes), total: bytes(s.totalBytes) }), " · ", `${t("used")}: ${bytes(usedByServer)}`)] : null)))
     : h("p", h("span.badge.warn", t("backupNotSet")));
   const bar = current.querySelector?.(".bar > span");
   if (bar && s.totalBytes) bar.style.width = `${Math.round(((s.totalBytes - s.freeBytes) / s.totalBytes) * 100)}%`;

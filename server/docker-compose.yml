@@ -1,16 +1,19 @@
-# Example: reveal-sync with its database in ./data, a backup folder and a read-only NAS share.
+# Example: hoard-server with its database in ./data, a backup folder and a read-only NAS share.
 # Everything the setup page can offer is mounted under /mnt; the container sees nothing else.
 #
 #   mkdir -p data backup && sudo chown 65532:65532 data backup
 #   docker compose up -d
-#   docker compose logs reveal-sync | grep setupCode     # first run: the one-time setup code
+#   docker compose logs hoard-server | grep setupCode    # first run: the one-time setup code
 #   open http://<this machine>:3071/admin/ from your network
+#
+# Upgrading from reveal-sync: keep the same ./data and backup folder, change the image (README, "Upgrading from
+# reveal-sync"). The database and blob folder keep their reveal-sync names on disk.
 services:
-  reveal-sync:
-    image: ghcr.io/henriquefps/reveal-sync:latest
+  hoard-server:
+    image: ghcr.io/henriquefps/hoard-server:latest
     # To build from this folder instead of pulling the published image:
     # build: .
-    container_name: reveal-sync
+    container_name: hoard-server
     ports:
       # BIND_IP limits the port to one interface (e.g. the Tailscale address).
       - "${BIND_IP:-0.0.0.0}:${PORT:-3071}:3071"
@@ -39,4 +42,4 @@ services:
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
     restart: unless-stopped
     depends_on:
-      - reveal-sync
+      - hoard-server

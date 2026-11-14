@@ -69,9 +69,13 @@ More in [`docs/screenshots/`](docs/screenshots/) (every screen at 412×915 and 1
 - **Settings**: theme and color palette, language, hidden files, default sort, default conflict policy, the folders Hoard may write to (release access), route check timeout, about. The browser build adds a simulated network switch (home, away on Tailscale, offline) and a worst-case data set (18 more machines, a 5,000-entry folder, unicode and very long names, a 1.4 TB file, a transfer that fails mid-way).
 - English and Portuguese (Brazil).
 
+## Server
+
+[`server/`](server/README.md) is **hoard-server**, the self-hosted photo server shared by Hoard, [Reveal](https://github.com/henriquefps/reveal) and (later) a web gallery: edits and library metadata, smart previews, original backups and read-only NAS folders, one revocable key per device. It was Reveal's `reveal-sync` and moved here unchanged ([ADR 0012](docs/adr/0012-hoard-server.md)); its protocol of record is [ADR 0013](docs/adr/0013-server-protocol.md) (`/v1`, frozen: additions only). Go + SQLite, one static binary or the image `ghcr.io/henriquefps/hoard-server`, released from `server-v*` tags (the app keeps `v*`). The app does not talk to it yet.
+
 ## Stack
 
-React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui (`radix-vega`) in the hfps identity, Phosphor icons, Inter, TanStack Router, i18next, Capacitor 8 (Android), SQLite (`@capacitor-community/sqlite`, sql.js in the browser), Vitest, ESLint, Prettier, bun. Native SMB: Kotlin + [smbj](https://github.com/hierynomus/smbj) ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
+React 19, TypeScript, Vite, Tailwind CSS 4, shadcn/ui (`radix-vega`) in the hfps identity, Phosphor icons, Inter, TanStack Router, i18next, Capacitor 8 (Android), SQLite (`@capacitor-community/sqlite`, sql.js in the browser), Vitest, ESLint, Prettier, bun. Native SMB: Kotlin + [smbj](https://github.com/hierynomus/smbj) ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)). Server: Go, SQLite (pure-Go `modernc.org/sqlite`), distroless image ([ADR 0012](docs/adr/0012-hoard-server.md)).
 
 ## Run and build
 
@@ -105,6 +109,13 @@ local `skv` vault, group `hoard` (`HOARD_KEYSTORE` as a file,
 Gradle warns and builds `app-release-unsigned.apk`. Check a build with
 `apksigner verify --print-certs android/app/build/outputs/apk/release/app-release.apk`. The keystore must be kept:
 updates to an installed app only install when signed with the same key.
+
+The server is built and tested on its own, from `server/` (Go version from `server/go.mod`); the bun scripts ignore it:
+
+```sh
+cd server && go vet ./... && go test ./...   # unit, end-to-end and reveal-sync compatibility tests
+docker build -t hoard-server .               # the image; see server/README.md to run and deploy it
+```
 
 In the browser, data lives in a sql.js database saved to `localStorage`; run `localStorage.removeItem("hoard.devdb")` in the console to reseed the demo machines.
 
@@ -141,6 +152,9 @@ android/              Capacitor Android project; app/src/main/java/dev/hfps/hoar
                       (TransferRunner over TransferFs endpoints); share/ = share in and out; cull/ = culling glue);
                       dev/hfps/hoard/image/ is the image core (ADR 0006: previews, decode, LibRaw, caches;
                       analysis/ = assisted-culling measurements and ML Kit faces, ADR 0009)
+server/               hoard-server (Go, ADR 0012/0013): main.go, internal/{server,store,blobstore,nas,mounts,
+                      fingerprint,auth,ratelimit}, api/openapi.yaml, testdata/compat (a reveal-sync data dir
+                      every release must open), Dockerfile, docker-compose.yml
 docs/testing/samba/   disposable Samba server for the opt-in native integration test
 docs/adr/             architecture decisions
 ```

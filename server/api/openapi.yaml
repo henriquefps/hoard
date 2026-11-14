@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
-  title: reveal-sync device API
+  title: hoard-server device API
   version: "1"
   summary: Sync of Reveal edits, library metadata, smart previews and original backups with a self-hosted server.
   description: |
-    The normative description is ADR 0017 (docs/adr/0017-sync-protocol.md); where this file and the ADR differ, the
-    ADR wins. Every request except `GET /v1/health` and `POST /v1/pair` needs `Authorization: Bearer <device key>`.
+    The normative description is ADR 0013 (docs/adr/0013-server-protocol.md in the Hoard repository; formerly Reveal
+    ADR 0017); where this file and the ADR differ, the ADR wins. Every request except `GET /v1/health` and `POST /v1/pair` needs `Authorization: Bearer <device key>`.
     Errors are always `{"error": {"code", "message", "details"?}}` (see `Error`).
   license:
     name: AGPL-3.0-or-later
@@ -512,7 +512,7 @@ components:
     Fingerprint:
       type: string
       pattern: "^v1:[0-9a-f]{64}$"
-      description: "v1: + SHA-256 over size (8 bytes BE), first 1 MiB, last 1 MiB (whole file when <= 2 MiB). ADR 0006."
+      description: "v1: + SHA-256 over size (8 bytes BE), first 1 MiB, last 1 MiB (whole file when <= 2 MiB). Reveal ADR 0006."
     Sha256:
       type: string
       pattern: "^[0-9a-f]{64}$"
@@ -551,7 +551,7 @@ components:
           type: object
           description: |
             Required unless deleted; at most 2 MiB. A photo needs `fingerprint`; a version needs `photoId`
-            (and carries `position`, `name`, `recipe` (ADR 0003), `history`, `cursor`).
+            (and carries `position`, `name`, `recipe` (Reveal ADR 0003), `history`, `cursor`).
     Result:
       type: object
       required: [kind, id, status, rev]

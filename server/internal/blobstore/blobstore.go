@@ -15,10 +15,11 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
 )
 
-// Dir is the folder reveal-sync owns inside the backup root.
+// Dir is the folder the server owns inside the backup root. It keeps its reveal-sync name: the blob layout on disk is
+// part of the compatibility promise (ADR 0012), so a backup folder made by reveal-sync is used as is.
 const Dir = "reveal-sync"
 
 var (
@@ -45,7 +46,7 @@ type Store struct {
 	dir  string
 }
 
-// Open creates (if needed) and opens the reveal-sync folder of backupRoot.
+// Open creates (if needed) and opens the server's folder (Dir) of backupRoot.
 func Open(backupRoot string) (*Store, error) {
 	dir := filepath.Join(backupRoot, Dir)
 	for _, d := range []string{dir, filepath.Join(dir, "blobs"), filepath.Join(dir, "uploads")} {

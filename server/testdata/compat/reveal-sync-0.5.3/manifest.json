@@ -1,0 +1,86 @@
+{
+  "adminPassword": "fixture admin password",
+  "changes": {
+    "changes": [
+      {
+        "data": {
+          "fingerprint": "v1:91f7742e59aad8a7cc42490b176ace654cc3e6070a8c32a23b36e2f6755ff5c6",
+          "preview": {
+            "height": 1365,
+            "sha256": "25be4dc42e791ae05a846fc3c18cf7594b4802082df47fa1fca73a2d101f0089",
+            "width": 2048
+          },
+          "rating": 4
+        },
+        "deleted": false,
+        "deviceId": "57977b01-ff8c-4c16-b2b9-62cadd6b3660",
+        "id": "11111111-0000-4000-8000-000000000001",
+        "kind": "photo",
+        "modifiedAt": 1000,
+        "rev": 1
+      },
+      {
+        "data": {
+          "cursor": 0,
+          "history": [],
+          "photoId": "11111111-0000-4000-8000-000000000001",
+          "position": 0,
+          "recipe": {
+            "light": {
+              "exposure": 0.5
+            },
+            "v": 1
+          }
+        },
+        "deleted": false,
+        "deviceId": "57977b01-ff8c-4c16-b2b9-62cadd6b3660",
+        "id": "11111111-0000-4000-8000-000000000002",
+        "kind": "version",
+        "modifiedAt": 1000,
+        "rev": 2
+      },
+      {
+        "data": {
+          "fingerprint": "v1:595c9e253687a0487814d76e351b8d249532ba25840f7974b9fcdee6598d6f56",
+          "flag": "pick",
+          "rating": 5
+        },
+        "deleted": false,
+        "deviceId": "445eb32d-035a-477d-adca-d45d16a6abd5",
+        "id": "11111111-0000-4000-8000-000000000003",
+        "kind": "photo",
+        "modifiedAt": 2000,
+        "rev": 4
+      }
+    ],
+    "cursor": "f06d5756:4",
+    "hasMore": false
+  },
+  "createdBy": "reveal-sync built from github.com/henriquefps/reveal 94fbfe7 (sync-server/ at ef0b8db, 0.5.3)",
+  "fingerprint": "v1:91f7742e59aad8a7cc42490b176ace654cc3e6070a8c32a23b36e2f6755ff5c6",
+  "originalSha256": "595c9e253687a0487814d76e351b8d249532ba25840f7974b9fcdee6598d6f56",
+  "phoneId": "57977b01-ff8c-4c16-b2b9-62cadd6b3660",
+  "phoneKey": "rvk1_acb75485440fa40e_cLjcn8H1OQEOkk-P3rJU5_RNPX6Yi7ANchzpF3_XOhE",
+  "previewSha256": "25be4dc42e791ae05a846fc3c18cf7594b4802082df47fa1fca73a2d101f0089",
+  "server": {
+    "api": 1,
+    "deviceId": "57977b01-ff8c-4c16-b2b9-62cadd6b3660",
+    "limits": {
+      "chunkSize": 8388608,
+      "maxBlobSize": 4294967296,
+      "maxJsonBody": 8388608,
+      "maxLookup": 1000,
+      "maxPullLimit": 500,
+      "maxPushChanges": 500,
+      "maxRecordData": 2097152,
+      "maxUploadsPerDevice": 32,
+      "requestBurst": 120,
+      "requestsPerSecond": 30
+    },
+    "serverId": "f06d5756-71c4-4f0e-87c2-db33162fd0e7",
+    "serverName": "Reveal sync",
+    "storageConfigured": true,
+    "version": "dev"
+  },
+  "tabletKey": "rvk1_c1e4a3782e039eee_6VJZ9vhKH2H_bhHgomycymfs8FabtIONGVEGxTv57Mg"
+}

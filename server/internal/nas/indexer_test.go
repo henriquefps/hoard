@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
-	"github.com/henriquefps/reveal/sync-server/internal/mounts"
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/mounts"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 func write(t *testing.T, p string, b []byte) {

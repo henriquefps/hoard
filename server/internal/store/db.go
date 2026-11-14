@@ -1,4 +1,4 @@
-// Package store is reveal-sync's metadata database: SQLite (pure Go, WAL) with numbered, embedded migrations.
+// Package store is hoard-server's metadata database: SQLite (pure Go, WAL) with numbered, embedded migrations.
 package store
 
 import (
@@ -84,7 +84,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if len(list) > 0 && current > list[len(list)-1].n {
-		return fmt.Errorf("database schema %d is newer than this server (%d): use a newer reveal-sync", current, list[len(list)-1].n)
+		return fmt.Errorf("database schema %d is newer than this server (%d): use a newer hoard-server", current, list[len(list)-1].n)
 	}
 	for _, m := range list {
 		if m.n <= current {

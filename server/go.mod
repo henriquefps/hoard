@@ -1,4 +1,4 @@
-module github.com/henriquefps/reveal/sync-server
+module github.com/henriquefps/hoard/server
 
 go 1.27.3
 

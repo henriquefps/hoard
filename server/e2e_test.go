@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/henriquefps/reveal/sync-server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
 )
 
 // TestEndToEnd builds the real binary, runs it and drives a scripted client through
@@ -30,7 +30,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Skip("builds and runs the binary")
 	}
 	base := t.TempDir()
-	bin := filepath.Join(base, "reveal-sync")
+	bin := filepath.Join(base, "hoard-server")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
@@ -66,7 +66,7 @@ func TestEndToEnd(t *testing.T) {
 				if v, ok := m["setupCode"].(string); ok {
 					setupCode = v
 				}
-				if v, ok := m["addr"].(string); ok && m["msg"] == "reveal-sync listening" {
+				if v, ok := m["addr"].(string); ok && m["msg"] == "hoard-server listening" {
 					addr = v
 					close(found)
 				}
@@ -91,7 +91,7 @@ func TestEndToEnd(t *testing.T) {
 		js, _ := json.Marshal(body)
 		req, _ := http.NewRequest(method, baseURL+"/admin/api/"+path, bytes.NewReader(js))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Reveal-Admin", "1")
+		req.Header.Set("X-Hoard-Admin", "1")
 		res, err := admin.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -322,7 +322,7 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatal("a secret reached the logs")
 		}
 	}
-	if fi, err := os.Stat(filepath.Join(base, "data", "reveal-sync.db")); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(filepath.Join(base, "data", "hoard-server.db")); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("database mode %v %v", fi, err)
 	}
 }

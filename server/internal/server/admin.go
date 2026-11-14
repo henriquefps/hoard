@@ -15,10 +15,10 @@ import (
 
 	"rsc.io/qr"
 
-	"github.com/henriquefps/reveal/sync-server/internal/auth"
-	"github.com/henriquefps/reveal/sync-server/internal/blobstore"
-	"github.com/henriquefps/reveal/sync-server/internal/mounts"
-	"github.com/henriquefps/reveal/sync-server/internal/store"
+	"github.com/henriquefps/hoard/server/internal/auth"
+	"github.com/henriquefps/hoard/server/internal/blobstore"
+	"github.com/henriquefps/hoard/server/internal/mounts"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 //go:embed web
@@ -88,11 +88,12 @@ func (s *Server) adminGate(next http.Handler) http.Handler {
 	})
 }
 
-// csrf: state-changing admin calls carry X-Reveal-Admin: 1 (a cross-site form cannot) and a same-host Origin.
+// csrf: state-changing admin calls carry X-Hoard-Admin: 1 (a cross-site form cannot) and a same-host Origin. The
+// reveal-sync name X-Reveal-Admin is still accepted (a setup page loaded before the upgrade keeps working).
 func (s *Server) csrf(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Reveal-Admin") != "1" {
-			fail(w, r, http.StatusForbidden, "forbidden", "Missing X-Reveal-Admin header.", nil)
+		if r.Header.Get(adminHeader) != "1" && r.Header.Get(legacyAdminHeader) != "1" {
+			fail(w, r, http.StatusForbidden, "forbidden", "Missing "+adminHeader+" header.", nil)
 			return
 		}
 		if o := r.Header.Get("Origin"); o != "" {
@@ -106,12 +107,23 @@ func (s *Server) csrf(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// sessionToken is the admin session cookie's value: the hoard-server cookie, else the one reveal-sync set (its sessions
+// live in the same table, so a signed-in admin stays signed in across the upgrade).
+func sessionToken(r *http.Request) string {
+	for _, name := range []string{sessionCookieName, legacySessionCookieName} {
+		if c, err := r.Cookie(name); err == nil && c.Value != "" {
+			return c.Value
+		}
+	}
+	return ""
+}
+
 func (s *Server) sessionValid(r *http.Request) bool {
-	c, err := r.Cookie(sessionCookieName)
-	if err != nil || c.Value == "" || len(c.Value) > 100 {
+	token := sessionToken(r)
+	if token == "" || len(token) > 100 {
 		return false
 	}
-	ok, err := s.store.TouchSession(r.Context(), auth.HashToken(c.Value), s.store.Now().Add(sessionTTL).UnixMilli())
+	ok, err := s.store.TouchSession(r.Context(), auth.HashToken(token), s.store.Now().Add(sessionTTL).UnixMilli())
 	return err == nil && ok
 }
 
@@ -230,11 +242,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(sessionCookieName); err == nil {
-		_ = s.store.DeleteSession(r.Context(), auth.HashToken(c.Value))
+	if token := sessionToken(r); token != "" {
+		_ = s.store.DeleteSession(r.Context(), auth.HashToken(token))
 	}
-	http.SetCookie(w, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/admin", MaxAge: -1, HttpOnly: true, //nolint:gosec // clears the cookie
-		SameSite: http.SameSiteStrictMode, Secure: secureRequest(r)})
+	for _, name := range []string{sessionCookieName, legacySessionCookieName} {
+		http.SetCookie(w, &http.Cookie{Name: name, Value: "", Path: "/admin", MaxAge: -1, HttpOnly: true, //nolint:gosec // clears the cookie
+			SameSite: http.SameSiteStrictMode, Secure: secureRequest(r)})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -428,6 +442,7 @@ func (s *Server) handleCreatePairing(w http.ResponseWriter, r *http.Request) {
 	q.Set("url", serverURL)
 	q.Set("token", token)
 	q.Set("server", s.serverID)
+	// The pairing URI scheme is frozen with /v1 (ADR 0012): Reveal scans revealsync:// codes.
 	uri := "revealsync://pair?" + q.Encode()
 	code, err := qr.Encode(uri, qr.M)
 	if err != nil {
@@ -513,7 +528,7 @@ func (s *Server) handleSetStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n > 0 && current != "" && filepath.Clean(current) != real {
-		fail(w, r, http.StatusConflict, "conflict", "The backup folder holds photos already; move its reveal-sync folder by hand to change it (see the README).", nil)
+		fail(w, r, http.StatusConflict, "conflict", "The backup folder holds photos already; move its reveal-sync folder (the server's files) by hand to change it (see the README).", nil)
 		return
 	}
 	if !mounts.Writable(real) {
@@ -521,7 +536,7 @@ func (s *Server) handleSetStorage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if blobstore.HasAnyBlob(real) && n == 0 {
-		fail(w, r, http.StatusConflict, "conflict", "This folder holds another server's reveal-sync data.", nil)
+		fail(w, r, http.StatusConflict, "conflict", "This folder holds another server's data (a reveal-sync folder).", nil)
 		return
 	}
 	if err := s.setBackupRoot(ctx, real); err != nil {
