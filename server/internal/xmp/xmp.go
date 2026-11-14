@@ -17,8 +17,11 @@ import (
 // MaxSize is the largest sidecar read (larger ones are ignored, as by the apps).
 const MaxSize = 4 << 20
 
-// MaxLabel is the longest label kept, in characters.
+// MaxLabel is the longest label imported, in characters (the store refuses longer ones per field).
 const MaxLabel = 64
+
+// MaxRawLabel is how much of a longer label (Lightroom free text) is kept as read, to notice when it changes.
+const MaxRawLabel = 256
 
 // Namespaces.
 const (
@@ -32,7 +35,7 @@ const (
 type Culling struct {
 	Rating *int    // 0..5; a negative xmp:Rating leaves it nil and sets Flag to reject
 	Flag   *string // pick | reject | none
-	Label  *string
+	Label  *string // as read (cut to MaxRawLabel characters); may be over MaxLabel
 }
 
 // Empty reports whether the sidecar holds no culling value.
@@ -157,11 +160,14 @@ func (r raw) culling() Culling {
 		flag("pick") // an old Hoard "Copy picks" sidecar (Hoard ADR 0011)
 	}
 	if r.label != nil {
-		if v := *r.label; utf8.ValidString(v) && utf8.RuneCountInString(v) <= MaxLabel && !strings.ContainsFunc(v, func(r rune) bool {
-			return r < 0x20 || r == 0x7f
-		}) {
-			c.Label = &v
+		// Kept as read (a label present in the file is never "absent"): the store imports it only when it is a valid
+		// label (at most MaxLabel characters, no control characters) and otherwise skips that field alone, and a label
+		// that disappears from a sidecar it was in is imported as cleared (ADR 0016).
+		v := *r.label
+		if utf8.RuneCountInString(v) > MaxRawLabel {
+			v = string([]rune(v)[:MaxRawLabel])
 		}
+		c.Label = &v
 	}
 	return c
 }

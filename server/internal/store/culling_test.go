@@ -197,16 +197,13 @@ func TestCullingUnknownItemAndReplacedBy(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	unknown := "cccccccc-0000-4000-8000-000000000000"
-	_, err := s.PushCulling(ctx, devA, []CullChange{
+	// An unknown itemId is an invalid result of its own; the rest of the batch applies (finding C).
+	res, err := s.PushCulling(ctx, devA, []CullChange{
 		{Fingerprint: fpShot, Field: CullRating, Value: json.RawMessage("1"), BaseRev: rev(0), ModifiedAt: 1},
 		{ItemID: unknown, Field: CullRating, Value: json.RawMessage("1"), BaseRev: rev(0), ModifiedAt: 1},
 	})
-	var ce *CullError
-	if !errors.As(err, &ce) || ce.Index != 1 {
-		t.Fatalf("%v", err)
-	}
-	if _, err := s.Culling(ctx, ItemID(fpShot)); !errors.Is(err, ErrNotFound) {
-		t.Fatal("a rejected push applied its first change")
+	if err != nil || res[0].Status != "applied" || res[1].Status != "invalid" || res[1].Code != CullUnknownItem || res[1].Index != 1 {
+		t.Fatalf("%+v %v", res, err)
 	}
 	// A tombstone with replacedBy forwards to the replacement.
 	newID := "dddddddd-0000-4000-8000-000000000000"
@@ -214,7 +211,7 @@ func TestCullingUnknownItemAndReplacedBy(t *testing.T) {
 		VALUES (?, 'v1:x', 1, 1, 'photo', ?, 0, 0), (?, 'v1:y', 2, 0, 'pair', '{}', 0, 0)`, unknown, `{"replacedBy":"`+newID+`"}`, newID); err != nil {
 		t.Fatal(err)
 	}
-	res, err := s.PushCulling(ctx, devA, []CullChange{{ItemID: unknown, Field: CullFlag, Value: json.RawMessage(`"pick"`), BaseRev: rev(0), ModifiedAt: 1}})
+	res, err = s.PushCulling(ctx, devA, []CullChange{{ItemID: unknown, Field: CullFlag, Value: json.RawMessage(`"pick"`), BaseRev: rev(0), ModifiedAt: 1}})
 	if err != nil || res[0].ItemID != newID {
 		t.Fatalf("%+v %v", res, err)
 	}

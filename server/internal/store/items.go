@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -219,8 +220,11 @@ func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte,
 		if _, err := t.tx.ExecContext(t.ctx, "UPDATE items SET deleted = 1, rev = ?, data = ?, updated_at = ? WHERE id = ?", rev, string(tombstone), t.now, id); err != nil {
 			return false, err
 		}
-		_, err = t.tx.ExecContext(t.ctx, "DELETE FROM item_files WHERE item_id = ?", id)
-		return true, err
+		if _, err = t.tx.ExecContext(t.ctx, "DELETE FROM item_files WHERE item_id = ?", id); err != nil {
+			return false, err
+		}
+		// Its culling record is sent again, now naming the item that replaced it (ADR 0016 "Mapping a record").
+		return true, touchCulling(t.ctx, t.tx, id)
 	}
 	if exists && !cur.deleted && bytes.Equal([]byte(cur.data), data) {
 		return false, nil
@@ -235,8 +239,23 @@ func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte,
 		id, mainFP, rev, kind, sortTime, string(data), t.now, t.now); err != nil {
 		return false, err
 	}
+	before, err := t.ItemFileFingerprints(id)
+	if err != nil {
+		return false, err
+	}
 	if _, err := t.tx.ExecContext(t.ctx, "DELETE FROM item_files WHERE item_id = ?", id); err != nil {
 		return false, err
+	}
+	after := make([]string, 0, len(files))
+	for _, f := range files {
+		after = append(after, f.Fingerprint)
+	}
+	slices.Sort(after)
+	if !slices.Equal(before, slices.Compact(after)) {
+		// Clients map culling records by the item's member fingerprints: a changed member list is sent again.
+		if err := touchCulling(t.ctx, t.tx, id); err != nil {
+			return false, err
+		}
 	}
 	for _, f := range files {
 		if _, err := t.tx.ExecContext(t.ctx, "INSERT INTO item_files (fingerprint, item_id, role) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",

@@ -353,7 +353,7 @@ The three GETs answer:
 ## Culling (hoard-server 0.7.0)
 
 Added by ADR 0016 (the record, the per-field conflict rule, NAS sidecars, the bridge from `photo` records and the
-client rules). Additions only; `features` gains `"culling"`.
+client rules), amended by Reveal's review (findings A–E, still 0.7.0). Additions only; `features` gains `"culling"`.
 
 A **culling record** belongs to an item id (ADR 0014) and has up to three fields, `rating` (0..5), `flag` (`pick` |
 `reject` | `none`) and `label` (≤ 64 characters, `""` = none), each `{"value", "rev", "modifiedAt", "deviceId"}`
@@ -362,13 +362,16 @@ Revisions come from the **items counter**.
 
 | Method and path | Answer |
 | --- | --- |
-| `POST /v1/culling` `{"changes": [{"itemId" \| "fingerprint", "field", "value", "baseRev", "modifiedAt"}]}` (≤ 500) | `{"results": [{"itemId", "field", "status": "applied" \| "unchanged" \| "conflict", "winner"?, "rev", "clipped"?}]}`. Per field: same value → `unchanged` (no revision; a later `modifiedAt` is remembered); `baseRev` equal to the field's `rev` (or a field never written) → `applied`; else last-writer-wins on `modifiedAt`, then device id. A `modifiedAt` more than 10 minutes ahead of the server's clock is clipped to it. A `fingerprint` names the live item that holds the file, else the id derived from it (a shot the server does not index yet); an `itemId` must be known (a tombstone's `replacedBy` is followed). One invalid change → `422 invalid_change` with `details.index`, nothing applied. |
-| `GET /v1/items/changes?…&include=items,culling` | `include` (comma-separated `items`, `culling`; absent = `items`, the 0.5.0 answer). With `culling`, the answer has a `culling` array of records changed since the cursor, merged with items in revision order (one cursor; `limit` counts both). |
+| `POST /v1/culling` `{"changes": [{"itemId" \| "fingerprint", "field", "value", "baseRev", "modifiedAt"}]}` (≤ 500) | `{"results": [{"index", "itemId", "field", "status": "applied" \| "unchanged" \| "conflict" \| "invalid", "winner"?, "rev", "clipped"?, "code"?, "message"?}]}`, one per change, in order. Per field: same value → `unchanged` (no revision; a later `modifiedAt` is remembered); `baseRev` equal to the field's `rev` (or a field never written) → `applied`; else last-writer-wins on `modifiedAt`, then device id. A `modifiedAt` more than 10 minutes ahead of the server's clock is clipped to it. A `fingerprint` names the live item that holds the file, else the id derived from it (a shot the server does not index yet); an `itemId` must be known (a tombstone's `replacedBy` is followed). A change that cannot be applied is a result `"status": "invalid"` with a `code` (`invalid_target`, `invalid_field`, `invalid_value`, `label_too_long`, `invalid_base_rev`, `invalid_modified_at`, `unknown_item`) and no `rev`; the other changes apply and the answer is `200`. Only a body that is not a push (malformed JSON `400`, 0 or more than 500 changes `422 invalid_change`) is refused as a whole. Calling it marks the device culling-aware (below). |
+| `GET /v1/items/changes?…&include=items,culling` | `include` (comma-separated `items`, `culling`; absent = `items`, the 0.5.0 answer). With `culling`, the answer has a `culling` array of records changed since the cursor, merged with items in revision order (one cursor; `limit` counts both). Each record also carries `fingerprints` (the item's member files, main first; `[]` when the server has no live item with that id) and, for a replaced item, `replacedBy`; a record is sent again when its item's members change or the item is replaced. |
 | `GET /v1/culling/{itemId}` | One record; `404 not_found` when no field was ever written. |
 
 Written by the server too: changed NAS sidecars (as `"nas"`, dated by the file's mtime; the server never writes a
-sidecar) and the culling fields a pushed `photo` record changes (its device and `modifiedAt`; once at the upgrade for
-every live photo record). `/v1/changes` is unchanged.
+sidecar; a label present in a sidecar the last time and absent now imports as `""`) and the culling fields a pushed
+`photo` record changes (its device and `modifiedAt`; once at the upgrade for every live photo record), **unless the
+device is culling-aware**: it declared `"culling"` in `PATCH /v1/device` `features` or called `POST /v1/culling`. A
+record write that turns to `REJECT` and drops the rating to 0 together keeps the stars (released Reveal reads
+`xmp:Rating="-1"` as 0 + reject); a label over 64 characters is skipped alone. `/v1/changes` is unchanged.
 
 ## Physical devices (hoard-server 0.7.0)
 
@@ -379,10 +382,10 @@ pairing starts its own, with the device's id; devices paired before 0.7.0 got th
 
 | Method and path | Answer |
 | --- | --- |
-| `POST /v1/pair` | Request also takes optional `app` (`[a-z0-9-]{1,32}`), `manufacturer`, `model` (≤ 64); answer also has `physicalDeviceId` and `candidates`: `[{"physicalDeviceId", "name", "match": "model" \| "other", "devices": [{"id", "name", "app", "platform", "manufacturer", "model"}]}]`, the other physical devices on the same platform without a device of this app, model matches first. |
-| `GET /v1/device` | `{"deviceId", "name", "platform", "app", "manufacturer", "model", "physicalDevice": {"id", "name", "devices": [...]}, "candidates": [...]}` |
-| `PATCH /v1/device` `{"app"?, "manufacturer"?, "model"?}` | The same view after storing them; `400 invalid_request` when malformed. |
-| `POST /v1/device/claim` `{"physicalDeviceId": "<id>" \| null}` | Moves this device there (`null`: to one of its own); the same view. `404 not_found`, `409 conflict` (`details.reason = same_app`: a live device of the same app is there), `400 invalid_request`. |
+| `POST /v1/pair` | Request also takes optional `app` (the app's name with an optional build variant: `reveal`, `reveal-debug`, `reveal-bench`, `hoard`, `hoard-debug`; `[a-z0-9]+(-[a-z0-9]+)*`, ≤ 32; variants are distinct apps of one phone), `manufacturer`, `model` (≤ 64); answer also has `physicalDeviceId` and `candidates`: `[{"physicalDeviceId", "name", "match": "model" \| "other", "devices": [{"id", "name", "app", "platform", "manufacturer", "model"}]}]`, the other physical devices on the same platform without a device of this app, model matches first. |
+| `GET /v1/device` | `{"deviceId", "name", "platform", "app", "manufacturer", "model", "features", "physicalDevice": {"id", "name", "devices": [...]}, "candidates": [...]}` (`features`: the capabilities the device declared or was seen using, so far `"culling"`) |
+| `PATCH /v1/device` `{"app"?, "manufacturer"?, "model"?, "features"?}` | The same view after storing them; `features` (≤ 16 names `[a-z0-9-]{1,32}`) are added, never removed, unknown names ignored; `400 invalid_request` when malformed. |
+| `POST /v1/device/claim` `{"physicalDeviceId": "<id>" \| null}` | Moves this device there (`null`: to one of its own); the same view. `404 not_found`, `409 conflict` (`details.reason = same_app`: a live device of the same app id, variant included, is there), `400 invalid_request`. |
 
 `GET /v1/devices` entries gain `physicalDeviceId` and `app`.
 

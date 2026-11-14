@@ -444,7 +444,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
     patch:
       tags: [devices]
-      summary: Report this device's app, manufacturer and model (ADR 0017; hoard-server 0.7.0)
+      summary: Report this device's app, manufacturer, model and capabilities (ADR 0017; hoard-server 0.7.0)
       requestBody:
         required: true
         content:
@@ -455,6 +455,14 @@ paths:
                 app: { $ref: "#/components/schemas/AppName" }
                 manufacturer: { type: string, maxLength: 64 }
                 model: { type: string, maxLength: 64 }
+                features:
+                  type: array
+                  maxItems: 16
+                  items: { type: string, pattern: "^[a-z0-9-]{1,32}$" }
+                  description: |
+                    Capabilities the app implements (ADR 0016). Known ones are recorded, unknown ones ignored, and a
+                    recorded one is never removed. `culling`: the device syncs culling per field, so the server stops
+                    bridging the culling fields of its photo records.
       responses:
         "200":
           description: The device view
@@ -486,7 +494,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: "`conflict` with `details.reason = same_app`: that physical device already has a live device of this app"
+          description: "`conflict` with `details.reason = same_app`: that physical device already has a live device of this app id (build variant included)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -812,8 +820,10 @@ paths:
       description: |
         Applied in order in one transaction; per field: same value = unchanged, `baseRev` equal to the field's rev =
         applied, else last-writer-wins on `modifiedAt` then device id. A `modifiedAt` more than 10 minutes ahead of the
-        server is clipped. A change that fails validation (or names an unknown `itemId`) rejects the whole request with
-        `details.index`.
+        server is clipped. A change that cannot be applied (validation, an unknown `itemId`, a label over 64
+        characters) is a result with `status: invalid` and a `code`; the other changes apply and the answer is 200.
+        Only a body that is not a push (malformed JSON, 0 or more than 500 changes) is refused. Calling it marks the
+        device culling-aware (its photo records are no longer bridged).
       requestBody:
         required: true
         content:
@@ -826,6 +836,7 @@ paths:
                   type: array
                   minItems: 1
                   maxItems: 500
+                  description: A change that does not match CullChange is an `invalid` result, not a 4xx.
                   items: { $ref: "#/components/schemas/CullChange" }
       responses:
         "200":
@@ -1227,14 +1238,23 @@ components:
         modifiedAt: { type: integer, description: "When the user made the change, Unix ms, the device's clock." }
     CullResult:
       type: object
-      required: [itemId, field, status, rev]
+      description: |
+        The outcome of one change. `applied` / `unchanged` / `conflict` carry `itemId` and `rev`; `invalid` carries
+        `code` and `message` and echoes the `itemId` or `fingerprint` and `field` it was sent with (no `rev`).
+      required: [index, field, status]
       properties:
+        index: { type: integer, description: "The change's position in `changes`." }
         itemId: { $ref: "#/components/schemas/Uuid" }
-        field: { type: string, enum: [rating, flag, label] }
-        status: { type: string, enum: [applied, unchanged, conflict] }
+        fingerprint: { type: string, description: "Only on `invalid`, as sent." }
+        field: { type: string, description: "rating, flag or label (on `invalid`: as sent)" }
+        status: { type: string, enum: [applied, unchanged, conflict, invalid] }
         winner: { type: string, enum: [incoming, server] }
         rev: { type: integer }
         clipped: { type: boolean }
+        code:
+          type: string
+          enum: [invalid_target, invalid_field, invalid_value, label_too_long, invalid_base_rev, invalid_modified_at, unknown_item]
+        message: { type: string, description: "English, for logs." }
     CullField:
       type: object
       required: [value, rev, modifiedAt, deviceId]
@@ -1245,19 +1265,30 @@ components:
         deviceId: { type: string, description: "A device id, or `nas` for a value imported from a NAS sidecar." }
     Culling:
       type: object
-      description: An item's culling record; fields never written are absent.
-      required: [itemId, rev]
+      description: |
+        An item's culling record; fields never written are absent. A client maps it to its photos by any of
+        `fingerprints` (else by the id derived from its main fingerprint when `fingerprints` is empty) and follows
+        `replacedBy` (ADR 0016 "Mapping a record").
+      required: [itemId, rev, fingerprints]
       properties:
         itemId: { $ref: "#/components/schemas/Uuid" }
-        rev: { type: integer }
+        rev: { type: integer, description: "Its newest change in the feed: a field write, or its item's members changing." }
+        fingerprints:
+          type: array
+          items: { $ref: "#/components/schemas/Fingerprint" }
+          description: The item's member files, main first; empty when the server has no live item with this id.
+        replacedBy: { $ref: "#/components/schemas/Uuid", description: "The live item that took a replaced item over." }
         rating: { $ref: "#/components/schemas/CullField" }
         flag: { $ref: "#/components/schemas/CullField" }
         label: { $ref: "#/components/schemas/CullField" }
     AppName:
       type: string
-      pattern: "^[a-z0-9-]{1,32}$"
-      examples: [hoard, reveal]
-      description: Which app this device is (ADR 0017; 0.7.0).
+      pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+      maxLength: 32
+      examples: [hoard, reveal, reveal-debug, reveal-bench, hoard-debug]
+      description: |
+        Which app this device is, with its build variant when it is not the release (ADR 0017; 0.7.0). Variants are
+        distinct apps of one physical device.
     DeviceEntry:
       type: object
       required: [id, name, app, platform, manufacturer, model]
@@ -1280,7 +1311,7 @@ components:
           items: { $ref: "#/components/schemas/DeviceEntry" }
     DeviceView:
       type: object
-      required: [deviceId, name, platform, app, manufacturer, model, physicalDevice, candidates]
+      required: [deviceId, name, platform, app, manufacturer, model, features, physicalDevice, candidates]
       properties:
         deviceId: { $ref: "#/components/schemas/Uuid" }
         name: { type: string }
@@ -1288,6 +1319,10 @@ components:
         app: { type: [string, "null"] }
         manufacturer: { type: [string, "null"] }
         model: { type: [string, "null"] }
+        features:
+          type: array
+          items: { type: string }
+          description: Capabilities the device declared or was seen using (ADR 0016), e.g. `culling`.
         physicalDevice:
           type: object
           required: [id, name, devices]

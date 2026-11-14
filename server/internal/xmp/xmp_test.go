@@ -41,7 +41,8 @@ func TestRead(t *testing.T) {
 		{"doctype", `<!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]>` + desc(`xmp:Rating="1"`, ""), false, -9, "", ""},
 		{"entity", desc(`xmp:Label="&e;"`, ""), false, -9, "", ""},
 		{"control character (not XML 1.0)", desc(`xmp:Label="a&#x1;b"`, ""), false, -9, "", ""},
-		{"label over 64 characters ignored", desc(`xmp:Rating="1" xmp:Label="`+strings.Repeat("r", 65)+`"`, ""), true, 1, "", ""},
+		{"label over 64 characters kept as read (the store refuses it per field)", desc(`xmp:Rating="1" xmp:Label="`+strings.Repeat("r", 65)+`"`, ""), true, 1, "", strings.Repeat("r", 65)},
+		{"label over 256 characters cut", desc(`xmp:Label="`+strings.Repeat("é", 300)+`"`, ""), true, -9, "", strings.Repeat("é", MaxRawLabel)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

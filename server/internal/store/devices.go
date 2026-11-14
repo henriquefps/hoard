@@ -24,6 +24,8 @@ type Device struct {
 	App          *string `json:"app"`
 	Manufacturer *string `json:"manufacturer"`
 	Model        *string `json:"model"`
+	// CullingSince is when the device declared the "culling" capability or first pushed culling (ADR 0016; nil: never).
+	CullingSince *int64 `json:"-"`
 }
 
 // ErrInvalidToken is returned for an unknown, used or expired pairing token.
@@ -94,13 +96,13 @@ func (s *Store) RedeemPairing(ctx context.Context, tokenHash []byte, d Device) (
 	return d, err
 }
 
-const deviceCols = "id, name, platform, app_version, key_id, key_hash, created_at, last_seen_at, last_sync_at, revoked_at, physical_id, app, manufacturer, model"
+const deviceCols = "id, name, platform, app_version, key_id, key_hash, created_at, last_seen_at, last_sync_at, revoked_at, physical_id, app, manufacturer, model, culling_since"
 
 func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 	var d Device
 	var physical sql.NullString
 	err := row.Scan(&d.ID, &d.Name, &d.Platform, &d.AppVersion, &d.KeyID, &d.KeyHash, &d.CreatedAt, &d.LastSeenAt, &d.LastSyncAt, &d.RevokedAt,
-		&physical, &d.App, &d.Manufacturer, &d.Model)
+		&physical, &d.App, &d.Manufacturer, &d.Model, &d.CullingSince)
 	d.PhysicalID = physical.String
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
@@ -180,6 +182,23 @@ func (s *Store) UpdateDeviceInfo(ctx context.Context, id string, info DeviceInfo
 	_, err := s.db.ExecContext(ctx, `UPDATE devices SET app = coalesce(?, app), manufacturer = coalesce(?, manufacturer),
 		model = coalesce(?, model) WHERE id = ?`, info.App, info.Manufacturer, info.Model, id)
 	return err
+}
+
+// MarkCullingAware records that a device syncs culling per field (ADR 0016 "Reveal's records"): from now on the
+// bridge ignores the culling fields of its photo records. The first time is kept; it is never undone.
+func (s *Store) MarkCullingAware(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE devices SET culling_since = coalesce(culling_since, ?) WHERE id = ?", s.nowMs(), id)
+	return err
+}
+
+// cullingAware reports whether a device declared the culling capability (an unknown device is not).
+func cullingAware(ctx context.Context, tx *sql.Tx, deviceID string) (bool, error) {
+	var since sql.NullInt64
+	err := tx.QueryRowContext(ctx, "SELECT culling_since FROM devices WHERE id = ?", deviceID).Scan(&since)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return since.Valid, err
 }
 
 // PhysicalExists reports whether a physical device exists.

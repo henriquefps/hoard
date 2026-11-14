@@ -24,36 +24,45 @@ type cullPush struct {
 	ModifiedAt  *int64          `json:"modifiedAt"`
 }
 
-func validateCull(c cullPush) (store.CullChange, string) {
+// validateCull checks one change; a problem is a result code and a message (ADR 0016: an invalid change never fails
+// the batch).
+func validateCull(c cullPush) (store.CullChange, string, string) {
 	out := store.CullChange{ItemID: c.ItemID, Fingerprint: c.Fingerprint, Field: c.Field}
 	switch {
 	case (c.ItemID == "") == (c.Fingerprint == ""):
-		return out, "name the shot with exactly one of itemId and fingerprint"
+		return out, store.CullInvalidTarget, "Name the shot with exactly one of itemId and fingerprint."
 	case c.ItemID != "" && !uuidPattern.MatchString(c.ItemID):
-		return out, "itemId must be a lower-case UUID"
+		return out, store.CullInvalidTarget, "itemId must be a lower-case UUID."
 	case c.Fingerprint != "" && !fingerprint.Valid(c.Fingerprint):
-		return out, "fingerprint is v1: + 64 lower-case hex"
+		return out, store.CullInvalidTarget, "fingerprint is v1: + 64 lower-case hex."
 	}
 	if c.Field != store.CullRating && c.Field != store.CullFlag && c.Field != store.CullLabel {
-		return out, "field must be rating, flag or label"
+		return out, store.CullInvalidField, "field must be rating, flag or label."
 	}
-	v, ok := store.CullValue(c.Field, c.Value)
-	if !ok {
-		return out, fmt.Sprintf("value: rating is an integer 0..5, flag is pick, reject or none, label a string of at most %d characters", store.MaxLabel)
+	v, code := store.CullValueCode(c.Field, c.Value)
+	switch code {
+	case store.CullLabelTooLong:
+		return out, code, fmt.Sprintf("A label is at most %d characters.", store.MaxLabel)
+	case "":
+	default:
+		return out, code, "value: rating is an integer 0..5, flag is pick, reject or none, label a string without control characters."
 	}
 	if c.BaseRev == nil || *c.BaseRev < 0 {
-		return out, "baseRev is required (0 when the field was never seen)"
+		return out, store.CullInvalidBaseRev, "baseRev is required (0 when the field was never seen)."
 	}
 	if c.ModifiedAt == nil || *c.ModifiedAt <= 0 || *c.ModifiedAt > 1<<53 {
-		return out, "modifiedAt (Unix milliseconds) is required"
+		return out, store.CullInvalidModifiedAt, "modifiedAt (Unix milliseconds) is required."
 	}
 	out.Value, out.BaseRev, out.ModifiedAt = v, c.BaseRev, *c.ModifiedAt
-	return out, ""
+	return out, "", ""
 }
 
+// handleCullingPush applies a batch (ADR 0016 "Push"): one result per change, in order. A change that cannot be applied
+// is an "invalid" result with a code; the others apply and the answer is 200. Only a body that is not a push at all
+// (malformed JSON, no changes, more than maxPushChanges) is refused.
 func (s *Server) handleCullingPush(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Changes []cullPush `json:"changes"`
+		Changes []json.RawMessage `json:"changes"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -62,24 +71,36 @@ func (s *Server) handleCullingPush(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_change", fmt.Sprintf("Send 1 to %d changes.", maxPushChanges), nil)
 		return
 	}
-	changes := make([]store.CullChange, len(req.Changes))
-	for i, c := range req.Changes {
-		v, problem := validateCull(c)
-		if problem != "" {
-			fail(w, r, http.StatusUnprocessableEntity, "invalid_change", problem, map[string]any{"index": i})
-			return
+	results := make([]store.CullResult, len(req.Changes))
+	var valid []store.CullChange
+	var at []int // index in req.Changes of each valid change
+	for i, raw := range req.Changes {
+		var c cullPush
+		if json.Unmarshal(raw, &c) != nil {
+			var field struct {
+				Field any `json:"field"`
+			}
+			_ = json.Unmarshal(raw, &field)
+			f, _ := field.Field.(string)
+			results[i] = store.InvalidCull(i, "", "", f, store.CullInvalidValue, "A change is an object with itemId or fingerprint, field, value, baseRev and modifiedAt.")
+			continue
 		}
-		changes[i] = v
+		v, code, problem := validateCull(c)
+		if code != "" {
+			results[i] = store.InvalidCull(i, c.ItemID, c.Fingerprint, c.Field, code, problem)
+			continue
+		}
+		valid = append(valid, v)
+		at = append(at, i)
 	}
-	results, err := s.store.PushCulling(r.Context(), info(r).device.ID, changes)
-	var ce *store.CullError
-	if errors.As(err, &ce) {
-		fail(w, r, http.StatusUnprocessableEntity, "invalid_change", ce.Problem, map[string]any{"index": ce.Index})
-		return
-	}
+	applied, err := s.store.PushCulling(r.Context(), info(r).device.ID, valid)
 	if err != nil {
 		s.internal(w, r, err)
 		return
+	}
+	for k, res := range applied {
+		res.Index = at[k]
+		results[at[k]] = res
 	}
 	s.touch(r.Context(), info(r).device.ID, true)
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})

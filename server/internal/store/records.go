@@ -67,8 +67,12 @@ func (s *Store) Push(ctx context.Context, deviceID string, changes []Change) ([]
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		results = results[:0]
 		released = released[:0]
+		aware, err := cullingAware(ctx, tx, deviceID)
+		if err != nil {
+			return err
+		}
 		for _, c := range changes {
-			r, sha, err := s.apply(ctx, tx, deviceID, c, now)
+			r, sha, err := s.apply(ctx, tx, deviceID, c, now, aware)
 			if err != nil {
 				return err
 			}
@@ -118,14 +122,19 @@ func dataOrNil(c Change) any {
 	return string(c.Data)
 }
 
-func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change, now int64) (Result, string, error) {
+// cullingAware: the device syncs culling per field (ADR 0016), so its photo records are not bridged.
+func (s *Store) apply(ctx context.Context, tx *sql.Tx, deviceID string, c Change, now int64, cullingAware bool) (Result, string, error) {
 	var before []byte
 	res, written, err := s.applyOne(ctx, tx, deviceID, c, now, &before)
 	if err != nil || !written || c.Kind != KindPhoto {
 		return res, "", err
 	}
 	if !c.Deleted {
-		// Culling a released Reveal syncs inside its photo records reaches the culling records (ADR 0016).
+		// Culling a released Reveal syncs inside its photo records reaches the culling records (ADR 0016), unless the
+		// device pushes culling per field itself.
+		if cullingAware {
+			return res, "", nil
+		}
 		return res, "", bridgePhoto(ctx, tx, deviceID, c.ModifiedAt, before, c.Data, now)
 	}
 	sha, err := releasePreview(ctx, tx, before)

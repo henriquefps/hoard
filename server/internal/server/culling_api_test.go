@@ -10,7 +10,10 @@ import (
 	"github.com/henriquefps/hoard/server/internal/store"
 )
 
-const fpA = "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+const (
+	fpA = "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fpB = "v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
 
 // pairApp pairs a device with ADR 0017's fields and returns key, id and the whole answer.
 func (hs *harness) pairApp(name, app, model string) (string, string, map[string]any) {
@@ -36,26 +39,36 @@ func TestCullingPushAndFeed(t *testing.T) {
 	hoard, _ := hs.pair("Hoard")
 	reveal, revealID := hs.pair("Reveal")
 
-	// Validation: the whole push is refused with the index of the bad change.
-	for i, bad := range []map[string]any{
-		{"field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1},                                                                       // no shot
-		{"itemId": "x", "field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1},                                                        // bad id
-		{"fingerprint": fpA, "itemId": "0b6f0b6f-0b6f-4b6f-8b6f-0b6f0b6f0b6f", "field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1}, // both
-		{"fingerprint": fpA, "field": "stars", "value": 3, "baseRev": 0, "modifiedAt": 1},
-		{"fingerprint": fpA, "field": "rating", "value": 6, "baseRev": 0, "modifiedAt": 1},
-		{"fingerprint": fpA, "field": "flag", "value": "maybe", "baseRev": 0, "modifiedAt": 1},
-		{"fingerprint": fpA, "field": "label", "value": strings.Repeat("x", 65), "baseRev": 0, "modifiedAt": 1},
-		{"fingerprint": fpA, "field": "rating", "value": 3, "modifiedAt": 1},
-		{"fingerprint": fpA, "field": "rating", "value": 3, "baseRev": 0},
-		{"itemId": "0b6f0b6f-0b6f-4b6f-8b6f-0b6f0b6f0b6f", "field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1}, // unknown item
+	// Validation (finding C): a bad change is an "invalid" result with a code; the batch still answers 200 and the
+	// other changes apply.
+	for i, c := range []struct {
+		bad  map[string]any
+		code string
+	}{
+		{map[string]any{"field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1}, "invalid_target"},                                                                       // no shot
+		{map[string]any{"itemId": "x", "field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1}, "invalid_target"},                                                        // bad id
+		{map[string]any{"fingerprint": fpA, "itemId": "0b6f0b6f-0b6f-4b6f-8b6f-0b6f0b6f0b6f", "field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1}, "invalid_target"}, // both
+		{map[string]any{"fingerprint": fpA, "field": "stars", "value": 3, "baseRev": 0, "modifiedAt": 1}, "invalid_field"},
+		{map[string]any{"fingerprint": fpA, "field": "rating", "value": 6, "baseRev": 0, "modifiedAt": 1}, "invalid_value"},
+		{map[string]any{"fingerprint": fpA, "field": "flag", "value": "maybe", "baseRev": 0, "modifiedAt": 1}, "invalid_value"},
+		{map[string]any{"fingerprint": fpA, "field": "label", "value": strings.Repeat("x", 65), "baseRev": 0, "modifiedAt": 1}, "label_too_long"},
+		{map[string]any{"fingerprint": fpA, "field": "rating", "value": 3, "modifiedAt": 1}, "invalid_base_rev"},
+		{map[string]any{"fingerprint": fpA, "field": "rating", "value": 3, "baseRev": 0}, "invalid_modified_at"},
+		{map[string]any{"itemId": "0b6f0b6f-0b6f-4b6f-8b6f-0b6f0b6f0b6f", "field": "rating", "value": 3, "baseRev": 0, "modifiedAt": 1}, "unknown_item"},
+		{map[string]any{"fingerprint": 7, "field": "rating"}, "invalid_value"}, // not a change object
 	} {
 		w := hs.do("POST", "/v1/culling", map[string]any{"changes": []any{
-			map[string]any{"fingerprint": fpA, "field": "rating", "value": 1, "baseRev": 0, "modifiedAt": 1}, bad}}, bearer(hoard))
-		expect(t, w, 422, "invalid_change")
-		if d := decode(t, w)["error"].(map[string]any)["details"].(map[string]any); d["index"] != float64(1) {
-			t.Fatalf("case %d: %v", i, d)
+			map[string]any{"fingerprint": fpB, "field": "rating", "value": 1, "baseRev": 0, "modifiedAt": 1}, c.bad}}, bearer(hoard))
+		expect(t, w, 200, "")
+		rs := decode(t, w)["results"].([]any)
+		first, second := rs[0].(map[string]any), rs[1].(map[string]any)
+		if first["status"] == "invalid" || second["status"] != "invalid" || second["code"] != c.code || second["index"] != float64(1) ||
+			second["message"] == "" || second["rev"] != nil {
+			t.Fatalf("case %d: %v", i, rs)
 		}
 	}
+	// Only a body that is not a push at all is refused.
+	expect(t, hs.do("POST", "/v1/culling", "{not json", bearer(hoard), header("Content-Type", "application/json")), 400, "")
 	expect(t, hs.do("POST", "/v1/culling", map[string]any{"changes": []any{}}, bearer(hoard)), 422, "invalid_change")
 	expect(t, hs.do("GET", "/v1/culling/0b6f0b6f-0b6f-4b6f-8b6f-0b6f0b6f0b6f", nil, bearer(hoard)), 404, "not_found")
 
@@ -95,7 +108,7 @@ func TestCullingPushAndFeed(t *testing.T) {
 		t.Fatalf("%v", plain)
 	}
 	feed := decode(t, hs.do("GET", "/v1/items/changes?include=culling", nil, bearer(hoard)))
-	if c := feed["culling"].([]any); len(c) != 1 || c[0].(map[string]any)["itemId"] != item || feed["hasMore"] != false {
+	if c := feed["culling"].([]any); len(c) != 2 || c[1].(map[string]any)["itemId"] != item || feed["hasMore"] != false {
 		t.Fatalf("%v", feed)
 	}
 	again := decode(t, hs.do("GET", "/v1/items/changes?include=items,culling&cursor="+feed["cursor"].(string), nil, bearer(hoard)))
