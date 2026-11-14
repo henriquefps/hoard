@@ -13,7 +13,7 @@
 Status: accepted (Reveal MS/1 server; Reveal MS/2 app side, Reveal ADR 0018, added `GET /v1/devices`). Date: 2026-11-11.
 Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below), ADR 0015
 (gallery previews, 0.6.0: "Previews" below), ADR 0016 (culling, 0.7.0: "Culling" below) and ADR 0017 (physical
-devices, 0.7.0: "Physical devices" below).
+devices, 0.7.0: "Physical devices" below) and ADR 0018 (web gallery, 0.8.0: routes outside `/v1`, "Web gallery" below).
 
 ## Context
 
@@ -388,6 +388,18 @@ pairing starts its own, with the device's id; devices paired before 0.7.0 got th
 | `POST /v1/device/claim` `{"physicalDeviceId": "<id>" \| null}` | Moves this device there (`null`: to one of its own); the same view. `404 not_found`, `409 conflict` (`details.reason = same_app`: a live device of the same app id, variant included, is there), `400 invalid_request`. |
 
 `GET /v1/devices` entries gain `physicalDeviceId` and `app`.
+
+## Web gallery (hoard-server 0.8.0)
+
+Added by ADR 0018, which is the reference for these routes. **Outside `/v1`**: nothing under `/v1` changed and no
+device calls them. The gallery's app is served at `/` (with `/folders`, `/items/<id>` and `/assets/`) and its API at
+`/web/` (`session`, `library`, `folders`, `items/{id}` with `exif`, `preview`, `poster`, `proxy`, `files/{fingerprint}`,
+`culling`, `downloads`). Every one of them answers only direct LAN/Tailscale requests (the setup page's address ranges,
+no proxy header, whatever "allow the setup page through a proxy" says); elsewhere `404`. Sign-in is the admin password
+(argon2id, rate limited like the setup page) for an HttpOnly, SameSite=Strict cookie `hoard_web`, 7 days idle; writes
+need `X-Hoard-Web: 1`. Culling written from the gallery goes through the culling rule above with the session's writer
+id `web:<16 hex>` as its `deviceId`. `/` used to redirect to `/admin/`; it still does for a request through a proxy
+when the setup page is allowed there. Schema 7 (`web_sessions`, index `previews_updated`).
 
 ## Other endpoints
 

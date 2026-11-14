@@ -3,3 +3,12 @@ dist
 .env
 *.log
 testdata
+
+# The image builds the web gallery from its sources (ADR 0018); local builds and dependencies stay out.
+web/node_modules
+web/test-results
+web/playwright-report
+web/e2e/.library
+internal/webui/dist/assets
+internal/webui/dist/index.html
+internal/webui/dist/favicon.svg

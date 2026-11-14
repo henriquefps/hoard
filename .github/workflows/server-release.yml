@@ -26,6 +26,13 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Web gallery build (embedded in the binaries; the image builds it in its own stage)
+        run: cd web && bun install --frozen-lockfile && bun run build
+
       - name: Version
         id: v
         run: echo "version=${GITHUB_REF_NAME#server-v}" >> "$GITHUB_OUTPUT"

@@ -29,6 +29,8 @@ tags:
   - name: previews
   - name: culling
   - name: devices
+  - name: web
+    description: The web gallery's API (ADR 0018), outside /v1.
 paths:
   /v1/health:
     get:
@@ -872,13 +874,348 @@ paths:
               schema: { $ref: "#/components/schemas/Culling" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  # --- Web gallery (ADR 0018; hoard-server 0.8.0). LAN/Tailscale only (404 through a proxy), signed in with the admin
+  # password (cookie `hoard_web`); writes need `X-Hoard-Web: 1`. Not for devices: the device API is /v1.
+  /web/session:
+    get:
+      tags: [web]
+      summary: Whether this browser is signed in to the gallery
+      security: []
+      responses:
+        "200":
+          description: Session state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [signedIn, setup, version]
+                properties:
+                  signedIn: { type: boolean }
+                  setup: { type: boolean, description: No admin password yet (use the setup page). }
+                  version: { type: string }
+                  writer: { type: string, description: "The session's culling writer id, web:<16 hex>; empty when signed out." }
+                  previews: { type: boolean }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [web]
+      summary: Sign in with the admin password (argon2id; 5 a minute per address)
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/WebCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "200":
+          description: Signed in; sets the HttpOnly, SameSite=Strict cookie `hoard_web` (Path=/web/, 7 days idle)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  writer: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { description: No admin password yet }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    delete:
+      tags: [web]
+      summary: Sign out
+      parameters:
+        - $ref: "#/components/parameters/WebCsrf"
+      responses:
+        "200": { description: Signed out; the cookie is cleared }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /web/library:
+    get:
+      tags: [web]
+      summary: The library index, whole or the changes since a cursor (ADR 0018 "Library index")
+      security: [{ webSession: [] }]
+      parameters:
+        - name: cursor
+          in: query
+          description: "<boot>:<generation> from the last answer; empty, foreign or malformed = the whole index."
+          schema: { type: string }
+      responses:
+        "200":
+          description: Rows newest first; gzip when accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cursor, full, rows, removed, folders, total]
+                properties:
+                  cursor: { type: string }
+                  full: { type: boolean }
+                  rows:
+                    type: array
+                    items: { $ref: "#/components/schemas/LibraryRow" }
+                  removed:
+                    type: array
+                    items: { $ref: "#/components/schemas/Uuid" }
+                  folders:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: NAS folder id to name.
+                  total: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /web/folders:
+    get:
+      tags: [web]
+      summary: NAS folders with item counts per directory
+      security: [{ webSession: [] }]
+      responses:
+        "200":
+          description: Every NAS folder (empty ones too) and the items uploaded by devices
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [folders, uploads]
+                properties:
+                  folders:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, state, items, dirs]
+                      properties:
+                        id: { $ref: "#/components/schemas/Uuid" }
+                        name: { type: string }
+                        state: { type: string, description: "pending, indexing, ready, error, unavailable, disabled, removed" }
+                        items: { type: integer }
+                        dirs:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              path: { type: string, description: '"" = the folder itself' }
+                              items: { type: integer }
+                  uploads: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /web/items/{itemId}:
+    get:
+      tags: [web]
+      summary: One live item with its culling record and the edited-in-Reveal flag
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+      responses:
+        "200":
+          description: The item
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [item, culling, edited]
+                properties:
+                  item: { $ref: "#/components/schemas/Item" }
+                  culling:
+                    oneOf:
+                      - { $ref: "#/components/schemas/Culling" }
+                      - { type: "null" }
+                  edited: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /web/items/{itemId}/exif:
+    get:
+      tags: [web]
+      summary: Exposure read on demand from the item's still (not stored)
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+      responses:
+        "200":
+          description: Fields absent when not recorded (and for videos)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exposure:
+                    type: object
+                    properties:
+                      exposureTime: { type: number, description: seconds }
+                      fNumber: { type: number }
+                      iso: { type: integer }
+                      bias: { type: number, description: EV }
+                      focalLength: { type: number, description: mm }
+                      focalLength35: { type: integer, description: mm }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /web/items/{itemId}/preview:
+    get:
+      tags: [web]
+      summary: As GET /v1/items/{itemId}/preview, with the gallery session
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/PreviewSize"
+        - $ref: "#/components/parameters/PreviewFormat"
+        - $ref: "#/components/parameters/PreviewVersion"
+      responses:
+        "200": { $ref: "#/components/responses/PreviewImage" }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+  /web/items/{itemId}/poster:
+    get:
+      tags: [web]
+      summary: As GET /v1/items/{itemId}/poster, with the gallery session
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/PreviewSize"
+        - $ref: "#/components/parameters/PreviewFormat"
+        - $ref: "#/components/parameters/PreviewVersion"
+      responses:
+        "200": { $ref: "#/components/responses/PreviewImage" }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+  /web/items/{itemId}/proxy:
+    get:
+      tags: [web]
+      summary: As GET /v1/items/{itemId}/proxy (MP4, ranges), with the gallery session
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/PreviewVersion"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200": { description: The proxy, video/mp4 }
+        "206": { description: A range of it }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+  /web/items/{itemId}/files/{fingerprint}:
+    get:
+      tags: [web]
+      summary: One member file of the item (inline, or an attachment with download=1), with ranges
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - name: fingerprint
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Fingerprint" }
+        - name: download
+          in: query
+          schema: { type: string, enum: ["1"] }
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200": { description: "The file; Content-Type by extension, Content-Disposition with its name" }
+        "206": { description: A range of it }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: The NAS file is offline or changed since it was indexed (Retry-After) }
+  /web/culling:
+    post:
+      tags: [web]
+      summary: As POST /v1/culling, written by the session's writer id (web:<16 hex>)
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/WebCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { $ref: "#/components/schemas/CullChange" }
+      responses:
+        "200":
+          description: As POST /v1/culling
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items: { $ref: "#/components/schemas/CullResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /web/downloads:
+    post:
+      tags: [web]
+      summary: A zip download link for items (valid 10 minutes, this session only)
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/WebCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 5000
+                  items: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "200":
+          description: The link
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url: { type: string, examples: ["/web/downloads/3f2a…"] }
+                  name: { type: string, examples: ["hoard-2026-11-14-3.zip"] }
+                  items: { type: integer }
+                  files: { type: integer }
+                  bytes: { type: integer, format: int64 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /web/downloads/{token}:
+    get:
+      tags: [web]
+      summary: "The zip: every file of every item, stored (no compression), streamed; unreadable files listed in missing.txt"
+      security: [{ webSession: [] }]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: application/zip }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
 components:
   securitySchemes:
     deviceKey:
       type: http
       scheme: bearer
       description: "Device key from POST /v1/pair: rvk1_<keyId>_<secret>."
+    webSession:
+      type: apiKey
+      in: cookie
+      name: hoard_web
+      description: "Web gallery session (POST /web/session with the admin password; ADR 0018). LAN/Tailscale only."
   parameters:
+    WebCsrf:
+      name: X-Hoard-Web
+      in: header
+      required: true
+      description: "1 on every state-changing /web/ call (a cross-site form cannot set it)."
+      schema: { type: string, enum: ["1"] }
     Range:
       name: Range
       in: header
@@ -920,6 +1257,11 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: "`unauthorized`: missing, malformed, unknown or revoked key"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Missing X-Hoard-Web header or a cross-origin request
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -1335,6 +1677,31 @@ components:
         candidates:
           type: array
           items: { $ref: "#/components/schemas/Candidate" }
+    LibraryRow:
+      type: object
+      description: One item in the web gallery's index (ADR 0018); absent fields are empty.
+      required: [id, t, k, n]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        t: { type: integer, format: int64, description: sortTime, ms }
+        l: { type: integer, format: int64, description: "The camera's wall clock read as UTC, when it differs from t" }
+        k: { type: string, enum: [photo, pair, video, motion] }
+        w: { type: integer, description: upright width }
+        h: { type: integer, description: upright height }
+        "n": { type: string, description: "main file's name" }
+        fo: { type: string, description: NAS folder id (absent = uploaded by a device) }
+        d: { type: string, description: directory in the folder }
+        cam: { type: string, description: make and model as one name }
+        lens: { type: string }
+        raw: { type: boolean, description: the main file is a RAW }
+        dur: { type: integer, description: video duration, ms }
+        r: { type: integer, minimum: 1, maximum: 5 }
+        x: { type: string, enum: [pick, reject] }
+        lb: { type: string }
+        e: { type: boolean, description: edited in Reveal }
+        v: { type: string, description: "image preview key on disk (?v= for immutable URLs)" }
+        cr: { type: string, description: "culling field revisions rating.flag.label" }
+        size: { type: integer, format: int64, description: bytes of all files }
     Error:
       type: object
       required: [error]

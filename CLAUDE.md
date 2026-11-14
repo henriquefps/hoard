@@ -55,6 +55,11 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   The bun scripts (ESLint, Prettier, Vitest, tsc) ignore `server/`. Run test servers on temp dirs and other ports;
   never touch the owner's deployed server (`~/Apps/reveal-sync` on cachyos-fps, containers `reveal-sync` and
   `reveal-sync-tunnel`) or its data.
+- **Web gallery** (`server/web/`, ADR 0018): Vite + React + shadcn in the hfps identity, built into
+  `server/internal/webui/dist` and embedded in the binary; API under `/web/` (LAN/Tailscale only, admin-password session
+  cookie). `cd server/web && bun run lint && bun run typecheck && bun run test && bun run e2e` (Playwright against the
+  binary with a synthetic library; `HOARD_WEB_SCREENSHOTS=1`, `HOARD_WEB_BENCH=1`): `docs/testing/web-gallery.md`.
+  Strings in `server/web/src/i18n/locales/{en,pt-BR}.json`.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules

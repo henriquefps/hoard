@@ -1,0 +1,174 @@
+{
+  "app": { "name": "Hoard" },
+  "common": { "loading": "Carregando", "retry": "Tentar de novo" },
+  "nav": { "label": "Seções", "gallery": "Galeria", "folders": "Pastas" },
+  "search": {
+    "label": "Buscar",
+    "placeholder": "Buscar nomes de arquivos e pastas",
+    "clear": "Limpar busca"
+  },
+  "sync": {
+    "pending_one": "{{count}} alteração esperando para ser salva",
+    "pending_other": "{{count}} alterações esperando para serem salvas"
+  },
+  "account": {
+    "menu": "Configurações",
+    "version": "hoard-server {{version}}",
+    "language": "Idioma",
+    "setup": "Página de configuração",
+    "signOut": "Sair"
+  },
+  "languages": { "en": "English", "pt-BR": "Português (Brasil)" },
+  "theme": {
+    "label": "Tema",
+    "light": "Claro",
+    "dark": "Escuro",
+    "system": "Sistema",
+    "palette": "Paleta",
+    "palettes": { "blue": "Azul", "olive": "Oliva", "violet": "Violeta", "rose": "Rosa", "graphite": "Grafite" }
+  },
+  "signIn": {
+    "password": "Senha de administrador",
+    "hint": "A senha da página de configuração deste servidor.",
+    "submit": "Entrar",
+    "wrong": "Senha incorreta.",
+    "rateLimited": "Tentativas demais. Espere um minuto e tente de novo.",
+    "failed": "Não foi possível entrar. Verifique se o servidor está rodando.",
+    "setupFirst": "Este servidor ainda não tem senha de administrador.",
+    "setupLink": "Abrir a página de configuração"
+  },
+  "kind": {
+    "raw": "RAW",
+    "rawJpg": "RAW+JPG",
+    "video": "Vídeo",
+    "motion": "Movimento",
+    "name": { "photo": "Foto", "pair": "RAW+JPG", "video": "Vídeo", "motion": "Foto com movimento" }
+  },
+  "badges": { "edited": "Editada no Reveal" },
+  "cull": {
+    "pick": "Escolher",
+    "reject": "Rejeitar",
+    "unflag": "Tirar marcação",
+    "rate": "Estrelas",
+    "picked": "escolhida",
+    "rejected": "rejeitada",
+    "unflagged": "Sem marcação",
+    "noStars": "Sem estrelas",
+    "stars_one": "{{count}} estrela",
+    "stars_other": "{{count}} estrelas",
+    "applied_one": "{{count}} item alterado",
+    "applied_other": "{{count}} itens alterados",
+    "undo": "Desfazer"
+  },
+  "filters": {
+    "kind": "Tipo",
+    "camera": "Câmera",
+    "rating": "Avaliação",
+    "anyRating": "Qualquer avaliação",
+    "atLeast_one": "{{count}} estrela ou mais",
+    "atLeast_other": "{{count}} estrelas ou mais",
+    "flag": "Marcação",
+    "flags": { "pick": "Escolhidas", "reject": "Rejeitadas", "none": "Sem marcação" },
+    "dates": "Datas",
+    "from": "De",
+    "to": "Até",
+    "clearDates": "Limpar datas",
+    "edited": "Editadas",
+    "clearFolder": "Mostrar todas as pastas",
+    "clear": "Limpar filtros",
+    "unknownCamera": "Câmera desconhecida",
+    "nSelected_one": "{{count}} selecionada",
+    "nSelected_other": "{{count}} selecionadas"
+  },
+  "gallery": {
+    "gridLabel_one": "{{count}} item",
+    "gridLabel_other": "{{count}} itens",
+    "itemsCount_one": "{{formatted}} item",
+    "itemsCount_other": "{{formatted}} itens",
+    "shownOf": "{{shown}} de {{total}}",
+    "jumpBar": "Ir para um mês",
+    "cellSize": "Tamanho das miniaturas",
+    "sizes": { "s": "Pequeno", "m": "Médio", "l": "Grande" },
+    "noMatch": "Nada encontrado",
+    "noMatchHint": "Nenhum item corresponde à busca e aos filtros.",
+    "emptyTitle": "Ainda não há fotos",
+    "emptyHint": "Adicione pastas do NAS na página de configuração; o servidor as indexa em segundo plano.",
+    "loadFailed": "Não foi possível carregar a biblioteca",
+    "noPreviews": "As prévias estão desligadas neste servidor, então as miniaturas não aparecem."
+  },
+  "select": {
+    "add": "Selecionar",
+    "remove": "Tirar da seleção",
+    "clear": "Limpar seleção",
+    "toolbar": "Seleção",
+    "count_one": "{{formatted}} selecionado",
+    "count_other": "{{formatted}} selecionados"
+  },
+  "download": {
+    "zip": "Baixar zip",
+    "item": "Baixar original",
+    "file": "Baixar {{name}}",
+    "started_one": "Baixando {{count}} arquivo ({{size}})",
+    "started_other": "Baixando {{count}} arquivos ({{size}})",
+    "failed": "Não foi possível iniciar o download."
+  },
+  "viewer": {
+    "close": "Voltar para a galeria",
+    "back": "Voltar para a galeria",
+    "gone": "Este item não está mais na biblioteca.",
+    "position": "{{index}} de {{total}}",
+    "zoom": "Zoom em 100%",
+    "info": "Informações",
+    "more": "Mais",
+    "autoAdvance": "Próxima foto depois de escolher ou rejeitar",
+    "previous": "Anterior",
+    "next": "Próxima",
+    "culling": "Seleção de fotos",
+    "playMotion": "Reproduzir movimento",
+    "stopMotion": "Mostrar a foto",
+    "videoPreparing": "Preparando o vídeo no servidor",
+    "videoUnavailable": "Este vídeo não pode ser reproduzido.",
+    "layer": { "thumb": "Miniatura", "screen": "Prévia", "original": "Original" }
+  },
+  "info": {
+    "when": "Feita em",
+    "camera": "Câmera",
+    "size": "Tamanho",
+    "place": "Local",
+    "culling": "Seleção",
+    "files": "Arquivos",
+    "equiv": "equiv.",
+    "audio": "áudio {{codec}}",
+    "label": "rótulo {{label}}",
+    "byNas": "de um sidecar do NAS",
+    "byWeb": "galeria web",
+    "byDevice": "dispositivo {{id}}",
+    "editedInReveal": "Editada no Reveal",
+    "field": { "flag": "Marcação", "rating": "Estrelas", "label": "Rótulo" },
+    "role": { "raw": "RAW", "rendered": "Imagem", "video": "Vídeo", "sidecar": "Sidecar XMP" },
+    "timeSource": {
+      "exif-gps": "Fuso horário pelo GPS",
+      "quicktime": "Horário do arquivo de vídeo",
+      "mtime": "Sem horário de captura: a data do arquivo"
+    }
+  },
+  "folders": {
+    "eyebrow": "Biblioteca",
+    "uploads": "Enviadas pelos dispositivos",
+    "unknown": "Pasta desconhecida",
+    "expand": "Abrir {{name}}",
+    "collapse": "Fechar {{name}}",
+    "loadFailed": "Não foi possível carregar as pastas.",
+    "emptyTitle": "Ainda não há pastas",
+    "emptyHint": "Adicione pastas do NAS na página de configuração.",
+    "backupsLater": "Os backups dos dispositivos vão aparecer aqui numa versão futura.",
+    "state": {
+      "pending": "Aguardando",
+      "indexing": "Indexando",
+      "error": "Erro",
+      "unavailable": "Indisponível",
+      "disabled": "Desligada",
+      "removed": "Removida"
+    }
+  }
+}

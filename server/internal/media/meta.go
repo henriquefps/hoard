@@ -120,6 +120,28 @@ var ErrUnsupported = errors.New("unsupported content")
 // ReadImage reads the metadata of a still (JPEG, HEIF, TIFF-based RAW, CR3, RAF) from its content (the extension is
 // not trusted). Motion photos get Motion without Motion.Video (see Prober).
 func ReadImage(r io.ReaderAt, size int64) (Meta, error) {
+	m, _, err := readImage(r, size)
+	return m, err
+}
+
+// Exposure is how a still was shot, read from its EXIF on demand (the web gallery's info panel, ADR 0018). Zero values
+// are "not recorded". It is not part of Meta: the stored metadata (and MetaVersion) do not change.
+type Exposure struct {
+	ExposureTime  float64  `json:"exposureTime,omitempty"` // seconds
+	FNumber       float64  `json:"fNumber,omitempty"`
+	ISO           int      `json:"iso,omitempty"`
+	Bias          *float64 `json:"bias,omitempty"` // EV
+	FocalLength   float64  `json:"focalLength,omitempty"`
+	FocalLength35 int      `json:"focalLength35,omitempty"`
+}
+
+// ReadExposure reads the exposure of a still (the formats of ReadImage).
+func ReadExposure(r io.ReaderAt, size int64) (Exposure, error) {
+	_, f, err := readImage(r, size)
+	return f.exposure, err
+}
+
+func readImage(r io.ReaderAt, size int64) (Meta, exifFields, error) {
 	m := Meta{Media: MediaImage}
 	var head [16]byte
 	n, _ := r.ReadAt(head[:], 0)
@@ -148,19 +170,19 @@ func ReadImage(r io.ReaderAt, size int64) (Meta, error) {
 			m.Format = "heif"
 			xmp, err = readHEIF(r, size, &f)
 		default:
-			return m, ErrUnsupported
+			return m, f, ErrUnsupported
 		}
 	default:
-		return m, ErrUnsupported
+		return m, f, ErrUnsupported
 	}
 	if err != nil && f.isEmpty() {
-		return m, err
+		return m, f, err
 	}
 	f.apply(&m)
 	if m.Format == "jpeg" || m.Format == "heif" {
 		m.Motion = findMotion(r, size, xmp)
 	}
-	return m, nil
+	return m, f, nil
 }
 
 var heifBrands = map[string]bool{"heic": true, "heix": true, "heim": true, "heis": true, "mif1": true, "msf1": true,

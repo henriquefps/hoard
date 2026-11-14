@@ -1,0 +1,52 @@
+{
+  "date": "2026-11-14T18:42:02.359Z",
+  "items": 20000,
+  "viewport": "1440x900",
+  "browser": "Chromium 156.0.8078.4 headless",
+  "loads": [
+    {
+      "cold": 1,
+      "domContentLoadedMs": 63,
+      "firstContentfulPaintMs": 104,
+      "libraryRequestMs": 254,
+      "libraryTransferKB": 686,
+      "libraryDecodedKB": 4027,
+      "firstThumbnailMs": 499,
+      "gridReadyMs": 2846
+    },
+    {
+      "cold": 0,
+      "domContentLoadedMs": 13,
+      "firstContentfulPaintMs": 48,
+      "libraryRequestMs": 80,
+      "libraryTransferKB": 687,
+      "libraryDecodedKB": 4028,
+      "firstThumbnailMs": 226,
+      "gridReadyMs": 328
+    }
+  ],
+  "scroll": {
+    "frames": 359,
+    "fps": 59.8,
+    "medianFrameMs": 16.7,
+    "p95FrameMs": 16.8,
+    "p99FrameMs": 16.8,
+    "framesOver50ms": 0,
+    "scrolledPx": 18000,
+    "renderedCells": 48
+  },
+  "memory": {
+    "afterLoad": {
+      "jsHeapMB": 27.8,
+      "domNodes": 3818
+    },
+    "afterScroll": {
+      "jsHeapMB": 32.1,
+      "domNodes": 12004
+    }
+  },
+  "jump": {
+    "jumpMs": 37
+  },
+  "searchMs": 69
+}

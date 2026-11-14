@@ -163,6 +163,9 @@ type Shot struct {
 	GPSDate           string  // "2024:05:01"
 	GPSTime           [3]uint32
 	Unique            uint64 // written into ImageUniqueID so every file differs
+	// Exposure (optional): ExposureTime and FNumber and FocalLength as rationals, ISO and the 35 mm focal length.
+	ExposureTime, FNumber, FocalLength [2]uint32
+	ISO, Focal35                       uint16
 }
 
 func dms(v float64) [][2]uint32 {
@@ -209,6 +212,21 @@ func (s Shot) IFD0() *IFD {
 	if s.Width != 0 {
 		add(ex, 0xA002, []uint32{s.Width})
 		add(ex, 0xA003, []uint32{s.Height})
+	}
+	if s.ExposureTime[1] != 0 {
+		add(ex, 0x829A, [][2]uint32{s.ExposureTime})
+	}
+	if s.FNumber[1] != 0 {
+		add(ex, 0x829D, [][2]uint32{s.FNumber})
+	}
+	if s.ISO != 0 {
+		add(ex, 0x8827, []uint16{s.ISO})
+	}
+	if s.FocalLength[1] != 0 {
+		add(ex, 0x920A, [][2]uint32{s.FocalLength})
+	}
+	if s.Focal35 != 0 {
+		add(ex, 0xA405, []uint16{s.Focal35})
 	}
 	add(ex, 0xA420, fmt.Sprintf("%032x", s.Unique))
 	d.Exif = ex

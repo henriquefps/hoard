@@ -5,6 +5,16 @@
 
 # BuildKit sets BUILDPLATFORM/TARGETOS/TARGETARCH; the legacy builder needs them as --build-arg (README, "Docker").
 ARG BUILDPLATFORM
+
+# The web gallery (ADR 0018): built once on the build platform (static files, the same for every target), embedded
+# by internal/webui. Dependencies pinned by web/bun.lock.
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN mkdir -p ../internal/webui/dist && bun run build
+
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
@@ -14,7 +24,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+COPY --from=web /src/internal/webui/dist ./internal/webui/dist
+RUN test -f internal/webui/dist/index.html && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hoard-server . \
  && mkdir -p /out/data /out/mnt
 
