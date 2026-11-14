@@ -1,0 +1,42 @@
+# Example: reveal-sync with its database in ./data, a backup folder and a read-only NAS share.
+# Everything the setup page can offer is mounted under /mnt; the container sees nothing else.
+#
+#   mkdir -p data backup && sudo chown 65532:65532 data backup
+#   docker compose up -d
+#   docker compose logs reveal-sync | grep setupCode     # first run: the one-time setup code
+#   open http://<this machine>:3071/admin/ from your network
+services:
+  reveal-sync:
+    image: ghcr.io/henriquefps/reveal-sync:latest
+    # To build from this folder instead of pulling the published image:
+    # build: .
+    container_name: reveal-sync
+    ports:
+      # BIND_IP limits the port to one interface (e.g. the Tailscale address).
+      - "${BIND_IP:-0.0.0.0}:${PORT:-3071}:3071"
+    volumes:
+      - ./data:/data                                   # database and settings (keep it backed up)
+      - ${BACKUP_DIR:-./backup}:/mnt/backup            # uploaded originals and smart previews
+      - ${NAS_DIR:-/srv/photos}:/mnt/nas:ro            # NAS shoots, indexed read-only
+    environment:
+      - LOG_FORMAT=json
+      - NAS_INTERVAL=30m
+    # The server runs as uid 65532; resource limits keep it polite on a shared machine.
+    cpus: "2"
+    mem_limit: 512m
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: reach the server from anywhere over HTTPS through a Cloudflare Tunnel. Devices sync through
+  # it with their keys; the setup page stays LAN-only unless you allow it on the Status page.
+  # CLOUDFLARE_TUNNEL_TOKEN comes from your secret vault at run time, never from a file in the repository.
+  # Start it with: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.3
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    restart: unless-stopped
+    depends_on:
+      - reveal-sync
