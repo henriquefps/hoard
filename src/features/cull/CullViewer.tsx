@@ -49,6 +49,7 @@ import {
   burstStatus,
   comparePartner,
   keepThisOne,
+  rejectBurst,
   stepOf,
   stepShot,
   type ViewerStep,
@@ -87,7 +88,8 @@ interface BurstMode {
  * The full-screen culling viewer (ADR 0008).
  *
  * **Folder mode** walks `steps`: a shot, or a whole burst shown by its cover (the frame the user
- * picked, else the suggested best) with "View burst (n)". **Burst mode** walks one burst's frames
+ * picked, else the suggested best) with "View burst (n)"; there ✕ rejects every frame of the burst
+ * (one undo step) and ✓ picks the cover. **Burst mode** walks one burst's frames
  * only, with "Keep this one" (pick this frame, reject the others but never un-pick an explicit
  * keeper), a quick compare against the suggested best and the burst's suggestion.
  *
@@ -281,6 +283,21 @@ export function CullViewer({
   const setFlag = useCallback(
     (flag: CullFlag | null, mode: "toggle" | "set") => {
       if (!current) return
+      // ✕ on a burst in the folder (a stacked step) rejects every frame of it (1.10.1); ✓ keeps
+      // picking only the cover, and inside burst mode ✕ is a single-frame decision.
+      if (flag === "reject" && !burstMode && step?.kind === "burst") {
+        const plan = rejectBurst(folder.decisions, step.shotIds, mode)
+        if (!plan) return
+        const after = new Map(plan.shotIds.map((id, i) => [id, plan.after[i]]))
+        const change = folder.decide(plan.shotIds, (d, id) => after.get(id) ?? d)
+        const rejected = change?.after.filter((d) => d.flag === "reject").length ?? 0
+        if (!rejected) return
+        toast.success(t("cull.burstMode.rejected", { count: rejected }), {
+          action: { label: t("cull.undo"), onClick: () => folder.undo() },
+        })
+        if (autoAdvance && index < order.length - 1) window.setTimeout(() => goTo(index + 1), 120)
+        return
+      }
       let applied: CullFlag | null = null
       folder.decide([current.id], (d) => {
         applied = mode === "toggle" && d.flag === flag ? null : flag
@@ -289,7 +306,7 @@ export function CullViewer({
       if (applied && autoAdvance && index < order.length - 1)
         window.setTimeout(() => goTo(index + 1), 120)
     },
-    [current, folder, autoAdvance, index, order.length, goTo]
+    [current, folder, autoAdvance, index, order.length, goTo, burstMode, step, t]
   )
 
   const rate = useCallback(

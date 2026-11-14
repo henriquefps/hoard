@@ -1,7 +1,7 @@
 /**
  * Burst mode (ADR 0008 "Burst mode", 1.7.0), pure and unit tested in `burst.test.ts`: which frame
  * a burst shows (grid cover, folder viewer), whether it is resolved, how the folder viewer steps
- * over a burst as one item, and "Keep this one".
+ * over a burst as one item, "Keep this one" and ✕ on a whole burst.
  */
 import type { BurstPosition, CullDecision, Decisions, DecisionChange } from "./model"
 import { changeOf, withFlag } from "./model"
@@ -66,6 +66,22 @@ export function keepThisOne(
     if (keptExplicitly(d)) return d
     return withFlag(d, "reject")
   })
+}
+
+/**
+ * ✕ on a burst in the folder viewer (1.10.1): rejects every frame of the burst, picks included, as
+ * one undo step (stars are kept, like any reject). `toggle` (the ✕ button, `x`) unmarks every frame
+ * instead when they are all rejected already; `set` (swipe down) only rejects. Inside burst mode ✕
+ * stays a single-frame decision. Returns null when nothing would change.
+ */
+export function rejectBurst(
+  decisions: Decisions,
+  ids: readonly string[],
+  mode: "toggle" | "set"
+): DecisionChange | null {
+  const allRejected = ids.length > 0 && ids.every((id) => decisions.get(id)?.flag === "reject")
+  const flag = mode === "toggle" && allRejected ? null : "reject"
+  return changeOf(decisions, ids, (d) => withFlag(d, flag))
 }
 
 /** One step of the viewer: a single shot, or a whole burst (shown by its cover). */

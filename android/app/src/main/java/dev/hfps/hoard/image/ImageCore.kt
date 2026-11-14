@@ -47,8 +47,14 @@ data class ImageCoreConfig(
     val previewsBytes: Long = 128L * 1024 * 1024,
     /** LibRaw renderings (full ~8-12 MB each, half ~2-3 MB). */
     val rendersBytes: Long = 512L * 1024 * 1024,
-    /** Screen-sized JPEGs and grid thumbnails for the culling view (~0.6-1.5 MB per screen image). */
+    /** Screen-sized JPEGs for the culling view (~0.6-1.5 MB each). */
     val screensBytes: Long = 384L * 1024 * 1024,
+    /**
+     * Grid thumbnails (~20-40 KB each: ~2,000 at least). Their own cache since 1.10.1: sharing
+     * [screensBytes] with screen images, culling a few hundred shots evicted the thumbnails the
+     * grid still pointed at (broken tiles on reopening a large folder).
+     */
+    val thumbsBytes: Long = 64L * 1024 * 1024,
     /** 100% zoom tiles (~60-200 KB each). */
     val tilesBytes: Long = 128L * 1024 * 1024,
     /** Region decoders kept open (current shot, the compared one, the next). */
@@ -108,6 +114,7 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
     private val renders = DiskCache(File(config.root, "renders"), config.rendersBytes)
     private val screens = DiskCache(File(config.root, "screens"), config.screensBytes)
     private val tiles = DiskCache(File(config.root, "tiles"), config.tilesBytes)
+    private val thumbs = DiskCache(File(config.root, "thumbs"), config.thumbsBytes)
     /** Upright pixel size of files written to [screens] and [tiles] (name -> width, height). */
     private val fileSizes = SizedLruCache<String, IntArray>(20_000, { 1 })
     private val zooms = object : LinkedHashMap<String, ZoomImage>(8, 0.75f, true) {}
@@ -308,9 +315,9 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
     fun thumbnailFile(shot: ShotRequest, maxSize: Int, priority: Int = 0): PriorityScheduler.Job<ImageFileResult> {
         val name = CacheKeys.fileName(shot.primary.identity, Variant.THUMB, "$maxSize:${shot.raw?.identity}")
         return scheduler.submit("thumb:$name", priority) { cancel ->
-            cachedFile(screens, name)?.let { (file, size) -> return@submit ImageFileResult(file, size[0], size[1]) }
+            cachedFile(thumbs, name)?.let { (file, size) -> return@submit ImageFileResult(file, size[0], size[1]) }
             val decoded = decodeThumbnail(shot, maxSize, cancel)
-            val file = writeJpeg(screens, name, decoded.bitmap, 85)
+            val file = writeJpeg(thumbs, name, decoded.bitmap, 85)
             ImageFileResult(file, decoded.bitmap.width, decoded.bitmap.height).also { decoded.bitmap.recycle() }
         }
     }
@@ -430,7 +437,7 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
     /** Disk usage of the culling caches (for the ADR's measurements and Settings). */
     fun cacheBytes(): Map<String, Long> = mapOf(
         "originals" to originals.sizeBytes(), "previews" to previews.sizeBytes(), "renders" to renders.sizeBytes(),
-        "screens" to screens.sizeBytes(), "tiles" to tiles.sizeBytes(), "memory" to memory.sizeBytes,
+        "screens" to screens.sizeBytes(), "thumbs" to thumbs.sizeBytes(), "tiles" to tiles.sizeBytes(), "memory" to memory.sizeBytes,
     )
 
     // --- Assisted culling (ADR 0009) ---------------------------------------------------------

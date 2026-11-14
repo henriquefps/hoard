@@ -78,8 +78,14 @@ Every call after `cullOpen` passes `location` again: an SMB session can be repla
   stages whole files with `PipelinedFileReader` (4 READs in flight) through the new
   `BulkCopySource`. `LocalFs` gained `pathFile` and `openDescriptor` (`smb/location/`).
 - **Files for the WebView**: `ImageCore.screenFile`, `thumbnailFile`, `tileFile`, `zoomInfo`, disk
-  caches `screens/` (384 MB) and `tiles/` (128 MB), an LRU of 4 open region decoders, and
-  `prefetchFiles`.
+  caches `screens/` (384 MB), `thumbs/` (64 MB, since 1.10.1) and `tiles/` (128 MB), an LRU of 4
+  open region decoders, and `prefetchFiles`. Grid thumbnails had shared `screens/` until 1.10.1:
+  culling a few hundred shots of a large folder trimmed them (LRU by last native access, and the
+  grid never asks native again for a thumbnail it has a URL for), so on reopening the grid most
+  tiles pointed at deleted files. The JS caches keep file URLs, so a tile whose `<img>` fails drops
+  its URL and asks native once more (`reloadThumbnail`, a cache-busting query); a second failure
+  leaves the tile muted (`data-thumb="failed"`), never the browser's broken-image icon. Counted in
+  `hoardCull.summary()` as `thumb:error`, `thumb:reload`, `thumb:failed`.
 - **Prefetch plan** (`CullPlans.prefetch`, pure, JVM-tested): fast images first for the shots up to
   `fastAhead` (6) ahead and 1 behind (a RAW preview is ~0.5 MB), then final images for 2 ahead and 1
   behind (a whole 5–8 MB camera JPEG over SMB), then the 100% source of the next shot. Priorities
@@ -144,6 +150,13 @@ unreliable. `src/features/cull/burst.ts` holds the pure part (tested in `burst.t
   as they are, so several keepers stay possible: pick another frame with ✓ before or after, and
   Keep this one never un-picks it. Frames already rejected stay rejected; the kept frame keeps its
   stars. With auto-advance on, it returns to the folder and moves to the next step.
+- **✕ on a burst rejects the whole burst** (1.10.1, `rejectBurst`): in the folder viewer, on a
+  burst's step, ✕ (button, `X`, or swipe down when swipe-to-decide is on) rejects **every** frame,
+  picks included, in one undo step (toast "Rejected N photos of the burst" with Undo; stars are
+  kept, like any reject; sidecars follow through the normal decision path). Pressed again on a
+  burst whose frames are all rejected, the button and `X` unmark them all (a toggle, like ✕ on one
+  shot); the swipe only rejects. ✓ still picks only the cover, and inside burst mode ✕ rejects
+  only the frame on screen. Filtered views show frames as separate steps, so ✕ there is per frame.
 - **Quick compare** in a burst: the frame on screen against the burst's top-ranked frame (or the
   runner-up when it is the top one), synchronized zoom starting on the main face (the first face
   with closed eyes, else the largest: `eyesSummary(...).focus`); "Keep" there is Keep this one.

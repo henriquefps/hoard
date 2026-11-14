@@ -4,6 +4,7 @@ import {
   burstStatus,
   comparePartner,
   keepThisOne,
+  rejectBurst,
   stepOf,
   stepShot,
   viewerSteps,
@@ -54,6 +55,41 @@ describe("keep this one", () => {
     const forty = Array.from({ length: 40 }, (_, i) => `f${i}`)
     const after = applyChange(new Map(), keepThisOne(new Map(), forty, "f17")!)
     expect(burstStatus(forty, after)).toEqual({ size: 40, kept: 1, decided: 40, resolved: true })
+  })
+})
+
+describe("✕ on a whole burst", () => {
+  it("rejects every frame, picks included, in one undo step that restores each frame", () => {
+    const before = decisions({ a: d("pick", 2), b: d(null, 4), d: d("reject") })
+    const change = rejectBurst(before, IDS, "toggle")!
+    // Only frames that change are in the step (d was rejected already).
+    expect(change.shotIds).toEqual(["a", "b", "c", "e"])
+    const after = applyChange(before, change)
+    expect(IDS.map((id) => after.get(id)?.flag)).toEqual(Array(5).fill("reject"))
+    // Stars are kept, like any reject.
+    expect(after.get("a")).toEqual(d("reject", 2))
+    expect(after.get("b")).toEqual(d("reject", 4))
+    expect(burstStatus(IDS, after)).toMatchObject({ kept: 0, decided: 5, resolved: true })
+    // One undo puts every frame back to what it was.
+    expect(applyChange(after, change, true)).toEqual(before)
+  })
+
+  it("toggles back to unmarked when every frame is rejected; `set` never unmarks", () => {
+    const allRejected = decisions(
+      Object.fromEntries(IDS.map((id) => [id, d("reject", id === "c" ? 3 : 0)]))
+    )
+    const off = applyChange(allRejected, rejectBurst(allRejected, IDS, "toggle")!)
+    expect(IDS.map((id) => off.get(id)?.flag ?? null)).toEqual(Array(5).fill(null))
+    expect(off.get("c")).toEqual(d(null, 3))
+    expect(rejectBurst(allRejected, IDS, "set")).toBeNull()
+    expect(rejectBurst(decisions({}), [], "toggle")).toBeNull()
+  })
+
+  it("rejects the whole burst after Keep this one (the burst's cover was the kept frame)", () => {
+    const kept = applyChange(new Map(), keepThisOne(new Map(), IDS, "c")!)
+    expect(burstCover(IDS, kept, undefined)).toBe("c")
+    const after = applyChange(kept, rejectBurst(kept, IDS, "toggle")!)
+    expect(burstStatus(IDS, after)).toMatchObject({ kept: 0, decided: 5 })
   })
 })
 

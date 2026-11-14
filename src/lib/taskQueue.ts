@@ -28,6 +28,19 @@ export class TaskQueue<T> {
   }
 
   /**
+   * Drops what is cached for `key` (a value that turned out to be unusable: a file URL whose file
+   * is gone), so the next `get` loads it again. A load already running is left alone.
+   */
+  forget(key: string): void {
+    this.cache.delete(key)
+  }
+
+  /** Caches `key` as failed (a value that failed again after a reload): `get` rejects with it. */
+  fail(key: string, error: unknown = new Error("failed")): void {
+    this.store(key, { error })
+  }
+
+  /**
    * Load `key` with `loader` (once; later calls share the result). `signal` cancels it while it is
    * still waiting for a slot; once running it completes and is cached.
    */
@@ -49,16 +62,19 @@ export class TaskQueue<T> {
           loader()
             .then(
               (value) => {
+                // Settled: off the in-flight list before anyone resumes, so a `forget` right
+                // after this load really loads again.
+                this.inflight.delete(key)
                 this.store(key, { value })
                 resolve(value)
               },
               (error: unknown) => {
+                this.inflight.delete(key)
                 this.store(key, { error: error ?? new Error("failed") })
                 reject(error)
               }
             )
             .finally(() => {
-              this.inflight.delete(key)
               this.running--
               this.next()
             })

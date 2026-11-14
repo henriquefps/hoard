@@ -30,6 +30,22 @@ class CullLogicTest {
     }
 
     @Test
+    fun `sidecars of every naming never change shots, their files or their identities (1_10_1)`() {
+        val photos = (1..840).flatMap { i -> listOf(file("DSC%05d.ARW".format(i), 25_000_000), file("DSC%05d.JPG".format(i), 4_000_000)) }
+        val sidecars = (1..840).flatMap { i ->
+            val stem = "DSC%05d".format(i)
+            listOf(file("$stem.xmp", 900), file("$stem.ARW.xmp", 900), file(".$stem.xmp", 900), file("$stem.XMP", 900), file("$stem.JPG.xmp", 900))
+        }
+        val plain = CullModel.shots(photos)
+        // Listed before, after and between the photos: the shots are the same, file for file.
+        assertEquals(plain, CullModel.shots(sidecars + photos))
+        assertEquals(plain, CullModel.shots(photos + sidecars))
+        assertEquals(plain, CullModel.shots(photos.chunked(2).zip(sidecars.chunked(5)).flatMap { (p, s) -> s.take(2) + p + s.drop(2) }))
+        assertEquals(840, plain.size)
+        assertEquals(emptyList<CullFileRef>(), plain.flatMap { it.others })
+    }
+
+    @Test
     fun `pairs a folder into shots with ids, kinds and extras`() {
         val shots = CullModel.shots(
             listOf(

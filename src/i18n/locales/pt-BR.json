@@ -1057,6 +1057,8 @@
       "kept_one": "Ficou com {{name}}; {{count}} outro quadro descartado",
       "kept_other": "Ficou com {{name}}; {{count}} outros quadros descartados",
       "kept_zero": "Ficou com {{name}}",
+      "rejected_one": "{{count}} foto da sequência descartada",
+      "rejected_other": "{{count}} fotos da sequência descartadas",
       "alreadyKept": "Já escolhida: os outros quadros já estão decididos",
       "compare": "Comparar com a melhor",
       "acceptSuggestion": "Aceitar sugestão da sequência",

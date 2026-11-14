@@ -3,11 +3,24 @@ import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import type { CullShot } from "@/plugins/smb/definitions"
-import { loadThumbnail, peekThumbnail, thumbnails, shotKey } from "./images"
+import {
+  cullTimings,
+  loadThumbnail,
+  peekThumbnail,
+  reloadThumbnail,
+  shotKey,
+  thumbKey,
+  thumbnailFailed,
+  thumbnails,
+} from "./images"
 import type { BurstPosition, CullDecision } from "./model"
 import type { CullFolder } from "./useCullFolder"
 
-/** A shot's thumbnail (the RAW's preview or a small JPEG decode), loaded while mounted. */
+/**
+ * A shot's thumbnail (the RAW's preview or a small JPEG decode), loaded while mounted. When the
+ * `<img>` cannot show its URL (the cached file is gone), it asks native once more; a second failure
+ * leaves the tile in its failed state (muted), never the browser's broken-image icon.
+ */
 export function ShotThumb({
   folder,
   shot,
@@ -18,28 +31,44 @@ export function ShotThumb({
   className?: string
 }) {
   const key = shotKey(folder, shot)
-  const [loaded, setLoaded] = useState<{ key: string; src?: string }>()
-  const src = loaded?.key === key ? loaded.src : peekThumbnail(folder, shot)
+  const [loaded, setLoaded] = useState<{ key: string; src?: string; retried?: boolean }>()
+  const mine = loaded?.key === key ? loaded : undefined
+  const retried = mine?.retried ?? false
+  const failed = thumbnails.hasFailed(thumbKey(folder, shot))
+  const src = failed ? undefined : (mine?.src ?? peekThumbnail(folder, shot))
   useEffect(() => {
-    if (peekThumbnail(folder, shot) || thumbnails.hasFailed(`${key}|thumb`)) return
+    if (peekThumbnail(folder, shot) || thumbnails.hasFailed(thumbKey(folder, shot))) return
     const controller = new AbortController()
-    loadThumbnail(folder, shot, controller.signal).then(
-      (value) => !controller.signal.aborted && setLoaded({ key, src: value }),
-      () => {}
+    const load = retried ? reloadThumbnail : loadThumbnail
+    load(folder, shot, controller.signal).then(
+      (value) => !controller.signal.aborted && setLoaded({ key, src: value, retried }),
+      () => !controller.signal.aborted && setLoaded({ key, retried })
     )
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key])
+  }, [key, retried])
+  const onError = () => {
+    if (retried) {
+      thumbnailFailed(folder, shot)
+      setLoaded({ key, retried })
+      return
+    }
+    cullTimings.record("thumb:error", 0)
+    thumbnails.forget(thumbKey(folder, shot))
+    setLoaded({ key, retried: true })
+  }
   return src ? (
     <img
+      key={src}
       src={src}
       alt=""
       draggable={false}
       decoding="async"
+      onError={onError}
       className={cn("object-cover", className)}
     />
   ) : (
-    <span className={cn("block bg-muted", className)} />
+    <span data-thumb={failed ? "failed" : "loading"} className={cn("block bg-muted", className)} />
   )
 }
 
