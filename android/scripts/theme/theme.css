@@ -1,0 +1,232 @@
+/* hfps theme for shadcn/ui (style radix-vega, baseColor olive, blue hfps tokens), Tailwind v4.
+   Paste into src/index.css after the three @import lines:
+     @import "tailwindcss"; @import "tw-animate-css"; @import "shadcn/tailwind.css";
+   Replace everything shadcn init wrote below those imports. */
+
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light), :root:not(.light) *) {
+      @slot;
+    }
+  }
+}
+
+@theme inline {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-warning: var(--warning);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* hfps tokens: blue is the default (since 2026-11). Neutrals are the shadcn olive preset with
+   hue 250 and 1.5x chroma; brand is oklch(0.5 0.14 255) light / 0.72 dark. Olive is now an
+   optional palette (palettes.css, data-palette="olive"). --warning is local.
+   Light --muted-foreground (0.52) and --destructive (0.54) are darker than the preset
+   so text passes WCAG AA (4.5:1) on --background, --muted and --card.
+   Surfaces: chrome (top bar, sidebar) sits on --background (--sidebar matches it);
+   content sits on one raised --card surface (white in light, lighter than chrome in dark).
+   Dark follows the OS (prefers-color-scheme); a .dark or .light class on <html> overrides it. */
+:root {
+  --background: oklch(0.966 0.0075 250);
+  --foreground: oklch(0.153 0.009 250);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.153 0.009 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.153 0.009 250);
+  --primary: oklch(0.5 0.14 255);
+  --primary-foreground: oklch(0.988 0.0045 250);
+  --secondary: oklch(0.966 0.0075 250);
+  --secondary-foreground: oklch(0.228 0.0195 250);
+  --muted: oklch(0.966 0.0075 250);
+  --muted-foreground: oklch(0.52 0.0465 250);
+  --accent: oklch(0.966 0.0075 250);
+  --accent-foreground: oklch(0.228 0.0195 250);
+  --destructive: oklch(0.54 0.22 27.325);
+  --warning: oklch(0.555 0.163 48.998);
+  --border: oklch(0.93 0.0105 250);
+  --input: oklch(0.93 0.0105 250);
+  --ring: oklch(0.72 0.126 255);
+  --chart-1: oklch(0.88 0.0165 250);
+  --chart-2: oklch(0.58 0.0465 250);
+  --chart-3: oklch(0.466 0.0375 250);
+  --chart-4: oklch(0.394 0.0345 250);
+  --chart-5: oklch(0.286 0.024 250);
+  --radius: 0.75rem;
+  --sidebar: oklch(0.966 0.0075 250);
+  --sidebar-foreground: oklch(0.153 0.009 250);
+  --sidebar-primary: oklch(0.5 0.14 255);
+  --sidebar-primary-foreground: oklch(0.988 0.0045 250);
+  --sidebar-accent: oklch(0.935 0.0105 250);
+  --sidebar-accent-foreground: oklch(0.228 0.0195 250);
+  --sidebar-border: oklch(0.93 0.0105 250);
+  --sidebar-ring: oklch(0.737 0.0315 250);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: oklch(0.153 0.009 250);
+    --foreground: oklch(0.988 0.0045 250);
+    --card: oklch(0.228 0.0195 250);
+    --card-foreground: oklch(0.988 0.0045 250);
+    --popover: oklch(0.228 0.0195 250);
+    --popover-foreground: oklch(0.988 0.0045 250);
+    --primary: oklch(0.72 0.14 255);
+    --primary-foreground: oklch(0.153 0.009 250);
+    --secondary: oklch(0.286 0.024 250);
+    --secondary-foreground: oklch(0.988 0.0045 250);
+    --muted: oklch(0.286 0.024 250);
+    --muted-foreground: oklch(0.737 0.0315 250);
+    --accent: oklch(0.286 0.024 250);
+    --accent-foreground: oklch(0.988 0.0045 250);
+    --destructive: oklch(0.704 0.191 22.216);
+    --warning: oklch(0.828 0.189 84.429);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.5 0.14 255);
+    --sidebar: oklch(0.153 0.009 250);
+    --sidebar-foreground: oklch(0.988 0.0045 250);
+    --sidebar-primary: oklch(0.72 0.14 255);
+    --sidebar-primary-foreground: oklch(0.988 0.0045 250);
+    --sidebar-accent: oklch(0.286 0.024 250);
+    --sidebar-accent-foreground: oklch(0.988 0.0045 250);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --sidebar-ring: oklch(0.58 0.0465 250);
+    color-scheme: dark;
+  }
+}
+
+.dark {
+  --background: oklch(0.153 0.009 250);
+  --foreground: oklch(0.988 0.0045 250);
+  --card: oklch(0.228 0.0195 250);
+  --card-foreground: oklch(0.988 0.0045 250);
+  --popover: oklch(0.228 0.0195 250);
+  --popover-foreground: oklch(0.988 0.0045 250);
+  --primary: oklch(0.72 0.14 255);
+  --primary-foreground: oklch(0.153 0.009 250);
+  --secondary: oklch(0.286 0.024 250);
+  --secondary-foreground: oklch(0.988 0.0045 250);
+  --muted: oklch(0.286 0.024 250);
+  --muted-foreground: oklch(0.737 0.0315 250);
+  --accent: oklch(0.286 0.024 250);
+  --accent-foreground: oklch(0.988 0.0045 250);
+  --destructive: oklch(0.704 0.191 22.216);
+  --warning: oklch(0.828 0.189 84.429);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.5 0.14 255);
+  --sidebar: oklch(0.153 0.009 250);
+  --sidebar-foreground: oklch(0.988 0.0045 250);
+  --sidebar-primary: oklch(0.72 0.14 255);
+  --sidebar-primary-foreground: oklch(0.988 0.0045 250);
+  --sidebar-accent: oklch(0.286 0.024 250);
+  --sidebar-accent-foreground: oklch(0.988 0.0045 250);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.58 0.0465 250);
+  color-scheme: dark;
+}
+
+/* Eyebrow: the only uppercase text in the app. Section labels only, never controls. */
+@utility eyebrow {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-foreground);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+    /* Mobile baseline (references/mobile-native.md): no gray tap flash, no landscape font inflation. */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* No double-tap-zoom delay on anything tappable. */
+  button,
+  a,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"] {
+    touch-action: manipulation;
+  }
+
+  /* A long press does not select a control's label. Links stay selectable: names, ids and
+     e-mails in tables are copied. */
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* iOS zooms into any field under 16px. vega's Input/Textarea already use text-base below md;
+     this catches native fields and local components that set text-sm. */
+  @media (max-width: 767px) {
+    input:not([type="checkbox"], [type="radio"], [type="range"]),
+    textarea,
+    select {
+      font-size: max(16px, 1em);
+    }
+  }
+}

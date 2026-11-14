@@ -1,0 +1,917 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "16b8556739701cded2654d5ebb9772a3",
+    "entities": [
+      {
+        "tableName": "machines",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `icon` TEXT, `color` TEXT, `username` TEXT NOT NULL DEFAULT '', `domain` TEXT, `server_guid` TEXT, `sort_order` INTEGER NOT NULL DEFAULT 0, `created_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "icon",
+            "columnName": "icon",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "color",
+            "columnName": "color",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "username",
+            "columnName": "username",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "domain",
+            "columnName": "domain",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "serverGuid",
+            "columnName": "server_guid",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sort_order",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "machine_addresses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `machine_id` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL DEFAULT 445, `kind` TEXT NOT NULL, `label` TEXT, `sort_order` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`), FOREIGN KEY(`machine_id`) REFERENCES `machines`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "machineId",
+            "columnName": "machine_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "host",
+            "columnName": "host",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "port",
+            "columnName": "port",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "445"
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sort_order",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_machine_addresses_machine",
+            "unique": false,
+            "columnNames": [
+              "machine_id",
+              "sort_order"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_machine_addresses_machine` ON `${TABLE_NAME}` (`machine_id`, `sort_order`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "machines",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "machine_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "favorites",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `location_id` TEXT NOT NULL, `machine_id` TEXT, `share` TEXT NOT NULL DEFAULT '', `path` TEXT NOT NULL DEFAULT '', `label` TEXT NOT NULL, `sort_order` INTEGER NOT NULL DEFAULT 0, `created_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`id`), FOREIGN KEY(`machine_id`) REFERENCES `machines`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "machineId",
+            "columnName": "machine_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sort_order",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_favorites_location_path",
+            "unique": true,
+            "columnNames": [
+              "location_id",
+              "share",
+              "path"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `idx_favorites_location_path` ON `${TABLE_NAME}` (`location_id`, `share`, `path`)"
+          },
+          {
+            "name": "idx_favorites_machine",
+            "unique": false,
+            "columnNames": [
+              "machine_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_favorites_machine` ON `${TABLE_NAME}` (`machine_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "machines",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "machine_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "manual_shares",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`machine_id` TEXT NOT NULL, `name` TEXT NOT NULL COLLATE NOCASE, `created_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`machine_id`, `name`), FOREIGN KEY(`machine_id`) REFERENCES `machines`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "machineId",
+            "columnName": "machine_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "machine_id",
+            "name"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "machines",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "machine_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "transfers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `op` TEXT NOT NULL DEFAULT 'copy', `source_location_id` TEXT NOT NULL, `source_machine_id` TEXT, `source_share` TEXT NOT NULL DEFAULT '', `source_paths` TEXT NOT NULL DEFAULT '[]', `dest_location_id` TEXT NOT NULL, `dest_machine_id` TEXT, `dest_share` TEXT NOT NULL DEFAULT '', `dest_path` TEXT NOT NULL DEFAULT '', `dest_tree_uri` TEXT, `name` TEXT NOT NULL, `conflict` TEXT NOT NULL DEFAULT 'rename', `size` INTEGER NOT NULL DEFAULT 0, `bytes_done` INTEGER NOT NULL DEFAULT 0, `items_total` INTEGER NOT NULL DEFAULT 0, `items_done` INTEGER NOT NULL DEFAULT 0, `items_failed` INTEGER NOT NULL DEFAULT 0, `items_skipped` INTEGER NOT NULL DEFAULT 0, `state` TEXT NOT NULL DEFAULT 'queued', `error_code` TEXT, `error` TEXT, `created_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), `finished_at` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`source_machine_id`) REFERENCES `machines`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`dest_machine_id`) REFERENCES `machines`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "op",
+            "columnName": "op",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'copy'"
+          },
+          {
+            "fieldPath": "sourceLocationId",
+            "columnName": "source_location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceMachineId",
+            "columnName": "source_machine_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "sourceShare",
+            "columnName": "source_share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "sourcePaths",
+            "columnName": "source_paths",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'[]'"
+          },
+          {
+            "fieldPath": "destLocationId",
+            "columnName": "dest_location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "destMachineId",
+            "columnName": "dest_machine_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "destShare",
+            "columnName": "dest_share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "destPath",
+            "columnName": "dest_path",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "destTreeUri",
+            "columnName": "dest_tree_uri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conflict",
+            "columnName": "conflict",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'rename'"
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "bytesDone",
+            "columnName": "bytes_done",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "itemsTotal",
+            "columnName": "items_total",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "itemsDone",
+            "columnName": "items_done",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "itemsFailed",
+            "columnName": "items_failed",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "itemsSkipped",
+            "columnName": "items_skipped",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'queued'"
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "error_code",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          },
+          {
+            "fieldPath": "finishedAt",
+            "columnName": "finished_at",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_transfers_created",
+            "unique": false,
+            "columnNames": [
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_transfers_created` ON `${TABLE_NAME}` (`created_at`)"
+          },
+          {
+            "name": "idx_transfers_source_machine",
+            "unique": false,
+            "columnNames": [
+              "source_machine_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_transfers_source_machine` ON `${TABLE_NAME}` (`source_machine_id`)"
+          },
+          {
+            "name": "idx_transfers_dest_machine",
+            "unique": false,
+            "columnNames": [
+              "dest_machine_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_transfers_dest_machine` ON `${TABLE_NAME}` (`dest_machine_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "machines",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "source_machine_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "machines",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "dest_machine_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "settings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`key` TEXT NOT NULL, `value` TEXT NOT NULL, PRIMARY KEY(`key`))",
+        "fields": [
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "key"
+          ]
+        }
+      },
+      {
+        "tableName": "cull_sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`location_id` TEXT NOT NULL, `share` TEXT NOT NULL DEFAULT '', `path` TEXT NOT NULL DEFAULT '', `started_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), `last_visited_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), `last_shot_id` TEXT, `shot_count` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`location_id`, `share`, `path`))",
+        "fields": [
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "started_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          },
+          {
+            "fieldPath": "lastVisitedAt",
+            "columnName": "last_visited_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          },
+          {
+            "fieldPath": "lastShotId",
+            "columnName": "last_shot_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "shotCount",
+            "columnName": "shot_count",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "location_id",
+            "share",
+            "path"
+          ]
+        }
+      },
+      {
+        "tableName": "cull_decisions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`location_id` TEXT NOT NULL, `share` TEXT NOT NULL DEFAULT '', `path` TEXT NOT NULL DEFAULT '', `shot_id` TEXT NOT NULL, `flag` TEXT, `rating` INTEGER NOT NULL DEFAULT 0, `updated_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`location_id`, `share`, `path`, `shot_id`))",
+        "fields": [
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "shotId",
+            "columnName": "shot_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flag",
+            "columnName": "flag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rating",
+            "columnName": "rating",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "location_id",
+            "share",
+            "path",
+            "shot_id"
+          ]
+        }
+      },
+      {
+        "tableName": "cull_destinations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`source_location_id` TEXT NOT NULL, `source_share` TEXT NOT NULL DEFAULT '', `location_id` TEXT NOT NULL, `share` TEXT NOT NULL DEFAULT '', `path` TEXT NOT NULL DEFAULT '', `label` TEXT, `options` TEXT NOT NULL DEFAULT '{}', `updated_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`source_location_id`, `source_share`))",
+        "fields": [
+          {
+            "fieldPath": "sourceLocationId",
+            "columnName": "source_location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceShare",
+            "columnName": "source_share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "options",
+            "columnName": "options",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'{}'"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updated_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "source_location_id",
+            "source_share"
+          ]
+        }
+      },
+      {
+        "tableName": "cull_analysis",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`location_id` TEXT NOT NULL, `share` TEXT NOT NULL DEFAULT '', `path` TEXT NOT NULL, `folder` TEXT NOT NULL DEFAULT '', `size` INTEGER NOT NULL, `modified_at` TEXT, `version` INTEGER NOT NULL, `analysis` TEXT NOT NULL, `analysed_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`location_id`, `share`, `path`))",
+        "fields": [
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folder",
+            "columnName": "folder",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modifiedAt",
+            "columnName": "modified_at",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysis",
+            "columnName": "analysis",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "analysedAt",
+            "columnName": "analysed_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "location_id",
+            "share",
+            "path"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_cull_analysis_folder",
+            "unique": false,
+            "columnNames": [
+              "location_id",
+              "share",
+              "folder"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_cull_analysis_folder` ON `${TABLE_NAME}` (`location_id`, `share`, `folder`)"
+          }
+        ]
+      },
+      {
+        "tableName": "cull_sidecars",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`location_id` TEXT NOT NULL, `share` TEXT NOT NULL DEFAULT '', `path` TEXT NOT NULL DEFAULT '', `shot_id` TEXT NOT NULL, `decided_at` INTEGER, `sidecar_mtime` INTEGER, `synced` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`location_id`, `share`, `path`, `shot_id`))",
+        "fields": [
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "shotId",
+            "columnName": "shot_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "decidedAt",
+            "columnName": "decided_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sidecarMtime",
+            "columnName": "sidecar_mtime",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "synced",
+            "columnName": "synced",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "location_id",
+            "share",
+            "path",
+            "shot_id"
+          ]
+        }
+      },
+      {
+        "tableName": "legacy_imports",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`source` TEXT NOT NULL, `status` TEXT NOT NULL, `importer_version` INTEGER NOT NULL, `legacy_version` INTEGER, `row_counts` TEXT NOT NULL DEFAULT '{}', `imported_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`source`))",
+        "fields": [
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importerVersion",
+            "columnName": "importer_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyVersion",
+            "columnName": "legacy_version",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "rowCounts",
+            "columnName": "row_counts",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'{}'"
+          },
+          {
+            "fieldPath": "importedAt",
+            "columnName": "imported_at",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "source"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '16b8556739701cded2654d5ebb9772a3')"
+    ]
+  }
+}

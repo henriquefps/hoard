@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Debug builds sit next to the Capacitor app (dev.hfps.hoard.next, ADR 0019): tell them apart. -->
+    <string name="app_name">Hoard next</string>
+</resources>

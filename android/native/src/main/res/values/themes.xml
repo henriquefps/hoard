@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Window theme: the hfps background before Compose draws its first frame; Compose draws everything else. -->
+    <style name="Theme.Hoard" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/hfps_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
