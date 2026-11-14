@@ -5,22 +5,25 @@ import {
   ImageBrokenIcon,
   PaintBrushIcon,
   PlayIcon,
+  StackIcon,
   StarIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { memo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { previewUrl } from "@/lib/api"
+import { isEdited } from "@/lib/edits"
 import { formatDuration } from "@/lib/format"
-import type { Row } from "@/lib/types"
+import type { Edit, Row } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /**
- * A thumbnail from GET /web/items/{id}/preview (ADR 0015). With the index's key `v` the URL is immutable (cached for
- * good); without one the server may answer 202 (not made yet, queued first): the image errors and is asked again.
+ * A thumbnail from GET /web/items/{id}/preview (ADR 0015), or of Reveal's edit (ADR 0020) when `edit` is given. With the
+ * index's key `v` the URL is immutable (cached for good); without one the server may answer 202 (not made yet, queued
+ * first): the image errors and is asked again.
  */
-export function Thumb({ row, size = "thumb", className }: { row: Row; size?: "thumb" | "screen"; className?: string }) {
-  const base = previewUrl(row.id, size, row.v)
+export function Thumb({ row, edit, size = "thumb", className }: { row: Row; edit?: Edit; size?: "thumb" | "screen"; className?: string }) {
+  const base = edit ? previewUrl(row.id, size, edit.v, "webp", edit.id) : previewUrl(row.id, size, row.v)
   const [state, setState] = useState({ base, attempt: 0, failed: false, loaded: false })
   // Another item or preview key: start over (state adjusted while rendering, not in an effect).
   if (state.base !== base) setState({ base, attempt: 0, failed: false, loaded: false })
@@ -94,6 +97,14 @@ export function Stars({ rating, className }: { rating: number; className?: strin
 
 interface CellProps {
   row: Row
+  /** The edit the cell shows (the item's primary, or a stack cell's), ADR 0020. */
+  edit?: Edit
+  /** A cell of an expanded stack (a virtual copy). */
+  stackCell: boolean
+  /** How many edits the item's stack holds (item cells). */
+  stack: number
+  expanded: boolean
+  onStack: (itemId: string) => void
   index: number
   size: number
   selected: boolean
@@ -107,6 +118,11 @@ interface CellProps {
 
 export const Cell = memo(function Cell({
   row,
+  edit,
+  stackCell,
+  stack,
+  expanded,
+  onStack,
   index,
   size,
   selected,
@@ -118,8 +134,9 @@ export const Cell = memo(function Cell({
   onFocusCell,
 }: CellProps) {
   const { t } = useTranslation()
+  const chip = "inline-flex h-6 items-center gap-1 rounded-md bg-viewer/75 px-1.5 text-xs leading-none font-medium text-viewer-foreground"
   return (
-    <div className="group relative" style={{ width: size, height: size }}>
+    <div className="group relative" style={{ width: size, height: size }} data-stack-cell={stackCell ? "" : undefined}>
       <button
         type="button"
         data-cell={index}
@@ -133,17 +150,42 @@ export const Cell = memo(function Cell({
           selected && "ring-3 ring-primary ring-offset-2 ring-offset-card"
         )}
       >
-        <Thumb row={row} className={cn("size-full", row.x === "reject" && "opacity-40")} />
+        <Thumb row={row} edit={edit} className={cn("size-full", row.x === "reject" && "opacity-40")} />
       </button>
       <div className="pointer-events-none absolute inset-x-1.5 top-1.5 flex items-start gap-1">
-        <KindBadge row={row} />
-        {row.e && (
+        {stackCell ? (
+          <span className={cn(chip, "max-w-full truncate bg-primary text-primary-foreground")} data-testid="copy-label">
+            {edit?.l || t("edits.edited")}
+          </span>
+        ) : (
+          <KindBadge row={row} />
+        )}
+        {!stackCell && (isEdited(row) || edit) && (
           <span
             className="inline-flex size-6 items-center justify-center rounded-md bg-viewer/75 text-viewer-foreground"
             title={t("badges.edited")}
+            data-testid="edited-badge"
           >
             <PaintBrushIcon className="size-3.5" aria-hidden />
           </span>
+        )}
+        {stack > 0 && (
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-expanded={expanded}
+            aria-label={t(expanded ? "edits.collapse" : "edits.expand", { count: stack })}
+            title={t(expanded ? "edits.collapse" : "edits.expand", { count: stack })}
+            onClick={(e) => {
+              e.stopPropagation()
+              onStack(row.id)
+            }}
+            data-testid="stack-badge"
+            className={cn(chip, "pointer-events-auto tabular-nums hover:bg-viewer", expanded && "bg-primary text-primary-foreground hover:bg-primary")}
+          >
+            <StackIcon className="size-3.5" aria-hidden />
+            {stack}
+          </button>
         )}
       </div>
       <button

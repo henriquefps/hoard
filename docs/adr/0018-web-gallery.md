@@ -5,6 +5,9 @@
   (full resolution for 100 %, named downloads, HTTPS behind `tailscale serve`, the culling check)
 - **Amends**: ADR 0013 (additive routes outside `/v1`, summarised there in "Web gallery (hoard-server 0.8.0)"). Reads
   ADR 0014 (items), 0015 (previews), 0016 (culling), 0017 (devices), and Hoard ADR 0008/0009 for the culling keys.
+- **Amended by**: ADR 0020 (hoard-server 0.9.0: Reveal's edited previews: the primary edit in the grid with the
+  "Edited" badge and filter, virtual copies as an expandable stack, Edited / Original in the viewer (E), "Download
+  edited JPEG"; the library row's `ed`)
 
 ## Context
 

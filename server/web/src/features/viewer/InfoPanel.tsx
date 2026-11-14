@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { fileUrl } from "@/lib/api"
 import { formatBytes, formatDateTime, formatDuration, formatNumber, formatShutter } from "@/lib/format"
-import type { Row } from "@/lib/types"
+import type { Edit, Row } from "@/lib/types"
 import { wallClock } from "@/lib/types"
 import type { ItemFile } from "./zoom"
 
@@ -58,7 +58,18 @@ const Line = ({ children, mono }: { children: ReactNode; mono?: boolean }) => (
 )
 
 /** The info panel (I): when, camera and exposure, size, place, files (each downloadable), culling and who made it. */
-export function InfoPanel({ row, detail, exposure }: { row: Row; detail: ItemDetail | null; exposure: Exposure | null }) {
+export function InfoPanel({
+  row,
+  detail,
+  exposure,
+  edit,
+}: {
+  row: Row
+  detail: ItemDetail | null
+  exposure: Exposure | null
+  /** Reveal's edit on screen (ADR 0020), if any. */
+  edit?: Edit
+}) {
   const { t, i18n } = useTranslation()
   const lang = i18n.language
   const it = detail?.item
@@ -155,7 +166,13 @@ export function InfoPanel({ row, detail, exposure }: { row: Row; detail: ItemDet
                 </p>
               )
             })}
-        {detail?.edited && <p className="text-[0.8125rem] text-muted-foreground">{t("info.editedInReveal")}</p>}
+        {(detail?.edited || !!row.ed?.length) && (
+          <p className="text-[0.8125rem] text-muted-foreground">
+            {row.ed?.length
+              ? t("edits.info", { count: row.ed.length, shown: edit ? edit.l || t("edits.edited") : t("edits.original") })
+              : t("info.editedInReveal")}
+          </p>
+        )}
       </Section>
       {it && (
         <Section label={t("info.files")}>

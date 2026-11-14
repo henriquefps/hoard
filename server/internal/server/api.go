@@ -56,6 +56,10 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/device", s.device(s.handleDevice))
 	mux.HandleFunc("PATCH /v1/device", s.device(s.handleDeviceUpdate))
 	mux.HandleFunc("POST /v1/device/claim", s.device(s.handleDeviceClaim))
+	// Reveal's edited previews (ADR 0020, hoard-server 0.9.0): additions.
+	mux.HandleFunc("PUT /v1/items/{itemId}/edits/{versionId}", s.device(s.handleEditPut))
+	mux.HandleFunc("GET /v1/items/{itemId}/edits/{versionId}", s.previewDevice(s.handleEditGet))
+	mux.HandleFunc("DELETE /v1/items/{itemId}/edits/{versionId}", s.device(s.handleEditDelete))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -155,18 +159,23 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 		// Not in "limits": that object is reveal-sync's, compared as a whole by its clients' tests (ADR 0012).
 		out["previews"] = map[string]any{"version": previews.Version, "thumbEdge": previews.ThumbEdge, "screenEdge": previews.ScreenEdge,
 			"proxyShortEdge": previews.ProxyEdge, "maxWarm": maxPreviewWarm, "requestsPerSecond": previewRate, "requestBurst": previewBurst}
+		out["edits"] = editsInfo() // ADR 0020
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
-// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0).
+// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews).
 func (s *Server) features() []string {
 	f := []string{"items"}
 	if s.prev != nil {
 		f = append(f, "previews")
 	}
-	return append(f, "culling", "device-identity")
+	f = append(f, "culling", "device-identity")
+	if s.prev != nil {
+		f = append(f, "edits")
+	}
+	return f
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device

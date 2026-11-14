@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,26 +27,38 @@ import (
 // libRow is one item in the index. Short keys: the index of a 20,000-item library is about 4 MB of JSON (400 KB
 // gzipped).
 type libRow struct {
-	ID     string `json:"id"`
-	T      int64  `json:"t"`           // sortTime (ADR 0014), ms
-	L      int64  `json:"l,omitempty"` // the camera's wall clock read as UTC, ms, when it differs from t (date headers)
-	K      string `json:"k"`           // photo | pair | video | motion
-	W      int    `json:"w,omitempty"` // upright size (orientation and video rotation applied)
-	H      int    `json:"h,omitempty"`
-	N      string `json:"n"`            // the main file's name
-	Fo     string `json:"fo,omitempty"` // NAS folder id ("" = uploaded by a device)
-	D      string `json:"d,omitempty"`  // directory in the folder, '/'-separated
-	Cam    string `json:"cam,omitempty"`
-	Lens   string `json:"lens,omitempty"`
-	Raw    bool   `json:"raw,omitempty"`  // the main file is a RAW
-	Dur    int64  `json:"dur,omitempty"`  // video duration, ms
-	R      int    `json:"r,omitempty"`    // rating 1..5
-	X      string `json:"x,omitempty"`    // flag: pick | reject
-	Lb     string `json:"lb,omitempty"`   // colour label
-	E      bool   `json:"e,omitempty"`    // edited in Reveal
-	V      string `json:"v,omitempty"`    // image preview key when one is on disk (immutable thumbnail URLs)
-	Fields string `json:"cr,omitempty"`   // culling field revisions "rating.flag.label" (baseRev of the next push)
-	Size   int64  `json:"size,omitempty"` // bytes of all files
+	ID     string    `json:"id"`
+	T      int64     `json:"t"`           // sortTime (ADR 0014), ms
+	L      int64     `json:"l,omitempty"` // the camera's wall clock read as UTC, ms, when it differs from t (date headers)
+	K      string    `json:"k"`           // photo | pair | video | motion
+	W      int       `json:"w,omitempty"` // upright size (orientation and video rotation applied)
+	H      int       `json:"h,omitempty"`
+	N      string    `json:"n"`            // the main file's name
+	Fo     string    `json:"fo,omitempty"` // NAS folder id ("" = uploaded by a device)
+	D      string    `json:"d,omitempty"`  // directory in the folder, '/'-separated
+	Cam    string    `json:"cam,omitempty"`
+	Lens   string    `json:"lens,omitempty"`
+	Raw    bool      `json:"raw,omitempty"`  // the main file is a RAW
+	Dur    int64     `json:"dur,omitempty"`  // video duration, ms
+	R      int       `json:"r,omitempty"`    // rating 1..5
+	X      string    `json:"x,omitempty"`    // flag: pick | reject
+	Lb     string    `json:"lb,omitempty"`   // colour label
+	E      bool      `json:"e,omitempty"`    // edited in Reveal
+	V      string    `json:"v,omitempty"`    // image preview key when one is on disk (immutable thumbnail URLs)
+	Fields string    `json:"cr,omitempty"`   // culling field revisions "rating.flag.label" (baseRev of the next push)
+	Size   int64     `json:"size,omitempty"` // bytes of all files
+	Ed     []libEdit `json:"ed,omitempty"`   // Reveal's edited previews (ADR 0020), the primary first
+}
+
+// libEdit is one edit of an item in the index.
+type libEdit struct {
+	ID string `json:"id"`          // Reveal's version id
+	L  string `json:"l,omitempty"` // label ("Copy 1")
+	P  bool   `json:"p,omitempty"` // primary: the grid shows it
+	C  bool   `json:"c,omitempty"` // a virtual copy: a cell of its own in the item's stack
+	V  string `json:"v,omitempty"` // its preview key when one is on disk
+	W  int    `json:"w,omitempty"` // its size
+	H  int    `json:"h,omitempty"`
 }
 
 type libEntry struct {
@@ -68,19 +81,21 @@ type libraryIndex struct {
 	itemsRev    int64
 	recordsRev  int64
 	previewsAt  int64
+	editsAt     int64
 	lastPreview time.Time
 	rows        map[string]*libEntry
 	removed     map[string]int64
 	culling     map[string]cullState
 	edited      map[string]bool
 	previewKey  map[string]string
+	editKey     map[string]string // item id + "|" + version id → edited preview key
 	folders     map[string]string // id → name (from item locations)
 }
 
 func newLibraryIndex(st *store.Store) *libraryIndex {
 	return &libraryIndex{st: st, boot: strconv.FormatInt(time.Now().UnixNano()%1e12, 36), recordsRev: -1,
 		rows: map[string]*libEntry{}, removed: map[string]int64{}, culling: map[string]cullState{}, edited: map[string]bool{},
-		previewKey: map[string]string{}, folders: map[string]string{}}
+		previewKey: map[string]string{}, editKey: map[string]string{}, folders: map[string]string{}}
 }
 
 // refresh applies everything that changed since the last call.
@@ -127,6 +142,27 @@ func (x *libraryIndex) refresh(ctx context.Context) error {
 			if e := x.rows[k.ItemID]; e != nil && e.row.V != k.Key {
 				e.row.V = k.Key
 				x.touch(e)
+			}
+		}
+		keys, err = x.st.PreviewKeysSince(ctx, previews.JobEditPrefix, x.editsAt)
+		if err != nil {
+			return err
+		}
+		for _, k := range keys {
+			x.editsAt = max(x.editsAt, k.UpdatedAt)
+			vid := strings.TrimPrefix(k.Job, previews.JobEditPrefix)
+			if x.editKey[k.ItemID+"|"+vid] == k.Key {
+				continue
+			}
+			x.editKey[k.ItemID+"|"+vid] = k.Key
+			if e := x.rows[k.ItemID]; e != nil {
+				for i := range e.row.Ed {
+					if e.row.Ed[i].ID == vid && e.row.Ed[i].V != k.Key {
+						e.row.Ed = slices.Clone(e.row.Ed) // rows already answered keep their slice
+						e.row.Ed[i].V = k.Key
+						x.touch(e)
+					}
+				}
 			}
 		}
 	}
@@ -232,6 +268,15 @@ func (x *libraryIndex) applyItem(r store.ItemRow) {
 	e.mainFP = d.MainFingerprint
 	row.E = x.edited[d.MainFingerprint]
 	row.V = x.previewKey[r.ID]
+	if len(r.Edits) > 0 {
+		var list []store.Edit
+		if err := json.Unmarshal(r.Edits, &list); err == nil {
+			for _, ed := range list {
+				row.Ed = append(row.Ed, libEdit{ID: ed.VersionID, L: ed.Label, P: ed.Primary, C: ed.IsVirtualCopy,
+					V: x.editKey[r.ID+"|"+ed.VersionID], W: ed.Width, H: ed.Height})
+			}
+		}
+	}
 	e.row = row
 	x.setCulling(e, x.culling[r.ID])
 	x.touch(e)

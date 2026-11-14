@@ -515,6 +515,14 @@ func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out["previews"] = p
+		// Reveal's edited previews (ADR 0020): the uploads (data: only Reveal can make them again) and their previews.
+		es, err := s.store.EditStatistics(ctx)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		files, onDisk := s.editsDiskUsage()
+		out["edits"] = map[string]any{"dir": s.cfg.EditsDir, "stats": es, "files": files, "diskBytes": onDisk}
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -538,7 +546,7 @@ func (s *Server) previewReport(r *http.Request) (map[string]any, error) {
 		Failed  int   `json:"failed"`
 		Bytes   int64 `json:"bytes"`
 	}
-	jobs := map[string]*jobReport{previews.JobImage: {}, previews.JobProxy: {}}
+	jobs := map[string]*jobReport{previews.JobImage: {}, previews.JobProxy: {}, "edit": {}}
 	for _, st := range stats {
 		j := jobs[st.Job]
 		if j == nil {

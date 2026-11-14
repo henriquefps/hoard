@@ -45,6 +45,25 @@
     "name": { "photo": "Photo", "pair": "RAW+JPG", "video": "Video", "motion": "Motion photo" }
   },
   "badges": { "edited": "Edited in Reveal" },
+  "edits": {
+    "edited": "Edited",
+    "original": "Original",
+    "primary": "shown in the grid",
+    "expand_one": "Show {{count}} more edit (virtual copy)",
+    "expand_other": "Show {{count}} more edits (virtual copies)",
+    "collapse_one": "Hide {{count}} more edit",
+    "collapse_other": "Hide {{count}} more edits",
+    "layer": "Edited in Reveal: {{name}}",
+    "version": "Version",
+    "showOriginal": "Show the original",
+    "showEdited": "Show Reveal's edit",
+    "choose": "Choose a version",
+    "downloadOriginal": "Download the original",
+    "download": "Download edited JPEG",
+    "downloadNamed": "Download edited JPEG: {{name}}",
+    "info_one": "Edited in Reveal ({{count}} version) · showing: {{shown}}",
+    "info_other": "Edited in Reveal ({{count}} versions) · showing: {{shown}}"
+  },
   "cull": {
     "pick": "Pick",
     "reject": "Reject",

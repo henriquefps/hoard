@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -82,6 +83,11 @@ func (s *Server) servePreview(w http.ResponseWriter, r *http.Request, poster boo
 		fail(w, r, http.StatusBadRequest, "invalid_request", "size is thumb or screen; format is jpeg or webp.", nil)
 		return
 	}
+	which := q.Get("edit")
+	if which != "" && (poster || !validEditParam(which)) {
+		fail(w, r, http.StatusBadRequest, "invalid_request", "edit is a version id or primary, on /preview only.", nil)
+		return
+	}
 	row, ok := s.previewItem(w, r)
 	if !ok {
 		return
@@ -90,7 +96,17 @@ func (s *Server) servePreview(w http.ResponseWriter, r *http.Request, poster boo
 		fail(w, r, http.StatusNotFound, "preview_unavailable", "Only videos have a poster frame; use /preview.", map[string]any{"reason": "not_applicable"})
 		return
 	}
-	s.serveJob(w, r, row, previews.JobImage, file, "image/"+format, 2)
+	job := previews.JobImage
+	if which != "" { // Reveal's edited preview (ADR 0020)
+		e, ok := itemEdit(row, which)
+		if !ok {
+			fail(w, r, http.StatusNotFound, "preview_unavailable", "The item has no such edit.", map[string]any{"reason": "no_edit"})
+			return
+		}
+		job = previews.EditJob(e.VersionID)
+		w.Header().Set("X-Hoard-Edit", e.VersionID)
+	}
+	s.serveJob(w, r, row, job, file, "image/"+format, 2)
 }
 
 func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +190,7 @@ type previewState struct {
 	Height int    `json:"height,omitempty"`    // ready
 	Bytes  int64  `json:"bytes,omitempty"`     // ready (JPEG; MP4 for a proxy)
 	WebP   int64  `json:"webpBytes,omitempty"` // ready thumb/screen: the WebP's size (format=webp)
-	Reason string `json:"reason,omitempty"`    // unavailable: not_applicable | unsupported | failed | no_tools
+	Reason string `json:"reason,omitempty"`    // unavailable: not_applicable | unsupported | failed | no_tools | no_edit
 }
 
 func toPreviewState(st previews.State, file, webp string) previewState {
@@ -199,8 +215,13 @@ func (s *Server) handleWarmPreviews(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Items    []string `json:"items"`
 		Previews []string `json:"previews"`
+		Edit     string   `json:"edit"` // ADR 0020: thumb and screen of this edit ("primary" or a version id)
 	}
 	if !readJSON(w, r, &req) {
+		return
+	}
+	if req.Edit != "" && !validEditParam(req.Edit) {
+		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "edit is a version id or primary.", nil)
 		return
 	}
 	if len(req.Items) > maxPreviewWarm {
@@ -254,18 +275,33 @@ func (s *Server) handleWarmPreviews(w http.ResponseWriter, r *http.Request) {
 			s.internal(w, r, err)
 			return
 		}
-		states, err := s.prev.Request(ctx, row, jobs, store.PriorityWarm, base+int64(len(req.Items)-i))
+		itemJobs, imageJob := jobs, previews.JobImage
+		e := entry{"id": id}
+		noEdit := false
+		if req.Edit != "" && jobSet[previews.JobImage] {
+			if ed, ok := itemEdit(row, req.Edit); ok {
+				imageJob = previews.EditJob(ed.VersionID)
+				e["edit"] = ed.VersionID
+				itemJobs = append([]string{imageJob}, slices.DeleteFunc(slices.Clone(jobs), func(j string) bool { return j == previews.JobImage })...)
+			} else {
+				noEdit = true
+				itemJobs = slices.DeleteFunc(slices.Clone(jobs), func(j string) bool { return j == previews.JobImage })
+			}
+		}
+		states, err := s.prev.Request(ctx, row, itemJobs, store.PriorityWarm, base+int64(len(req.Items)-i))
 		if err != nil {
 			s.internal(w, r, err)
 			return
 		}
-		e := entry{"id": id}
+		if noEdit {
+			states[imageJob] = previews.State{Status: previews.StatusUnavailable, Reason: "no_edit"}
+		}
 		for _, p := range req.Previews {
 			switch p {
 			case "thumb":
-				e[p] = toPreviewState(states[previews.JobImage], previews.FileThumb, previews.FileThumbWebP)
+				e[p] = toPreviewState(states[imageJob], previews.FileThumb, previews.FileThumbWebP)
 			case "screen":
-				e[p] = toPreviewState(states[previews.JobImage], previews.FileScreen, previews.FileScreenWebP)
+				e[p] = toPreviewState(states[imageJob], previews.FileScreen, previews.FileScreenWebP)
 			case "proxy":
 				e[p] = toPreviewState(states[previews.JobProxy], previews.FileProxy, "")
 			}

@@ -284,7 +284,7 @@ func serve(args []string, stderr io.Writer) int {
 	}
 	srv, err := server.New(ctx, server.Config{Version: version, Mounts: mountList, BackupRoot: o.backupRoot,
 		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout,
-		PreviewsDir: previewsDir, Vips: o.vips, FFmpeg: o.ffmpeg, PreviewWorkers: o.previewWorkers, ProxyWorkers: o.proxyWorkers,
+		PreviewsDir: previewsDir, EditsDir: filepath.Join(dir, "edits"), Vips: o.vips, FFmpeg: o.ffmpeg, PreviewWorkers: o.previewWorkers, ProxyWorkers: o.proxyWorkers,
 		PreviewThreads: o.previewThreads, PreviewBacklog: backlog, FullCacheBytes: int64(o.fullCacheMB) << 20,
 		TrustTailscaleServe: o.trustTailscaleServe, TailscaleServePeers: peers}, st)
 	if err != nil {

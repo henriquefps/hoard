@@ -1,8 +1,10 @@
 import { chromium, expect, test, type Cookie, type Page } from "@playwright/test"
-import { readFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { mkdtempSync, readFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import http from "node:http"
 import path from "node:path"
-import { PASSWORD, readState, SERVER } from "./server"
+import { LIB, PASSWORD, readState, SERVER } from "./server"
 
 // The web gallery against a real hoard-server with the synthetic library of TestWriteWebFixture (37 items: 4 RAW+JPG
 // pairs, 27 JPEGs, a lone RAW with a full-size embedded JPEG, 3 videos, 1 motion photo, one XMP sidecar with 5 stars + pick). Tests run in order and share the
@@ -336,6 +338,99 @@ test("live: culling from a device and an edit in Reveal appear without a reload"
   await expect(grid(page).getByRole("button", { name: /^IMG_0303\.JPG.*Edited in Reveal/ })).toBeVisible({ timeout: 10_000 })
   await page.getByRole("button", { name: "Edited", exact: true }).click()
   await expect(count(page)).toHaveText("1 of 37")
+})
+
+// Reveal's edited previews (ADR 0020): Reveal (here, the paired device) uploads an edit of a pair's version and a
+// virtual copy; the grid shows the edit with the badge and a stack, the viewer toggles Edited / Original with E.
+test("edits: Reveal's edit with a badge, the viewer toggles with E, a virtual copy in a stack", async ({ page }) => {
+  const target = state.items.find((i) => i.name === "DSC01006.ARW")!
+  // Two "renders" of the pair's camera JPEG (drawn, synthetic): a punchy colour edit and a black-and-white copy.
+  const dir = mkdtempSync(path.join(tmpdir(), "hoard-edit-"))
+  const src = path.join(LIB, "fixture", "mnt", "nas", "2024", "2024-05-03 Trip", "DSC01006.JPG")
+  const render = (name: string, filter: string) => {
+    const out = path.join(dir, name)
+    execFileSync("ffmpeg", ["-loglevel", "error", "-y", "-i", src, "-vf", filter, "-q:v", "3", out])
+    return readFileSync(out)
+  }
+  const colour = render("main.jpg", "eq=contrast=1.25:saturation=1.7:gamma=0.9,vignette=PI/5")
+  const mono = render("copy.jpg", "hue=s=0,eq=contrast=1.4")
+  const main = crypto.randomUUID()
+  const copy = crypto.randomUUID()
+  const put = async (version: string, body: Buffer, headers: Record<string, string>) => {
+    const res = await fetch(`${state.base}/v1/items/${target.id}/edits/${version}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${state.deviceKey}`, "Content-Type": "image/jpeg", "X-Hoard-Edited-At": String(Date.now()), ...headers },
+      body: new Uint8Array(body),
+    })
+    expect(res.status, await res.clone().text()).toBe(201)
+    return res.json()
+  }
+  await put(main, colour, { "X-Hoard-Recipe-Digest": "r1:e2e-main", "X-Hoard-Primary": "true" })
+  await put(copy, mono, { "X-Hoard-Recipe-Digest": "r1:e2e-copy", "X-Hoard-Virtual-Copy": "true", "X-Hoard-Label": "Copy%201" })
+  const item = await device("GET", `/v1/items/${target.id}`)
+  expect(item.edits.map((e: { versionId: string }) => e.versionId)).toEqual([main, copy])
+
+  await signIn(page)
+  await page.goto("/?q=DSC01006")
+  const cell = grid(page).getByRole("button", { name: /^DSC01006\.ARW.*Edited in Reveal/ })
+  await expect(cell).toBeVisible({ timeout: 10_000 })
+  // The cell shows the edit's thumbnail (?edit=<version>), loaded.
+  const thumb = cell.locator("img")
+  await expect(thumb).toHaveAttribute("src", new RegExp(`edit=${main}`))
+  await expect.poll(() => thumb.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), { timeout: 20_000 }).toBe(true)
+  // The stack: one more edit; expanding it adds the copy's cell right after the item.
+  const wrapper = page.locator("[role=gridcell]").filter({ has: page.getByRole("button", { name: /^DSC01006\.ARW.*Edited in Reveal/ }) })
+  const stack = wrapper.getByTestId("stack-badge")
+  await expect(stack).toHaveText("1")
+  await stack.click()
+  await expect(stack).toHaveAttribute("aria-expanded", "true")
+  const copyCell = grid(page).getByRole("button", { name: /^DSC01006\.ARW \(Copy 1\)/ })
+  await expect(copyCell).toBeVisible()
+  await expect(copyCell.locator("img")).toHaveAttribute("src", new RegExp(`edit=${copy}`))
+  await expect.poll(() => copyCell.locator("img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0), { timeout: 20_000 }).toBe(true)
+  await shot(page, "edits-grid")
+  // The Edited filter keeps it (and the photo "live" edited through Reveal's records).
+  await page.goto("/?edited=1")
+  await expect(count(page)).toHaveText("2 of 37")
+
+  // The viewer opens on the primary edit; E shows the original and back.
+  await page.goto("/?q=DSC01006")
+  await grid(page).getByRole("button", { name: /^DSC01006\.ARW/ }).first().click()
+  const viewer = page.getByTestId("viewer")
+  const toggle = viewer.getByTestId("edit-toggle")
+  await expect(toggle).toHaveAttribute("aria-pressed", "true")
+  await expect(viewer.getByTestId("layer")).toHaveText("Edited in Reveal")
+  await expect(viewer.locator("img").last()).toHaveAttribute("src", new RegExp(`edit=${main}`))
+  await page.waitForTimeout(600)
+  await shot(page, "edits-viewer")
+  await page.keyboard.press("e")
+  await expect(toggle).toHaveAttribute("aria-pressed", "false")
+  await expect(viewer.getByTestId("layer")).not.toContainText("Edited")
+  await expect(viewer.locator("img[src*='edit=']")).toHaveCount(0)
+  await page.waitForTimeout(600)
+  await shot(page, "edits-viewer-original")
+  await page.keyboard.press("e")
+  await expect(toggle).toHaveAttribute("aria-pressed", "true")
+  // The menu lists the versions; the copy shows its own edit.
+  await viewer.getByTestId("edit-menu").click()
+  await page.getByRole("menuitemradio", { name: "Copy 1" }).click()
+  await expect(viewer.getByTestId("layer")).toHaveText("Edited in Reveal: Copy 1")
+  // Downloads: the originals, and the edited JPEG as uploaded (metadata removed).
+  await viewer.getByTestId("download-menu").click()
+  await expect(page.getByRole("menuitem", { name: "Download the original" })).toBeVisible()
+  const edited = page.getByRole("menuitem", { name: "Download edited JPEG" })
+  await expect(edited).toBeVisible()
+  const [download] = await Promise.all([page.waitForEvent("download"), edited.click()])
+  expect(download.suggestedFilename()).toBe("DSC01006 (Copy 1).jpg")
+  await page.keyboard.press("Escape")
+  await page.keyboard.press("Escape")
+  await expect(viewer).toHaveCount(0)
+  // A stack cell opens the viewer on its edit.
+  await grid(page).getByRole("button", { name: /^DSC01006\.ARW/ }).first().focus()
+  await page.keyboard.press("s")
+  await grid(page).getByRole("button", { name: /^DSC01006\.ARW \(Copy 1\)/ }).click()
+  await expect(page.getByTestId("viewer").getByTestId("layer")).toHaveText("Edited in Reveal: Copy 1")
+  await page.keyboard.press("Escape")
 })
 
 test("folders: the NAS tree with counts opens the gallery filtered", async ({ page }) => {

@@ -137,12 +137,16 @@ func (s *Store) WantPreviews(ctx context.Context, wants []PreviewWant) (int, err
 	return changed, err
 }
 
-// LeasePreview takes the most urgent pending job of the given kind that may run now and marks it running.
+// laneWhere selects a worker lane's jobs (?1 = the lane): the edited previews of ADR 0020 ("edit:<version>") run in
+// the image lane.
+const laneWhere = "(job = ?1 OR (?1 = 'image' AND job >= 'edit:' AND job < 'edit;'))"
+
+// LeasePreview takes the most urgent pending job of the given lane that may run now and marks it running.
 func (s *Store) LeasePreview(ctx context.Context, job string) (Preview, bool, error) {
 	var p Preview
 	found := false
 	err := s.tx(ctx, func(tx *sql.Tx) error {
-		row := tx.QueryRowContext(ctx, "SELECT "+previewCols+` FROM previews WHERE state = 'pending' AND job = ? AND not_before <= ?
+		row := tx.QueryRowContext(ctx, "SELECT "+previewCols+` FROM previews WHERE state = 'pending' AND `+laneWhere+` AND not_before <= ?2
 			ORDER BY priority, order_key DESC LIMIT 1`, job, s.nowMs())
 		var err error
 		p, err = scanPreview(row)
@@ -165,7 +169,7 @@ func (s *Store) LeasePreview(ctx context.Context, job string) (Preview, bool, er
 // NextPreviewAt returns when the earliest delayed pending job of a kind may run (0 when none waits).
 func (s *Store) NextPreviewAt(ctx context.Context, job string) (int64, error) {
 	var t sql.NullInt64
-	err := s.db.QueryRowContext(ctx, "SELECT min(not_before) FROM previews WHERE state = 'pending' AND job = ?", job).Scan(&t)
+	err := s.db.QueryRowContext(ctx, "SELECT min(not_before) FROM previews WHERE state = 'pending' AND "+laneWhere, job).Scan(&t)
 	return t.Int64, err
 }
 
@@ -335,8 +339,10 @@ type PreviewStat struct {
 
 // PreviewStats reports the queue and the storage (files shared by several rows are counted once per row).
 func (s *Store) PreviewStats(ctx context.Context) ([]PreviewStat, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT job, state, count(*), coalesce(sum(bytes), 0),
-		coalesce(sum(CASE WHEN key != '' AND key != want_key THEN 1 ELSE 0 END), 0) FROM previews GROUP BY job, state ORDER BY job, state`)
+	// Edited previews (ADR 0020, one job per version) are counted together as "edit".
+	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN job >= 'edit:' AND job < 'edit;' THEN 'edit' ELSE job END AS j, state, count(*),
+		coalesce(sum(bytes), 0), coalesce(sum(CASE WHEN key != '' AND key != want_key THEN 1 ELSE 0 END), 0) FROM previews
+		GROUP BY j, state ORDER BY j, state`)
 	if err != nil {
 		return nil, err
 	}

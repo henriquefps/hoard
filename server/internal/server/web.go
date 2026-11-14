@@ -34,6 +34,7 @@ import (
 //	GET    /web/items/{itemId}/preview|poster|proxy    as /v1 (ADR 0015)
 //	GET    /web/items/{itemId}/full               the still at full resolution: the file, or a JPEG made on demand (202)
 //	GET    /web/items/{itemId}/files/{fingerprint}[/{name}]  one member file (?download=1: as an attachment)
+//	GET    /web/items/{itemId}/edits/{versionId}[/{name}]    Reveal's uploaded edit of a version (ADR 0020)
 //	POST   /web/culling      as POST /v1/culling, written by the session's writer id "web:<16 hex>"
 //	POST   /web/downloads    {items: [ids]}  → {url}: a zip of the items' files, valid 10 minutes
 //	GET    /web/downloads/{token}[/{name}]    the zip, streamed
@@ -96,6 +97,8 @@ func (s *Server) routesWeb(mux *http.ServeMux) {
 	authed("GET /web/items/{itemId}/full", s.handleWebFull)
 	authed("GET /web/items/{itemId}/files/{fingerprint}", s.handleWebFile)
 	authed("GET /web/items/{itemId}/files/{fingerprint}/{name}", s.handleWebFile)
+	authed("GET /web/items/{itemId}/edits/{versionId}", s.handleEditGet)
+	authed("GET /web/items/{itemId}/edits/{versionId}/{name}", s.handleEditGet)
 	authed("POST /web/culling", s.handleCullingPush)
 	authed("POST /web/downloads", s.handleWebDownloadCreate)
 	authed("GET /web/downloads/{token}", s.handleWebDownload)

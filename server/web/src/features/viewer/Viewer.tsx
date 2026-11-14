@@ -8,6 +8,7 @@ import {
   InfoIcon,
   MagnifyingGlassMinusIcon,
   MagnifyingGlassPlusIcon,
+  PaintBrushIcon,
   PlayIcon,
   StarIcon,
   StopIcon,
@@ -17,16 +18,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { api, fileUrl, fullUrl, previewUrl } from "@/lib/api"
+import { api, editFileUrl, fileUrl, fullUrl, previewUrl } from "@/lib/api"
 import { actionForKey, type CullAction } from "@/lib/culling"
+import { initialEdit, primaryEdit, toggleEdit } from "@/lib/edits"
 import { applyFilters, filtersToSearch } from "@/lib/filters"
 import { formatBytes, formatDateTime } from "@/lib/format"
-import { navigate } from "@/lib/router"
+import { navigate, useLocation } from "@/lib/router"
 import { decide, downloadZip, startDownload, undo, useLibraryState } from "@/lib/store"
-import type { Row } from "@/lib/types"
+import type { Edit, Row } from "@/lib/types"
 import { wallClock } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import { setLastViewed } from "@/lib/viewState"
@@ -61,13 +73,15 @@ const isTyping = (t: EventTarget | null) => {
 
 /**
  * The full-screen viewer (ADR 0018 "Viewer"), dark in both themes like Hoard's: ←/→, 0-5, P, X, U (Hoard's culling
- * semantics), Z zoom, I info, Esc, Ctrl/Cmd+Z undo. It walks the gallery's filtered list as it was when it opened, so
+ * semantics), Z zoom, I info, E edited/original (Reveal's edits, ADR 0020), Esc, Ctrl/Cmd+Z undo. It walks the gallery's filtered list as it was when it opened, so
  * an item does not jump away when a decision makes it leave the filter.
  */
 export function Viewer({ itemId }: { itemId: string }) {
   const { t, i18n } = useTranslation()
   const { library } = useLibraryState()
   const [filters] = useFilters()
+  const loc = useLocation()
+  const asked = loc.search.get("edit")
   const filtered = useMemo(() => applyFilters(library.rows, filters, library.folders), [library.rows, filters, library.folders])
   // The order it opened with; items that appear (live) are added at the end, items that are gone are dropped.
   const [snapshot] = useState<string[]>(() => filtered.map((r) => r.id))
@@ -99,6 +113,11 @@ export function Viewer({ itemId }: { itemId: string }) {
 
   const index = order.indexOf(itemId)
   const row: Row | undefined = library.byId.get(itemId)
+  // Reveal's edit on screen (ADR 0020): the one asked for (a stack cell), else the primary; null = the original.
+  const [choice, setChoice] = useState<{ item: string; id: string | null; last: string | null } | null>(null)
+  const editId = choice?.item === itemId ? choice.id : (initialEdit(row, asked)?.id ?? null)
+  const lastEdit = choice?.item === itemId ? choice.last : null
+  const edit: Edit | undefined = editId ? row?.ed?.find((e) => e.id === editId) : undefined
   const search = filtersToSearch(filters)
 
   const goTo = useCallback(
@@ -108,12 +127,14 @@ export function Viewer({ itemId }: { itemId: string }) {
       setZoomed(false)
       navigate(`/items/${id}`, search, true)
     },
-    [order, itemId, search]
+    [order, itemId, search, setZoomed]
   )
   const close = useCallback(() => {
     setLastViewed(itemId)
     navigate("/", search)
   }, [itemId, search])
+
+  const showEdit = (e: Edit | undefined) => setChoice({ item: itemId, id: e?.id ?? null, last: edit?.id ?? lastEdit })
 
   // Details (again after a decision: who wrote each field) and exposure of the item on screen.
   const revs = row?.cr ?? ""
@@ -141,7 +162,9 @@ export function Viewer({ itemId }: { itemId: string }) {
     for (const d of [1, -1, 2]) {
       const id = order[index + d]
       const r = id ? library.byId.get(id) : undefined
-      if (r && r.k !== "video") new Image().src = previewUrl(r.id, "screen", r.v)
+      if (!r || r.k === "video") continue
+      const p = primaryEdit(r)
+      new Image().src = p ? previewUrl(r.id, "screen", p.v, "webp", p.id) : previewUrl(r.id, "screen", r.v)
     }
   }, [index, order, library.byId])
 
@@ -212,6 +235,16 @@ export function Viewer({ itemId }: { itemId: string }) {
     return () => window.removeEventListener("keydown", onKey)
   }, [index, order, itemId, zoomed, goTo, close, act])
 
+  // E switches between Reveal's edit and the original (ADR 0020).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey || e.key.toLowerCase() !== "e" || !row?.ed?.length) return
+      e.preventDefault()
+      showEdit(toggleEdit(row, edit, lastEdit))
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  })
   if (!row) {
     return (
       <div className="dark fixed inset-0 z-50 grid place-items-center bg-viewer text-viewer-foreground" role="dialog" aria-modal>
@@ -226,8 +259,12 @@ export function Viewer({ itemId }: { itemId: string }) {
   }
 
   const isVideo = row.k === "video"
-  const layerLabel =
-    layer === "original"
+  const editName = (e: Edit) => e.l || t("edits.edited")
+  const layerLabel = edit
+    ? edit.l
+      ? t("edits.layer", { name: edit.l })
+      : t("badges.edited")
+    : layer === "original"
       ? t(`viewer.layer.${fullSource === "raw" ? "originalRaw" : fullSource === "converted" ? "originalConverted" : "original"}`)
       : layer === "screen"
         ? t("viewer.layer.screen")
@@ -262,6 +299,7 @@ export function Viewer({ itemId }: { itemId: string }) {
             )}
           </p>
         </div>
+        {!!row.ed?.length && <EditSwitch edits={row.ed} edit={edit} onShow={(e) => showEdit(e ?? undefined)} onToggle={() => showEdit(toggleEdit(row, edit, lastEdit))} />}
         {!isVideo && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -295,9 +333,31 @@ export function Viewer({ itemId }: { itemId: string }) {
             {t("viewer.info")} <Kbd>I</Kbd>
           </TooltipContent>
         </Tooltip>
-        <Button variant="ghost" size="icon" onClick={() => void download()} disabled={!detail} aria-label={t("download.item")}>
-          <DownloadSimpleIcon />
-        </Button>
+        {row.ed?.length ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" disabled={!detail} aria-label={t("download.item")} data-testid="download-menu">
+                <DownloadSimpleIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="dark">
+              <DropdownMenuItem onSelect={() => void download()}>{t("edits.downloadOriginal")}</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {(edit ? [edit] : row.ed).map((e) => {
+                const name = editDownloadName(row, e)
+                return (
+                  <DropdownMenuItem key={e.id} onSelect={() => startDownload(editFileUrl(row.id, e.id, name, true), name)}>
+                    {row.ed!.length > 1 && !edit ? t("edits.downloadNamed", { name: editName(e) }) : t("edits.download")}
+                  </DropdownMenuItem>
+                )
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Button variant="ghost" size="icon" onClick={() => void download()} disabled={!detail} aria-label={t("download.item")}>
+            <DownloadSimpleIcon />
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label={t("viewer.more")}>
@@ -323,12 +383,12 @@ export function Viewer({ itemId }: { itemId: string }) {
             <VideoView key={row.id} itemId={row.id} poster={previewUrl(row.id, "screen", row.v)} loop={motion} />
           ) : (
             <ZoomImage
-              key={row.id}
-              width={row.w}
-              height={row.h}
-              thumb={previewUrl(row.id, "thumb", row.v)}
-              screen={previewUrl(row.id, "screen", row.v)}
-              full={fullUrl(row.id)}
+              key={`${row.id}:${edit?.id ?? ""}`}
+              width={edit ? edit.w : row.w}
+              height={edit ? edit.h : row.h}
+              thumb={edit ? previewUrl(row.id, "thumb", edit.v, "webp", edit.id) : previewUrl(row.id, "thumb", row.v)}
+              screen={edit ? previewUrl(row.id, "screen", edit.v, "webp", edit.id) : previewUrl(row.id, "screen", row.v)}
+              full={edit ? null : fullUrl(row.id)}
               zoomed={zoomed}
               onZoomedChange={setZoomed}
               onLayer={(l, source) => {
@@ -370,7 +430,7 @@ export function Viewer({ itemId }: { itemId: string }) {
         </div>
         {info && (
           <aside aria-label={t("viewer.info")} className="w-80 shrink-0 overflow-y-auto border-l border-border bg-card max-lg:hidden">
-            <InfoPanel row={row} detail={detail} exposure={exposure} />
+            <InfoPanel row={row} detail={detail} exposure={exposure} edit={edit} />
           </aside>
         )}
       </div>
@@ -411,6 +471,63 @@ export function Viewer({ itemId }: { itemId: string }) {
           <CheckIcon weight="bold" />
         </Button>
       </footer>
+    </div>
+  )
+}
+
+/** "DSC01000 (Copy 1).jpg": the stored edit's download name (the server names it the same way). */
+function editDownloadName(row: Row, e: Edit) {
+  const stem = row.n.replace(/\.[^.]*$/, "")
+  return `${stem} (${(e.l || "Edited").replace(/[/\\:*?"<>|]/g, "_")}).jpg`
+}
+
+/** Edited / Original (E), and a menu of the versions when the item has several edits (ADR 0020). */
+function EditSwitch({
+  edits,
+  edit,
+  onShow,
+  onToggle,
+}: {
+  edits: Edit[]
+  edit: Edit | undefined
+  onShow: (e: Edit | undefined) => void
+  onToggle: () => void
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex items-center" role="group" aria-label={t("edits.version")}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant={edit ? "secondary" : "ghost"} onClick={onToggle} aria-pressed={!!edit} data-testid="edit-toggle">
+            <PaintBrushIcon data-icon="inline-start" />
+            {edit ? t("edits.edited") : t("edits.original")}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          {edit ? t("edits.showOriginal") : t("edits.showEdited")} <Kbd>E</Kbd>
+        </TooltipContent>
+      </Tooltip>
+      {edits.length > 1 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" aria-label={t("edits.choose")} data-testid="edit-menu">
+              <CaretRightIcon className="rotate-90" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="dark">
+            <DropdownMenuLabel>{t("edits.version")}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup value={edit?.id ?? ""} onValueChange={(v) => onShow(edits.find((e) => e.id === v))}>
+              <DropdownMenuRadioItem value="">{t("edits.original")}</DropdownMenuRadioItem>
+              {edits.map((e) => (
+                <DropdownMenuRadioItem key={e.id} value={e.id}>
+                  {e.l || t("edits.edited")}
+                  {e.p && <span className="ml-auto pl-3 text-xs text-muted-foreground">{t("edits.primary")}</span>}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   )
 }

@@ -1,3 +1,4 @@
+import { isEdited } from "./edits"
 import type { Kind, Row } from "./types"
 import { wallClock } from "./types"
 
@@ -73,7 +74,7 @@ export function matches(row: Row, f: Filters, terms: string[], folders: Record<s
   if (f.cameras.length && !f.cameras.includes(row.cam ?? "")) return false
   if (f.minRating && (row.r ?? 0) < f.minRating) return false
   if (f.flags.length && !f.flags.includes(row.x ?? "none")) return false
-  if (f.edited && !row.e) return false
+  if (f.edited && !isEdited(row)) return false
   if (f.folder) {
     if (f.folder.id === UPLOADS) {
       if (row.fo) return false

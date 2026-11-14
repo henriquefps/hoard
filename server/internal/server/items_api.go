@@ -17,10 +17,14 @@ import (
 // revision counter and cursors ("<server>:i<rev>"); the browse query has keyset cursors
 // ("<server>:q<sortTime>.<id>.<order>").
 
-// itemJSON writes an item as served: id, rev, deleted, createdAt, updatedAt, then the stored state (for a tombstone
-// only replacedBy, when known).
+// itemJSON writes an item as served: id, rev, deleted, createdAt, updatedAt, its edits (ADR 0020) when it has any,
+// then the stored state (for a tombstone only replacedBy, when known).
 func itemJSON(buf *bytes.Buffer, r store.ItemRow) {
 	fmt.Fprintf(buf, `{"id":"%s","rev":%d,"deleted":%t,"createdAt":%d,"updatedAt":%d`, r.ID, r.Rev, r.Deleted, r.CreatedAt, r.UpdatedAt)
+	if len(r.Edits) > 0 { // Reveal's edited previews (ADR 0020)
+		buf.WriteString(`,"edits":`)
+		buf.Write(r.Edits)
+	}
 	data := bytes.TrimSpace(r.Data)
 	if len(data) > 2 && data[0] == '{' {
 		buf.WriteByte(',')
