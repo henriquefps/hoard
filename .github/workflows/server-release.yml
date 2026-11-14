@@ -14,7 +14,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 150
     defaults:
       run:
         working-directory: server
@@ -78,6 +78,7 @@ jobs:
       - name: Image (linux/amd64, linux/arm64)
         run: |
           docker buildx build --push --platform linux/amd64,linux/arm64 \
+            --cache-from type=gha,scope=hoard-server --cache-to type=gha,scope=hoard-server,mode=max \
             --build-arg VERSION=${{ steps.v.outputs.version }} --build-arg COMMIT=${GITHUB_SHA::7} \
             --label org.opencontainers.image.source=https://github.com/henriquefps/hoard \
             --label org.opencontainers.image.licenses=AGPL-3.0-or-later \
