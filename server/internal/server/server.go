@@ -20,6 +20,7 @@ import (
 	"github.com/henriquefps/hoard/server/internal/media"
 	"github.com/henriquefps/hoard/server/internal/mounts"
 	"github.com/henriquefps/hoard/server/internal/nas"
+	"github.com/henriquefps/hoard/server/internal/previews"
 	"github.com/henriquefps/hoard/server/internal/ratelimit"
 	"github.com/henriquefps/hoard/server/internal/store"
 )
@@ -67,6 +68,15 @@ type Config struct {
 	FFprobe      string
 	ProbeWorkers int
 	ProbeTimeout time.Duration
+	// Gallery previews (ADR 0015); disabled when PreviewsDir is "".
+	PreviewsDir    string
+	Vips, FFmpeg   string // programs (paths or names in PATH)
+	PreviewWorkers int    // image jobs at a time
+	ProxyWorkers   int    // video proxy jobs at a time
+	PreviewThreads int    // threads per vips/ffmpeg run
+	PreviewBacklog []string
+	// PreviewGenerator replaces the CPU generator (tests; a GPU worker later).
+	PreviewGenerator previews.Generator
 }
 
 // Server holds the state behind the handlers.
@@ -76,15 +86,17 @@ type Server struct {
 	roots   mounts.Roots
 	log     *slog.Logger
 	indexer *nas.Indexer
+	prev    *previews.Manager // nil when previews are disabled
 
 	serverID string
 
 	blobMu sync.RWMutex
 	blobs  *blobstore.Store // nil until a backup root is chosen
 
-	deviceLimit *ratelimit.Limiter
-	anonLimit   *ratelimit.Limiter
-	loginLimit  *ratelimit.Limiter
+	deviceLimit  *ratelimit.Limiter
+	previewLimit *ratelimit.Limiter
+	anonLimit    *ratelimit.Limiter
+	loginLimit   *ratelimit.Limiter
 
 	setupMu   sync.Mutex
 	setupCode string
@@ -109,10 +121,10 @@ type ErrorEvent struct {
 func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 	s := &Server{
 		cfg: cfg, store: st, log: cfg.Logger,
-		deviceLimit: ratelimit.New(30, 120),
-		anonLimit:   ratelimit.New(10.0/60, 10),
-		loginLimit:  ratelimit.New(5.0/60, 5),
-		touched:     map[string]time.Time{},
+		deviceLimit: ratelimit.New(30, 120), previewLimit: ratelimit.New(previewRate, previewBurst),
+		anonLimit:  ratelimit.New(10.0/60, 10),
+		loginLimit: ratelimit.New(5.0/60, 5),
+		touched:    map[string]time.Time{},
 	}
 	var missing []string
 	s.roots, missing = mounts.New(cfg.Mounts)
@@ -152,12 +164,52 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 	if !s.indexer.Prober.Available() {
 		s.log.Warn("ffprobe not found: videos are indexed, their metadata is read once it is installed")
 	}
+	if cfg.PreviewsDir != "" {
+		gen := cfg.PreviewGenerator
+		if gen == nil {
+			cpu := previews.NewCPU(cfg.Vips, cfg.FFmpeg, cfg.PreviewThreads)
+			if !cpu.HasVips() || !cpu.HasFFmpeg() {
+				s.log.Warn("previews: vips or ffmpeg not found: previews wait until both are installed", "vips", cpu.HasVips(), "ffmpeg", cpu.HasFFmpeg())
+			}
+			gen = cpu
+		}
+		backlog := map[string]bool{}
+		for _, j := range cfg.PreviewBacklog {
+			backlog[j] = true
+		}
+		s.prev, err = previews.New(previews.Config{Dir: cfg.PreviewsDir, ImageWorkers: cfg.PreviewWorkers, ProxyWorkers: cfg.ProxyWorkers,
+			Backlog: backlog, Generator: gen, Store: st, Open: s.openSource, Log: s.log})
+		if err != nil {
+			return nil, fmt.Errorf("previews directory: %w", err)
+		}
+	}
 	return s, nil
+}
+
+// openSource opens a file by fingerprint for the previews: an indexed NAS copy still as indexed, else an uploaded
+// original (never written to).
+func (s *Server) openSource(ctx context.Context, fp string) (*os.File, error) {
+	o, err := s.store.LookupOriginal(ctx, fp)
+	if err != nil {
+		return nil, err
+	}
+	if o.Source == "backup" {
+		return s.openBlob(o.SHA256)
+	}
+	f, err := s.openNasFile(o)
+	if err != nil {
+		s.indexer.Trigger()
+	}
+	return f, err
 }
 
 // Run starts the background work (NAS indexing, sweeping) until ctx ends.
 func (s *Server) Run(ctx context.Context) {
 	go s.indexer.Run(ctx)
+	if s.prev != nil {
+		s.log.Info("previews", "config", s.prev.String(), "dir", s.prev.Dir())
+		s.prev.Run(ctx)
+	}
 	go func() {
 		t := time.NewTicker(10 * time.Minute)
 		defer t.Stop()

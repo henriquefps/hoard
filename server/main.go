@@ -47,6 +47,14 @@ Flags (each falls back to the environment variable in brackets):
   --ffprobe string        ffprobe binary for video metadata [FFPROBE] (default ffprobe in PATH)
   --probe-workers int     ffprobe runs at a time [PROBE_WORKERS] (default 2)
   --probe-timeout duration  time limit of one ffprobe run [PROBE_TIMEOUT] (default 30s)
+  --previews-dir string   where gallery previews are kept [PREVIEWS_DIR] (default <data-dir>/previews)
+  --vips string           libvips' vips program, for photo previews [VIPS] (default vips in PATH)
+  --ffmpeg string         ffmpeg, for video posters and proxies [FFMPEG] (default ffmpeg in PATH)
+  --preview-workers int   photo/poster previews made at a time [PREVIEW_WORKERS] (default 2)
+  --proxy-workers int     video proxies made at a time [PROXY_WORKERS] (default 1)
+  --preview-threads int   threads of one vips/ffmpeg run [PREVIEW_THREADS] (default 2)
+  --preview-backlog list  previews made for every item ahead of requests: image, proxy, none
+                          [PREVIEW_BACKLOG] (default image,proxy)
 
 On the first start the log shows a one-time setup code: open http://<server>:3071/admin/ from your
 network and enter it to set the admin password. The setup page only answers the local network and
@@ -109,6 +117,18 @@ type options struct {
 	port, listen, dataDir, mounts, backupRoot, logFormat, ffprobe string
 	nasInterval, probeTimeout                                     time.Duration
 	probeWorkers                                                  int
+	previewsDir, vips, ffmpeg, previewBacklog                     string
+	previewWorkers, proxyWorkers, previewThreads                  int
+}
+
+// intOption reads an integer flag whose default comes from an environment variable.
+func intOption(fs *flag.FlagSet, dst *int, name, env string, def int) error {
+	v, err := strconv.Atoi(envOr(env, strconv.Itoa(def)))
+	if err != nil {
+		return fmt.Errorf("%s: %w", env, err)
+	}
+	fs.IntVar(dst, name, v, "")
+	return nil
 }
 
 func parseOptions(args []string, stderr io.Writer) (options, error) {
@@ -138,6 +158,20 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 		return o, fmt.Errorf("PROBE_WORKERS: %w", err)
 	}
 	fs.IntVar(&o.probeWorkers, "probe-workers", probeWorkers, "")
+	fs.StringVar(&o.previewsDir, "previews-dir", envOr("PREVIEWS_DIR", ""), "")
+	fs.StringVar(&o.vips, "vips", envOr("VIPS", "vips"), "")
+	fs.StringVar(&o.ffmpeg, "ffmpeg", envOr("FFMPEG", "ffmpeg"), "")
+	fs.StringVar(&o.previewBacklog, "preview-backlog", envOr("PREVIEW_BACKLOG", "image,proxy"), "")
+	for _, opt := range []struct {
+		dst       *int
+		name, env string
+		def       int
+	}{{&o.previewWorkers, "preview-workers", "PREVIEW_WORKERS", 2}, {&o.proxyWorkers, "proxy-workers", "PROXY_WORKERS", 1},
+		{&o.previewThreads, "preview-threads", "PREVIEW_THREADS", 2}} {
+		if err := intOption(fs, opt.dst, opt.name, opt.env, opt.def); err != nil {
+			return o, err
+		}
+	}
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
@@ -153,7 +187,28 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	if o.probeTimeout < time.Second {
 		return o, fmt.Errorf("--probe-timeout must be at least 1s")
 	}
+	if o.previewWorkers < 1 || o.previewWorkers > 16 || o.proxyWorkers < 1 || o.proxyWorkers > 8 || o.previewThreads < 1 || o.previewThreads > 32 {
+		return o, fmt.Errorf("--preview-workers must be 1 to 16, --proxy-workers 1 to 8, --preview-threads 1 to 32")
+	}
+	if _, err := backlogJobs(o.previewBacklog); err != nil {
+		return o, err
+	}
 	return o, nil
+}
+
+// backlogJobs parses --preview-backlog: a comma-separated list of image and proxy, or none.
+func backlogJobs(v string) ([]string, error) {
+	var out []string
+	for _, j := range strings.Split(v, ",") {
+		switch j = strings.TrimSpace(j); j {
+		case "image", "proxy":
+			out = append(out, j)
+		case "none", "":
+		default:
+			return nil, fmt.Errorf("--preview-backlog is a list of image, proxy, or none")
+		}
+	}
+	return out, nil
 }
 
 func serve(args []string, stderr io.Writer) int {
@@ -200,8 +255,15 @@ func serve(args []string, stderr io.Writer) int {
 			mountList = append(mountList, m)
 		}
 	}
+	previewsDir := o.previewsDir
+	if previewsDir == "" {
+		previewsDir = filepath.Join(dir, "previews")
+	}
+	backlog, _ := backlogJobs(o.previewBacklog)
 	srv, err := server.New(ctx, server.Config{Version: version, Mounts: mountList, BackupRoot: o.backupRoot,
-		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout}, st)
+		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout,
+		PreviewsDir: previewsDir, Vips: o.vips, FFmpeg: o.ffmpeg, PreviewWorkers: o.previewWorkers, ProxyWorkers: o.proxyWorkers,
+		PreviewThreads: o.previewThreads, PreviewBacklog: backlog}, st)
 	if err != nil {
 		logger.Error("cannot start", "err", err)
 		return 1

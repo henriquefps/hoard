@@ -51,6 +51,12 @@ type harness struct {
 
 func newHarness(t *testing.T, withBackup bool) *harness {
 	t.Helper()
+	return newHarnessWith(t, withBackup, nil)
+}
+
+// newHarnessWith lets a test change the configuration (previews, …) before the server is made.
+func newHarnessWith(t *testing.T, withBackup bool, configure func(*Config)) *harness {
+	t.Helper()
 	base := t.TempDir()
 	mnt := filepath.Join(base, "mnt")
 	backup := filepath.Join(mnt, "backup")
@@ -68,6 +74,9 @@ func newHarness(t *testing.T, withBackup bool) *harness {
 	cfg := Config{Version: "test", Mounts: []string{mnt}, NasInterval: time.Hour, Logger: slog.New(slog.NewJSONHandler(logs, nil))}
 	if withBackup {
 		cfg.BackupRoot = backup
+	}
+	if configure != nil {
+		configure(&cfg)
 	}
 	srv, err := New(context.Background(), cfg, st)
 	if err != nil {

@@ -267,7 +267,27 @@ async function renderStorage() {
   page().replaceChildren(
     h("div.section", h("h2", t("storageTitle")), h("p.muted", t("storageIntro")), current,
       s.locked && s.backupRoot ? h("p.hint", t("storageLocked")) : null),
+    s.previews ? renderPreviews(s.previews) : null,
     h("div.section", h("h2", t("available")), rows.length ? h("div.list", rows) : h("p.empty", t("noCandidates"))));
+}
+
+// Gallery previews (ADR 0015): what is made, its size, the queue.
+function renderPreviews(p) {
+  const metric = (label, value, hint) => h("div.metric", h("div.eyebrow", label), h("div.value", value), hint ? h("div.meta", hint) : null);
+  const img = p.jobs.image || {}, proxy = p.jobs.proxy || {};
+  const queued = (img.pending || 0) + (img.running || 0) + (proxy.pending || 0) + (proxy.running || 0);
+  const failed = (img.failed || 0) + (proxy.failed || 0);
+  const errors = Object.entries(p.errors || {}).map(([e, n]) => h("div.row", icon("warning-circle"), h("div.main.mono", `${num(n)} · ${e}`)));
+  return h("div.section",
+    h("div.section-head", h("h2", t("previewsTitle")), p.toolsAvailable ? null : h("span.badge.warn", t("previewsNoTools"))),
+    h("p.muted", t("previewsIntro")),
+    h("div.metrics",
+      metric(t("previewsImages"), `${num(img.ready)} · ${bytes(img.bytes)}`, img.stale ? t("previewsStale", { n: num(img.stale) }) : null),
+      metric(t("previewsProxies"), `${num(proxy.ready)} · ${bytes(proxy.bytes)}`, proxy.stale ? t("previewsStale", { n: num(proxy.stale) }) : null),
+      metric(t("previewsQueue"), num(queued), t("previewsRunning", { n: num((img.running || 0) + (proxy.running || 0)) })),
+      metric(t("previewsFailed"), num(failed))),
+    h("p.meta.mono", p.dir, p.totalBytes ? ` · ${t("free", { free: bytes(p.freeBytes), total: bytes(p.totalBytes) })}` : ""),
+    errors.length ? h("div.list", errors) : null);
 }
 
 // --- NAS ---------------------------------------------------------------------------------------------------------

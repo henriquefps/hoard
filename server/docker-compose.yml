@@ -24,9 +24,16 @@ services:
     environment:
       - LOG_FORMAT=json
       - NAS_INTERVAL=30m
-    # The server runs as uid 65532; resource limits keep it polite on a shared machine.
+      # Gallery previews (ADR 0015): made in the background at low priority. PREVIEW_BACKLOG=image makes video
+      # proxies only when a video is played; none makes everything on demand.
+      - PREVIEW_WORKERS=2
+      - PROXY_WORKERS=1
+      - PREVIEW_THREADS=2
+      - PREVIEW_BACKLOG=image,proxy
+    # The server runs as uid 65532; resource limits keep it polite on a shared machine (a 4K HEVC proxy is the
+    # largest job: give it at least 1.5 GiB).
     cpus: "2"
-    mem_limit: 512m
+    mem_limit: 1536m
     restart: unless-stopped
     read_only: true
     security_opt:

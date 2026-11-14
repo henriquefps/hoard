@@ -11,7 +11,8 @@
 > `<backup root>/reveal-sync/`) is unchanged and frozen for `/v1` (ADR 0012).
 
 Status: accepted (Reveal MS/1 server; Reveal MS/2 app side, Reveal ADR 0018, added `GET /v1/devices`). Date: 2026-11-11.
-Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below).
+Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below) and ADR 0015
+(gallery previews, hoard-server 0.6.0: "Previews" below).
 
 ## Context
 
@@ -319,12 +320,41 @@ Also added: `GET /v1/server` has `features: ["items"]` (absent before 0.5.0: a c
 routes above); `GET /v1/health` `counts` has `items`. `POST /v1/fingerprints/lookup` and `GET /v1/originals` find
 indexed NAS **videos** (and XMP sidecars) as well as photos; `GET /v1/nas/files` keeps listing photos only.
 
+## Previews (hoard-server 0.6.0)
+
+Added by ADR 0015 (what is made from which source, keys and versions, the queue, the generators). Additions only;
+Reveal does not call these routes, and its smart previews (`/v1/blobs`) are unchanged. Present when `GET /v1/server`
+has `features` containing `previews`; its `previews` object gives `version` (PREVIEW_VERSION), `thumbEdge` (512),
+`screenEdge` (2560), `proxyShortEdge` (720), `maxWarm` (500), `requestsPerSecond` and `requestBurst` (the preview
+GETs' own per-device bucket: 200 per second, burst 600, separate from the 30/s of the rest of the API).
+
+| Method and path | Answer |
+| --- | --- |
+| `GET /v1/items/{itemId}/preview?size=thumb\|screen&format=jpeg\|webp&v=` | The item's preview: an upright sRGB JPEG (default) or WebP, long edge ≤ 512 (`thumb`, default) or ≤ 2560 (`screen`) px, never upscaled; a video's is its poster frame. |
+| `GET /v1/items/{itemId}/poster?size=thumb\|screen&format=jpeg\|webp&v=` | A video's poster frame (the same file as `/preview` of a video); `404 preview_unavailable` (`not_applicable`) for other kinds. |
+| `GET /v1/items/{itemId}/proxy?v=` | The proxy of a video or of a motion photo's video: MP4 (`faststart`), H.264, short edge ≤ 720 px, ≤ 30 fps, ≤ 2.5 Mb/s, AAC; HDR tone-mapped to SDR. `Range` and `HEAD` work. |
+| `POST /v1/items/previews` `{"items": [...] (≤ 500), "previews": ["thumb", "screen", "proxy"] (default ["thumb"])}` | `{"items": [{"id", "thumb": {"status", "v", "stale"?, "width", "height", "bytes", "webpBytes"} \| {"status": "pending"} \| {"status": "unavailable", "reason"}, …}], "missing": [ids]}`: each item once, in the order asked; unknown or deleted ids in `missing`. Previews not ready are queued (first item first). |
+
+The three GETs answer:
+
+- **200** with the file. `ETag: "<key>-<file>"`, `X-Hoard-Preview-Version: <key>` (the content key: source +
+  recipe + PREVIEW_VERSION), `X-Hoard-Preview: ready | stale` (`stale`: an older preview, served while the new one is
+  made). With `v` equal to the key: `Cache-Control: private, max-age=31536000, immutable`; otherwise
+  `private, no-cache` (revalidate with `If-None-Match` → 304). A client that builds URLs from the warm answer's `v`
+  never asks twice for the same preview, and a changed preview has a new `v`.
+- **202** `{"status": "pending", "retryAfter"}` with `Retry-After` (2 s for images, 15 s for proxies) and
+  `X-Hoard-Preview: pending`: not made yet; it was queued ahead of everything else. Ask again later.
+- **404** `not_found` (no such live item) or `preview_unavailable` with `details.reason`: `not_applicable`,
+  `unsupported` (no decoder reads the file), `failed` (generation failed three times; a new recipe or source tries
+  again), `no_tools` (the server's vips/ffmpeg are missing).
+- **400** `invalid_request` (bad `size`), **401**, **429** (the preview bucket) as usual.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
 | --- | --- | --- |
 | `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads", "items" (0.5.0)}}`: counts only, no names or paths |
-| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items"] (0.5.0)}` |
+| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "previews" (0.6.0)], "previews": {…} (0.6.0, when enabled)}` |
 | `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform"}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
 | `POST /v1/pair` | pairing token | see "Pairing" |
 
@@ -340,6 +370,8 @@ indexed NAS **videos** (and XMP sidecars) as well as photos; `GET /v1/nas/files`
 | Blob size | 4 GiB | `422 invalid_request` |
 | Unfinished uploads per device | 32 | `429 rate_limited` |
 | Requests per device | 30 per second, burst 120 | `429` + `Retry-After` |
+| Preview GETs per device (`/preview`, `/poster`, `/proxy`; 0.6.0) | 200 per second, burst 600, a bucket of their own | `429` + `Retry-After` |
+| Items per preview warm (0.6.0) | 500 | `422 invalid_request` |
 | Unauthenticated requests per address (pair, failed device auth) | 10 per minute, burst 10 | `429` + `Retry-After` |
 | Admin sign-in and setup per address | 5 per minute, burst 5 | `429` + `Retry-After` |
 
@@ -361,7 +393,7 @@ Every error is JSON:
 | 400 | `invalid_request`, `invalid_cursor`, `invalid_json` |
 | 401 | `unauthorized`, `invalid_pairing_token` |
 | 403 | `forbidden` (admin: missing `X-Hoard-Admin` or foreign `Origin`; `DELETE /v1/blobs`: an original or another device's preview; `DELETE /v1/originals`: a NAS file) |
-| 404 | `not_found` |
+| 404 | `not_found`, `preview_unavailable` (0.6.0, `details.reason`) |
 | 405 | `method_not_allowed` |
 | 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced) |
 | 413 | `too_large` |
@@ -373,7 +405,8 @@ Every error is JSON:
 
 ## Server implementation
 
-Go, `server/` (`hoard-server`, formerly `reveal-sync`), a static binary (`CGO_ENABLED=0`) and a distroless non-root image:
+Go, `server/` (`hoard-server`, formerly `reveal-sync`), a static binary (`CGO_ENABLED=0`) and a non-root image
+(distroless until 0.5.0; Alpine with libvips and ffmpeg for the previews since 0.6.0, ADR 0015):
 
 - **SQLite** through the pure-Go `modernc.org/sqlite`, WAL, `busy_timeout`, foreign keys, write transactions
   `BEGIN IMMEDIATE`; the schema is versioned by `PRAGMA user_version` with numbered migrations embedded in the binary.
