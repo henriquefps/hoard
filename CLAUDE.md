@@ -17,7 +17,7 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `ANDROID_SERIAL`); never install test builds on the owner's phone.
 - End-to-end testing against a real Samba: see `docs/testing/release-1.0.0.md` (container, routes
   through a killable throttled TCP proxy, driving the WebView over CDP in debug builds).
-- Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/app/src/main/cpp`): see
+- Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/core/image/src/main/cpp`): see
   `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
   `HOARD_ARW_DIR` JVM tests. Real photos are private: never commit them, use copies.
 - Culling (ADR 0008, `src/features/cull/`): the WebView shows JPEG files the image core writes
@@ -60,6 +60,13 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   cookie). `cd server/web && bun run lint && bun run typecheck && bun run test && bun run e2e` (Playwright against the
   binary with a synthetic library; `HOARD_WEB_SCREENSHOTS=1`, `HOARD_WEB_BENCH=1`): `docs/testing/web-gallery.md`.
   Strings in `server/web/src/i18n/locales/{en,pt-BR}.json`.
+- **Hoard 2 (native, ADR 0019)**: one Gradle project. Native code lives in `android/core/{smb,image,xmp}` (used by the
+  Capacitor `:app` and by the Compose app `:native`, id `dev.hfps.hoard.next` until the swap), the database and the
+  one-time import of `hoardSQLite.db` in `:core:data` (Room, schema = Capacitor v7), the hfps theme in
+  `:core:designsystem`. `cd android && ./gradlew testDebugUnitTest` runs every JVM test; `:native:recordRoborazziDebug`
+  re-records screenshots. A Capacitor migration also regenerates `LegacyMigrations.kt`
+  (`bun scripts/legacy-db/export-migrations.ts`) and the fixtures (`bun scripts/legacy-db/fixtures.ts`). Upgrade test
+  with `-Phoard.native.sameId=true` on the emulator only: `docs/testing/native-2a.md`.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules
@@ -79,7 +86,7 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `src/i18n/locales/en.json` and `pt-BR.json`.
 - **Plugin contract rule.** `src/plugins/smb/definitions.ts` is the contract. Any change touches, in
   the same PR: `definitions.ts`, the web mock (`web.ts` + `mockData.ts`, with tests in
-  `web.test.ts`) and the Kotlin plugin (`android/app/src/main/java/dev/hfps/hoard/smb/`, including
+  `web.test.ts`) and the Kotlin plugin (facade `android/app/.../smb/HoardSmbPlugin.kt`, the rest in `android/core/smb/`, including
   `ErrorCode.kt`). Every rejection carries a `HoardSmbErrorCode` in `error.code`.
 - **Locations** (ADR 0005): file calls take a `location` (`LocationRef`); pages work through
   `BrowseLocation.run` (`src/features/locations/useBrowseLocation.ts`), never with a raw
