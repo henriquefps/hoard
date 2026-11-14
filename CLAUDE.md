@@ -47,6 +47,13 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `docs/testing/persistable-handoff.md`. Test with Reveal's debug APK on the emulator only
   (`./gradlew :app:assembleDebug` in a copy of the reveal repo; its `release` variant did not compile in a clean clone
   on 2026-11-12).
+- **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`): Go + SQLite,
+  formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`; includes an
+  end-to-end test and `TestOpensRevealSyncDataDir`), `docker build -t hoard-server .`, `gofmt`/golangci-lint as in
+  `.github/workflows/server.yml`. Releases: tag `server-v<version>` (`server-release.yml` → GHCR); the app keeps `v*`.
+  The bun scripts (ESLint, Prettier, Vitest, tsc) ignore `server/`. Run test servers on temp dirs and other ports;
+  never touch the owner's deployed server (`~/Apps/reveal-sync` on cachyos-fps, containers `reveal-sync` and
+  `reveal-sync-tunnel`) or its data.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules
@@ -84,4 +91,9 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   update `src/db/types.ts`, `docs/adr/0003-storage.md` and `src/db/db.test.ts`.
 - All data access goes through the `Db` interface (`useDb`, `useLiveQuery`); the app's `Db` notifies
   live queries after every committed write (`src/db/changes.ts`).
+- **Server compatibility** (ADR 0012): `/v1` is frozen for Reveal — additions only (new optional fields, new routes;
+  incompatible changes go to `/v2` next to it), each written into ADR 0013 and `api/openapi.yaml` in the same PR;
+  `server/testdata/v1-routes.txt` never shrinks. Keep `rvk1_` keys, the `revealsync://pair` URI, the SQLite schema
+  (append migrations, never edit one), and the on-disk names `reveal-sync.db` (when present) and
+  `<backup root>/reveal-sync/`. `server/testdata/compat/` must keep opening as is.
 - Code, identifiers, comments and ADRs in English.

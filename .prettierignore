@@ -2,3 +2,4 @@ android
 dist
 bun.lock
 src/components/ui
+server
