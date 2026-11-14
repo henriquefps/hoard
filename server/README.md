@@ -20,6 +20,8 @@ it moved here ([ADR 0012](../docs/adr/0012-hoard-server.md)); an existing reveal
 - Every app has its own revocable key (pair by QR code); Hoard and Reveal on one phone are grouped as one device
   ([ADR 0017](../docs/adr/0017-device-identity.md)). There is no anonymous mode.
 - Conflicts never lose an edit: the newer one wins and the other becomes a virtual copy.
+- A web gallery for your computers on the LAN or Tailscale: browse every item by date, search and filter, cull with
+  Hoard's keys, view at 100 %, play videos, download originals or a zip ([ADR 0018](../docs/adr/0018-web-gallery.md)).
 
 The protocol (for the apps and any other client) is [ADR 0013](../docs/adr/0013-server-protocol.md), with an OpenAPI
 description in [`api/openapi.yaml`](api/openapi.yaml). `/v1` is frozen: additions only (ADR 0012).
@@ -48,6 +50,26 @@ volumes under `/mnt/<name>` to offer more.
 
 Building the image yourself: `docker build -t hoard-server .` from `server/` with BuildKit (the default with buildx);
 the legacy builder needs `--build-arg BUILDPLATFORM=linux/amd64 --build-arg TARGETOS=linux --build-arg TARGETARCH=amd64`.
+
+## Web gallery
+
+Open `http://<this machine>:3071/` from your network or Tailscale and sign in with the admin password. The gallery
+answers only direct LAN/Tailscale requests (like the setup page, and even when the setup page is allowed through a
+proxy): through a Cloudflare Tunnel or a reverse proxy it is `404`. Behind `tailscale serve`, open the Tailscale
+address and port directly.
+
+- **Gallery**: every photo and video, newest first, with a header per day and a jump bar of years and months; badges
+  for RAW+JPG, RAW, videos (duration), motion photos, stars, pick / reject and photos edited in Reveal. Filters: kind,
+  camera, stars, picked / rejected / not flagged, folder, dates, edited; the search matches file and folder names.
+- **Viewer**: the screen preview, then the original when the browser can show it (JPEG); Z for 100 %, drag to pan; I
+  for details (exposure, files with downloads, who picked or rated it); videos from the server's proxy.
+- **Culling** with Hoard's keys: P pick, X reject, U clear, 1-5 stars (0 clears), ←/→, Ctrl+Z; in the grid they apply
+  to the selection (Ctrl/Shift-click, Ctrl+A). Decisions sync with Hoard and Reveal (ADR 0016); theirs appear within
+  seconds without a reload.
+- **Folders**: the NAS folders as a tree with counts.
+- **Downloads**: one file, or a zip the server streams (a pair's RAW, JPEG and sidecar; any selection).
+
+Changing the admin password signs every browser out. There is no setting to turn it on: it is part of the server.
 
 ## Configuration
 
@@ -143,6 +165,13 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.8.0 (web gallery)
+
+0.8.0 adds the web gallery (ADR 0018) with a database migration (schema 7: gallery sessions, an index on previews)
+applied in place on start: no step to take, and nothing changes for Reveal or Hoard. `http://<server>:3071/` now opens
+the gallery on your network (it used to redirect to `/admin/`, which is unchanged). **Back up `data/` before
+upgrading**: 0.7.x refuses a schema-7 database.
+
 ## Upgrading to 0.7.0 (culling, one device per phone)
 
 0.7.0 adds culling records (ADR 0016) and physical devices (ADR 0017) with database migrations (schema 6) applied in
@@ -191,6 +220,7 @@ arm64. The Hoard app keeps its own `v*` tags.
 ## Development
 
 ```sh
+(cd web && bun install && bun run build)   # the web gallery into internal/webui/dist (optional for Go tests)
 go vet ./... && go test -race ./...   # unit tests, an end-to-end test that builds and runs the binary, the
                                       # reveal-sync and 0.4.0 data directory tests and the Reveal contract test
 golangci-lint run ./...
@@ -200,8 +230,12 @@ HOARD_SAMPLES_DIR=~/raw-samples go test -run RealSamples -v ./internal/media/ ./
 HOARD_BENCH_FILES=20000 go test -run TestIndexLargeTree -v -timeout 30m ./internal/nas/   # indexing benchmark
 ```
 
+Web gallery (`web/`, Vite + React + shadcn, ADR 0018): `bun run dev` (proxies `/web` to a local server,
+`HOARD_SERVER`), `bun run lint`, `bun run typecheck`, `bun run test`, `bun run e2e` (Playwright against the binary with a
+synthetic library; see `docs/testing/web-gallery.md`).
+
 Layout: `main.go` (flags, database file), `internal/server` (HTTP: `/v1` device API, `/admin` setup page in
-`internal/server/web`), `internal/store` (SQLite, migrations in `internal/store/migrations`: never edit a released
+`internal/server/web`, the gallery's `/web/` API in `web*.go`), `internal/webui` (the embedded gallery build), `internal/store` (SQLite, migrations in `internal/store/migrations`: never edit a released
 one), `internal/blobstore`, `internal/nas` (indexer), `internal/mounts` (path confinement), `internal/fingerprint`
 (the `v1:` rule, vectors shared with Reveal in `testdata/fingerprint-vectors.txt`), `internal/auth`,
 `internal/ratelimit`, `internal/xmp` (culling values of XMP sidecars, read only), `internal/media` (metadata readers: EXIF/TIFF, JPEG, HEIF, CR3, RAF, motion photos, ffprobe,

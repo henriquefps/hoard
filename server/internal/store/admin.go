@@ -31,13 +31,16 @@ func (s *Store) CreateAdmin(ctx context.Context, hash string) error {
 	return nil
 }
 
-// SetAdminPassword replaces the password and ends every session.
+// SetAdminPassword replaces the password and ends every session (setup page and web gallery).
 func (s *Store) SetAdminPassword(ctx context.Context, hash string) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "UPDATE admin SET password_hash = ? WHERE id = 1", hash); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, "DELETE FROM sessions")
+		if _, err := tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "DELETE FROM web_sessions")
 		return err
 	})
 }
@@ -64,10 +67,13 @@ func (s *Store) DeleteSession(ctx context.Context, idHash []byte) error {
 	return err
 }
 
-// Sweep removes expired sessions and pairing tokens.
+// Sweep removes expired sessions (setup page and web gallery) and pairing tokens.
 func (s *Store) Sweep(ctx context.Context) error {
 	now := s.nowMs()
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at <= ?", now); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM web_sessions WHERE expires_at <= ?", now); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, "DELETE FROM pairing_tokens WHERE used_at IS NULL AND expires_at <= ?", now-24*3600*1000)

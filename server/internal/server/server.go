@@ -108,6 +108,8 @@ type Server struct {
 
 	errMu  sync.Mutex
 	errors []ErrorEvent
+
+	web webState // the web gallery (ADR 0018)
 }
 
 // ErrorEvent is one recent server-side failure, for the status page (no paths, names or keys).
@@ -221,6 +223,7 @@ func (s *Server) Run(ctx context.Context) {
 		defer t.Stop()
 		for {
 			s.sweep(ctx)
+			s.sweepWeb(ctx)
 			select {
 			case <-ctx.Done():
 				return
@@ -305,13 +308,20 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.routesAPI(mux)
 	s.routesAdmin(mux)
+	s.routesWeb(mux)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		if directLocal(r) { // the web gallery (ADR 0018)
+			s.serveWebApp(w, r)
+			return
+		}
+		// Through a proxy the gallery never answers; the setup page does when the admin allowed it (ADR 0013).
 		if s.adminAllowed(r) {
 			http.Redirect(w, r, "/admin/", http.StatusFound)
 			return
 		}
 		writeError(w, http.StatusNotFound, "not_found", "Not found.", nil)
 	})
+
 	return s.logRequests(s.recoverPanics(jsonMux(mux)))
 }
 

@@ -31,6 +31,13 @@ const (
 	tagPixelYDimension = 0xA003
 	tagLensMake        = 0xA433
 	tagLensModel       = 0xA434
+	// Exposure (read on demand for the web gallery's info panel, ADR 0018; not part of the stored metadata).
+	tagExposureTime = 0x829A
+	tagFNumber      = 0x829D
+	tagISO          = 0x8827
+	tagExposureBias = 0x9204
+	tagFocalLength  = 0x920A
+	tagFocal35      = 0xA405
 
 	gpsLatRef    = 0x0001
 	gpsLat       = 0x0002
@@ -229,6 +236,7 @@ type exifFields struct {
 	gps                         *GPS
 	gpsDate                     string // "YYYY:MM:DD"
 	gpsTime                     []float64
+	exposure                    Exposure
 }
 
 func (f *exifFields) size(w, h uint32) {
@@ -310,6 +318,37 @@ func (t *tiffReader) exif(d ifd, f *exifFields) {
 	w, _ := t.uint(d, tagPixelXDimension)
 	h, _ := t.uint(d, tagPixelYDimension)
 	f.size(w, h)
+	t.readExposure(d, &f.exposure)
+}
+
+// readExposure fills the exposure fields still unknown from an EXIF IFD.
+func (t *tiffReader) readExposure(d ifd, e *Exposure) {
+	first := func(tag uint16) (float64, bool) {
+		v := t.rationals(d, tag)
+		if len(v) == 0 || math.IsNaN(v[0]) || math.IsInf(v[0], 0) {
+			return 0, false
+		}
+		return v[0], true
+	}
+	if v, ok := first(tagExposureTime); ok && v > 0 && v < 1e5 && e.ExposureTime == 0 {
+		e.ExposureTime = v
+	}
+	if v, ok := first(tagFNumber); ok && v > 0 && v < 1000 && e.FNumber == 0 {
+		e.FNumber = round(v, 2)
+	}
+	if v, ok := t.uint(d, tagISO); ok && v > 0 && e.ISO == 0 {
+		e.ISO = int(v)
+	}
+	if v, ok := first(tagExposureBias); ok && math.Abs(v) < 100 && e.Bias == nil {
+		b := round(v, 2)
+		e.Bias = &b
+	}
+	if v, ok := first(tagFocalLength); ok && v > 0 && v < 1e5 && e.FocalLength == 0 {
+		e.FocalLength = round(v, 1)
+	}
+	if v, ok := t.uint(d, tagFocal35); ok && v > 0 && e.FocalLength35 == 0 {
+		e.FocalLength35 = int(v)
+	}
 }
 
 func (t *tiffReader) gpsIFD(d ifd, f *exifFields) {

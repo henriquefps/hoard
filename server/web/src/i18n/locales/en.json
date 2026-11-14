@@ -1,0 +1,174 @@
+{
+  "app": { "name": "Hoard" },
+  "common": { "loading": "Loading", "retry": "Try again" },
+  "nav": { "label": "Sections", "gallery": "Gallery", "folders": "Folders" },
+  "search": {
+    "label": "Search",
+    "placeholder": "Search file and folder names",
+    "clear": "Clear search"
+  },
+  "sync": {
+    "pending_one": "{{count}} change waiting to be saved",
+    "pending_other": "{{count}} changes waiting to be saved"
+  },
+  "account": {
+    "menu": "Settings",
+    "version": "hoard-server {{version}}",
+    "language": "Language",
+    "setup": "Setup page",
+    "signOut": "Sign out"
+  },
+  "languages": { "en": "English", "pt-BR": "Português (Brasil)" },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "palette": "Palette",
+    "palettes": { "blue": "Blue", "olive": "Olive", "violet": "Violet", "rose": "Rose", "graphite": "Graphite" }
+  },
+  "signIn": {
+    "password": "Admin password",
+    "hint": "The password of this server's setup page.",
+    "submit": "Sign in",
+    "wrong": "Wrong password.",
+    "rateLimited": "Too many attempts. Wait a minute and try again.",
+    "failed": "Could not sign in. Check that the server is running.",
+    "setupFirst": "This server has no admin password yet.",
+    "setupLink": "Open the setup page"
+  },
+  "kind": {
+    "raw": "RAW",
+    "rawJpg": "RAW+JPG",
+    "video": "Video",
+    "motion": "Motion",
+    "name": { "photo": "Photo", "pair": "RAW+JPG", "video": "Video", "motion": "Motion photo" }
+  },
+  "badges": { "edited": "Edited in Reveal" },
+  "cull": {
+    "pick": "Pick",
+    "reject": "Reject",
+    "unflag": "Clear flag",
+    "rate": "Stars",
+    "picked": "picked",
+    "rejected": "rejected",
+    "unflagged": "Not flagged",
+    "noStars": "No stars",
+    "stars_one": "{{count}} star",
+    "stars_other": "{{count}} stars",
+    "applied_one": "Changed {{count}} item",
+    "applied_other": "Changed {{count}} items",
+    "undo": "Undo"
+  },
+  "filters": {
+    "kind": "Kind",
+    "camera": "Camera",
+    "rating": "Rating",
+    "anyRating": "Any rating",
+    "atLeast_one": "{{count}} star or more",
+    "atLeast_other": "{{count}} stars or more",
+    "flag": "Flag",
+    "flags": { "pick": "Picked", "reject": "Rejected", "none": "Not flagged" },
+    "dates": "Dates",
+    "from": "From",
+    "to": "To",
+    "clearDates": "Clear dates",
+    "edited": "Edited",
+    "clearFolder": "Show every folder",
+    "clear": "Clear filters",
+    "unknownCamera": "Unknown camera",
+    "nSelected_one": "{{count}} selected",
+    "nSelected_other": "{{count}} selected"
+  },
+  "gallery": {
+    "gridLabel_one": "{{count}} item",
+    "gridLabel_other": "{{count}} items",
+    "itemsCount_one": "{{formatted}} item",
+    "itemsCount_other": "{{formatted}} items",
+    "shownOf": "{{shown}} of {{total}}",
+    "jumpBar": "Jump to a month",
+    "cellSize": "Thumbnail size",
+    "sizes": { "s": "Small", "m": "Medium", "l": "Large" },
+    "noMatch": "Nothing matches",
+    "noMatchHint": "No item matches the search and filters.",
+    "emptyTitle": "No photos yet",
+    "emptyHint": "Add NAS folders on the setup page; the server indexes them in the background.",
+    "loadFailed": "Could not load the library",
+    "noPreviews": "Previews are turned off on this server, so thumbnails cannot be shown."
+  },
+  "select": {
+    "add": "Select",
+    "remove": "Deselect",
+    "clear": "Clear selection",
+    "toolbar": "Selection",
+    "count_one": "{{formatted}} selected",
+    "count_other": "{{formatted}} selected"
+  },
+  "download": {
+    "zip": "Download zip",
+    "item": "Download original",
+    "file": "Download {{name}}",
+    "started_one": "Downloading {{count}} file ({{size}})",
+    "started_other": "Downloading {{count}} files ({{size}})",
+    "failed": "The download could not start."
+  },
+  "viewer": {
+    "close": "Back to the gallery",
+    "back": "Back to the gallery",
+    "gone": "This item is no longer in the library.",
+    "position": "{{index}} of {{total}}",
+    "zoom": "Zoom to 100%",
+    "info": "Info",
+    "more": "More",
+    "autoAdvance": "Next photo after pick or reject",
+    "previous": "Previous",
+    "next": "Next",
+    "culling": "Culling",
+    "playMotion": "Play motion",
+    "stopMotion": "Show the still",
+    "videoPreparing": "Preparing the video on the server",
+    "videoUnavailable": "This video cannot be played.",
+    "layer": { "thumb": "Thumbnail", "screen": "Preview", "original": "Original" }
+  },
+  "info": {
+    "when": "Taken",
+    "camera": "Camera",
+    "size": "Size",
+    "place": "Place",
+    "culling": "Culling",
+    "files": "Files",
+    "equiv": "equiv.",
+    "audio": "{{codec}} audio",
+    "label": "label {{label}}",
+    "byNas": "from a NAS sidecar",
+    "byWeb": "web gallery",
+    "byDevice": "device {{id}}",
+    "editedInReveal": "Edited in Reveal",
+    "field": { "flag": "Flag", "rating": "Stars", "label": "Label" },
+    "role": { "raw": "RAW", "rendered": "Image", "video": "Video", "sidecar": "XMP sidecar" },
+    "timeSource": {
+      "exif-gps": "Time zone from GPS",
+      "quicktime": "Time from the video file",
+      "mtime": "No capture time: the file's date"
+    }
+  },
+  "folders": {
+    "eyebrow": "Library",
+    "uploads": "Uploaded from devices",
+    "unknown": "Unknown folder",
+    "expand": "Expand {{name}}",
+    "collapse": "Collapse {{name}}",
+    "loadFailed": "Could not load the folders.",
+    "emptyTitle": "No folders yet",
+    "emptyHint": "Add NAS folders on the setup page.",
+    "backupsLater": "Device backups will appear here in a later version.",
+    "state": {
+      "pending": "Waiting",
+      "indexing": "Indexing",
+      "error": "Error",
+      "unavailable": "Unavailable",
+      "disabled": "Off",
+      "removed": "Removed"
+    }
+  }
+}

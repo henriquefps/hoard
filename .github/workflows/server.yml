@@ -21,6 +21,59 @@ permissions:
   contents: read
 
 jobs:
+  web:
+    # The web gallery (server/web, ADR 0018): lint, types, unit tests and the build the binary embeds.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webui-dist
+          path: server/internal/webui/dist
+          retention-days: 3
+
+  e2e:
+    # Playwright against the binary with the synthetic library (docs/testing/web-gallery.md).
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: server/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: ffmpeg and libvips
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libvips-tools libheif-plugin-libde265 libheif-plugin-dav1d
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: server/web/test-results
+          retention-days: 7
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -55,6 +108,13 @@ jobs:
 
       - name: go test -race (unit + end-to-end + reveal-sync and 0.4.0 compatibility + Reveal contract)
         run: go test -race -count=1 ./...
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Web gallery build (embedded in the binaries)
+        run: cd web && bun install --frozen-lockfile && bun run build
 
       - name: Static binaries (linux amd64 + arm64)
         run: |
