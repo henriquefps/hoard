@@ -71,6 +71,7 @@ class LogicTest {
             Place.Drive("SD", "1234-abcd"),
             Place.Drive(null, "FFFF-0000"),
         ).inOrder()
+        assertThat(state.favorites.map { it.share }).containsExactly("photos", "", "", "").inOrder()
     }
 
     @Test fun importOutcomesBecomeScreenStates() {

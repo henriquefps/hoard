@@ -169,7 +169,8 @@ private fun favoriteSubtitle(favorite: FavoriteItem): String {
         Place.Phone -> stringResource(R.string.files_this_phone)
         is Place.Drive -> p.label ?: stringResource(R.string.files_volume_unknown, p.uuid)
     }
-    val path = favorite.path.ifEmpty { stringResource(R.string.files_root) }
-    return "$place · $path"
+    // As Hoard 1 says it: the machine, its share, then the folder ("NAS · photos · 2026/Lisboa").
+    val where = listOf(favorite.share, favorite.path).filter { it.isNotEmpty() }
+    return listOf(place).plus(where.ifEmpty { listOf(stringResource(R.string.files_root)) }).joinToString(" · ")
 }
 

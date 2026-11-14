@@ -31,8 +31,11 @@ data class VolumeItem(
     val totalBytes: Long?,
 )
 
-/** A favorite folder; [place] says where (machine name, this phone, a drive), [path] is '' for the root. */
-data class FavoriteItem(val id: String, val label: String, val place: Place, val path: String)
+/**
+ * A favorite folder; [place] says where (machine name, this phone, a drive), [share] is the SMB share ('' on the phone
+ * and drives), [path] is '' for the share's or the volume's root.
+ */
+data class FavoriteItem(val id: String, val label: String, val place: Place, val path: String, val share: String = "")
 
 sealed interface Place {
     data class Machine(val name: String) : Place
@@ -95,7 +98,7 @@ class FilesViewModel(
                             Place.Drive(items.firstOrNull { it.uuid.equals(uuid, ignoreCase = true) }?.label, uuid)
                         }
                     }
-                    FavoriteItem(f.id, f.label, place, f.path)
+                    FavoriteItem(f.id, f.label, place, f.path, f.share)
                 },
             )
         }

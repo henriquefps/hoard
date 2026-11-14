@@ -56,7 +56,7 @@ class ShellBehaviourTest {
         compose.onNodeWithText("This phone").assertIsDisplayed()
         compose.onNodeWithText("SanDisk SD card").assertIsDisplayed()
         compose.onNode(hasScrollAction()).performScrollToNode(hasText("Lisboa"))
-        compose.onNodeWithText("NAS · 2026/Lisboa").assertIsDisplayed()
+        compose.onNodeWithText("NAS · photos · 2026/Lisboa").assertIsDisplayed()
         compose.onNodeWithContentDescription("Settings").performClick()
         assertThat(settings).isEqualTo(1)
     }

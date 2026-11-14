@@ -39,7 +39,7 @@ class FirstLaunchTest {
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("NAS")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("192.168.1.10 and 2 more addresses").assertExists()
             compose.onNode(hasScrollAction()).performScrollToNode(hasText("Lisboa"))
-            compose.onNodeWithText("NAS · 2026/Lisboa").assertExists()
+            compose.onNodeWithText("NAS · photos · 2026/Lisboa").assertExists()
         }
     }
 }

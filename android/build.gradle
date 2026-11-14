@@ -7,6 +7,9 @@ buildscript {
         mavenCentral()
     }
     dependencies {
+        // R8 newer than AGP 8.13's own: it reads Kotlin 2.4 metadata (the bundled one warns and keeps it unparsed, which
+        // :app's release shrinking must not rely on). Drop this line with the swap PR's move to AGP 9 (ADR 0019).
+        classpath 'com.android.tools:r8:9.5.32'
         classpath 'com.android.tools.build:gradle:8.13.0'
         classpath 'com.google.gms:google-services:4.4.4'
         // Kotlin for the native modules (core/*, the HoardSmb plugin in :app, :native; ADR 0019). One version for

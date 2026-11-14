@@ -23,10 +23,10 @@ object Samples {
             VolumeItem("9F3E-11C0", "USB drive", "usb", "mountedReadOnly", 200 * GB, 512 * GB),
         ),
         favorites = listOf(
-            FavoriteItem("f1", "Lisboa", Place.Machine("NAS"), "2026/Lisboa"),
+            FavoriteItem("f1", "Lisboa", Place.Machine("NAS"), "2026/Lisboa", share = "photos"),
             FavoriteItem("f2", "Camera", Place.Phone, "DCIM/Camera"),
             FavoriteItem("f3", "Sony card", Place.Drive("SanDisk SD card", "1234-ABCD"), "DCIM/100MSDCF"),
-            FavoriteItem("f4", "Users", Place.Machine("Família — desktop ✓"), ""),
+            FavoriteItem("f4", "Users", Place.Machine("Família — desktop ✓"), "", share = "Users"),
         ),
     )
 
