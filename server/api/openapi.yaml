@@ -28,6 +28,7 @@ tags:
   - name: items
   - name: previews
   - name: culling
+  - name: edits
   - name: devices
   - name: web
     description: The web gallery's API (ADR 0018), outside /v1.
@@ -708,11 +709,15 @@ paths:
         `Cache-Control: private, max-age=31536000, immutable`, otherwise `private, no-cache` (revalidate: 304).
         `X-Hoard-Preview: stale` = an older preview (older recipe or source) served while the new one is made.
         HEAD and Range work. Its own per-device rate (200/s, burst 600), separate from the API's.
+        With `edit` (hoard-server 0.9.0, ADR 0020): the same sizes made from Reveal's edited preview of that version
+        (or of the item's primary edit), header `X-Hoard-Edit: <versionId>`; `404 preview_unavailable` with reason
+        `no_edit` when the item has no such edit.
       parameters:
         - $ref: "#/components/parameters/ItemId"
         - $ref: "#/components/parameters/PreviewSize"
         - $ref: "#/components/parameters/PreviewFormat"
         - $ref: "#/components/parameters/PreviewVersion"
+        - $ref: "#/components/parameters/PreviewEdit"
       responses:
         "200": { $ref: "#/components/responses/PreviewImage" }
         "202": { $ref: "#/components/responses/PreviewPending" }
@@ -789,6 +794,11 @@ paths:
                   type: array
                   description: Which previews (default thumb).
                   items: { type: string, enum: [thumb, screen, proxy] }
+                edit:
+                  type: string
+                  description: >-
+                    (0.9.0, ADR 0020) thumb and screen of this edit: a Reveal version id, or `primary`. An item without
+                    it answers them `unavailable` with reason `no_edit`; proxy is unaffected.
       responses:
         "200":
           description: Per item (each once, in the order asked), the state of each preview asked; unknown or deleted ids in missing
@@ -805,6 +815,7 @@ paths:
                       required: [id]
                       properties:
                         id: { $ref: "#/components/schemas/Uuid" }
+                        edit: { $ref: "#/components/schemas/Uuid", description: "the version whose edit thumb and screen are (with edit)" }
                         thumb: { $ref: "#/components/schemas/PreviewState" }
                         screen: { $ref: "#/components/schemas/PreviewState" }
                         proxy: { $ref: "#/components/schemas/PreviewState" }
@@ -815,6 +826,127 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/items/{itemId}/edits/{versionId}:
+    put:
+      tags: [edits]
+      summary: "Store Reveal's edited preview of one version of an item (hoard-server 0.9.0, ADR 0020)"
+      description: |
+        The body is one sRGB JPEG or WebP rendered by Reveal from the version's recipe: upright pixels, long edge 16 to
+        2560 px (min(2560, the edit's own long edge)), at most 8 MiB. The server decodes it whole, checks the size and
+        the colour space (no ICC profile = sRGB; an sRGB or grey profile is accepted; any other profile, CMYK or an
+        animated WebP is refused) and removes every metadata segment (EXIF, XMP, ICC, comments) without re-encoding.
+        Metadata travels in headers. A version has one edit on the server; a PUT on another item moves it there.
+
+        - The same `X-Hoard-Recipe-Digest` as the stored edit of the version: the stored image stays and the body is
+          not read (send it empty, or with `Expect: 100-continue`); only label, primary, virtual copy and `editedAt`
+          change (`updated`), or nothing (`unchanged`, no new revision).
+        - A different digest needs the image (else `422` reason `image_required`); an `X-Hoard-Edited-At` older than
+          the stored one is `409 conflict` (reason `older`, with the stored `editedAt` and `recipeDigest`). A time
+          more than 10 minutes ahead of the server is clipped.
+        - `X-Hoard-Primary: true` makes it the item's primary edit (at most one; the last set wins).
+
+        Every change gives the item a new revision in the items feed (its `edits` array). Thumb and screen previews
+        are made from the upload (`GET .../preview?edit=<versionId>`).
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/VersionId"
+        - name: X-Hoard-Recipe-Digest
+          in: header
+          required: true
+          description: "Reveal's digest of what was rendered (recipe + render pipeline); 1-128 of A-Z a-z 0-9 . _ : + / = -"
+          schema: { type: string, maxLength: 128 }
+        - name: X-Hoard-Edited-At
+          in: header
+          required: true
+          description: When the version last changed on the device, Unix ms
+          schema: { type: integer, format: int64 }
+        - name: X-Hoard-Label
+          in: header
+          description: "The version's name, percent-encoded UTF-8, at most 64 characters (\"\" = none)"
+          schema: { type: string }
+        - name: X-Hoard-Virtual-Copy
+          in: header
+          schema: { type: boolean, default: false }
+        - name: X-Hoard-Primary
+          in: header
+          schema: { type: boolean, default: false }
+      requestBody:
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/webp:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EditWriteResult" }
+        "200":
+          description: "replaced (a new image), updated (metadata) or unchanged"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EditWriteResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "`conflict`, reason `older`: the server has a later edit of this version (details: editedAt, recipeDigest)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "422":
+          description: >-
+            `invalid_image` with details.reason `format`, `decode`, `dimensions`, `colour_space` or `animated`;
+            `invalid_request` with reason `image_required`, `too_many_edits` (32 per item) or `not_applicable` (a video)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { description: "`unavailable`: previews (and so edits) are off on this server" }
+    get:
+      tags: [edits]
+      summary: The stored upload of a version's edit (metadata removed); Range works
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/VersionId"
+        - name: v
+          in: query
+          description: The edit's image SHA-256 (ETag) for an immutable answer
+          schema: { type: string }
+      responses:
+        "200":
+          description: "image/jpeg or image/webp; ETag the image's SHA-256, X-Hoard-Recipe-Digest"
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/webp:
+              schema: { type: string, format: binary }
+        "304": { description: Not modified (If-None-Match) }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [edits]
+      summary: Remove a version's edit from an item (idempotent)
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/VersionId"
+      responses:
+        "200":
+          description: "deleted, or absent (nothing to delete; a tombstoned item has none)"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, itemId, rev]
+                properties:
+                  status: { type: string, enum: [deleted, absent] }
+                  itemId: { $ref: "#/components/schemas/Uuid" }
+                  rev: { type: integer, description: "the item's revision" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /v1/culling:
     post:
       tags: [culling]
@@ -1052,13 +1184,14 @@ paths:
   /web/items/{itemId}/preview:
     get:
       tags: [web]
-      summary: As GET /v1/items/{itemId}/preview, with the gallery session
+      summary: As GET /v1/items/{itemId}/preview, with the gallery session (edit included)
       security: [{ webSession: [] }]
       parameters:
         - $ref: "#/components/parameters/ItemId"
         - $ref: "#/components/parameters/PreviewSize"
         - $ref: "#/components/parameters/PreviewFormat"
         - $ref: "#/components/parameters/PreviewVersion"
+        - $ref: "#/components/parameters/PreviewEdit"
       responses:
         "200": { $ref: "#/components/responses/PreviewImage" }
         "202": { $ref: "#/components/responses/PreviewPending" }
@@ -1115,6 +1248,40 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/PreviewNotFound" }
         "503": { description: "The NAS file is offline or changed (Retry-After), or previews are off" }
+  /web/items/{itemId}/edits/{versionId}:
+    get:
+      tags: [web]
+      summary: "As GET /v1/items/{itemId}/edits/{versionId} (0.9.0): the gallery's \"Download edited JPEG\" (download=1: an attachment named \"<stem> (<label>).jpg\")"
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/VersionId"
+        - name: download
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200": { description: The stored upload }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /web/items/{itemId}/edits/{versionId}/{name}:
+    get:
+      tags: [web]
+      summary: "As /edits/{versionId}: the name ends the URL; it is ignored"
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/VersionId"
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+        - name: download
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200": { description: The stored upload }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
   /web/items/{itemId}/files/{fingerprint}:
     get:
       tags: [web]
@@ -1298,6 +1465,17 @@ components:
       in: query
       description: JPEG (default, decodes everywhere) or WebP (about a third smaller at the same SSIM; ADR 0015 "Formats").
       schema: { type: string, enum: [jpeg, webp], default: jpeg }
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      description: Reveal's version id (ADR 0013 "Records"), lower-case UUID
+      schema: { $ref: "#/components/schemas/Uuid" }
+    PreviewEdit:
+      name: edit
+      in: query
+      description: "(0.9.0, ADR 0020) Reveal's edited preview instead of the original: a version id, or primary"
+      schema: { type: string }
     PreviewVersion:
       name: v
       in: query
@@ -1377,7 +1555,7 @@ components:
       description: >-
         `not_found` (no such live item) or `preview_unavailable` with `details.reason`: `not_applicable` (a poster of a
         still, a proxy of a photo), `unsupported` (no decoder for the file), `failed` (generation failed three times),
-        `no_tools`.
+        `no_tools`, `no_edit` (0.9.0: the item has no such edit).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -1492,9 +1670,20 @@ components:
           type: array
           description: >-
             Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
-            `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0). Clients
-            ignore names they do not know.
-          items: { type: string, enum: [items, previews, culling, device-identity] }
+            `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0), `edits` =
+            ADR 0020 (0.9.0, with previews). Clients ignore names they do not know.
+          items: { type: string, enum: [items, previews, culling, device-identity, edits] }
+        edits:
+          type: object
+          description: Present with the edits feature (ADR 0020).
+          properties:
+            maxBytes: { type: integer }
+            maxEdge: { type: integer }
+            minEdge: { type: integer }
+            formats: { type: array, items: { type: string, enum: [jpeg, webp] } }
+            maxPerItem: { type: integer }
+            maxLabel: { type: integer }
+            maxDigest: { type: integer }
         previews:
           type: object
           description: Present when the server makes previews (ADR 0015). Not in limits, which is reveal-sync's.
@@ -1530,7 +1719,7 @@ components:
         height: { type: integer }
         bytes: { type: integer, description: "the JPEG's (the MP4's for a proxy)" }
         webpBytes: { type: integer, description: "thumb and screen: the WebP's" }
-        reason: { type: string, enum: [not_applicable, unsupported, failed, no_tools] }
+        reason: { type: string, enum: [not_applicable, unsupported, failed, no_tools, no_edit] }
     Role:
       type: string
       enum: [raw, rendered, video, sidecar]
@@ -1626,6 +1815,34 @@ components:
         files:
           type: array
           items: { $ref: "#/components/schemas/ItemFile" }
+        edits:
+          type: array
+          description: "Reveal's edited previews (0.9.0, ADR 0020), the primary first; absent when none"
+          items: { $ref: "#/components/schemas/Edit" }
+    Edit:
+      type: object
+      required: [versionId, label, recipeDigest, editedAt, primary, isVirtualCopy, deviceId, format, width, height, bytes, updatedAt]
+      properties:
+        versionId: { $ref: "#/components/schemas/Uuid" }
+        label: { type: string }
+        recipeDigest: { type: string }
+        editedAt: { type: integer, format: int64 }
+        primary: { type: boolean }
+        isVirtualCopy: { type: boolean }
+        deviceId: { $ref: "#/components/schemas/Uuid", description: the device that uploaded the image }
+        format: { type: string, enum: [jpeg, webp] }
+        width: { type: integer }
+        height: { type: integer }
+        bytes: { type: integer }
+        updatedAt: { type: integer, format: int64 }
+    EditWriteResult:
+      type: object
+      required: [status, itemId, rev, edit]
+      properties:
+        status: { type: string, enum: [created, replaced, updated, unchanged] }
+        itemId: { $ref: "#/components/schemas/Uuid" }
+        rev: { type: integer, description: "the item's revision after the write" }
+        edit: { $ref: "#/components/schemas/Edit" }
     CullValue:
       description: "rating: integer 0..5; flag: pick | reject | none; label: a string of at most 64 characters (\"\" = none)"
       oneOf:
@@ -1766,6 +1983,20 @@ components:
         v: { type: string, description: "image preview key on disk (?v= for immutable URLs)" }
         cr: { type: string, description: "culling field revisions rating.flag.label" }
         size: { type: integer, format: int64, description: bytes of all files }
+        ed:
+          type: array
+          description: "(0.9.0) Reveal's edits, the primary first: id (version), l label, p primary, c virtual copy, v preview key, w/h size"
+          items:
+            type: object
+            required: [id]
+            properties:
+              id: { $ref: "#/components/schemas/Uuid" }
+              l: { type: string }
+              p: { type: boolean }
+              c: { type: boolean }
+              v: { type: string }
+              w: { type: integer }
+              h: { type: integer }
     Error:
       type: object
       required: [error]

@@ -68,14 +68,22 @@ func (s *Store) EditedFingerprints(ctx context.Context) (map[string]bool, error)
 // PreviewKey is the on-disk content key of an item's preview job.
 type PreviewKey struct {
 	ItemID    string
+	Job       string
 	Key       string // "" when none was made yet
 	UpdatedAt int64
 }
 
-// PreviewKeysSince lists the preview rows of a job changed at or after since (ms), oldest first: the web gallery's
-// index keeps each item's image key so the grid builds immutable thumbnail URLs (ADR 0015 "?v=").
+// PreviewKeysSince lists the preview rows of a job ("edit:" for every edited preview) changed at or after since (ms),
+// oldest first: the web gallery's index keeps each item's image key so the grid builds immutable thumbnail URLs (ADR
+// 0015 "?v=").
 func (s *Store) PreviewKeysSince(ctx context.Context, job string, since int64) ([]PreviewKey, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT item_id, key, updated_at FROM previews WHERE job = ? AND updated_at >= ? ORDER BY updated_at", job, since)
+	q := "SELECT item_id, job, key, updated_at FROM previews WHERE job = ? AND updated_at >= ? ORDER BY updated_at"
+	args := []any{job, since}
+	if job == "edit:" { // every edited preview (ADR 0020)
+		q = "SELECT item_id, job, key, updated_at FROM previews WHERE job >= 'edit:' AND job < 'edit;' AND updated_at >= ? ORDER BY updated_at"
+		args = args[1:]
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +91,7 @@ func (s *Store) PreviewKeysSince(ctx context.Context, job string, since int64) (
 	var out []PreviewKey
 	for rows.Next() {
 		var p PreviewKey
-		if err := rows.Scan(&p.ItemID, &p.Key, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ItemID, &p.Job, &p.Key, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)

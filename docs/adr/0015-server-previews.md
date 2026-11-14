@@ -3,6 +3,8 @@
 - **Date**: 2026-11-14
 - **Status**: Accepted (hoard-server 0.6.0, Hoard 2 phase 1e)
 - **Amends**: ADR 0013 (protocol additions under `/v1`, written there in "Previews (hoard-server 0.6.0)")
+- **Amended by**: ADR 0020 (hoard-server 0.9.0: an image job `edit:<versionId>` per Reveal edited preview, in the
+  image lane, and `edit=` on `/preview` and the warm request)
 
 ## Context
 

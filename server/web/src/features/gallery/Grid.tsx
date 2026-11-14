@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { CELL_SIZES, type CellSize } from "@/lib/cellSize"
 import { formatDay, formatMonth, formatNumber } from "@/lib/format"
 import { columnsFor, layout, monthAt, yearsOf, type Entry } from "@/lib/layout"
-import type { Row } from "@/lib/types"
+import { cellEdit, stackOf, type GridCell } from "@/lib/edits"
 import { cn } from "@/lib/utils"
 import { Cell } from "./Cell"
 import { useRowLabel } from "./rowLabel"
@@ -14,7 +14,8 @@ const HEADER = 44
 const PAD = 16
 
 interface GridProps {
-  rows: Row[]
+  /** Items, with the cells of their expanded stacks (Reveal's virtual copies, ADR 0020) after them. */
+  cells: GridCell[]
   cellSize: CellSize
   selected: ReadonlySet<string>
   focus: number
@@ -23,6 +24,9 @@ interface GridProps {
   onSelect: (i: number, mode: "toggle" | "range") => void
   /** An index to bring into view (the item the viewer closed on). */
   reveal: number | null
+  /** Items whose stack is expanded. */
+  expanded: ReadonlySet<string>
+  onStack: (itemId: string) => void
 }
 
 /**
@@ -30,7 +34,7 @@ interface GridProps {
  * top, and the months/years jump bar. Only what is on screen is in the DOM (about 100 cells at 1440 × 900), so 20,000
  * items scroll like 200.
  */
-export function Grid({ rows, cellSize, selected, focus, onFocus, onOpen, onSelect, reveal }: GridProps) {
+export function Grid({ cells, cellSize, selected, focus, onFocus, onOpen, onSelect, reveal, expanded, onStack }: GridProps) {
   const { t, i18n } = useTranslation()
   const rowLabel = useRowLabel()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -48,6 +52,7 @@ export function Grid({ rows, cellSize, selected, focus, onFocus, onOpen, onSelec
   const inner = Math.max(0, width - 2 * PAD)
   const cols = columnsFor(inner, CELL_SIZES[cellSize], GAP)
   const size = Math.max(40, Math.floor((inner - (cols - 1) * GAP) / cols))
+  const rows = useMemo(() => cells.map((c) => c.row), [cells])
   const grid = useMemo(() => layout(rows, cols), [rows, cols])
   const entries = grid.entries
 
@@ -215,18 +220,25 @@ export function Grid({ rows, cellSize, selected, focus, onFocus, onOpen, onSelec
                   </h2>
                 ) : (
                   <div className="flex" style={{ gap: GAP }}>
-                    {rows.slice(entry.start, entry.end).map((row, k) => {
+                    {cells.slice(entry.start, entry.end).map((cell, k) => {
                       const i = entry.start + k
+                      const row = cell.row
+                      const stack = cell.edit ? 0 : stackOf(row).length
                       return (
-                        <div role="gridcell" key={row.id}>
+                        <div role="gridcell" key={cell.key}>
                           <Cell
                             row={row}
+                            edit={cellEdit(cell)}
+                            stackCell={!!cell.edit}
+                            stack={stack}
+                            expanded={expanded.has(row.id)}
+                            onStack={onStack}
                             index={i}
                             size={size}
                             selected={selected.has(row.id)}
                             selecting={selected.size > 0}
                             focused={i === focus}
-                            label={rowLabel(row)}
+                            label={rowLabel(row, cell.edit)}
                             onActivate={activate}
                             onToggle={toggle}
                             onFocusCell={onFocus}

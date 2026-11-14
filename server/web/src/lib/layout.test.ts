@@ -52,3 +52,13 @@ describe("grid layout", () => {
     expect(columnsFor(0, 180, 4)).toBe(1)
   })
 })
+
+describe("layout with an expanded stack", () => {
+  it("counts items, not the cells of a stack", () => {
+    const r = (id: string): Row => ({ id, t: Date.UTC(2024, 4, 3, 10), k: "photo", n: id })
+    const a = r("a")
+    const g = layout([a, a, a, r("b")], 3)
+    expect(g.entries[0]).toMatchObject({ type: "header", count: 2 })
+    expect(g.months[0].count).toBe(2)
+  })
+})

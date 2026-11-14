@@ -298,6 +298,7 @@ async function renderStorage() {
     h("div.section", h("h2", t("storageTitle")), h("p.muted", t("storageIntro")), current,
       s.locked && s.backupRoot ? h("p.hint", t("storageLocked")) : null),
     s.previews ? renderPreviews(s.previews) : null,
+    s.edits ? renderEdits(s.edits) : null,
     h("div.section", h("h2", t("available")), rows.length ? h("div.list", rows) : h("p.empty", t("noCandidates"))));
 }
 
@@ -318,6 +319,22 @@ function renderPreviews(p) {
       metric(t("previewsFailed"), num(failed))),
     h("p.meta.mono", p.dir, p.totalBytes ? ` · ${t("free", { free: bytes(p.freeBytes), total: bytes(p.totalBytes) })}` : ""),
     errors.length ? h("div.list", errors) : null);
+}
+
+// Reveal's edited previews (ADR 0020): the uploads, the previews made from them.
+function renderEdits(e) {
+  const metric = (label, value, hint) => h("div.metric", h("div.eyebrow", label), h("div.value", value), hint ? h("div.meta", hint) : null);
+  const st = e.stats || {};
+  return h("div.section",
+    h("h2", t("editsTitle")),
+    h("p.muted", t("editsIntro")),
+    h("div.metrics",
+      metric(t("editsCount"), num(st.edits || 0), t("editsItems", { n: num(st.items || 0), c: num(st.virtualCopies || 0) })),
+      metric(t("editsUploads"), `${num(st.images || 0)} · ${bytes(st.bytes || 0)}`),
+      metric(t("editsPreviews"), `${num(st.previews || 0)} · ${bytes(st.previewBytes || 0)}`,
+        st.pending ? t("editsPending", { n: num(st.pending) }) : null),
+      metric(t("previewsFailed"), num(st.failed || 0))),
+    h("p.meta.mono", e.dir, ` · ${bytes(e.diskBytes || 0)}`));
 }
 
 // --- NAS ---------------------------------------------------------------------------------------------------------

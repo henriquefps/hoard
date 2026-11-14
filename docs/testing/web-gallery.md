@@ -40,7 +40,7 @@ gallery shows RAWs through the server's previews, which ADR 0015's tests already
 on 1,667 days), five cameras, one folder per month. Indexed in 11 s. Previews made on demand only
 (`PREVIEW_BACKLOG=none`), as on a fresh install that has not caught up yet.
 
-## What the end-to-end tests check (`e2e/gallery.spec.ts`, 12 tests)
+## What the end-to-end tests check (`e2e/gallery.spec.ts`, 13 tests)
 
 1. Sign-in: wrong password refused with a message; right password opens the gallery; newest first; the jump bar; the
    sidecar from the NAS shows as picked with 5 stars.
@@ -60,20 +60,28 @@ on 1,667 days), five cameras, one folder per month. Indexed in 11 s. Previews ma
    `Snow-3 photos.zip`.
 8. Live: a rating pushed by a paired device (`POST /v1/culling`) and a Reveal edit (`POST /v1/changes`, a photo and a
    version with a history step) appear in the open grid without a reload; the Edited filter finds it.
-9. Folders: the tree with counts; a directory opens the gallery filtered to it.
-10. Sign-out ends the session (`/web/library` answers 401).
-11. Zoom (0.8.1): at fit nothing asks for full resolution; Z to 100 % on the 6000 × 4000 pair asks once, shows the
+9. Edits (0.9.0, ADR 0020): the paired device uploads two renders of `DSC01006` (ffmpeg filters on the drawn camera
+   JPEG: a colour edit, primary, and a black-and-white virtual copy "Copy 1") with `PUT /v1/items/{id}/edits/{version}`;
+   the item answers both in `edits`; the grid cell shows the primary edit's thumbnail (`edit=<version>`, decoded) with
+   the Edited badge and a stack of 1; expanding it adds the copy's cell (its own thumbnail, "Copy 1"); the Edited
+   filter counts it; the viewer opens on the edit ("Edited in Reveal"), E shows the original (no `edit=` image) and
+   back, the version menu shows the copy, "Download edited JPEG" saves `DSC01006 (Copy 1).jpg`; S on the focused item
+   opens the stack and a copy cell opens the viewer on that copy.
+10. Folders: the tree with counts; a directory opens the gallery filtered to it.
+11. Sign-out ends the session (`/web/library` answers 401).
+12. Zoom (0.8.1): at fit nothing asks for full resolution; Z to 100 % on the 6000 × 4000 pair asks once, shows the
     progress line while the answer is held back, then swaps in the 6000 × 4000 original in the same box at the same
     scale ("Original"); the lone RAW renders on the server and shows "Original (rendered from the RAW)" at 6000 × 4000.
-12. HTTPS (0.8.1): against the `TRUST_TAILSCALE_SERVE=1` server, requests as `tailscale serve` sends them (loopback,
+13. HTTPS (0.8.1): against the `TRUST_TAILSCALE_SERVE=1` server, requests as `tailscale serve` sends them (loopback,
     `X-Forwarded-For` a tailnet address, `-Proto https`, `-Host` the ts.net name) open the gallery and sign in with a
     `Secure` cookie and the ts.net `Origin`; Funnel, a Cloudflare header or a public address get 404; the main server
     refuses the same request. A Chromium that resolves `gallery.test` to 127.0.0.1 opens the gallery over plain HTTP
     by that name and shows the HTTPS hint (dismissible, remembered); on 127.0.0.1 there is none.
 
-Last run (2026-11-14, cachyos-fps, 0.8.1): **12 passed** in 56 s, plus the server tests (`TestWebGateAndSession`,
+Last run (2026-11-14, cachyos-fps, 0.9.0): **13 passed** in 54 s, plus the server tests (`TestWebGateAndSession`,
 `TestWebLibraryCullingAndFolders`, `TestWebFullResolution`, `TestWebFullCacheBound`, `TestWebDownloadNames`,
-`TestWebBehindTailscaleServe`, `TestWebCullingReachesOtherClients`, …) and the unit tests.
+`TestWebBehindTailscaleServe`, `TestWebCullingReachesOtherClients`, `TestWebEdits`, `TestEditUploadFeedAndPreviews`,
+`TestEditValidation`, `TestEditLifecycle`, …) and the unit tests.
 
 ## Screenshots (1440 × 900 unless named, Chromium, synthetic library)
 
@@ -95,6 +103,9 @@ Last run (2026-11-14, cachyos-fps, 0.8.1): **12 passed** in 56 s, plus the serve
 | 100 % after the swap: the 6000 × 4000 original, the 1-pixel checkerboard sharp (0.8.1) | ![](web-gallery/zoom100-original.png) |
 | 100 % of a lone RAW, rendered by the server (0.8.1) | ![](web-gallery/zoom100-raw.png) |
 | Over plain HTTP from another computer: the HTTPS hint (0.8.1) | ![](web-gallery/https-hint.png) |
+| Reveal's edit in the grid: the Edited badge, a stack of one copy expanded (0.9.0) | ![](web-gallery/edits-grid.png) |
+| The viewer on Reveal's edit (0.9.0) | ![](web-gallery/edits-viewer.png) |
+| E: the original (0.9.0) | ![](web-gallery/edits-viewer-original.png) |
 | Folders, light | ![](web-gallery/folders-1440-light.png) |
 | Folders, 1024 × 768, dark | ![](web-gallery/folders-1024-dark.png) |
 

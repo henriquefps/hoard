@@ -12,9 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/henriquefps/hoard/server/internal/items"
 	"github.com/henriquefps/hoard/server/internal/media"
+	"github.com/henriquefps/hoard/server/internal/store"
 )
 
 // Version is PREVIEW_VERSION: raising it (or changing a recipe below) gives every preview a new key, so each one is
@@ -142,6 +144,45 @@ func Plan(id string, d items.Data) map[string]Job {
 					Offset: d.Motion.Offset, Length: d.Motion.Length, Video: d.Video})
 			}
 		}
+	}
+	return out
+}
+
+// Edited previews (ADR 0020): Reveal's upload of an edited version is the source of an image job of its own,
+// "edit:<versionId>", which makes the same four files (thumb and screen, JPEG and WebP) with the same recipe, in the
+// image lane. Its source is the uploaded file (Source.Fingerprint "edit:<sha256>", Role RoleEdit).
+const (
+	JobEditPrefix = "edit:"
+	RoleEdit      = "edit"
+)
+
+// EditJob is the job name of a version's edited preview.
+func EditJob(versionID string) string { return JobEditPrefix + versionID }
+
+// IsEditJob reports an edited preview's job.
+func IsEditJob(job string) bool { return strings.HasPrefix(job, JobEditPrefix) }
+
+// Lane is the worker lane a job runs in: edited previews share the image lane.
+func Lane(job string) string {
+	if IsEditJob(job) {
+		return JobImage
+	}
+	return job
+}
+
+// EditSourcePrefix marks an edited preview's source: Open receives "edit:<sha256>".
+const EditSourcePrefix = "edit:"
+
+// PlanEdits lists the image jobs of an item's edits. Their key is SHA-256 of PREVIEW_VERSION, the image recipe, the
+// item, the version, its recipe digest and the uploaded file's SHA-256: a new upload, digest or recipe gives a new key.
+func PlanEdits(itemID string, edits []store.Edit) map[string]Job {
+	out := map[string]Job{}
+	for _, e := range edits {
+		src := Source{Fingerprint: EditSourcePrefix + e.SHA256, Role: RoleEdit, Format: e.Format, LongEdge: max(e.Width, e.Height)}
+		h := sha256.New()
+		fmt.Fprintf(h, "hoard-preview-edit\x00%d\x00%s\x00%s\x00%s\x00%s\x00%s", Version, recipes[JobImage], itemID, e.VersionID, e.RecipeDigest, e.SHA256)
+		job := EditJob(e.VersionID)
+		out[job] = Job{ItemID: itemID, Kind: RoleEdit, Job: job, Source: src, Key: hex.EncodeToString(h.Sum(nil)[:16])}
 	}
 	return out
 }

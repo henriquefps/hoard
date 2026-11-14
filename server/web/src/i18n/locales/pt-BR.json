@@ -45,6 +45,25 @@
     "name": { "photo": "Foto", "pair": "RAW+JPG", "video": "Vídeo", "motion": "Foto com movimento" }
   },
   "badges": { "edited": "Editada no Reveal" },
+  "edits": {
+    "edited": "Editada",
+    "original": "Original",
+    "primary": "mostrada na grade",
+    "expand_one": "Mostrar mais {{count}} edição (cópia virtual)",
+    "expand_other": "Mostrar mais {{count}} edições (cópias virtuais)",
+    "collapse_one": "Esconder mais {{count}} edição",
+    "collapse_other": "Esconder mais {{count}} edições",
+    "layer": "Editada no Reveal: {{name}}",
+    "version": "Versão",
+    "showOriginal": "Mostrar o original",
+    "showEdited": "Mostrar a edição do Reveal",
+    "choose": "Escolher uma versão",
+    "downloadOriginal": "Baixar o original",
+    "download": "Baixar JPEG editado",
+    "downloadNamed": "Baixar JPEG editado: {{name}}",
+    "info_one": "Editada no Reveal ({{count}} versão) · mostrando: {{shown}}",
+    "info_other": "Editada no Reveal ({{count}} versões) · mostrando: {{shown}}"
+  },
   "cull": {
     "pick": "Escolher",
     "reject": "Rejeitar",

@@ -12,6 +12,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { actionForKey, type CullAction } from "@/lib/culling"
+import { expandStacks } from "@/lib/edits"
 import { applyFilters, filtersToSearch, NO_FILTERS } from "@/lib/filters"
 import { formatBytes, formatNumber } from "@/lib/format"
 import { navigate, useLocation } from "@/lib/router"
@@ -47,11 +48,14 @@ export function GalleryPage({ previews }: { previews: boolean }) {
   const [chosen, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [focus, setFocus] = useState(0)
   const [reveal, setReveal] = useState<number | null>(null)
+  // Items whose stack of Reveal's edits (virtual copies, ADR 0020) is open.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
   const anchor = useRef<number | null>(null)
   const viewerOpen = loc.path.startsWith("/items/")
 
   const rows = useMemo(() => applyFilters(library.rows, filters, library.folders), [library.rows, filters, library.folders])
-  const focusIndex = Math.min(focus, Math.max(0, rows.length - 1))
+  const cells = useMemo(() => expandStacks(rows, expanded), [rows, expanded])
+  const focusIndex = Math.min(focus, Math.max(0, cells.length - 1))
   // The selection is what is chosen and still in the list (filters changed, items removed).
   const selected = useMemo<ReadonlySet<string>>(() => {
     if (chosen.size === 0) return chosen
@@ -64,7 +68,7 @@ export function GalleryPage({ previews }: { previews: boolean }) {
   if (wasOpen !== viewerOpen) {
     setWasOpen(viewerOpen)
     const id = viewerOpen ? null : takeLastViewed()
-    const i = id ? rows.findIndex((r) => r.id === id) : -1
+    const i = id ? cells.findIndex((c) => c.row.id === id && !c.edit) : -1
     if (i >= 0) {
       setFocus(i)
       setReveal(i)
@@ -90,11 +94,23 @@ export function GalleryPage({ previews }: { previews: boolean }) {
 
   const open = useCallback(
     (i: number) => {
-      const row = rows[i]
-      if (row) navigate(`/items/${row.id}`, filtersToSearch(filters))
+      const cell = cells[i]
+      if (!cell) return
+      const search = filtersToSearch(filters)
+      if (cell.edit) search.set("edit", cell.edit.id) // a copy of the stack opens on that edit
+      navigate(`/items/${cell.row.id}`, search)
     },
-    [rows, filters]
+    [cells, filters]
   )
+
+  const toggleStack = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
 
   const select = useCallback(
     (i: number, mode: "toggle" | "range") => {
@@ -102,9 +118,9 @@ export function GalleryPage({ previews }: { previews: boolean }) {
         const next = new Set(prev)
         if (mode === "range" && anchor.current !== null) {
           const [a, b] = [Math.min(anchor.current, i), Math.max(anchor.current, i)]
-          for (let k = a; k <= b; k++) if (rows[k]) next.add(rows[k].id)
+          for (let k = a; k <= b; k++) if (cells[k]) next.add(cells[k].row.id)
         } else {
-          const id = rows[i]?.id
+          const id = cells[i]?.row.id
           if (!id) return prev
           if (next.has(id)) next.delete(id)
           else next.add(id)
@@ -114,10 +130,13 @@ export function GalleryPage({ previews }: { previews: boolean }) {
       })
       setFocus(i)
     },
-    [rows]
+    [cells]
   )
 
-  const targets = useCallback(() => (selected.size ? [...selected] : rows[focusIndex] ? [rows[focusIndex].id] : []), [selected, rows, focusIndex])
+  const targets = useCallback(
+    () => (selected.size ? [...selected] : cells[focusIndex] ? [cells[focusIndex].row.id] : []),
+    [selected, cells, focusIndex]
+  )
 
   const act = useCallback(
     (a: CullAction) => {
@@ -157,6 +176,12 @@ export function GalleryPage({ previews }: { previews: boolean }) {
         setSelected(new Set())
         return
       }
+      if (e.key.toLowerCase() === "s" && cells[focusIndex]) {
+        // Open or close the focused item's stack of edits.
+        e.preventDefault()
+        toggleStack(cells[focusIndex].row.id)
+        return
+      }
       const a = actionForKey(e.key)
       if (a && rows.length) {
         e.preventDefault()
@@ -165,7 +190,7 @@ export function GalleryPage({ previews }: { previews: boolean }) {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [viewerOpen, rows, selected, act])
+  }, [viewerOpen, rows, cells, focusIndex, selected, act, toggleStack])
 
 
   if (status === "loading") {
@@ -259,7 +284,7 @@ export function GalleryPage({ previews }: { previews: boolean }) {
         </Empty>
       ) : (
         <Grid
-          rows={rows}
+          cells={cells}
           cellSize={cellSize}
           selected={selected}
           focus={focusIndex}
@@ -267,6 +292,8 @@ export function GalleryPage({ previews }: { previews: boolean }) {
           onOpen={open}
           onSelect={select}
           reveal={reveal}
+          expanded={expanded}
+          onStack={toggleStack}
         />
       )}
       {!previews && (

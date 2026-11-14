@@ -204,6 +204,15 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.9.0 (Reveal's edited previews)
+
+0.9.0 lets Reveal upload a preview of each edited photo and virtual copy (ADR 0020): the gallery then shows Reveal's
+result with an "Edited" badge (E switches to the original in the viewer; virtual copies open as a stack). A database
+migration (schema 8) is applied in place on start: no step to take, and nothing changes for released Reveal or Hoard
+(new routes and a new optional `edits` field on items). The uploads are kept in `<data dir>/edits` (about 0.4-2.6 MB
+each): only Reveal can make them again, so they belong in your backups with the database (below). **Back up `data/`
+before upgrading**: 0.8.x refuses a schema-8 database.
+
 ## Upgrading to 0.8.1 (web gallery fixes)
 
 No migration and nothing to do for Reveal or Hoard. New: sharp 100 % zoom (full resolution on demand; RAW and HEIF
@@ -251,6 +260,9 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
 - `<backup folder>/reveal-sync/blobs/` holds the uploaded originals and previews, named by their SHA-256; files are
   mode 0600. The backup folder is fixed once it holds files: to move it, stop the server, move the `reveal-sync`
   folder to the new place, mount it at the same path inside the container (or update the `backupRoot` setting).
+- `/data/edits/` holds Reveal's edited previews (0.9.0, ADR 0020; one file per image, named by its SHA-256, metadata
+  removed). Back it up with the database: unlike the previews below, the server cannot make them again (Reveal can
+  upload them again, but only from a device that still has the edits).
 - `/data/previews/` holds the gallery previews (`<key[0:2]>/<key>.thumb.jpg`, `.thumb.webp`, `.screen.jpg`,
   `.screen.webp`, `.proxy.mp4`); they
   can be deleted with the server stopped (with `DELETE FROM previews` in the database) and are made again.

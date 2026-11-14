@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -72,7 +73,10 @@ type Config struct {
 	ProbeWorkers int
 	ProbeTimeout time.Duration
 	// Gallery previews (ADR 0015); disabled when PreviewsDir is "".
-	PreviewsDir    string
+	PreviewsDir string
+	// EditsDir keeps Reveal's edited previews (ADR 0020; main sets <data dir>/edits; tests default to "edits" next to
+	// PreviewsDir). Data, not a cache: only Reveal can make them again.
+	EditsDir       string
 	Vips, FFmpeg   string // programs (paths or names in PATH)
 	PreviewWorkers int    // image jobs at a time
 	ProxyWorkers   int    // video proxy jobs at a time
@@ -194,6 +198,12 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		for _, j := range cfg.PreviewBacklog {
 			backlog[j] = true
 		}
+		if cfg.EditsDir == "" {
+			s.cfg.EditsDir = filepath.Join(filepath.Dir(cfg.PreviewsDir), "edits")
+		}
+		if err := os.MkdirAll(s.cfg.EditsDir, 0o700); err != nil {
+			return nil, fmt.Errorf("edits directory: %w", err)
+		}
 		s.prev, err = previews.New(previews.Config{Dir: cfg.PreviewsDir, ImageWorkers: cfg.PreviewWorkers, ProxyWorkers: cfg.ProxyWorkers,
 			FullCacheBytes: cfg.FullCacheBytes,
 			Backlog:        backlog, Generator: gen, Store: st, Open: s.openSource, Log: s.log})
@@ -207,6 +217,9 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 // openSource opens a file by fingerprint for the previews: an indexed NAS copy still as indexed, else an uploaded
 // original (never written to).
 func (s *Server) openSource(ctx context.Context, fp string) (*os.File, error) {
+	if sha, ok := strings.CutPrefix(fp, previews.EditSourcePrefix); ok { // an edited preview (ADR 0020)
+		return s.openEdit(sha)
+	}
 	o, err := s.store.LookupOriginal(ctx, fp)
 	if err != nil {
 		return nil, err
@@ -234,6 +247,7 @@ func (s *Server) Run(ctx context.Context) {
 		for {
 			s.sweep(ctx)
 			s.sweepWeb(ctx)
+			s.sweepEdits(ctx)
 			select {
 			case <-ctx.Done():
 				return

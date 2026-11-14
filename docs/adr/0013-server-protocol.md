@@ -13,7 +13,8 @@
 Status: accepted (Reveal MS/1 server; Reveal MS/2 app side, Reveal ADR 0018, added `GET /v1/devices`). Date: 2026-11-11.
 Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below), ADR 0015
 (gallery previews, 0.6.0: "Previews" below), ADR 0016 (culling, 0.7.0: "Culling" below) and ADR 0017 (physical
-devices, 0.7.0: "Physical devices" below) and ADR 0018 (web gallery, 0.8.0: routes outside `/v1`, "Web gallery" below).
+devices, 0.7.0: "Physical devices" below) and ADR 0018 (web gallery, 0.8.0: routes outside `/v1`, "Web gallery" below) and ADR 0020 (Reveal's edited previews,
+0.9.0: "Edited previews" below).
 
 ## Context
 
@@ -408,12 +409,28 @@ at full resolution: the original file, or a JPEG made on demand for a lone RAW o
 `Content-Disposition` carries `filename*=UTF-8''…`; with `TRUST_TAILSCALE_SERVE=1` the gallery and `/admin` also
 answer requests `tailscale serve` proxies on the same machine. Still nothing under `/v1`.
 
+## Edited previews (hoard-server 0.9.0)
+
+Added by ADR 0020, which is the reference (and holds the client rules Reveal follows). Additions only; `features`
+gains `"edits"` (with previews on) and `GET /v1/server` an `edits` object with the limits.
+
+| Method and path | Answer |
+| --- | --- |
+| `PUT /v1/items/{itemId}/edits/{versionId}` | Body: one sRGB JPEG or WebP rendered by Reveal (upright, long edge 16-2560 px, ≤ 8 MiB); headers `X-Hoard-Recipe-Digest`, `X-Hoard-Edited-At` (ms), `X-Hoard-Label` (percent-encoded), `X-Hoard-Virtual-Copy`, `X-Hoard-Primary`. Decoded, checked (size, colour space) and stripped of metadata without re-encoding. `201 created`, `200 replaced / updated / unchanged` (`{"status", "itemId", "rev", "edit"}`); the same digest keeps the stored image and does not read the body; an older `editedAt` is `409 conflict` (reason `older`); `422 invalid_image` (reason `format`, `decode`, `dimensions`, `colour_space`, `animated`) or `invalid_request` (`image_required`, `too_many_edits`, `not_applicable`). |
+| `GET /v1/items/{itemId}/edits/{versionId}` | The stored image (`ETag` its SHA-256, `X-Hoard-Recipe-Digest`, ranges). |
+| `DELETE /v1/items/{itemId}/edits/{versionId}` | `200 {"status": "deleted" \| "absent", "itemId", "rev"}`. |
+| `GET /v1/items/{itemId}/preview?…&edit=<versionId\|primary>` | The preview made from that edit (`X-Hoard-Edit`); `404 preview_unavailable` reason `no_edit`. `POST /v1/items/previews` takes `"edit"` likewise. |
+
+Items carry `edits: [{versionId, label, recipeDigest, editedAt, primary, isVirtualCopy, deviceId, format, width,
+height, bytes, updatedAt}]` (the primary first; absent when none), and every edit change is a new item revision in the
+items feed. An item's edits follow it when it is replaced and go when it is deleted. Schema 8 (`item_edits`).
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
 | --- | --- | --- |
 | `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads", "items" (0.5.0)}}`: counts only, no names or paths |
-| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0)], "previews": {…} (0.6.0, when enabled)}` |
+| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0), "edits" (0.9.0)], "previews": {…} (0.6.0, when enabled), "edits": {…} (0.9.0)}` |
 | `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform", "physicalDeviceId" (0.7.0), "app" (0.7.0)}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
 | `POST /v1/pair` | pairing token | see "Pairing" |
 
@@ -453,6 +470,7 @@ Every error is JSON:
 | 401 | `unauthorized`, `invalid_pairing_token` |
 | 403 | `forbidden` (admin: missing `X-Hoard-Admin` or foreign `Origin`; `DELETE /v1/blobs`: an original or another device's preview; `DELETE /v1/originals`: a NAS file) |
 | 404 | `not_found`, `preview_unavailable` (0.6.0, `details.reason`) |
+| 422 (0.9.0) | `invalid_image` (an edited preview, ADR 0020, `details.reason`) |
 | 405 | `method_not_allowed` |
 | 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced) |
 | 413 | `too_large` |

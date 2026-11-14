@@ -51,8 +51,13 @@ export interface Session {
   previews: boolean
 }
 
-export const previewUrl = (id: string, size: "thumb" | "screen", v?: string, format: "webp" | "jpeg" = "webp") =>
-  `/web/items/${id}/preview?size=${size}&format=${format}${v ? `&v=${v}` : ""}`
+/** An item's preview, or with `edit` (a version id) the preview of Reveal's edit of that version (ADR 0020). */
+export const previewUrl = (id: string, size: "thumb" | "screen", v?: string, format: "webp" | "jpeg" = "webp", edit?: string) =>
+  `/web/items/${id}/preview?size=${size}&format=${format}${edit ? `&edit=${edit}` : ""}${v ? `&v=${v}` : ""}`
+
+/** Reveal's uploaded edit of a version, as stored (the viewer's "Download edited JPEG"); the URL ends in its name. */
+export const editFileUrl = (id: string, version: string, name: string, download = false) =>
+  `/web/items/${id}/edits/${version}/${encodeURIComponent(name)}${download ? "?download=1" : ""}`
 
 export const proxyUrl = (id: string) => `/web/items/${id}/proxy`
 

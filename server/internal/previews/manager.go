@@ -148,11 +148,10 @@ func (m *Manager) Request(ctx context.Context, row store.ItemRow, jobs []string,
 		}
 		return out, nil
 	}
-	var d items.Data
-	if err := json.Unmarshal(row.Data, &d); err != nil {
+	plan, err := m.plan(ctx, row)
+	if err != nil {
 		return nil, err
 	}
-	plan := Plan(row.ID, d)
 	rows, err := m.cfg.Store.Previews(ctx, row.ID)
 	if err != nil {
 		return nil, err
@@ -190,7 +189,7 @@ func (m *Manager) Request(ctx context.Context, row store.ItemRow, jobs []string,
 		}
 		if n > 0 {
 			for _, w := range wants {
-				m.signal(w.Job)
+				m.signal(Lane(w.Job))
 			}
 		}
 	}
@@ -205,6 +204,25 @@ func failReason(e string) string {
 		return "no_tools"
 	}
 	return "failed"
+}
+
+// plan is an item's jobs: Plan's, and an image job per edit (ADR 0020).
+func (m *Manager) plan(ctx context.Context, row store.ItemRow) (map[string]Job, error) {
+	var d items.Data
+	if err := json.Unmarshal(row.Data, &d); err != nil {
+		return nil, err
+	}
+	plan := Plan(row.ID, d)
+	if len(row.Edits) > 0 {
+		edits, err := m.cfg.Store.ItemEdits(ctx, row.ID) // with the fields the served JSON leaves out (the file)
+		if err != nil {
+			return nil, err
+		}
+		for job, j := range PlanEdits(row.ID, edits) {
+			plan[job] = j
+		}
+	}
+	return plan, nil
 }
 
 // FilesMissing is called when a ready row's file cannot be opened (removed by hand): the row is queued again.
@@ -285,12 +303,12 @@ func (m *Manager) runJob(ctx context.Context, p store.Preview) {
 		m.retry(ctx, p, "store: "+err.Error(), time.Minute)
 		return
 	}
-	var d items.Data
-	if err := json.Unmarshal(row.Data, &d); err != nil {
+	plan, err := m.plan(ctx, row)
+	if err != nil {
 		m.fail(ctx, p, "failed: item data")
 		return
 	}
-	j, ok := Plan(row.ID, d)[p.Job]
+	j, ok := plan[p.Job]
 	if !ok {
 		m.drop(ctx, p.ItemID, p.Job)
 		return
@@ -486,6 +504,16 @@ func (m *Manager) scan(ctx context.Context, since int64) (int64, error) {
 			return since, err
 		}
 		var wants []store.PreviewWant
+		var withEdits []string
+		for _, r := range rows {
+			if !r.Deleted && len(r.Edits) > 0 {
+				withEdits = append(withEdits, r.ID)
+			}
+		}
+		edits, err := m.cfg.Store.EditsByItem(ctx, withEdits)
+		if err != nil {
+			return since, err
+		}
 		for _, r := range rows {
 			since = r.Rev
 			if r.Deleted {
@@ -497,6 +525,9 @@ func (m *Manager) scan(ctx context.Context, since int64) (int64, error) {
 				continue
 			}
 			plan := Plan(r.ID, d)
+			for job, j := range PlanEdits(r.ID, edits[r.ID]) {
+				plan[job] = j
+			}
 			existing, err := m.cfg.Store.Previews(ctx, r.ID)
 			if err != nil {
 				return since, err
@@ -511,11 +542,11 @@ func (m *Manager) scan(ctx context.Context, since int64) (int64, error) {
 				prio = store.PriorityRecent
 			}
 			for job, j := range plan {
-				if p, ok := existing[job]; (ok && p.WantKey == j.Key) || !m.cfg.Backlog[job] && !ok {
+				if p, ok := existing[job]; (ok && p.WantKey == j.Key) || !m.cfg.Backlog[Lane(job)] && !ok {
 					continue // up to date, or made on request only
 				}
 				wants = append(wants, store.PreviewWant{ItemID: r.ID, Job: job, WantKey: j.Key, Priority: prio, OrderKey: r.SortTime})
-				queued[job] = true
+				queued[Lane(job)] = true
 			}
 		}
 		if _, err := m.cfg.Store.WantPreviews(ctx, wants); err != nil {

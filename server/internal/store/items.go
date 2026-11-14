@@ -223,6 +223,10 @@ func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte,
 		if _, err = t.tx.ExecContext(t.ctx, "DELETE FROM item_files WHERE item_id = ?", id); err != nil {
 			return false, err
 		}
+		// Its edits follow the item that replaced it, else go with it (ADR 0020 "Lifecycle").
+		if err := editsOfTombstone(t.ctx, t.tx, id, tombstone, t.now); err != nil {
+			return false, err
+		}
 		// Its culling record is sent again, now naming the item that replaced it (ADR 0016 "Mapping a record").
 		return true, touchCulling(t.ctx, t.tx, id)
 	}
@@ -292,6 +296,7 @@ type ItemRow struct {
 	Data      []byte
 	CreatedAt int64
 	UpdatedAt int64
+	Edits     []byte // JSON array of the item's edits (ADR 0020), nil when it has none
 }
 
 const itemCols = "id, rev, deleted, kind, sort_time, data, created_at, updated_at"
@@ -325,7 +330,7 @@ func (s *Store) ItemChanges(ctx context.Context, since int64, limit int) ([]Item
 	if more {
 		out = out[:limit]
 	}
-	return out, more, nil
+	return out, more, s.attachEdits(ctx, out)
 }
 
 // Item returns one item (a tombstone too).
@@ -341,7 +346,7 @@ func (s *Store) Item(ctx context.Context, id string) (ItemRow, error) {
 	if len(out) == 0 {
 		return ItemRow{}, ErrNotFound
 	}
-	return out[0], nil
+	return out[0], s.attachEdits(ctx, out)
 }
 
 // ItemQuery filters live items (GET /v1/items).
@@ -412,7 +417,7 @@ func (s *Store) QueryItems(ctx context.Context, q ItemQuery) ([]ItemRow, bool, e
 	if more {
 		out = out[:q.Limit]
 	}
-	return out, more, nil
+	return out, more, s.attachEdits(ctx, out)
 }
 
 func likeEscape(s string) string {

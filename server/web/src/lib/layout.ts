@@ -41,8 +41,11 @@ export function layout(rows: readonly Row[], columns: number): GridLayout {
     if (!last || last.key !== month) {
       months.push({ key: month, year: Number(day.slice(0, 4)), month: Number(day.slice(5, 7)), entry: entries.length, count: 0 })
     }
-    months[months.length - 1].count += j - i
-    entries.push({ type: "header", day, count: j - i, first: i })
+    // Items, not cells: an expanded stack repeats its item (Reveal's virtual copies, ADR 0020).
+    let n = 0
+    for (let k = i; k < j; k++) if (k === i || rows[k].id !== rows[k - 1].id) n++
+    months[months.length - 1].count += n
+    entries.push({ type: "header", day, count: n, first: i })
     for (let s = i; s < j; s += cols) {
       const end = Math.min(s + cols, j)
       for (let k = s; k < end; k++) entryOf[k] = entries.length

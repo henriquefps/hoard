@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/henriquefps/hoard/server/internal/store"
 	"image/jpeg"
 	"os"
 	"os/exec"
@@ -475,5 +476,51 @@ func TestMeanLumaAndProxySize(t *testing.T) {
 		if w, h := ProxySize(c.w, c.h); w != c.ew || h != c.eh {
 			t.Errorf("ProxySize(%d,%d) = %d,%d want %d,%d", c.w, c.h, w, h, c.ew, c.eh)
 		}
+	}
+}
+
+// TestCPUEditedPreview: Reveal's uploaded edit (ADR 0020), a JPEG or a WebP, makes the same four files as an item's
+// image job, never upscaled.
+func TestCPUEditedPreview(t *testing.T) {
+	c := testCPU(t, false)
+	dir := t.TempDir()
+	src := testJPEG(t, c, dir, 2560, 1440)
+	webp := filepath.Join(dir, "edit.webp")
+	if b, err := exec.Command(c.vips, "copy", src, webp+"[Q=85]").CombinedOutput(); err != nil {
+		t.Fatalf("vips copy: %v %s", err, b)
+	}
+	for _, p := range []string{src, webp} {
+		jobs := PlanEdits("item", []store.Edit{{VersionID: "v1", RecipeDigest: "r1", SHA256: strings.Repeat("a", 64), Format: "jpeg", Width: 2560, Height: 1440}})
+		j := jobs[EditJob("v1")]
+		if Lane(j.Job) != JobImage || j.Source.Role != RoleEdit {
+			t.Fatalf("%+v", j)
+		}
+		res, out := generate(t, c, j, p)
+		checkImages(t, res, out, 2560, 1440)
+	}
+	small := testJPEG(t, c, t.TempDir(), 1200, 900)
+	res, out := generate(t, c, PlanEdits("item", []store.Edit{{VersionID: "v2", SHA256: strings.Repeat("b", 64)}})[EditJob("v2")], small)
+	checkImages(t, res, out, 1200, 900)
+}
+
+func TestEditKeys(t *testing.T) {
+	e := store.Edit{VersionID: "v1", RecipeDigest: "r1", SHA256: strings.Repeat("a", 64)}
+	k := PlanEdits("item", []store.Edit{e})[EditJob("v1")].Key
+	for _, mod := range []func(*store.Edit){
+		func(e *store.Edit) { e.RecipeDigest = "r2" },
+		func(e *store.Edit) { e.SHA256 = strings.Repeat("c", 64) },
+		func(e *store.Edit) { e.VersionID = "v2" },
+	} {
+		e2 := e
+		mod(&e2)
+		if PlanEdits("item", []store.Edit{e2})[EditJob(e2.VersionID)].Key == k {
+			t.Fatalf("same key for %+v", e2)
+		}
+	}
+	if PlanEdits("other", []store.Edit{e})[EditJob("v1")].Key == k {
+		t.Fatal("same key on another item")
+	}
+	if PlanEdits("item", []store.Edit{{VersionID: "v1", RecipeDigest: "r1", SHA256: strings.Repeat("a", 64), Label: "renamed", Primary: true}})[EditJob("v1")].Key != k {
+		t.Fatal("metadata changed the key")
 	}
 }
