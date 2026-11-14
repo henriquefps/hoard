@@ -77,6 +77,17 @@ fun machineColor(id: String?): Color = when (id) {
     else -> Color(0xFF3B6FE0)
 }
 
+fun machineIconName(id: String): Int = when (id) {
+    "desktop-tower" -> R.string.t_machines_icons_desktop_tower
+    "desktop" -> R.string.t_machines_icons_desktop
+    "laptop" -> R.string.t_machines_icons_laptop
+    "cloud" -> R.string.t_machines_icons_cloud
+    "house" -> R.string.t_machines_icons_house
+    "monitor-play" -> R.string.t_machines_icons_monitor_play
+    "cpu" -> R.string.t_machines_icons_cpu
+    else -> R.string.t_machines_icons_hard_drives
+}
+
 @Composable
 fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, onBack: () -> Unit, onSaved: (String) -> Unit, onDeleted: () -> Unit) {
     val context = LocalContext.current
@@ -134,7 +145,7 @@ fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, 
                                     .border(if (selected) 2.dp else 0.dp, if (selected) machineColor(draft.color) else Color.Transparent, RoundedCornerShape(10.dp))
                                     .clickable { viewModel.update { it.copy(icon = id) } },
                                 contentAlignment = Alignment.Center,
-                            ) { Icon(machineIcon(id), id, Modifier.size(22.dp), tint = if (selected) machineColor(draft.color) else HfpsTheme.colors.mutedForeground) }
+                            ) { Icon(machineIcon(id), stringResource(machineIconName(id)), Modifier.size(22.dp), tint = if (selected) machineColor(draft.color) else HfpsTheme.colors.mutedForeground) }
                         }
                     }
                     Text(stringResource(R.string.t_machines_form_color), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)

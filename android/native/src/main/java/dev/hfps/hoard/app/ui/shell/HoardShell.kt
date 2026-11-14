@@ -137,6 +137,7 @@ fun HoardShell(container: AppContainer) {
     val phoneName = stringResource(R.string.t_locations_internal)
     val driveName = stringResource(R.string.t_locations_drive)
     val openSave by ShellRequests.openSave.collectAsState()
+    val clipboardShown = container.clipboard.content.collectAsState().value != null
     LaunchedEffect(openSave) {
         if (openSave) {
             ShellRequests.openSave.value = false
@@ -243,7 +244,8 @@ fun HoardShell(container: AppContainer) {
             }
             SnackbarHost(
                 snackbar,
-                Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)).padding(bottom = 72.dp),
+                Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                    .padding(bottom = if (clipboardShown) 144.dp else 72.dp),
             ) { data ->
                 Snackbar(data, containerColor = HfpsTheme.colors.foreground, contentColor = HfpsTheme.colors.background, actionColor = HfpsTheme.colors.primary.copy(alpha = 1f))
             }
@@ -444,6 +446,11 @@ fun ShellLayout(navController: NavHostController, content: @Composable (inFilesT
     TabbedLayout(
         selected = tab,
         onSelect = { selected ->
+            // The tab on screen again: back to its root (the Files tab's home), like Android's own tab bars.
+            if (selected == tab) {
+                navController.popBackStack(if (selected == Tab.Gallery) GalleryRoute else FilesRoute, inclusive = false)
+                return@TabbedLayout
+            }
             navController.navigate(if (selected == Tab.Gallery) GalleryRoute else FilesRoute) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true

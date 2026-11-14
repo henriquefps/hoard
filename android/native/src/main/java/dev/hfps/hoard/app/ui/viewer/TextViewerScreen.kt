@@ -32,6 +32,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -221,12 +222,14 @@ fun TextViewerScreen(locationId: String, share: String?, path: String, startEdit
                 }
                 HorizontalDivider(color = HfpsTheme.colors.hairline, modifier = Modifier.padding(top = 8.dp))
                 if (editing) {
+                    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
                     BasicTextField(
                         value = draft,
                         onValueChange = { draft = it },
                         textStyle = HfpsTheme.typography.mono.copy(color = HfpsTheme.colors.cardForeground),
                         cursorBrush = SolidColor(HfpsTheme.colors.primary),
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).testTag("text-editor"),
+                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp).focusRequester(focus).testTag("text-editor"),
                     )
                 } else if (read.text.isEmpty()) {
                     Text(stringResource(R.string.t_text_empty_file), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(16.dp))
