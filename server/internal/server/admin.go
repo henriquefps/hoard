@@ -18,6 +18,7 @@ import (
 	"github.com/henriquefps/hoard/server/internal/auth"
 	"github.com/henriquefps/hoard/server/internal/blobstore"
 	"github.com/henriquefps/hoard/server/internal/mounts"
+	"github.com/henriquefps/hoard/server/internal/previews"
 	"github.com/henriquefps/hoard/server/internal/store"
 )
 
@@ -505,7 +506,60 @@ func (s *Server) handleStorage(w http.ResponseWriter, r *http.Request) {
 		total, free := mounts.Usage(root)
 		out["totalBytes"], out["freeBytes"] = total, free
 	}
+	if s.prev != nil {
+		p, err := s.previewReport(r)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		out["previews"] = p
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// previewReport is the Storage page's previews section (ADR 0015): per job, rows ready (with their bytes), queued,
+// running and failed, and the free space of the previews directory.
+func (s *Server) previewReport(r *http.Request) (map[string]any, error) {
+	stats, err := s.store.PreviewStats(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	errs, err := s.store.PreviewErrors(r.Context(), 5)
+	if err != nil {
+		return nil, err
+	}
+	type jobReport struct {
+		Ready   int   `json:"ready"`
+		Stale   int   `json:"stale"`
+		Pending int   `json:"pending"`
+		Running int   `json:"running"`
+		Failed  int   `json:"failed"`
+		Bytes   int64 `json:"bytes"`
+	}
+	jobs := map[string]*jobReport{previews.JobImage: {}, previews.JobProxy: {}}
+	for _, st := range stats {
+		j := jobs[st.Job]
+		if j == nil {
+			continue
+		}
+		j.Bytes += st.Bytes
+		j.Stale += st.Stale
+		switch st.State {
+		case store.PreviewDone:
+			j.Ready += st.Count
+		case store.PreviewPending:
+			j.Pending += st.Count
+		case store.PreviewRunning:
+			j.Running += st.Count
+		case store.PreviewFailed:
+			j.Failed += st.Count
+		}
+	}
+	gen := s.prev.Generator()
+	out := map[string]any{"dir": s.prev.Dir(), "generator": gen.Name(), "toolsAvailable": gen.Available(), "jobs": jobs, "errors": errs}
+	total, free := mounts.Usage(s.prev.Dir())
+	out["totalBytes"], out["freeBytes"] = total, free
+	return out, nil
 }
 
 func (s *Server) handleSetStorage(w http.ResponseWriter, r *http.Request) {

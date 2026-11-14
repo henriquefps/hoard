@@ -18,6 +18,8 @@ import (
 	"github.com/henriquefps/hoard/server/internal/auth"
 	"github.com/henriquefps/hoard/server/internal/blobstore"
 	"github.com/henriquefps/hoard/server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/previews"
+	"github.com/henriquefps/hoard/server/internal/ratelimit"
 	"github.com/henriquefps/hoard/server/internal/store"
 )
 
@@ -43,10 +45,25 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/items/changes", s.device(s.handleItemChanges))
 	mux.HandleFunc("GET /v1/items/{itemId}", s.device(s.handleItem))
 	mux.HandleFunc("POST /v1/items/lookup", s.device(s.handleItemLookup))
+	// Gallery previews (ADR 0015).
+	mux.HandleFunc("GET /v1/items/{itemId}/preview", s.previewDevice(s.handlePreview))
+	mux.HandleFunc("GET /v1/items/{itemId}/poster", s.previewDevice(s.handlePoster))
+	mux.HandleFunc("GET /v1/items/{itemId}/proxy", s.previewDevice(s.handleProxy))
+	mux.HandleFunc("POST /v1/items/previews", s.device(s.handleWarmPreviews))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
 func (s *Server) device(next http.HandlerFunc) http.HandlerFunc {
+	return s.deviceLimited(s.deviceLimit, next)
+}
+
+// previewDevice is device with its own, larger per-device bucket: a gallery grid fetches many thumbnails at once, and
+// that must not use up the requests sync needs (ADR 0015 "Limits").
+func (s *Server) previewDevice(next http.HandlerFunc) http.HandlerFunc {
+	return s.deviceLimited(s.previewLimit, next)
+}
+
+func (s *Server) deviceLimited(limit *ratelimit.Limiter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		keyID, hash, err := auth.ParseKey(strings.TrimSpace(bearer))
@@ -68,7 +85,7 @@ func (s *Server) device(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		info(r).device = d
-		if ok, wait := s.deviceLimit.Allow(d.ID); !ok {
+		if ok, wait := limit.Allow(d.ID); !ok {
 			rateLimited(w, r, wait)
 			return
 		}
@@ -123,11 +140,27 @@ func limits() map[string]any {
 
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	name, _, _ := s.store.Setting(r.Context(), settingServerName)
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"serverId": s.serverID, "serverName": name, "version": s.cfg.Version, "api": APIVersion,
 		"deviceId": info(r).device.ID, "limits": limits(), "storageConfigured": s.blobStore() != nil,
-		"features": []string{"items"}, // ADR 0014; absent before hoard-server 0.5.0
-	})
+		"features": s.features(),
+	}
+	if s.prev != nil {
+		// Not in "limits": that object is reveal-sync's, compared as a whole by its clients' tests (ADR 0012).
+		out["previews"] = map[string]any{"version": previews.Version, "thumbEdge": previews.ThumbEdge, "screenEdge": previews.ScreenEdge,
+			"proxyShortEdge": previews.ProxyEdge, "maxWarm": maxPreviewWarm, "requestsPerSecond": previewRate, "requestBurst": previewBurst}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
+// when enabled).
+func (s *Server) features() []string {
+	f := []string{"items"}
+	if s.prev != nil {
+		f = append(f, "previews")
+	}
+	return f
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device

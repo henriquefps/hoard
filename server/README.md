@@ -6,12 +6,15 @@ devices, backs up the photos that live only on a device, and serves the photos a
 even away from home. You run it yourself; nothing assumes anyone else's server. It was Reveal's `reveal-sync` until
 it moved here ([ADR 0012](../docs/adr/0012-hoard-server.md)); an existing reveal-sync data directory works as is.
 
-- One static binary (Linux amd64/arm64) or a small Docker image (distroless, non-root).
+- One static binary (Linux amd64/arm64) or a Docker image (Alpine, non-root, with libvips and ffmpeg for previews).
 - Everything in two places you choose: `/data` (a SQLite database) and a backup folder (content-addressed files).
 - NAS folders are mounted read-only and indexed; photos the server can already reach are never uploaded.
 - One index of every photo and video: each shot is an **item** (a photo, a RAW+JPEG pair, a video, a motion or Live
   Photo) with its files, where they live and its metadata (capture time, camera, lens, GPS, size; codec, duration,
   frame rate, HDR for videos), from the NAS folders and from uploads ([ADR 0014](../docs/adr/0014-server-items.md)).
+- Gallery previews of every item, made on the server: thumbnails (512 px), screen previews (2560 px), video posters
+  and low-bitrate H.264 proxies for phones, upright and sRGB, from the best source (a pair's camera JPEG, a RAW's
+  embedded preview, HEIC/AVIF, HDR video tone-mapped), in a background queue ([ADR 0015](../docs/adr/0015-server-previews.md)).
 - Every device has its own revocable key (pair by QR code). There is no anonymous mode.
 - Conflicts never lose an edit: the newer one wins and the other becomes a virtual copy.
 
@@ -57,10 +60,32 @@ the legacy builder needs `--build-arg BUILDPLATFORM=linux/amd64 --build-arg TARG
 | `--ffprobe` | `FFPROBE` | `ffprobe` in `PATH` (`/usr/local/bin/ffprobe` in the image) | ffprobe binary for video metadata |
 | `--probe-workers` | `PROBE_WORKERS` | `2` | ffprobe runs at a time (1-16) |
 | `--probe-timeout` | `PROBE_TIMEOUT` | `30s` | time limit of one ffprobe run |
+| `--previews-dir` | `PREVIEWS_DIR` | `<data dir>/previews` | where gallery previews are kept (rebuildable, not backed up) |
+| `--vips` | `VIPS` | `vips` in `PATH` (`/opt/hoard/bin/vips` in the image) | libvips' `vips`, for photo previews |
+| `--ffmpeg` | `FFMPEG` | `ffmpeg` in `PATH` (`/opt/hoard/bin/ffmpeg` in the image) | ffmpeg, for video posters and proxies |
+| `--preview-workers` | `PREVIEW_WORKERS` | `2` | photo/poster previews made at a time (1-16) |
+| `--proxy-workers` | `PROXY_WORKERS` | `1` | video proxies made at a time (1-8) |
+| `--preview-threads` | `PREVIEW_THREADS` | `2` | threads of one vips/ffmpeg run (1-32) |
+| `--preview-backlog` | `PREVIEW_BACKLOG` | `image,proxy` | what is made for every item ahead of requests: `image`, `proxy`, or `none` (the rest only when a client asks) |
 
 These are the names reveal-sync used; none was renamed (there were never `REVEAL_SYNC_*` variables). The ffprobe
 settings are new in 0.5.0. Without ffprobe (a binary built by hand) videos are still indexed; their metadata is read
 once ffprobe is available.
+
+## Gallery previews
+
+From 0.6.0 the server makes previews of every item in the background (newest shots first; a preview a client asks for
+jumps the queue): a 512 px thumbnail and a 2560 px screen JPEG of every photo (a video's are its poster frame), and
+an H.264 720p proxy of every video and motion photo, as JPEG and WebP (`format=webp`, a fifth to a third smaller). They
+live in `<data dir>/previews` (about 1 GiB per 1,000 photos, plus about 2 MB per 10 s of video; the Storage tab shows
+the size, the queue and failures) and never touch the originals. Generation is CPU work
+at low priority, at most `PREVIEW_WORKERS` + `PROXY_WORKERS` processes of `PREVIEW_THREADS` threads at a time; the
+first pass over a large library takes a while (see ADR 0015, "Measurements"). Change `PREVIEW_BACKLOG` to `image` to
+make proxies only when a video is played, or `none` to make everything on demand.
+
+Memory: the example compose file gives the container 1.5 GiB; a 4K HEVC 10-bit proxy needs the most (ffmpeg about
+740 MiB; everything together stayed under 900 MiB on the bench). Without libvips/ffmpeg (a binary built by hand) the server runs and previews wait until they are
+installed.
 
 ## Away from home: Cloudflare Tunnel or Tailscale
 
@@ -97,6 +122,14 @@ Environment variables: unchanged (see "Configuration"). Renamed things you may n
 names in the example compose file, the binary (`/usr/local/bin/hoard-server`), the log message, the setup page's
 title, the admin header `X-Hoard-Admin` and cookie `hoard_server_admin` (the old names are still accepted).
 
+## Upgrading to 0.6.0 (previews)
+
+0.6.0 adds the previews (ADR 0015) with a migration (schema 4) applied in place on start, and the image grows from
+35 to 86 MB (libvips, ffmpeg). After the upgrade the server starts making previews of the whole library in the
+background; give the container more memory (`mem_limit: 1536m` in the example compose file) and, on a small machine,
+lower `PREVIEW_WORKERS`/`PREVIEW_THREADS` or set `PREVIEW_BACKLOG=image`. Nothing changes for Reveal. Going back to
+0.5.0 means restoring a copy of `data/` made before the upgrade (0.5.0 refuses a schema-4 database).
+
 ## Upgrading to 0.5.0 (items)
 
 0.5.0 adds items (ADR 0014) with a database migration (schema 3) applied in place on start: no step to take, and
@@ -112,7 +145,8 @@ database, so going back to 0.4.0 means restoring that copy.
 ```sh
 cd server && go build -o hoard-server .              # Go version from go.mod, no C compiler needed
 ./hoard-server --data-dir ./data --mounts /srv/photos   # offers the folders under /srv/photos
-# video metadata needs ffprobe (the ffmpeg package of your distribution, or --ffprobe /path/to/ffprobe)
+# video metadata needs ffprobe, previews need vips and ffmpeg (your distribution's ffmpeg and libvips-tools with
+# HEIF support; libvips >= 8.17 for RAW decoding with LibRaw), or --ffprobe/--vips/--ffmpeg /path/to/...
 ```
 
 ## Data and backups
@@ -124,6 +158,9 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
 - `<backup folder>/reveal-sync/blobs/` holds the uploaded originals and previews, named by their SHA-256; files are
   mode 0600. The backup folder is fixed once it holds files: to move it, stop the server, move the `reveal-sync`
   folder to the new place, mount it at the same path inside the container (or update the `backupRoot` setting).
+- `/data/previews/` holds the gallery previews (`<key[0:2]>/<key>.thumb.jpg`, `.thumb.webp`, `.screen.jpg`,
+  `.screen.webp`, `.proxy.mp4`); they
+  can be deleted with the server stopped (with `DELETE FROM previews` in the database) and are made again.
 - Nothing is ever written to a NAS folder.
 - Logs never contain keys, tokens, passwords, file names or paths of photos.
 
@@ -139,8 +176,9 @@ arm64. The Hoard app keeps its own `v*` tags.
 go vet ./... && go test -race ./...   # unit tests, an end-to-end test that builds and runs the binary, the
                                       # reveal-sync and 0.4.0 data directory tests and the Reveal contract test
 golangci-lint run ./...
-# ffmpeg/ffprobe on PATH runs the video tests (skipped without them). Opt-in:
-HOARD_SAMPLES_DIR=~/raw-samples go test -run RealSamples -v ./internal/media/   # real camera files (never commit them)
+# ffmpeg/ffprobe and vips on PATH run the video and preview tests (skipped without them; FIXTURE_FFMPEG names a full
+# ffmpeg when the one under test is the image's minimal build). Opt-in:
+HOARD_SAMPLES_DIR=~/raw-samples go test -run RealSamples -v ./internal/media/ ./internal/previews/   # real camera files (never commit them)
 HOARD_BENCH_FILES=20000 go test -run TestIndexLargeTree -v -timeout 30m ./internal/nas/   # indexing benchmark
 ```
 
@@ -148,10 +186,13 @@ Layout: `main.go` (flags, database file), `internal/server` (HTTP: `/v1` device 
 `internal/server/web`), `internal/store` (SQLite, migrations in `internal/store/migrations`: never edit a released
 one), `internal/blobstore`, `internal/nas` (indexer), `internal/mounts` (path confinement), `internal/fingerprint`
 (the `v1:` rule, vectors shared with Reveal in `testdata/fingerprint-vectors.txt`), `internal/auth`,
-`internal/ratelimit`, `internal/media` (metadata readers: EXIF/TIFF, JPEG, HEIF, CR3, RAF, motion photos, ffprobe;
-`mediatest` builds synthetic files), `internal/items` (pairing rule, item building, sync of sources and items).
+`internal/ratelimit`, `internal/media` (metadata readers: EXIF/TIFF, JPEG, HEIF, CR3, RAF, motion photos, ffprobe,
+RAW embedded previews; `mediatest` builds synthetic files), `internal/items` (pairing rule, item building, sync of
+sources and items), `internal/previews` (gallery previews: plan and keys, the queue manager, the CPU generator).
 `testdata/compat/` holds a reveal-sync data directory and a hoard-server 0.4.0 one (each with the program that made
 it) that every release must open; `testdata/v1-routes.txt` lists the frozen `/v1` routes.
 
-Licence: [AGPL-3.0-or-later](../LICENSE). The Docker image also ships a static `ffprobe` built from the FFmpeg
-release pinned in the `Dockerfile` (LGPL-2.1-or-later configuration; source: ffmpeg.org), run as a separate program.
+Licence: [AGPL-3.0-or-later](../LICENSE). The Docker image also ships, run as separate programs and built in the
+`Dockerfile` from the pinned upstream releases: FFmpeg (`ffmpeg`, `ffprobe`; GPL-2.0-or-later configuration because of
+x264; source: ffmpeg.org), libvips (LGPL-2.1-or-later; github.com/libvips/libvips) and libheif (LGPL-3.0;
+github.com/strukturag/libheif), with Alpine's packages of LibRaw, x264, zimg, dav1d, libde265 and their dependencies.

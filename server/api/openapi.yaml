@@ -26,6 +26,7 @@ tags:
   - name: originals
   - name: nas
   - name: items
+  - name: previews
 paths:
   /v1/health:
     get:
@@ -603,6 +604,125 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/items/{itemId}/preview:
+    get:
+      tags: [previews]
+      summary: An item's preview (thumb or screen, JPEG or WebP); a video's poster frame (ADR 0015)
+      description: >-
+        Upright sRGB JPEG, long edge at most 512 (thumb) or 2560 (screen) px, never upscaled, from the item's best
+        source (a pair's camera JPEG, a RAW's embedded preview or a LibRaw decode, HEIF/AVIF; a video's first non-dark
+        frame at 10/25/50 %). Not made yet: 202 with Retry-After after queueing it ahead of the backlog. Ready: the
+        file with `ETag` and `X-Hoard-Preview-Version` (its content key); with `v` equal to that key the answer is
+        `Cache-Control: private, max-age=31536000, immutable`, otherwise `private, no-cache` (revalidate: 304).
+        `X-Hoard-Preview: stale` = an older preview (older recipe or source) served while the new one is made.
+        HEAD and Range work. Its own per-device rate (200/s, burst 600), separate from the API's.
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/PreviewSize"
+        - $ref: "#/components/parameters/PreviewFormat"
+        - $ref: "#/components/parameters/PreviewVersion"
+      responses:
+        "200": { $ref: "#/components/responses/PreviewImage" }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "304": { description: Not modified (If-None-Match) }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/items/{itemId}/poster:
+    get:
+      tags: [previews]
+      summary: A video item's poster frame (thumb or screen); the same file as /preview of a video
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/PreviewSize"
+        - $ref: "#/components/parameters/PreviewFormat"
+        - $ref: "#/components/parameters/PreviewVersion"
+      responses:
+        "200": { $ref: "#/components/responses/PreviewImage" }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "304": { description: Not modified (If-None-Match) }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/items/{itemId}/proxy:
+    get:
+      tags: [previews]
+      summary: The low-bitrate proxy of a video or of a motion photo's video; Range and HEAD supported
+      description: >-
+        MP4 (faststart): H.264 High, short edge at most 720 px, at most 30 fps, a keyframe every 2 s, capped CRF
+        (at most 2.5 Mb/s), AAC stereo 128 kb/s; HDR (PQ, HLG, Dolby Vision's base layer) tone-mapped to SDR BT.709.
+        Same caching and 202 rules as /preview.
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/PreviewVersion"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: The proxy (video/mp4)
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        "206":
+          description: The requested range
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "304": { description: Not modified (If-None-Match) }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/items/previews:
+    post:
+      tags: [previews]
+      summary: The preview states of up to 500 items; queues the ones not made (a gallery warming a screen)
+      description: >-
+        Queued at the "warm" priority (after a client waiting on a GET, before recently added items and the backlog);
+        the first item of the list first. `v` of a ready preview builds an immutable URL (`?v=`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  maxItems: 500
+                  items: { $ref: "#/components/schemas/Uuid" }
+                previews:
+                  type: array
+                  description: Which previews (default thumb).
+                  items: { type: string, enum: [thumb, screen, proxy] }
+      responses:
+        "200":
+          description: Per item (each once, in the order asked), the state of each preview asked; unknown or deleted ids in missing
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, missing]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id]
+                      properties:
+                        id: { $ref: "#/components/schemas/Uuid" }
+                        thumb: { $ref: "#/components/schemas/PreviewState" }
+                        screen: { $ref: "#/components/schemas/PreviewState" }
+                        proxy: { $ref: "#/components/schemas/PreviewState" }
+                  missing:
+                    type: array
+                    items: { $ref: "#/components/schemas/Uuid" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 components:
   securitySchemes:
     deviceKey:
@@ -614,6 +734,25 @@ components:
       name: Range
       in: header
       schema: { type: string, examples: ["bytes=0-1048575"] }
+    ItemId:
+      name: itemId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    PreviewSize:
+      name: size
+      in: query
+      schema: { type: string, enum: [thumb, screen], default: thumb }
+    PreviewFormat:
+      name: format
+      in: query
+      description: JPEG (default, decodes everywhere) or WebP (about a third smaller at the same SSIM; ADR 0015 "Formats").
+      schema: { type: string, enum: [jpeg, webp], default: jpeg }
+    PreviewVersion:
+      name: v
+      in: query
+      description: The preview's key (X-Hoard-Preview-Version, or `v` from POST /v1/items/previews); makes the answer immutable when it is the current one.
+      schema: { type: string, pattern: "^[0-9a-f]{32}$" }
   responses:
     Bytes:
       description: The bytes (application/octet-stream; ETag, Accept-Ranges)
@@ -652,6 +791,38 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Unprocessable:
       description: "`invalid_request` or `checksum_mismatch`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PreviewImage:
+      description: The JPEG (image/jpeg) or WebP (image/webp)
+      headers:
+        ETag: { schema: { type: string } }
+        X-Hoard-Preview-Version: { schema: { type: string }, description: The content key (source + recipe + PREVIEW_VERSION) }
+        X-Hoard-Preview: { schema: { type: string, enum: [ready, stale] } }
+      content:
+        image/jpeg:
+          schema: { type: string, format: binary }
+        image/webp:
+          schema: { type: string, format: binary }
+    PreviewPending:
+      description: Not made yet; queued ahead of the backlog. Ask again after Retry-After seconds.
+      headers:
+        Retry-After: { schema: { type: integer } }
+        X-Hoard-Preview: { schema: { type: string, const: pending } }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, retryAfter]
+            properties:
+              status: { type: string, const: pending }
+              retryAfter: { type: integer }
+    PreviewNotFound:
+      description: >-
+        `not_found` (no such live item) or `preview_unavailable` with `details.reason`: `not_applicable` (a poster of a
+        still, a proxy of a photo), `unsupported` (no decoder for the file), `failed` (generation failed three times),
+        `no_tools`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -764,8 +935,21 @@ components:
         storageConfigured: { type: boolean }
         features:
           type: array
-          description: Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014.
-          items: { type: string, enum: [items] }
+          description: >-
+            Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
+            `previews` = ADR 0015 (0.6.0).
+          items: { type: string, enum: [items, previews] }
+        previews:
+          type: object
+          description: Present when the server makes previews (ADR 0015). Not in limits, which is reveal-sync's.
+          properties:
+            version: { type: integer, description: PREVIEW_VERSION }
+            thumbEdge: { type: integer }
+            screenEdge: { type: integer }
+            proxyShortEdge: { type: integer }
+            maxWarm: { type: integer }
+            requestsPerSecond: { type: integer }
+            requestBurst: { type: integer }
         limits:
           type: object
           properties:
@@ -779,6 +963,18 @@ components:
             maxUploadsPerDevice: { type: integer }
             requestsPerSecond: { type: integer }
             requestBurst: { type: integer }
+    PreviewState:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ready, pending, unavailable] }
+        v: { type: string, description: "ready: the key for ?v=" }
+        stale: { type: boolean, description: "ready, but an older preview; a new one is queued" }
+        width: { type: integer }
+        height: { type: integer }
+        bytes: { type: integer, description: "the JPEG's (the MP4's for a proxy)" }
+        webpBytes: { type: integer, description: "thumb and screen: the WebP's" }
+        reason: { type: string, enum: [not_applicable, unsupported, failed, no_tools] }
     Role:
       type: string
       enum: [raw, rendered, video, sidecar]
