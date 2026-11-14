@@ -11,7 +11,7 @@
 > `<backup root>/reveal-sync/`) is unchanged and frozen for `/v1` (ADR 0012).
 
 Status: accepted (Reveal MS/1 server; Reveal MS/2 app side, Reveal ADR 0018, added `GET /v1/devices`). Date: 2026-11-11.
-Imported into Hoard: 2026-11-14 (ADR 0012).
+Imported into Hoard: 2026-11-14 (ADR 0012). Amended by ADR 0014 (items, hoard-server 0.5.0: "Items" below).
 
 ## Context
 
@@ -256,7 +256,8 @@ uploads an original only when its fingerprint is missing (and the user's rules a
 The server indexes folders the admin picks among the read-only mounts it can see (Docker: the paths mounted under
 `/mnt`; see "Mounts"). It walks them in the background (on enabling, on request and every 30 minutes), skips names
 starting with `.` and symbolic links, keeps RAW, JPEG and HEIF files by extension (the list of `ImageFormats` in
-`:core:image`), compares size and mtime with the last walk, and computes the `v1:` fingerprint of new or changed files
+`:core:image`) — and since 0.5.0 videos and XMP sidecars for items (ADR 0014), which the NAS feed below does not
+list —, compares size and mtime with the last walk, and computes the `v1:` fingerprint of new or changed files
 (at most 2 MiB read per file, 2 files at a time). The `v1:` rule is defined once (Reveal ADR 0006 "Identity"); the Go and
 Kotlin implementations check the same vectors (`server/testdata/fingerprint-vectors.txt`, see "Tests").
 
@@ -277,12 +278,53 @@ database or the setup page is resolved (symbolic links included) and checked to 
 opened through `os.Root`, which refuses `..` and links that leave the folder. The backup root is fixed once a blob is
 stored (moving blobs is a manual step, see the server's README).
 
+## Items (hoard-server 0.5.0)
+
+Added by ADR 0014 (the model, pairing rule, motion photos, capture-time rules, indexer behaviour and why items have a
+feed of their own). Additions only: no existing route, field or meaning changed; Reveal does not call these routes.
+
+An **item** is one shot: `kind` `photo` | `pair` (RAW + rendering) | `video` | `motion` (still + video, next to it or
+inside it). Its `id` is a UUID derived from its main file's fingerprint (ADR 0014 "Item id"). Served as:
+
+```json
+{"id": "…", "rev": 12, "deleted": false, "createdAt": 1762851000000, "updatedAt": 1762851000000,
+ "kind": "pair", "mainFingerprint": "v1:…", "sortTime": 1714568400500,
+ "capture": {"local": "2024-05-01T10:00:00.500", "offset": "-03:00", "utc": 1714568400500, "source": "exif"},
+ "make": "SONY", "model": "ILCE-7M4", "lens": "FE 35mm F1.8", "gps": {"lat": -23.5, "lon": -46.6, "alt": 760},
+ "width": 7008, "height": 4672, "orientation": 1,
+ "files": [{"fingerprint": "v1:…", "role": "raw", "name": "DSC00001.ARW", "format": "tiff", "size": 25639680,
+            "locations": [{"source": "nas", "folderId": "…", "folderName": "photos", "path": "2024/DSC00001.ARW",
+                           "modifiedAt": 1714568400000},
+                          {"source": "backup", "sha256": "…"}]},
+           {"fingerprint": "v1:…", "role": "rendered", "name": "DSC00001.JPG", "format": "jpeg", "size": 8123456,
+            "locations": [{"source": "nas", "…": "…"}]}]}
+```
+
+`video` (`durationMs`, `container`, `codec`, `profile`, `width`, `height`, `rotation`, `fps`, `bitDepth`, `hdr`,
+`colorSpace`, `audio`) is present on videos and motion photos; `motion` is `{"source": "file", "fingerprint": <the
+video's>}` or `{"source": "embedded", "fingerprint": <the still's>, "format": "google" | "microvideo" | "samsung",
+"offset", "length", "presentationUs"?}` (the MP4 is bytes `[offset, offset + length)` of the still, which
+`GET /v1/originals/{fingerprint}` serves with ranges). Optional fields are left out when unknown. A **tombstone** is
+`{"id", "rev", "deleted": true, "createdAt", "updatedAt", "replacedBy"?}`; `replacedBy` names the item that took its
+main file over (its RAW appeared). Clients ignore unknown fields; new fields may be added.
+
+| Method and path | Answer |
+| --- | --- |
+| `GET /v1/items/changes?cursor=&limit=` | The items feed: `{"items": [...], "cursor", "hasMore"}`, every item whose revision is greater than the cursor, once, at its latest state, oldest revision first; tombstones forever. Its own revision counter and cursors (`<server>:i<rev>`, opaque; not interchangeable with `/v1/changes` or `/v1/nas/files`); the cursor rules of "Revisions, cursors and tombstones" apply (`400 invalid_cursor` → pull from the start). `limit` default 200, max 500. |
+| `GET /v1/items?kind=&from=&to=&folder=&path=&order=&cursor=&limit=` | A query, not a feed: live items ordered by `sortTime` then `id`, newest first (`order=desc`, default) or oldest first (`asc`). `kind`: comma-separated kinds; `from` / `to`: `sortTime` range `[from, to)` in Unix ms; `folder`: a NAS folder id; `path` (with `folder`): a directory in it, sub-directories included. `{"items", "cursor" (null on the last page), "hasMore"}`; the cursor is valid for the same `order` (else `400 invalid_cursor`) and is used with the same filters. Bad parameters: `400 invalid_request`. |
+| `GET /v1/items/{itemId}` | One item, tombstones included; `404 not_found` when unknown. |
+| `POST /v1/items/lookup` `{"fingerprints": [...]}` (at most 1000) | `{"items": [...], "matches": [{"fingerprint", "itemId", "role"}], "missing": [...]}`: the live items with any of the fingerprints as a member file (each once), which fingerprint matched which item in which role, and the fingerprints no live item has. `422 invalid_request` for a malformed fingerprint or too many. |
+
+Also added: `GET /v1/server` has `features: ["items"]` (absent before 0.5.0: a client checks it before calling the
+routes above); `GET /v1/health` `counts` has `items`. `POST /v1/fingerprints/lookup` and `GET /v1/originals` find
+indexed NAS **videos** (and XMP sidecars) as well as photos; `GET /v1/nas/files` keeps listing photos only.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
 | --- | --- | --- |
-| `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads"}}`: counts only, no names or paths |
-| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool}` |
+| `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads", "items" (0.5.0)}}`: counts only, no names or paths |
+| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items"] (0.5.0)}` |
 | `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform"}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
 | `POST /v1/pair` | pairing token | see "Pairing" |
 

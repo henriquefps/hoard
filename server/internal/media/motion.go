@@ -31,7 +31,8 @@ type xmpItem struct {
 // parseXMPMotion reads the Google camera properties of an XMP packet: GCamera:MotionPhoto (with the
 // Container:Directory items) and the older GCamera:MicroVideo, as attributes or elements.
 func parseXMPMotion(packet []byte, m *xmpMotion) {
-	d := xml.NewDecoder(bytes.NewReader(packet))
+	// Tokens only, from a packet of at most 1 MiB; encoding/xml expands no external entities.
+	d := xml.NewDecoder(bytes.NewReader(packet)) //nolint:gosec // see above
 	d.Strict = false
 	var stack []xml.Name
 	for {

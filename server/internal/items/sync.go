@@ -134,6 +134,9 @@ func (y *Syncer) SyncBackup(ctx context.Context, originals []store.UploadedOrigi
 }
 
 func (y *Syncer) apply(ctx context.Context, ops []sourceOp) (Stats, error) {
+	// Changes to one item go into the same transaction (a move is a removed and a new source of the same item: one
+	// revision, not two).
+	sort.SliceStable(ops, func(i, j int) bool { return ops[i].affected[0] < ops[j].affected[0] })
 	var st Stats
 	for start := 0; start < len(ops); start += chunk {
 		part := ops[start:min(start+chunk, len(ops))]

@@ -9,6 +9,9 @@ it moved here ([ADR 0012](../docs/adr/0012-hoard-server.md)); an existing reveal
 - One static binary (Linux amd64/arm64) or a small Docker image (distroless, non-root).
 - Everything in two places you choose: `/data` (a SQLite database) and a backup folder (content-addressed files).
 - NAS folders are mounted read-only and indexed; photos the server can already reach are never uploaded.
+- One index of every photo and video: each shot is an **item** (a photo, a RAW+JPEG pair, a video, a motion or Live
+  Photo) with its files, where they live and its metadata (capture time, camera, lens, GPS, size; codec, duration,
+  frame rate, HDR for videos), from the NAS folders and from uploads ([ADR 0014](../docs/adr/0014-server-items.md)).
 - Every device has its own revocable key (pair by QR code). There is no anonymous mode.
 - Conflicts never lose an edit: the newer one wins and the other becomes a virtual copy.
 
@@ -51,8 +54,13 @@ the legacy builder needs `--build-arg BUILDPLATFORM=linux/amd64 --build-arg TARG
 | `--backup-root` | `BACKUP_ROOT` | none | backup folder to use until one is chosen on the setup page |
 | `--nas-interval` | `NAS_INTERVAL` | `30m` | how often NAS folders are walked again |
 | `--log-format` | `LOG_FORMAT` | `json` | `json` or `text` |
+| `--ffprobe` | `FFPROBE` | `ffprobe` in `PATH` (`/usr/local/bin/ffprobe` in the image) | ffprobe binary for video metadata |
+| `--probe-workers` | `PROBE_WORKERS` | `2` | ffprobe runs at a time (1-16) |
+| `--probe-timeout` | `PROBE_TIMEOUT` | `30s` | time limit of one ffprobe run |
 
-These are the names reveal-sync used; none was renamed (there were never `REVEAL_SYNC_*` variables).
+These are the names reveal-sync used; none was renamed (there were never `REVEAL_SYNC_*` variables). The ffprobe
+settings are new in 0.5.0. Without ffprobe (a binary built by hand) videos are still indexed; their metadata is read
+once ffprobe is available.
 
 ## Away from home: Cloudflare Tunnel or Tailscale
 
@@ -89,17 +97,29 @@ Environment variables: unchanged (see "Configuration"). Renamed things you may n
 names in the example compose file, the binary (`/usr/local/bin/hoard-server`), the log message, the setup page's
 title, the admin header `X-Hoard-Admin` and cookie `hoard_server_admin` (the old names are still accepted).
 
+## Upgrading to 0.5.0 (items)
+
+0.5.0 adds items (ADR 0014) with a database migration (schema 3) applied in place on start: no step to take, and
+nothing changes for Reveal. The first NAS walk afterwards reads the metadata of every photo (headers only; photos are
+not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it takes longer than usual once (about
+85 s for 20,000 files on local disks; on a NAS, mostly the 2 MiB read per new file).
+
+**Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
+database, so going back to 0.4.0 means restoring that copy.
+
 ## Without Docker
 
 ```sh
 cd server && go build -o hoard-server .              # Go version from go.mod, no C compiler needed
 ./hoard-server --data-dir ./data --mounts /srv/photos   # offers the folders under /srv/photos
+# video metadata needs ffprobe (the ffmpeg package of your distribution, or --ffprobe /path/to/ffprobe)
 ```
 
 ## Data and backups
 
 - `/data/hoard-server.db` (or `reveal-sync.db` for a data directory made by reveal-sync; SQLite, WAL) holds devices,
-  edits, the change feed and the NAS index. Back it up with the server stopped, or with
+  edits, the change feed, the NAS index and the items (about 4 KiB per item: 54 MiB for 12,700 items from 20,000
+  files). Back it up with the server stopped, or with
   `sqlite3 hoard-server.db ".backup copy.db"` while it runs.
 - `<backup folder>/reveal-sync/blobs/` holds the uploaded originals and previews, named by their SHA-256; files are
   mode 0600. The backup folder is fixed once it holds files: to move it, stop the server, move the `reveal-sync`
@@ -116,16 +136,22 @@ arm64. The Hoard app keeps its own `v*` tags.
 ## Development
 
 ```sh
-go vet ./... && go test -race ./...   # unit tests, an end-to-end test that builds and runs the binary, and the
-                                      # reveal-sync data directory compatibility test
+go vet ./... && go test -race ./...   # unit tests, an end-to-end test that builds and runs the binary, the
+                                      # reveal-sync and 0.4.0 data directory tests and the Reveal contract test
 golangci-lint run ./...
+# ffmpeg/ffprobe on PATH runs the video tests (skipped without them). Opt-in:
+HOARD_SAMPLES_DIR=~/raw-samples go test -run RealSamples -v ./internal/media/   # real camera files (never commit them)
+HOARD_BENCH_FILES=20000 go test -run TestIndexLargeTree -v -timeout 30m ./internal/nas/   # indexing benchmark
 ```
 
 Layout: `main.go` (flags, database file), `internal/server` (HTTP: `/v1` device API, `/admin` setup page in
 `internal/server/web`), `internal/store` (SQLite, migrations in `internal/store/migrations`: never edit a released
 one), `internal/blobstore`, `internal/nas` (indexer), `internal/mounts` (path confinement), `internal/fingerprint`
 (the `v1:` rule, vectors shared with Reveal in `testdata/fingerprint-vectors.txt`), `internal/auth`,
-`internal/ratelimit`. `testdata/compat/` holds a reveal-sync data directory (and the program that made it) that every
-release must open as is; `testdata/v1-routes.txt` lists the frozen `/v1` routes.
+`internal/ratelimit`, `internal/media` (metadata readers: EXIF/TIFF, JPEG, HEIF, CR3, RAF, motion photos, ffprobe;
+`mediatest` builds synthetic files), `internal/items` (pairing rule, item building, sync of sources and items).
+`testdata/compat/` holds a reveal-sync data directory and a hoard-server 0.4.0 one (each with the program that made
+it) that every release must open; `testdata/v1-routes.txt` lists the frozen `/v1` routes.
 
-Licence: [AGPL-3.0-or-later](../LICENSE).
+Licence: [AGPL-3.0-or-later](../LICENSE). The Docker image also ships a static `ffprobe` built from the FFmpeg
+release pinned in the `Dockerfile` (LGPL-2.1-or-later configuration; source: ffmpeg.org), run as a separate program.

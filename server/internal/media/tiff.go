@@ -52,9 +52,10 @@ var errTIFF = errors.New("not a TIFF stream")
 
 // tiffReader reads one TIFF stream (a TIFF-based RAW, or the EXIF block of a JPEG/HEIF) at base inside r.
 type tiffReader struct {
-	r    io.ReaderAt
-	base int64
-	bo   binary.ByteOrder
+	r     io.ReaderAt
+	base  int64
+	bo    binary.ByteOrder
+	magic uint16
 }
 
 type ifdEntry struct {
@@ -81,7 +82,8 @@ func newTIFF(r io.ReaderAt, base int64) (*tiffReader, uint32, error) {
 	default:
 		return nil, 0, errTIFF
 	}
-	switch t.bo.Uint16(h[2:4]) {
+	t.magic = t.bo.Uint16(h[2:4])
+	switch t.magic {
 	case 42, 0x4F52, 0x5352, 0x55: // TIFF, ORF ("IIRO", "MMOR"), ORF variant, RW2 ("IIU")
 	default:
 		return nil, 0, errTIFF
@@ -283,6 +285,15 @@ func (t *tiffReader) ifd0(d ifd, f *exifFields) {
 	w, _ := t.uint(d, tagImageWidth)
 	h, _ := t.uint(d, tagImageLength)
 	f.size(w, h)
+	if t.magic == 0x55 { // Panasonic RW2: the sensor borders give the image size
+		top, ok1 := t.uint(d, 0x0004)
+		left, ok2 := t.uint(d, 0x0005)
+		bottom, ok3 := t.uint(d, 0x0006)
+		right, ok4 := t.uint(d, 0x0007)
+		if ok1 && ok2 && ok3 && ok4 && right > left && bottom > top {
+			f.size(right-left, bottom-top)
+		}
+	}
 }
 
 func (t *tiffReader) exif(d ifd, f *exifFields) {
