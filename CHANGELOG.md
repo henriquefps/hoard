@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.1
+
+- **✕ on a burst rejects the whole burst**: in the culling viewer, on a burst shown as one item (with "View burst (N)"), ✕ — the button, `X`, or swiping down when swipe-to-decide is on — now rejects every frame of the burst, in one step that Undo reverts (toast "Rejected N photos of the burst" with Undo). Stars are kept, and each frame's sidecar is written as usual. ✓ still picks only the frame shown, "View burst" → "Keep this one" is unchanged, and inside the burst ✕ still rejects only the frame on screen.
+- **Fix: broken thumbnails after culling a large folder**: after culling a few hundred photos, reopening the folder showed the broken-image icon on most grid tiles. Thumbnails shared a disk cache with the viewer's screen images, so culling pushed them out while the grid still pointed at them. They now have their own cache (64 MB, about 2,000 or more thumbnails). A tile whose image fails to load asks for it again once; if it fails again, the tile stays grey instead of showing a broken image. XMP sidecars had nothing to do with it, and they never affect thumbnails or how photos are paired (now tested).
+
 ## 1.10.0
 
 - **Edit in Reveal: photos stay reopenable** ([ADR 0010](docs/adr/0010-edit-in-reveal.md)): every hand-off now gives Reveal a _persistable_ read grant, for photos on the phone, on drives and on SMB shares. Photos from a network share go as stable links that Hoard serves itself: Reveal can reopen them later, after the phone restarts and with Hoard closed, while the machine is reachable (before, they stopped working an hour after the last read or when Hoard closed: "Permission Denial" in Reveal). Hoard starts in the background to serve them, connects on its own (the address that last worked first, the pinned server checked before the password is sent), shows the "Streaming" notification while Reveal reads, and stops two minutes after. An unreachable share makes Reveal show its own preview.

@@ -1057,6 +1057,8 @@
       "kept_one": "Kept {{name}} and rejected {{count}} other frame",
       "kept_other": "Kept {{name}} and rejected {{count}} other frames",
       "kept_zero": "Kept {{name}}",
+      "rejected_one": "Rejected {{count}} photo of the burst",
+      "rejected_other": "Rejected {{count}} photos of the burst",
       "alreadyKept": "Already kept: the other frames are decided",
       "compare": "Compare with the best",
       "acceptSuggestion": "Accept burst suggestion",

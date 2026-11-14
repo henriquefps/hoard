@@ -198,6 +198,24 @@ describe("TaskQueue", () => {
     expect(failing).toHaveBeenCalledTimes(1)
     expect(queue.hasFailed("x")).toBe(true)
   })
+
+  it("forgets a value so the next get loads it again, and can mark a key failed", async () => {
+    const queue = new TaskQueue<string>(2)
+    let n = 0
+    const loader = vi.fn(async () => `v${++n}`)
+    expect(await queue.get("a", loader)).toBe("v1")
+    queue.forget("a")
+    expect(queue.peek("a")).toBeUndefined()
+    expect(await queue.get("a", loader)).toBe("v2")
+    expect(loader).toHaveBeenCalledTimes(2)
+    queue.fail("a")
+    expect(queue.hasFailed("a")).toBe(true)
+    expect(queue.peek("a")).toBeUndefined()
+    await expect(queue.get("a", loader)).rejects.toThrow("failed")
+    expect(loader).toHaveBeenCalledTimes(2)
+    queue.forget("a")
+    expect(await queue.get("a", loader)).toBe("v3")
+  })
 })
 
 describe("moveItem (reorder)", () => {

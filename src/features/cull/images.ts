@@ -113,9 +113,12 @@ export function loadScreen(
 export const thumbnails = new TaskQueue<string>(4, 3000)
 export const THUMB_SIZE = 320
 
+export const thumbKey = (folder: Pick<CullFolder, "key">, shot: CullShot) =>
+  `${shotKey(folder, shot)}|thumb`
+
 export function loadThumbnail(folder: CullFolder, shot: CullShot, signal?: AbortSignal) {
   return thumbnails.get(
-    `${shotKey(folder, shot)}|thumb`,
+    thumbKey(folder, shot),
     () =>
       folder
         .call((ref) => HoardSmb.cullThumbnail({ ...ref, shotId: shot.id, maxSize: THUMB_SIZE }))
@@ -125,7 +128,42 @@ export function loadThumbnail(folder: CullFolder, shot: CullShot, signal?: Abort
 }
 
 export const peekThumbnail = (folder: CullFolder, shot: CullShot) =>
-  thumbnails.peek(`${shotKey(folder, shot)}|thumb`)
+  thumbnails.peek(thumbKey(folder, shot))
+
+/**
+ * The `<img>` could not show the cached URL (its file is gone from native's cache, 1.10.1): forget
+ * it and ask native again, which writes the thumbnail anew. Called once per tile; a second failure
+ * goes to `thumbnailFailed`.
+ */
+export function reloadThumbnail(folder: CullFolder, shot: CullShot, signal?: AbortSignal) {
+  const key = thumbKey(folder, shot)
+  thumbnails.forget(key)
+  const started = performance.now()
+  return thumbnails.get(
+    key,
+    () =>
+      folder
+        .call((ref) => HoardSmb.cullThumbnail({ ...ref, shotId: shot.id, maxSize: THUMB_SIZE }))
+        // Native writes it again under the same name: a fresh URL, so the WebView never answers
+        // from the failed request.
+        .then((r) => reloadedSrc(r.src, Date.now()))
+        .then((src) => {
+          cullTimings.record("thumb:reload", performance.now() - started)
+          return src
+        }),
+    signal
+  )
+}
+
+/** `src` with a cache-busting query (file URLs served by Capacitor ignore the query). */
+export const reloadedSrc = (src: string, stamp: number) =>
+  `${src}${src.includes("?") ? "&" : "?"}r=${stamp}`
+
+/** The reloaded thumbnail failed to show too: the tile keeps its failed state (no more retries). */
+export function thumbnailFailed(folder: CullFolder, shot: CullShot) {
+  thumbnails.fail(thumbKey(folder, shot), new Error("thumbnail did not load"))
+  cullTimings.record("thumb:failed", 0)
+}
 
 // --- 100% ------------------------------------------------------------------------------------
 
