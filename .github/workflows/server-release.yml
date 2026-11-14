@@ -30,6 +30,11 @@ jobs:
         id: v
         run: echo "version=${GITHUB_REF_NAME#server-v}" >> "$GITHUB_OUTPUT"
 
+      - name: ffmpeg and libvips (same test tools as server.yml)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libvips-tools libheif-plugin-libde265 libheif-plugin-dav1d
+
       - name: Test
         run: go test -count=1 ./...
 
