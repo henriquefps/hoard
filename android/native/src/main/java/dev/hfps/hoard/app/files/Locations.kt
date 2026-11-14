@@ -131,9 +131,9 @@ class FileService(
         }
     }
 
-    /** Opens the machine's session through the engine and runs a raw session call (the share list probe). */
-    suspend fun <T> onShare(machine: MachineWithAddresses, block: (dev.hfps.hoard.smb.SmbSession) -> T): T = mapped {
-        engine.withSession(machine.engineMachine()) { sessionId -> gateway.onSession(sessionId) { s, _ -> block(s) } }
+    /** A raw session call on the machine's route (the open cache's download). */
+    suspend fun <T> onSessionCancellable(machine: MachineWithAddresses, block: (dev.hfps.hoard.smb.SmbSession, Cancellation) -> T): T = mapped {
+        engine.withSession(machine.engineMachine()) { sessionId -> gateway.onSession(sessionId, block) }
     }
 
     private suspend fun <T> mapped(block: suspend () -> T): T = try {
