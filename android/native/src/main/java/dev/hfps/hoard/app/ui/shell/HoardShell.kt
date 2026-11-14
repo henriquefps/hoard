@@ -248,6 +248,7 @@ fun HoardShell(container: AppContainer) {
                                     onPalette = settings::setPalette,
                                     onOpenLicences = { navController.navigate(LicencesRoute) },
                                     files = { FilesSettingsSection() },
+                                    culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
                                 )
                             }
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
