@@ -19,6 +19,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
+    // Findings that came with the code from :app (where lint never ran in CI): java.nio on minSdk 24, and the
+    // WorkManager service type that :app's manifest declares (a library cannot see it). New findings still fail.
+    lint { baseline = file("lint-baseline.xml") }
     testOptions {
         unitTests {
             // android.* stubs return defaults instead of throwing in JVM unit tests (pure logic only).

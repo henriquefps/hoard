@@ -1,0 +1,598 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<issues format="6" by="lint 8.13.0" type="baseline" client="gradle" dependencies="false" name="AGP (8.13.0)" variant="all" version="8.13.0">
+
+    <issue
+        id="ApplySharedPref"
+        message="Consider using `apply()` instead; `commit` writes its data to persistent storage immediately, whereas `apply` will handle it in the background"
+        errorLine1="        prefs.edit().remove(keyFor(machineId)).commit()"
+        errorLine2="                                               ~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/CredentialStore.kt"
+            line="52"
+            column="48"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Class requires API level 26, or core library desugaring (current min is 24): `java.nio.file.NoSuchFileException`"
+        errorLine1="            error is NoSuchFileException || error is FileNotFoundException &amp;&amp; isMissing(error) -> ErrorCode.NOT_FOUND"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/HoardFs.kt"
+            line="100"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Class requires API level 26, or core library desugaring (current min is 24): `java.nio.file.NotDirectoryException`"
+        errorLine1="            error is NotDirectoryException -> ErrorCode.NOT_FOUND"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/HoardFs.kt"
+            line="101"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Class requires API level 26, or core library desugaring (current min is 24): `java.nio.file.FileAlreadyExistsException`"
+        errorLine1="            error is FileAlreadyExistsException -> ErrorCode.ALREADY_EXISTS"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/HoardFs.kt"
+            line="102"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Class requires API level 26, or core library desugaring (current min is 24): `java.nio.file.AccessDeniedException`"
+        errorLine1="            error is AccessDeniedException || error is SecurityException -> ErrorCode.ACCESS_DENIED"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/HoardFs.kt"
+            line="103"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.io.File#toPath`"
+        errorLine1="            runCatching { Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS) }.getOrNull()"
+        errorLine2="                                                    ~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/PathFs.kt"
+            line="60"
+            column="53"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.nio.file.Files#readAttributes`"
+        errorLine1="            runCatching { Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS) }.getOrNull()"
+        errorLine2="                                ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/PathFs.kt"
+            line="60"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Class requires API level 26, or core library desugaring (current min is 24): `java.nio.file.attribute.BasicFileAttributes`"
+        errorLine1="            runCatching { Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS) }.getOrNull()"
+        errorLine2="                                                              ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/PathFs.kt"
+            line="60"
+            column="63"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Field requires API level 26, or core library desugaring (current min is 24): `java.nio.file.LinkOption#NOFOLLOW_LINKS`"
+        errorLine1="            runCatching { Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS) }.getOrNull()"
+        errorLine2="                                                                                               ~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/PathFs.kt"
+            line="60"
+            column="96"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.io.File#toPath`"
+        errorLine1="        val isLink = sdkInt >= 26 &amp;&amp; Files.isSymbolicLink(file.toPath())"
+        errorLine2="                                                               ~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/PathFs.kt"
+            line="195"
+            column="64"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26, or core library desugaring (current min is 24): `java.nio.file.Files#isSymbolicLink`"
+        errorLine1="        val isLink = sdkInt >= 26 &amp;&amp; Files.isSymbolicLink(file.toPath())"
+        errorLine2="                                           ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/PathFs.kt"
+            line="195"
+            column="44"/>
+    </issue>
+
+    <issue
+        id="NewApi"
+        message="Call requires API level 26 (current min is 24): `android.content.Context#revokeUriPermission`"
+        errorLine1="            plan.writable.forEach { runCatching { context.revokeUriPermission(target, it, SIDECAR_GRANT) } }"
+        errorLine2="                                                          ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/share/RevealHandoff.kt"
+            line="179"
+            column="59"/>
+    </issue>
+
+    <issue
+        id="WrongConstant"
+        message="Must be one or more of: Intent.FLAG_GRANT_READ_URI_PERMISSION, Intent.FLAG_GRANT_WRITE_URI_PERMISSION"
+        errorLine1="            plan.writable.forEach { runCatching { context.revokeUriPermission(target, it, SIDECAR_GRANT) } }"
+        errorLine2="                                                                                          ~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/share/RevealHandoff.kt"
+            line="179"
+            column="91"/>
+    </issue>
+
+    <issue
+        id="SpecifyForegroundServiceType"
+        message="Missing dataSync foregroundServiceType in the AndroidManifest.xml"
+        errorLine1="            ForegroundInfo(progressId(transferId), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)"
+        errorLine2="            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/transfer/TransferNotifications.kt"
+            line="125"
+            column="13"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.core:core-ktx than 1.17.0 is available: 1.19.1"
+        errorLine1="    implementation(&quot;androidx.core:core-ktx:${rootProject.extra[&quot;androidxCoreVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="50"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.work:work-runtime-ktx than 2.11.0 is available: 2.12.0"
+        errorLine1="    api(&quot;androidx.work:work-runtime-ktx:${rootProject.extra[&quot;workVersion&quot;]}&quot;)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="52"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="GradleDependency"
+        message="A newer version of androidx.exifinterface:exifinterface than 1.4.1 is available: 1.4.2"
+        errorLine1="    implementation(&quot;androidx.exifinterface:exifinterface:${rootProject.extra[&quot;exifInterfaceVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="53"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.slf4j:slf4j-nop than 2.0.17 is available: 2.0.20"
+        errorLine1="    implementation(&quot;org.slf4j:slf4j-nop:${rootProject.extra[&quot;slf4jVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="49"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.jetbrains.kotlinx:kotlinx-coroutines-android than 1.10.2 is available: 1.11.0"
+        errorLine1="    api(&quot;org.jetbrains.kotlinx:kotlinx-coroutines-android:${rootProject.extra[&quot;coroutinesVersion&quot;]}&quot;)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="51"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="NewerVersionAvailable"
+        message="A newer version of org.json:json than 20250517 is available: 20260814"
+        errorLine1="    testImplementation(&quot;org.json:json:20250517&quot;)"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="59"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="PluralsCandidate"
+        message="Formatting %d followed by words (&quot;files&quot;): This should probably be a plural rather than a string"
+        errorLine1="    &lt;string name=&quot;transfer_items_progress&quot;>%1$d of %2$d files · %3$s of %4$s&lt;/string>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/hoard_smb_strings.xml"
+            line="17"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="PluralsCandidate"
+        message="Formatting %d followed by words (&quot;failed&quot;): This should probably be a plural rather than a string"
+        errorLine1="    &lt;string name=&quot;transfer_partly_failed&quot;>%1$d of %2$d failed&lt;/string>"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/res/values/hoard_smb_strings.xml"
+            line="22"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="UnusedQuantity"
+        message="For language &quot;pt&quot; (Portuguese) the following quantities are not relevant: `many`"
+        errorLine1="    &lt;plurals name=&quot;transfer_files&quot;>"
+        errorLine2="    ^">
+        <location
+            file="src/main/res/values-pt-rBR/hoard_smb_strings.xml"
+            line="17"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="UnusedQuantity"
+        message="For language &quot;pt&quot; (Portuguese) the following quantities are not relevant: `many`"
+        errorLine1="    &lt;plurals name=&quot;stream_count&quot;>"
+        errorLine2="    ^">
+        <location
+            file="src/main/res/values-pt-rBR/hoard_smb_strings.xml"
+            line="30"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="Recycle"
+        message="This `Cursor` should be freed up after use with `#close()`"
+        errorLine1="            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { c ->"
+        errorLine2="                     ~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/share/IncomingShares.kt"
+            line="163"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="Recycle"
+        message="This `Cursor` should be freed up after use with `#close()`"
+        errorLine1="        resolver.query("
+        errorLine2="                 ~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/SafDestinations.kt"
+            line="189"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="Recycle"
+        message="This `ParcelFileDescriptor` should be freed up after use with `#close()`"
+        errorLine1="        resolver.openFileDescriptor(documentUri, &quot;r&quot;)?.use { pfd ->"
+        errorLine2="                 ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/SafDestinations.kt"
+            line="207"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="Recycle"
+        message="This `OutputStream` should be freed up after use with `#close()`"
+        errorLine1="            (resolver.openOutputStream(uri, &quot;wt&quot;) ?: smbFail(ErrorCode.ACCESS_DENIED, &quot;Could not write $name&quot;)).use { it.write(bytes) }"
+        errorLine2="                      ~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/location/SafFs.kt"
+            line="234"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="Recycle"
+        message="This `Cursor` should be freed up after use with `#close()`"
+        errorLine1="        resolver.query(children, arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME), null, null, null)?.use { c ->"
+        errorLine2="                 ~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/transfer/TransferEndpoints.kt"
+            line="243"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="StaticFieldLeak"
+        message="Do not place Android context classes in static fields (static reference to `HandoffServer` which has field `app` pointing to `Context`); this is a memory leak"
+        errorLine1="/**"
+        errorLine2="^">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/handoff/HandoffServer.kt"
+            line="41"
+            column="1"/>
+    </issue>
+
+    <issue
+        id="StaticFieldLeak"
+        message="Do not place Android context classes in static fields; this is a memory leak"
+        errorLine1="    @Volatile private var app: Context? = null"
+        errorLine2="    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/handoff/HandoffServer.kt"
+            line="62"
+            column="5"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="            if (!prefs.edit().putString(keyFor(machineId), Base64.encodeToString(blob, Base64.NO_WRAP)).commit()) {"
+        errorLine2="                 ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/CredentialStore.kt"
+            line="40"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `SharedPreferences.edit` instead?"
+        errorLine1="        prefs.edit().remove(keyFor(machineId)).commit()"
+        errorLine2="        ~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/CredentialStore.kt"
+            line="52"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        items.filter { it.kind == HandoffKind.LOCAL }.forEach { runCatching { context.revokeUriPermission(Uri.parse(it.uri), flags) } }"
+        errorLine2="                                                                                                          ~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/handoff/HandoffServer.kt"
+            line="318"
+            column="107"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="            runCatching { context.revokeUriPermission(Uri.parse(item.uri), flags) }"
+        errorLine2="                                                      ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/handoff/HandoffServer.kt"
+            line="329"
+            column="55"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="                    IncomingItem(o.getInt(&quot;index&quot;), Uri.parse(o.getString(&quot;uri&quot;)), o.getString(&quot;name&quot;), o.optLong(&quot;size&quot;, -1), o.optString(&quot;mimeType&quot;).takeIf { s -> o.has(&quot;mimeType&quot;) &amp;&amp; s.isNotEmpty() })"
+        errorLine2="                                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/share/IncomingShares.kt"
+            line="51"
+            column="53"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="                return Uri.parse(item.uri)"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/share/RevealHandoff.kt"
+            line="123"
+            column="24"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="                Uri.parse(uri),"
+        errorLine2="                ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/SafDestinations.kt"
+            line="65"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        val uri = runCatching { Uri.parse(treeUri) }.getOrNull()"
+        errorLine2="                                ~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/SafDestinations.kt"
+            line="73"
+            column="33"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="                Uri.parse(&quot;${LocalWebServer.baseUrl()}/${entry.token}/${WebPaths.encodeSegment(name)}&quot;)"
+        errorLine2="                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/stream/Streamer.kt"
+            line="64"
+            column="17"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="            val url = Uri.parse(&quot;${LocalWebServer.baseUrl()}/${entry.token}/${WebPaths.encodeSegment(name)}&quot;)"
+        errorLine2="                      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/stream/Streamer.kt"
+            line="113"
+            column="23"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `Bitmap.scale` instead?"
+        errorLine1="        val scaled = Bitmap.createScaledBitmap("
+        errorLine2="                     ^">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/viewer/Thumbnailer.kt"
+            line="286"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        is Endpoint.Tree -> DocumentTransferFs.forTree(context, Uri.parse(endpoint.uri))"
+        errorLine2="                                                                ~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/transfer/TransferEndpoints.kt"
+            line="63"
+            column="65"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="            .setData(Uri.parse(&quot;hoard-transfer:$transferId&quot;)) // distinct PendingIntent per job"
+        errorLine2="                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/transfer/TransferNotifications.kt"
+            line="64"
+            column="22"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        origin = Uri.parse(url)"
+        errorLine2="                 ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/stream/WebViewerActivity.kt"
+            line="49"
+            column="18"/>
+    </issue>
+
+    <issue
+        id="UseKtx"
+        message="Use the KTX extension function `String.toUri` instead?"
+        errorLine1="        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)"
+        errorLine2="                                                ~~~~~~~~~~~~~~">
+        <location
+            file="src/main/java/dev/hfps/hoard/smb/stream/WebViewerActivity.kt"
+            line="150"
+            column="49"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    api(&quot;com.hierynomus:smbj:${rootProject.extra[&quot;smbjVersion&quot;]}&quot;)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="48"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    implementation(&quot;org.slf4j:slf4j-nop:${rootProject.extra[&quot;slf4jVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="49"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    implementation(&quot;androidx.core:core-ktx:${rootProject.extra[&quot;androidxCoreVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="50"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    api(&quot;org.jetbrains.kotlinx:kotlinx-coroutines-android:${rootProject.extra[&quot;coroutinesVersion&quot;]}&quot;)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="51"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    api(&quot;androidx.work:work-runtime-ktx:${rootProject.extra[&quot;workVersion&quot;]}&quot;)"
+        errorLine2="        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="52"
+            column="9"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    implementation(&quot;androidx.exifinterface:exifinterface:${rootProject.extra[&quot;exifInterfaceVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="53"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    implementation(&quot;com.google.mlkit:face-detection:${rootProject.extra[&quot;mlkitFaceDetectionVersion&quot;]}&quot;)"
+        errorLine2="                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="54"
+            column="20"/>
+    </issue>
+
+    <issue
+        id="UseTomlInstead"
+        message="Use version catalog instead"
+        errorLine1="    testImplementation(&quot;org.json:json:20250517&quot;)"
+        errorLine2="                       ~~~~~~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="59"
+            column="24"/>
+    </issue>
+
+</issues>

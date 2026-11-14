@@ -6,6 +6,10 @@
       passwords never migrates. Components of the Capacitor app (stream provider, transfer service, share targets)
       come over screen by screen with the features that use them.
     -->
+    <!-- :core:smb's streaming and transfer notifications (the same permission as the Capacitor app; asked for when
+         the screens that start them arrive). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".HoardApplication"
         android:allowBackup="false"

@@ -64,9 +64,27 @@ async function v7(SQL: initSqlJs.SqlJsStatic): Promise<Database> {
   await addManualShare(db, nas, "Hidden$")
   await addManualShare(db, nas, "photos")
 
-  await addFavorite(db, { locationId: nas, machineId: nas, share: "photos", path: "2026/Lisboa", label: "Lisboa" })
-  await addFavorite(db, { locationId: desktop, machineId: desktop, share: "Users", path: "", label: "Users" })
-  await addFavorite(db, { locationId: "device", machineId: null, share: "", path: "DCIM/Camera", label: "Camera" })
+  await addFavorite(db, {
+    locationId: nas,
+    machineId: nas,
+    share: "photos",
+    path: "2026/Lisboa",
+    label: "Lisboa",
+  })
+  await addFavorite(db, {
+    locationId: desktop,
+    machineId: desktop,
+    share: "Users",
+    path: "",
+    label: "Users",
+  })
+  await addFavorite(db, {
+    locationId: "device",
+    machineId: null,
+    share: "",
+    path: "DCIM/Camera",
+    label: "Camera",
+  })
   await addFavorite(db, {
     locationId: "vol-1234-ABCD",
     machineId: null,
@@ -148,20 +166,30 @@ async function v7(SQL: initSqlJs.SqlJsStatic): Promise<Database> {
     { shotId: "dsc01237", flag: "pick", rating: 3 },
   ])
   await saveCullSidecars(db, card, [
-    { shotId: "dsc01234", decidedAt: 1_762_000_000_000, sidecarMtime: 1_762_000_000_500, synced: true },
+    {
+      shotId: "dsc01234",
+      decidedAt: 1_762_000_000_000,
+      sidecarMtime: 1_762_000_000_500,
+      synced: true,
+    },
     { shotId: "dsc01299", decidedAt: null, sidecarMtime: 1_761_000_000_000, synced: false },
   ])
-  await setCullDestination(db, { locationId: "vol-1234-ABCD", share: "" }, { ...card, locationId: nas, share: "photos", label: "photos" }, {
-    pairs: "both",
-    sidecars: true,
-  })
+  await setCullDestination(
+    db,
+    { locationId: "vol-1234-ABCD", share: "" },
+    { ...card, locationId: nas, share: "photos", label: "photos" },
+    {
+      pairs: "both",
+      sidecars: true,
+    }
+  )
   await saveCullAnalyses(db, card, [
     {
       path: "DCIM/100MSDCF/DSC01234.ARW",
       size: 26_214_400,
       modifiedAt: "2026-11-01T10:00:00.000Z",
       version: 3,
-      analysis: JSON.stringify({ sharpness: 0.82, faces: [{ eyesOpen: 0.97 }], note: "ação \"ok\"" }),
+      analysis: JSON.stringify({ sharpness: 0.82, faces: [{ eyesOpen: 0.97 }], note: 'ação "ok"' }),
     },
     {
       path: "DCIM/100MSDCF/DSC01235.JPG",
@@ -216,7 +244,9 @@ async function v1(SQL: initSqlJs.SqlJsStatic): Promise<Database> {
 
 async function v99(SQL: initSqlJs.SqlJsStatic): Promise<Database> {
   const database = await v7(SQL)
-  database.exec("CREATE TABLE future_things (id TEXT PRIMARY KEY NOT NULL); PRAGMA user_version = 99")
+  database.exec(
+    "CREATE TABLE future_things (id TEXT PRIMARY KEY NOT NULL); PRAGMA user_version = 99"
+  )
   return database
 }
 

@@ -586,7 +586,9 @@ class ImageCore(val config: ImageCoreConfig) : ComponentCallbacks2 {
         const val ANALYSIS_MIN_PREVIEW = 1024
 
         fun sharpness(bitmap: Bitmap, cols: Int = 4, rows: Int = 4): SharpnessScore {
-            require(bitmap.config != Bitmap.Config.HARDWARE) { "Sharpness needs a software bitmap" }
+            require(android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O || bitmap.config != Bitmap.Config.HARDWARE) {
+                "Sharpness needs a software bitmap"
+            }
             val longest = max(bitmap.width, bitmap.height)
             val scale = minOf(1f, Sharpness.ANALYSIS_LONG_SIDE.toFloat() / longest)
             val small = if (scale < 1f) {
