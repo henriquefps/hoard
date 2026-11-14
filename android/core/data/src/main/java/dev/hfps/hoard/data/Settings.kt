@@ -18,6 +18,14 @@ class SettingsStore(private val dao: SettingsDao) {
 
     suspend fun putString(key: String, value: String) = dao.put(SettingEntity(key, encodeString(value)))
 
+    /** The stored JSON text of [key] (any JSON value), null when unset. Typed reading is the caller's. */
+    fun observeJson(key: String): Flow<String?> = dao.observe(key)
+
+    suspend fun getJson(key: String): String? = dao.get(key)
+
+    /** Stores [json] (already JSON text: `true`, `1500`, `{"key":"name","direction":"asc"}`) as Hoard 1 does. */
+    suspend fun putJson(key: String, json: String) = dao.put(SettingEntity(key, json))
+
     companion object {
         const val THEME_MODE = "themeMode"
         const val PALETTE = "palette"

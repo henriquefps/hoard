@@ -121,6 +121,7 @@ dependencies {
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.truth)
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${rootProject.extra["coroutinesVersion"]}")
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))
