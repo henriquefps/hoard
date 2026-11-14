@@ -1,7 +1,8 @@
 # ADR 0018: The web gallery served by hoard-server
 
 - **Date**: 2026-11-14
-- **Status**: Accepted (hoard-server 0.8.0, Hoard 2 phase 7, moved up)
+- **Status**: Accepted (hoard-server 0.8.0, Hoard 2 phase 7, moved up); amended in 0.8.1 after the owner's first test
+  (full resolution for 100 %, named downloads, HTTPS behind `tailscale serve`, the culling check)
 - **Amends**: ADR 0013 (additive routes outside `/v1`, summarised there in "Web gallery (hoard-server 0.8.0)"). Reads
   ADR 0014 (items), 0015 (previews), 0016 (culling), 0017 (devices), and Hoard ADR 0008/0009 for the culling keys.
 
@@ -48,8 +49,7 @@ second process or a Node runtime.
 carrying a proxy header (`Cf-Connecting-Ip`, `X-Forwarded-For`, `X-Real-Ip`, `Forwarded`). Unlike `/admin`, the
 setup page's "allow through a tunnel or proxy" setting does **not** open the gallery: that needs a decision of its own
 (Cloudflare Access in front, share links). Elsewhere every gallery path answers `404` like an unknown route.
-(Consequence: `tailscale serve` in front, which adds `X-Forwarded-For`, hides the gallery; open it at the Tailscale
-address and port directly.)
+The one exception, opt-in, is `tailscale serve` on the same machine (0.8.1, "HTTPS with tailscale serve" below).
 
 **Sign-in with the admin password** (chosen over pairing the browser as a device):
 
@@ -87,10 +87,11 @@ address and port directly.)
 | `GET /web/items/{id}` | `{"item": <as GET /v1/items/{id}>, "culling": <record> \| null, "edited": bool}` |
 | `GET /web/items/{id}/exif` | `{"exposure": {"exposureTime", "fNumber", "iso", "bias", "focalLength", "focalLength35"}}` read on demand from the still (a pair's JPEG, else the main file); `{}` fields absent when not recorded or for videos. Not stored: `MetaVersion` and the items do not change. |
 | `GET /web/items/{id}/preview\|poster\|proxy` | As `/v1` (ADR 0015), same handlers (`202` pending, `?v=` immutable, ranges for the proxy). |
-| `GET /web/items/{id}/files/{fingerprint}` | One member file of the item with ranges, `Content-Type` by extension, `Content-Disposition: inline` (`?download=1`: `attachment`) with the file's name. `404` when the fingerprint is not a member; `503` when the NAS file is offline or changed. |
+| `GET /web/items/{id}/full` (0.8.1) | The still at full resolution ("Full resolution" below): the original file (`X-Hoard-Full: original`), or a JPEG made on demand (`converted`, `raw`), `202` + `Retry-After` while it is made; `404 preview_unavailable` for a video. |
+| `GET /web/items/{id}/files/{fingerprint}[/{name}]` | One member file of the item with ranges, `Content-Type` by extension, `Content-Disposition: inline` (`?download=1`: `attachment`) with the file's name ("Downloads"). The optional last segment is the file's name, ignored by the server. `404` when the fingerprint is not a member; `503` when the NAS file is offline or changed. |
 | `POST /web/culling` | As `POST /v1/culling` (ADR 0016), written by the session's writer id. |
-| `POST /web/downloads` `{"items": [ids]}` (1-5000) | `{"url": "/web/downloads/<token>", "name", "items", "files", "bytes"}`: a download link valid **10 minutes**, for this session only. `422 invalid_request` (`details.index`) for an unknown or deleted item. |
-| `GET /web/downloads/{token}` | `application/zip`, streamed as it is read (no temporary file, no `Content-Length`): every file of every item (a pair's RAW and JPEG, its sidecar; a motion photo's video when it is a separate file), stored without compression (photos and videos are compressed already), names made unique (`DSC0001 (2).JPG`). A file the server cannot open is skipped and listed in `missing.txt` at the end. |
+| `POST /web/downloads` `{"items": [ids]}` (1-5000) | `{"url": "/web/downloads/<token>/<name>", "name", "items", "files", "bytes"}`: a download link valid **10 minutes**, for this session only. `422 invalid_request` (`details.index`) for an unknown or deleted item. |
+| `GET /web/downloads/{token}[/{name}]` | `application/zip`, streamed as it is read (no temporary file, no `Content-Length`): every file of every item (a pair's RAW and JPEG, its sidecar; a motion photo's video when it is a separate file), stored without compression (photos and videos are compressed already), names made unique (`DSC0001 (2).JPG`). A file the server cannot open is skipped and listed in `missing.txt` at the end. |
 
 Errors are ADR 0013's JSON errors. A browser downloads one file with the `files` route and a pair, a motion photo with
 a separate video, or a selection with a zip link (`<a download>` on the link: the browser's own download manager shows
@@ -155,9 +156,10 @@ thumbnail URLs, ADR 0015, and never revalidates), `cr` the culling fields' revis
 ### Viewer
 
 Full screen, dark in both themes (Hoard's viewer tokens). The thumbnail shows at once, the **screen preview** (2560 px
-WebP) replaces it, then the **original** when the browser can show it (a pair's JPEG, a JPEG/PNG/WebP/AVIF photo up
-to 80 MB; a RAW or HEIC stays at the preview). The header says which one is on screen ("Thumbnail", "Preview",
-"Original"). **Z**, a double click or the wheel zoom to 100 % (one image pixel per device pixel) at the pointer; drag
+WebP) replaces it, and the **full-resolution still** replaces that once a zoom would magnify the preview ("Full
+resolution", 0.8.1; in 0.8.0 the original of a JPEG loaded always, and a RAW or HEIC stayed at the preview, blurry at
+100 %). The header says which one is on screen ("Thumbnail", "Preview", "Original", "Original (rendered from the
+RAW)", "Original (converted from HEIF)"). **Z**, a double click or the wheel zoom to 100 % (one image pixel per device pixel) at the pointer; drag
 pans. **I** opens the info panel: capture time with milliseconds and offset, camera, lens, exposure (shutter, aperture,
 ISO, focal length and its 35 mm equivalent, bias), size and megapixels, video codec/fps/HDR/audio, GPS with a map
 link, each culling field with who wrote it (a device, the NAS sidecar, the web gallery) and when, edited in Reveal,
@@ -178,6 +180,86 @@ Writes follow ADR 0016's client rules: the decision shows at once; one change pe
 revision from the index as `baseRev` and the browser's clock as `modifiedAt`; changes to the same field collapse to
 the last; a failed push stays queued and retries (a header indicator counts pending changes); a field still pending
 keeps its local value over what a poll brings; a conflict the server wins makes the next poll show the winner.
+
+### Full resolution (0.8.1)
+
+The owner's first test: 100 % was blurry. The viewer zoomed the 2560 px screen preview, and a Sony RAW's preview is
+its 1616 px embedded JPEG (ADR 0015), so 100 % of a 24-60 MP shot was the preview magnified 2.3-6 times.
+
+- **When**: the viewer asks for full resolution once the image's width on screen in device pixels is larger than the
+  screen preview's own width (5 % slack), i.e. on any zoom past what the preview holds, not at fit. A photo whose
+  preview is already its full size (≤ 2560 px) never asks. Over 150 MP it stays at the preview.
+- **What** (`GET /web/items/{id}/full`, `previews.FullOriginal` and `JobFull`):
+  - a JPEG photo, or a pair's camera JPEG (a rendering a browser shows: JPEG, PNG, WebP, AVIF, GIF): **the file
+    itself**, untouched (`X-Hoard-Full: original`; the browser applies its EXIF orientation and ICC profile);
+  - a **HEIF** rendering: converted to a full-size JPEG (q90, sRGB, upright) by libvips (`converted`);
+  - a **lone RAW** (`raw`): its largest embedded JPEG **as it is** (the camera's rendering, the RAW's orientation put in
+    a minimal EXIF in front) when its long edge is at least 90 % of the RAW's (Canon, Nikon, Apple embed a full-size
+    one), else a **LibRaw decode** (`dcrawload`, as ADR 0015's fallback) to a full-size JPEG q90; if LibRaw fails, the
+    largest embedded JPEG when it is larger than the screen preview, else unavailable (the viewer stays at "Preview").
+    "Whichever is larger and sharp": a Sony's 1616 px or an Olympus's 3200 px preview is never called full resolution.
+- **Made on demand, cached like previews**: `JobFull` is a third job of the preview queue (same rows, keys, states and
+  retries as ADR 0015; key = source + recipe + `PREVIEW_VERSION`), in its own lane (one worker, so a 10 s LibRaw decode
+  never holds up thumbnails), at priority 0 when a viewer asks (`202` + `Retry-After: 2`), **never in the backlog**
+  (`--preview-backlog` does not take it). Files: `<key>.full.jpg` under the previews directory. The cache is bounded
+  (`--full-cache-mb`, default 4 GiB, about 200 photos of 24-60 MP): after each new still, the least recently served
+  go (serving one touches its row); they are made again when asked.
+- **Progressive, no jump**: the viewer downloads the answer with `fetch` (progress from `Content-Length`: "Loading full
+  resolution… 42 %"; "Rendering full resolution on the server…" while it gets `202`), makes a blob URL, and puts the
+  image in the same box as the preview (every layer is `absolute inset-0` of a box sized from the item's width and
+  height), visible once decoded: the swap changes no position or scale (tested).
+- **Memory**: one full-resolution image at a time (the viewer remounts per item; leaving an item aborts the download,
+  clears the `<img>` and revokes the blob). Single image chosen over tiles (measured below): it costs about 100 MB
+  (24 MP) to 250 MB (60 MP) of browser memory while shown, Chrome's own decoded-image cache levels off at about 0.6-1
+  GB over a sitting of 20 visits at 60 MP (discardable: Chrome drops it under memory pressure); tiles save about 150 MB
+  at 60 MP but cost 50-85 requests per pan across the photo, a server-side pyramid per photo (and so a second copy of
+  every JPEG original instead of serving it untouched) and a tile renderer.
+
+### Downloads (0.8.1)
+
+The owner's first test: downloads were blocked and arrived named after the URL (`v1_2537051c…`, no extension).
+
+- **Names**: every download answer sends `Content-Disposition: attachment; filename="<ASCII fallback>";
+  filename*=UTF-8''<percent-encoded name>` (RFC 6266/8187: accents and spaces survive). One file keeps its own name;
+  a zip of one item is `<main file's stem>.zip` (a pair: the RAW, the JPEG and the sidecar under their own names);
+  several items from one directory `<directory>-<n> photos.zip`, else the capture day or days
+  (`2024-05-03–2024-05-10-<n> photos.zip`). The URL ends in the name too (`/files/{fingerprint}/{name}`,
+  `/web/downloads/{token}/{name}`, ignored by the server), so a browser that names a download by its URL (a blocked
+  download, "Save link as") still gets it right; the links are same-origin `<a download="<name>">`.
+- **Blocked downloads**: Chrome blocks downloads from a plain-HTTP page that is not on the same computer
+  (`http://cachyos-fps:3071/` from a Mac). No header fixes that; HTTPS does (next section). Over plain HTTP from
+  another computer the gallery shows a dismissible line saying so.
+
+### HTTPS with tailscale serve (0.8.1)
+
+`tailscale serve --bg --https=443 http://127.0.0.1:3071` on the server machine gives the gallery
+`https://<machine>.<tailnet>.ts.net/` with a certificate Tailscale manages, reachable from the tailnet only. It
+proxies from this host, which the 0.8.0 gate refused (a proxy header). With **`TRUST_TAILSCALE_SERVE=1`** (off by
+default) the gate, for the gallery and `/admin` alike, also accepts a request when all of these hold:
+
+- the TCP peer is loopback, or, in a container (`/.dockerenv`, `/run/.containerenv`), the default gateway (the Docker
+  bridge, which a published port's traffic from the host comes from), found at start and logged;
+- `X-Forwarded-For` is **one** address in Tailscale's ranges (100.64.0.0/10, fd7a:115c:a1e0::/48): `tailscale serve`
+  replaces whatever the client sent with the connection's tailnet address;
+- none of `Tailscale-Funnel-Request` (Funnel brings the internet in: refused), `Cf-Connecting-Ip`, `X-Real-Ip`,
+  `Forwarded` (another proxy).
+
+`Tailscale-User-*` headers are not needed (a tagged device has none) and are not used for authorization: the admin
+password still signs in. Behind it the cookie is `Secure` (`X-Forwarded-Proto: https`), the `Origin` check of
+writes compares with `X-Forwarded-Host` (the `ts.net` name; the request's own Host is `127.0.0.1:3071`), and rate
+limits key on the tailnet address. URLs are relative, so nothing else changes. A Cloudflare Tunnel connector on the
+same host still gets `404` (it sends `Cf-Connecting-Ip` and a public `X-Forwarded-For`). The setup is in the server's
+README; the server never configures Tailscale.
+
+### Culling from the gallery reaches other clients (0.8.1 check)
+
+Verified end to end (`TestWebCullingReachesOtherClients`, the e2e "viewer" test): a pick or rating set in the gallery
+is a per-field write by the session's `web:<16 hex>` writer through ADR 0016's rule, appears in
+`GET /v1/items/changes?include=culling` with a new revision for every paired client, and leaves Reveal's record feed
+(`/v1/changes`) untouched. ADR 0016 bridges **one way only** (Reveal's `photo` records → culling, for releases that do
+not push culling; "The bridge never writes `photo` records"), so a released Reveal that does not pull the culling feed
+does not show gallery decisions: that is Reveal's pending culling client (ADR 0016 "Client rules", step 5), not a
+server change. Hoard shows them once its phase-2 pull lands.
 
 ### Folders
 
@@ -207,6 +289,23 @@ Method, every number and how to run them again: `docs/testing/web-gallery.md`.
 | Browser JS heap after load / after scrolling | 27.8 / 32.1 MB |
 | Server RSS before / after the first index | 36 / 78 MB |
 
+Full resolution (0.8.1): `server/web/e2e/zoom.bench.spec.ts` (`HOARD_WEB_ZOOM_BENCH=1`), synthetic 3:2 JPEGs q90
+(ffmpeg `testsrc2` → libvips) answered in place of `/full`, the viewer at 1440 × 900, info panel closed; memory is the
+RSS of Chromium's renderer and GPU processes, a fresh context per size. Numbers in
+`docs/testing/web-gallery/zoom-measurements.json`.
+
+| | 24 MP | 45 MP | 60 MP |
+| --- | --- | --- | --- |
+| Z to full resolution shown (local, 2.1 / 2.9 / 4.7 MB) | 150 ms | 121 ms | 178 ms |
+| Memory at fit → full → panned corner to corner | 274 → 375 → 394 MB | 275 → 463 → 481 MB | 273 → 523 → 543 MB |
+| Tiles instead (512 px, only those in view): first view → panned; requests | 194 → 254 MB; 50 | 192 → 294 MB; 76 | 195 → 297 MB; 85 |
+
+A sitting at 60 MP (zoom, ← and back, 8 and 20 times): 184 → 532 → 784 MB, then 800-1000 MB, rising about 10 MB per
+visit more than the same walk without zooming (Chrome's caches; it gives them back under memory pressure). LibRaw
+renders on cachyos-fps (two threads, nice 10, CC0 raw.pixls.us files, two runs on a shared machine): Sony A7 III 24 MP
+2.9-4.0 s, Fujifilm X-T3 26 MP 6.1-7.6 s, Olympus E-M1 II 20 MP 4.3-6.1 s, Panasonic G9 80 MP high-res 10.9-16.5 s;
+Nikon Z 6, Canon R6 and the iPhone DNG use their full-size embedded JPEG as it is (4-20 ms).
+
 ## Consequences
 
 - One more thing the binary serves; the binary grows by the web build (0.9 MB of assets: 660 KB of JavaScript, 196 KB
@@ -219,6 +318,12 @@ Method, every number and how to run them again: `docs/testing/web-gallery.md`.
 - No share links, no editing, no access through the tunnel: each is a decision of its own.
 
 ## Alternatives considered
+
+- **Tiles for 100 %** (a DZI-like pyramid per photo): bounded browser memory, but per-photo server work and storage, a
+  re-encode of JPEG originals that are served untouched now, and dozens of requests per pan over Tailscale; measured
+  in "Measurements" and left out for 24-60 MP (0.8.1).
+- **Trusting `Tailscale-User-Login` as sign-in**: would skip the password on the tailnet, but tagged devices have no
+  identity and it would make the HTTPS address a different security model from the LAN one; the password stays.
 
 - **Pair the browser as a device**: see the table in "Reach and sign-in".
 - **Reuse `/v1` with a cookie**: `/v1` is reachable through the tunnel and is bearer-only by design; accepting cookies

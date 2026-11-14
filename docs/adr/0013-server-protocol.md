@@ -401,6 +401,13 @@ need `X-Hoard-Web: 1`. Culling written from the gallery goes through the culling
 id `web:<16 hex>` as its `deviceId`. `/` used to redirect to `/admin/`; it still does for a request through a proxy
 when the setup page is allowed there. Schema 7 (`web_sessions`, index `previews_updated`).
 
+**0.8.1** (ADR 0018 "Full resolution", "Downloads", "HTTPS with tailscale serve"): `GET /web/items/{id}/full` (the still
+at full resolution: the original file, or a JPEG made on demand for a lone RAW or a HEIF, `202` while it is made;
+`X-Hoard-Full: original | converted | raw`); `GET /web/items/{id}/files/{fingerprint}/{name}` and
+`GET /web/downloads/{token}/{name}` (the same answers, the name at the end of the URL); every download's
+`Content-Disposition` carries `filename*=UTF-8''…`; with `TRUST_TAILSCALE_SERVE=1` the gallery and `/admin` also
+answer requests `tailscale serve` proxies on the same machine. Still nothing under `/v1`.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |

@@ -32,10 +32,11 @@ import (
 //	GET    /web/items/{itemId}                one item (as /v1) plus its culling record, edited flag and folder
 //	GET    /web/items/{itemId}/exif           exposure read from the item's still
 //	GET    /web/items/{itemId}/preview|poster|proxy    as /v1 (ADR 0015)
-//	GET    /web/items/{itemId}/files/{fingerprint}     one member file (?download=1: as an attachment)
+//	GET    /web/items/{itemId}/full               the still at full resolution: the file, or a JPEG made on demand (202)
+//	GET    /web/items/{itemId}/files/{fingerprint}[/{name}]  one member file (?download=1: as an attachment)
 //	POST   /web/culling      as POST /v1/culling, written by the session's writer id "web:<16 hex>"
 //	POST   /web/downloads    {items: [ids]}  → {url}: a zip of the items' files, valid 10 minutes
-//	GET    /web/downloads/{token}             the zip, streamed
+//	GET    /web/downloads/{token}[/{name}]    the zip, streamed
 
 const (
 	webCookieName = "hoard_web"
@@ -92,10 +93,13 @@ func (s *Server) routesWeb(mux *http.ServeMux) {
 	authed("GET /web/items/{itemId}/preview", s.handlePreview)
 	authed("GET /web/items/{itemId}/poster", s.handlePoster)
 	authed("GET /web/items/{itemId}/proxy", s.handleProxy)
+	authed("GET /web/items/{itemId}/full", s.handleWebFull)
 	authed("GET /web/items/{itemId}/files/{fingerprint}", s.handleWebFile)
+	authed("GET /web/items/{itemId}/files/{fingerprint}/{name}", s.handleWebFile)
 	authed("POST /web/culling", s.handleCullingPush)
 	authed("POST /web/downloads", s.handleWebDownloadCreate)
 	authed("GET /web/downloads/{token}", s.handleWebDownload)
+	authed("GET /web/downloads/{token}/{name}", s.handleWebDownload)
 }
 
 // serveWebApp serves the gallery's built files; paths without an extension (the app's own routes) get index.html.
@@ -127,10 +131,11 @@ func (s *Server) serveWebApp(w http.ResponseWriter, r *http.Request) {
 }
 
 // webGate: the gallery answers direct LAN/Tailscale requests only (the setup page's address check, ADR 0013 "Admin"),
-// never a request that came through a tunnel or proxy, whatever the setup page's own proxy setting says (ADR 0018).
+// and, with TRUST_TAILSCALE_SERVE=1, requests `tailscale serve` proxied for a tailnet address — never a request that
+// came through a tunnel or another proxy, whatever the setup page's own proxy setting says (ADR 0018).
 func (s *Server) webGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !directLocal(r) {
+		if !s.localRequest(r) {
 			fail(w, r, http.StatusNotFound, "not_found", "Not found.", nil)
 			return
 		}
@@ -148,7 +153,7 @@ func (s *Server) webCSRF(next http.HandlerFunc) http.HandlerFunc {
 		}
 		if o := r.Header.Get("Origin"); o != "" {
 			u, err := url.Parse(o)
-			if err != nil || u.Host != r.Host {
+			if err != nil || u.Host != publicHost(r) {
 				fail(w, r, http.StatusForbidden, "forbidden", "Cross-origin request refused.", nil)
 				return
 			}
@@ -192,7 +197,8 @@ func (s *Server) webSessionAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		info(r).device = store.Device{ID: id, Name: "Web gallery", Platform: "web"}
 		limit := s.web.limit
-		if strings.HasSuffix(r.Pattern, "/preview") || strings.HasSuffix(r.Pattern, "/poster") || strings.HasSuffix(r.Pattern, "/proxy") {
+		if strings.HasSuffix(r.Pattern, "/preview") || strings.HasSuffix(r.Pattern, "/poster") || strings.HasSuffix(r.Pattern, "/proxy") ||
+			strings.HasSuffix(r.Pattern, "/full") {
 			limit = s.previewLimit
 		}
 		if ok, wait := limit.Allow(id); !ok {
@@ -254,7 +260,7 @@ func (s *Server) handleWebLogin(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
-	// Secure only over HTTPS: the gallery is plain HTTP on the LAN, where a Secure cookie would never come back.
+	// Secure over HTTPS (tailscale serve): on plain HTTP on the LAN a Secure cookie would never come back.
 	http.SetCookie(w, &http.Cookie{Name: webCookieName, Value: token, Path: "/web/", HttpOnly: true, //nolint:gosec // see above
 		SameSite: http.SameSiteStrictMode, Secure: secureRequest(r), MaxAge: int(webSessionTTL.Seconds())})
 	s.log.Info("web gallery signed in", "writer", writer)

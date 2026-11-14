@@ -273,6 +273,30 @@ func (s *Store) DeletePreviews(ctx context.Context, itemID, job string) ([]strin
 	return keys, err
 }
 
+// TouchPreview marks a job's files as just served (the full-resolution cache keeps the most recently used).
+func (s *Store) TouchPreview(ctx context.Context, itemID, job string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE previews SET updated_at = ? WHERE item_id = ? AND job = ? AND key != ''", s.nowMs(), itemID, job)
+	return err
+}
+
+// PreviewsByAge returns a job's rows that have files, least recently made or served first.
+func (s *Store) PreviewsByAge(ctx context.Context, job string) ([]Preview, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+previewCols+" FROM previews WHERE job = ? AND key != '' ORDER BY updated_at, item_id", job)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Preview
+	for rows.Next() {
+		p, err := scanPreview(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ResetRunningPreviews puts jobs a stopped server was running back in the queue (the queue resumes after a restart).
 func (s *Store) ResetRunningPreviews(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx, "UPDATE previews SET state = 'pending' WHERE state = 'running'")

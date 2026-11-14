@@ -126,6 +126,12 @@ export async function prepare(base: string, code: string, dir: string, opts: { p
   }
 }
 
+/** First-run setup only (setup code → admin password). */
+export async function setupOnly(base: string, code: string) {
+  const setup = await call(base, "POST", "/admin/api/setup", { code, password: PASSWORD }, { "X-Hoard-Admin": "1" })
+  if (setup.status !== 200) throw new Error("setup failed " + JSON.stringify(setup.json))
+}
+
 export function save(name: string, state: E2EState) {
   writeFileSync(statePath(name), JSON.stringify(state, null, 2))
 }

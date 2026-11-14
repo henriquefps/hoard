@@ -112,6 +112,10 @@
     "started_other": "Baixando {{count}} arquivos ({{size}})",
     "failed": "Não foi possível iniciar o download."
   },
+  "https": {
+    "hint": "O Chrome bloqueia downloads deste endereço HTTP sem criptografia. Abra a galeria pelo endereço HTTPS (tailscale serve, veja o README do servidor) para baixar.",
+    "dismiss": "Dispensar"
+  },
   "viewer": {
     "close": "Voltar para a galeria",
     "back": "Voltar para a galeria",
@@ -128,7 +132,18 @@
     "stopMotion": "Mostrar a foto",
     "videoPreparing": "Preparando o vídeo no servidor",
     "videoUnavailable": "Este vídeo não pode ser reproduzido.",
-    "layer": { "thumb": "Miniatura", "screen": "Prévia", "original": "Original" }
+    "layer": {
+      "thumb": "Miniatura",
+      "screen": "Prévia",
+      "original": "Original",
+      "originalRaw": "Original (revelado do RAW)",
+      "originalConverted": "Original (convertido do HEIF)"
+    },
+    "full": {
+      "rendering": "Gerando a resolução total no servidor…",
+      "loading": "Carregando a resolução total…",
+      "loadingPercent": "Carregando a resolução total… {{percent}}%"
+    }
   },
   "info": {
     "when": "Feita em",

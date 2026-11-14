@@ -1,0 +1,77 @@
+{
+  "singleImage": [
+    {
+      "megapixels": 24,
+      "width": 6000,
+      "height": 4000,
+      "jpegMB": 2.1,
+      "swapMs": 150,
+      "panMs": 762,
+      "rssFitMB": 274,
+      "rssFullMB": 375,
+      "rssPannedMB": 394,
+      "rssNextPhotoMB": 409
+    },
+    {
+      "megapixels": 45,
+      "width": 8256,
+      "height": 5504,
+      "jpegMB": 2.9,
+      "swapMs": 121,
+      "panMs": 498,
+      "rssFitMB": 275,
+      "rssFullMB": 463,
+      "rssPannedMB": 481,
+      "rssNextPhotoMB": 565
+    },
+    {
+      "megapixels": 60,
+      "width": 9504,
+      "height": 6336,
+      "jpegMB": 4.7,
+      "swapMs": 178,
+      "panMs": 494,
+      "rssFitMB": 273,
+      "rssFullMB": 523,
+      "rssPannedMB": 543,
+      "rssNextPhotoMB": 558
+    }
+  ],
+  "singleImageSeries60mp": [
+    184,
+    532,
+    784,
+    806,
+    822,
+    668,
+    835,
+    876,
+    891
+  ],
+  "tiles": [
+    {
+      "megapixels": 24,
+      "tileRequests": 50,
+      "tileMB": 1.8,
+      "panMs": 837,
+      "rssFirstViewMB": 194,
+      "rssPannedMB": 254
+    },
+    {
+      "megapixels": 45,
+      "tileRequests": 76,
+      "tileMB": 2.1,
+      "panMs": 977,
+      "rssFirstViewMB": 192,
+      "rssPannedMB": 294
+    },
+    {
+      "megapixels": 60,
+      "tileRequests": 85,
+      "tileMB": 3.4,
+      "panMs": 948,
+      "rssFirstViewMB": 195,
+      "rssPannedMB": 297
+    }
+  ]
+}

@@ -20,12 +20,16 @@ import (
 
 // Config is what the server resolves for the previews.
 type Config struct {
-	Dir          string          // where the files live (default <data dir>/previews)
-	ImageWorkers int             // image jobs at a time
-	ProxyWorkers int             // proxy jobs at a time
-	Backlog      map[string]bool // jobs made for every item ahead of requests (the others only when asked)
-	Generator    Generator
-	Store        *store.Store
+	Dir          string // where the files live (default <data dir>/previews)
+	ImageWorkers int    // image jobs at a time
+	ProxyWorkers int    // proxy jobs at a time
+	FullWorkers  int    // full-resolution jobs at a time (default 1)
+	// FullCacheBytes bounds the full-resolution stills kept on disk (default 4 GiB): past it, the ones served least
+	// recently go, and are made again when asked.
+	FullCacheBytes int64
+	Backlog        map[string]bool // jobs made for every item ahead of requests (the others only when asked)
+	Generator      Generator
+	Store          *store.Store
 	// Open opens a source file by fingerprint (a NAS copy still as indexed, or an uploaded blob). An error means the
 	// file is not reachable now: the job waits and is retried.
 	Open func(ctx context.Context, fingerprint string) (*os.File, error)
@@ -53,6 +57,10 @@ func New(cfg Config) (*Manager, error) {
 	}
 	cfg.ImageWorkers = max(cfg.ImageWorkers, 1)
 	cfg.ProxyWorkers = max(cfg.ProxyWorkers, 1)
+	cfg.FullWorkers = max(cfg.FullWorkers, 1)
+	if cfg.FullCacheBytes <= 0 {
+		cfg.FullCacheBytes = DefaultFullCacheBytes
+	}
 	if err := os.MkdirAll(cfg.Dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -64,10 +72,13 @@ func New(cfg Config) (*Manager, error) {
 		return nil, err
 	}
 	m := &Manager{cfg: cfg, tmp: tmp,
-		wake:    map[string]chan struct{}{JobImage: make(chan struct{}, 1), JobProxy: make(chan struct{}, 1)},
-		running: map[string]*atomic.Int32{JobImage: {}, JobProxy: {}}}
+		wake:    map[string]chan struct{}{JobImage: make(chan struct{}, 1), JobProxy: make(chan struct{}, 1), JobFull: make(chan struct{}, 1)},
+		running: map[string]*atomic.Int32{JobImage: {}, JobProxy: {}, JobFull: {}}}
 	return m, nil
 }
+
+// DefaultFullCacheBytes: the full-resolution cache's default bound (about 200 stills of 24-60 MP).
+const DefaultFullCacheBytes = 4 << 30
 
 // Dir is the previews directory.
 func (m *Manager) Dir() string { return m.cfg.Dir }
@@ -102,6 +113,9 @@ func (m *Manager) Run(ctx context.Context) {
 	}
 	for range m.cfg.ProxyWorkers {
 		go m.worker(ctx, JobProxy)
+	}
+	for range m.cfg.FullWorkers {
+		go m.worker(ctx, JobFull)
 	}
 	go m.scanner(ctx)
 }
@@ -349,6 +363,42 @@ func (m *Manager) runJob(ctx context.Context, p store.Preview) {
 		m.removeKey(old)
 	}
 	log.Debug("preview made", "kind", j.Kind, "ms", ms, "bytes", total)
+	if p.Job == JobFull {
+		m.TrimFull(ctx)
+	}
+}
+
+// Served marks a full-resolution still as just used (the cache keeps the most recently served ones).
+func (m *Manager) Served(ctx context.Context, itemID, job string) {
+	if job != JobFull {
+		return
+	}
+	if err := m.cfg.Store.TouchPreview(ctx, itemID, job); err != nil && ctx.Err() == nil {
+		m.cfg.Log.Warn("previews: touch", "err", err.Error())
+	}
+}
+
+// SetFullCacheBytes changes the full-resolution cache's bound (tests and tools); TrimFull applies it.
+func (m *Manager) SetFullCacheBytes(n int64) { m.cfg.FullCacheBytes = n }
+
+// TrimFull drops the least recently served full-resolution stills past FullCacheBytes (after every full job).
+func (m *Manager) TrimFull(ctx context.Context) {
+	rows, err := m.cfg.Store.PreviewsByAge(ctx, JobFull)
+	if err != nil {
+		m.cfg.Log.Error("previews: full cache", "err", err)
+		return
+	}
+	var total int64
+	for _, p := range rows {
+		total += p.Bytes
+	}
+	for _, p := range rows[:max(len(rows)-1, 0)] { // never the newest: the one just made or served
+		if total <= m.cfg.FullCacheBytes {
+			return
+		}
+		m.drop(ctx, p.ItemID, JobFull)
+		total -= p.Bytes
+	}
 }
 
 func (m *Manager) retry(ctx context.Context, p store.Preview, msg string, after time.Duration) {
@@ -378,7 +428,7 @@ func (m *Manager) drop(ctx context.Context, itemID, job string) {
 }
 
 // files every key may have.
-var allFiles = []string{FileThumb, FileScreen, FileThumbWebP, FileScreenWebP, FileProxy}
+var allFiles = []string{FileThumb, FileScreen, FileThumbWebP, FileScreenWebP, FileProxy, FileFull}
 
 func (m *Manager) removeKey(key string) {
 	if len(key) < 2 {
@@ -541,5 +591,6 @@ func (m *Manager) String() string {
 			b = append(b, j)
 		}
 	}
-	return fmt.Sprintf("generator=%s image=%d proxy=%d backlog=%v", m.cfg.Generator.Name(), m.cfg.ImageWorkers, m.cfg.ProxyWorkers, b)
+	return fmt.Sprintf("generator=%s image=%d proxy=%d full=%d fullCache=%dMiB backlog=%v", m.cfg.Generator.Name(), m.cfg.ImageWorkers,
+		m.cfg.ProxyWorkers, m.cfg.FullWorkers, m.cfg.FullCacheBytes>>20, b)
 }

@@ -17,15 +17,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { api, fileUrl, previewUrl } from "@/lib/api"
+import { api, fileUrl, fullUrl, previewUrl } from "@/lib/api"
 import { actionForKey, type CullAction } from "@/lib/culling"
 import { applyFilters, filtersToSearch } from "@/lib/filters"
 import { formatBytes, formatDateTime } from "@/lib/format"
@@ -38,7 +33,7 @@ import { setLastViewed } from "@/lib/viewState"
 import { useFilters } from "@/lib/useFilters"
 import { InfoPanel, type Exposure, type ItemDetail } from "./InfoPanel"
 import { VideoView } from "./VideoView"
-import { displayableOriginal } from "./zoom"
+import type { FullSource } from "./fullres"
 import { ZoomImage, type Layer } from "./ZoomImage"
 
 const ADVANCE_KEY = "hoard-web.autoAdvance"
@@ -85,6 +80,7 @@ export function Viewer({ itemId }: { itemId: string }) {
   }, [snapshot, filtered, library.byId])
   const [zoomed, setZoomed] = useState(false)
   const [layer, setLayer] = useState<Layer>("thumb")
+  const [fullSource, setFullSource] = useState<FullSource>("original")
   const [info, setInfo] = useState(() => readBool(INFO_KEY, true))
   const [advance, setAdvance] = useState(() => readBool(ADVANCE_KEY, true))
   const [loadedDetail, setDetail] = useState<ItemDetail | null>(null)
@@ -170,7 +166,7 @@ export function Viewer({ itemId }: { itemId: string }) {
     if (!detail) return
     const files = detail.item.files
     if (files.length === 1) {
-      startDownload(fileUrl(detail.item.id, files[0].fingerprint, true))
+      startDownload(fileUrl(detail.item.id, files[0].fingerprint, true, files[0].name), files[0].name)
       return
     }
     try {
@@ -229,9 +225,13 @@ export function Viewer({ itemId }: { itemId: string }) {
     )
   }
 
-  const original = detail ? displayableOriginal(detail.item.kind, detail.item.mainFingerprint, detail.item.files) : null
   const isVideo = row.k === "video"
-  const layerLabel = layer === "original" ? t("viewer.layer.original") : layer === "screen" ? t("viewer.layer.screen") : t("viewer.layer.thumb")
+  const layerLabel =
+    layer === "original"
+      ? t(`viewer.layer.${fullSource === "raw" ? "originalRaw" : fullSource === "converted" ? "originalConverted" : "original"}`)
+      : layer === "screen"
+        ? t("viewer.layer.screen")
+        : t("viewer.layer.thumb")
 
   return (
     <div
@@ -254,7 +254,12 @@ export function Viewer({ itemId }: { itemId: string }) {
           <p className="truncate text-[0.8125rem] text-muted-foreground tabular-nums">
             {formatDateTime(wallClock(row), i18n.language)}
             {index >= 0 && ` · ${t("viewer.position", { index: index + 1, total: order.length })}`}
-            {!isVideo && ` · ${layerLabel}`}
+            {!isVideo && (
+              <>
+                {" · "}
+                <span data-testid="layer">{layerLabel}</span>
+              </>
+            )}
           </p>
         </div>
         {!isVideo && (
@@ -323,10 +328,13 @@ export function Viewer({ itemId }: { itemId: string }) {
               height={row.h}
               thumb={previewUrl(row.id, "thumb", row.v)}
               screen={previewUrl(row.id, "screen", row.v)}
-              original={original ? fileUrl(row.id, original.fingerprint) : null}
+              full={fullUrl(row.id)}
               zoomed={zoomed}
               onZoomedChange={setZoomed}
-              onLayer={(l) => setLayer((cur) => (l === "original" || (l === "screen" && cur === "thumb") ? l : cur))}
+              onLayer={(l, source) => {
+                if (l === "original" && source) setFullSource(source)
+                setLayer((cur) => (l === "original" || (l === "screen" && cur === "thumb") ? l : cur))
+              }}
               alt={row.n}
               dimmed={row.x === "reject"}
             />

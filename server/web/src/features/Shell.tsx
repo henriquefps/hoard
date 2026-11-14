@@ -3,12 +3,13 @@ import {
   FolderSimpleIcon,
   GearSixIcon,
   ImagesIcon,
+  LockSimpleOpenIcon,
   MagnifyingGlassIcon,
   SignOutIcon,
   TranslateIcon,
   XIcon,
 } from "@phosphor-icons/react"
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { AppLogo } from "@/components/AppLogo"
 import { ThemeMenu } from "@/components/ThemeMenu"
@@ -25,7 +26,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isLanguage, LANGUAGES, setLanguage } from "@/i18n"
-import { api, type Session } from "@/lib/api"
+import { api, insecureDownloads, type Session } from "@/lib/api"
 import { filtersToSearch } from "@/lib/filters"
 import { useFilters } from "@/lib/useFilters"
 import { navigate, useLocation, viewerItem } from "@/lib/router"
@@ -39,6 +40,49 @@ import { Viewer } from "./viewer/Viewer"
  * hfps shell: a fixed 56px header on the tinted background, one card filling the rest of the screen, content scrolling
  * inside the card (the document never scrolls). The viewer opens over the gallery, which stays mounted (scroll kept).
  */
+const HTTPS_HINT_KEY = "hoard-web.httpsHintDismissed"
+
+/**
+ * Over plain HTTP from another computer, Chrome blocks every download ("Insecure download blocked"): a dismissible
+ * line says so and names the fix, the HTTPS address of tailscale serve (ADR 0018 "HTTPS with tailscale serve").
+ */
+function HttpsHint() {
+  const { t } = useTranslation()
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(HTTPS_HINT_KEY) === "1"
+    } catch {
+      return false
+    }
+  })
+  if (dismissed || !insecureDownloads(window.location)) return null
+  return (
+    <div
+      role="note"
+      data-testid="https-hint"
+      className="mx-2 mb-2 flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-[0.8125rem] text-muted-foreground md:mx-3"
+    >
+      <LockSimpleOpenIcon className="size-4 shrink-0 text-warning" />
+      <p className="min-w-0 flex-1">{t("https.hint")}</p>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t("https.dismiss")}
+        onClick={() => {
+          setDismissed(true)
+          try {
+            localStorage.setItem(HTTPS_HINT_KEY, "1")
+          } catch {
+            // this page load only
+          }
+        }}
+      >
+        <XIcon />
+      </Button>
+    </div>
+  )
+}
+
 export function Shell({ session, onSignedOut }: { session: Session; onSignedOut: () => void }) {
   const { t, i18n } = useTranslation()
   const loc = useLocation()
@@ -181,6 +225,7 @@ export function Shell({ session, onSignedOut }: { session: Session; onSignedOut:
           </DropdownMenu>
         </div>
       </header>
+      <HttpsHint />
       <main className="mx-2 mb-[max(0.5rem,env(safe-area-inset-bottom))] flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-xs md:mx-3 md:mb-3">
         {onFolders ? <FoldersPage /> : <GalleryPage previews={session.previews} />}
       </main>

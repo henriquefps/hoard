@@ -20,7 +20,15 @@ export interface ItemDetail {
     gps?: { lat: number; lon: number; alt?: number }
     width?: number
     height?: number
-    video?: { durationMs?: number; codec?: string; fps?: number; hdr?: string; width?: number; height?: number; audio?: string }
+    video?: {
+      durationMs?: number
+      codec?: string
+      fps?: number
+      hdr?: string
+      width?: number
+      height?: number
+      audio?: string
+    }
     files: (ItemFile & { locations: { source: string; folderName?: string; path?: string }[] })[]
   }
   culling: Record<string, { value: unknown; modifiedAt: number; deviceId: string }> | null
@@ -59,7 +67,10 @@ export function InfoPanel({ row, detail, exposure }: { row: Row; detail: ItemDet
     exp.exposureTime ? formatShutter(exp.exposureTime) : null,
     exp.fNumber ? `f/${formatNumber(exp.fNumber, lang)}` : null,
     exp.iso ? `ISO ${exp.iso}` : null,
-    exp.focalLength ? `${formatNumber(exp.focalLength, lang)} mm` + (exp.focalLength35 && exp.focalLength35 !== Math.round(exp.focalLength) ? ` (${exp.focalLength35} mm ${t("info.equiv")})` : "") : null,
+    exp.focalLength
+      ? `${formatNumber(exp.focalLength, lang)} mm` +
+        (exp.focalLength35 && exp.focalLength35 !== Math.round(exp.focalLength) ? ` (${exp.focalLength35} mm ${t("info.equiv")})` : "")
+      : null,
     exp.bias ? `${exp.bias > 0 ? "+" : ""}${formatNumber(exp.bias, lang)} EV` : null,
   ].filter(Boolean)
   const w = row.w ?? it?.width
@@ -73,7 +84,9 @@ export function InfoPanel({ row, detail, exposure }: { row: Row; detail: ItemDet
         <Line>{formatDateTime(wallClock(row), lang, true)}</Line>
         {it?.capture?.offset && <Line mono>UTC{it.capture.offset}</Line>}
         {it?.capture && it.capture.source !== "exif" && (
-          <p className="text-[0.8125rem] text-muted-foreground">{t(`info.timeSource.${it.capture.source}`, { defaultValue: it.capture.source })}</p>
+          <p className="text-[0.8125rem] text-muted-foreground">
+            {t(`info.timeSource.${it.capture.source}`, { defaultValue: it.capture.source })}
+          </p>
         )}
       </Section>
       {(row.cam || row.lens || expParts.length > 0) && (
@@ -88,7 +101,9 @@ export function InfoPanel({ row, detail, exposure }: { row: Row; detail: ItemDet
           {w && h ? (
             <Line>
               {formatNumber(w, lang)} × {formatNumber(h, lang)}
-              {row.k !== "video" && <span className="text-muted-foreground"> · {formatNumber(Math.round((w * h) / 1e5) / 10, lang)} MP</span>}
+              {row.k !== "video" && (
+                <span className="text-muted-foreground"> · {formatNumber(Math.round((w * h) / 1e5) / 10, lang)} MP</span>
+              )}
             </Line>
           ) : null}
           {it?.video && (
@@ -159,7 +174,11 @@ export function InfoPanel({ row, detail, exposure }: { row: Row; detail: ItemDet
                     </p>
                   </div>
                   <Button asChild variant="ghost" size="icon" className="shrink-0">
-                    <a href={fileUrl(it.id, f.fingerprint, true)} aria-label={t("download.file", { name: f.name })} download>
+                    <a
+                      href={fileUrl(it.id, f.fingerprint, true, f.name)}
+                      aria-label={t("download.file", { name: f.name })}
+                      download={f.name}
+                    >
                       <DownloadSimpleIcon />
                     </a>
                   </Button>

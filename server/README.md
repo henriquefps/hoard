@@ -55,14 +55,50 @@ the legacy builder needs `--build-arg BUILDPLATFORM=linux/amd64 --build-arg TARG
 
 Open `http://<this machine>:3071/` from your network or Tailscale and sign in with the admin password. The gallery
 answers only direct LAN/Tailscale requests (like the setup page, and even when the setup page is allowed through a
-proxy): through a Cloudflare Tunnel or a reverse proxy it is `404`. Behind `tailscale serve`, open the Tailscale
-address and port directly.
+proxy): through a Cloudflare Tunnel or a reverse proxy it is `404`. The one proxy it can trust is `tailscale serve`
+on the same machine, for HTTPS (below).
+
+### HTTPS with `tailscale serve` (needed for downloads from another computer)
+
+Chrome (and Edge, Brave, Arc) block downloads from a plain-HTTP page that is not on the same computer ("Insecure
+download blocked"), so on `http://<server>:3071/` from your laptop browsing works but downloads do not. Give the
+gallery Tailscale's HTTPS address instead, with no certificate to manage:
+
+1. In the Tailscale admin console, turn on **MagicDNS** and **HTTPS certificates** (DNS page) once for the tailnet.
+2. Start the server with `TRUST_TAILSCALE_SERVE=1` (Docker: add it to `environment:`). Off by default.
+3. Make the server reachable on the machine's loopback: run it without `--listen`/`LISTEN`, or with Docker publish the
+   port on `127.0.0.1` too (`ports: ["127.0.0.1:3071:3071", "${BIND_IP:-0.0.0.0}:3071:3071"]` when `BIND_IP` limits the
+   other one).
+4. On the server machine (not inside the container):
+
+   ```sh
+   sudo tailscale serve --bg --https=443 http://127.0.0.1:3071
+   tailscale serve status      # shows https://<machine>.<tailnet>.ts.net/
+   ```
+
+   Another HTTPS port works the same way (`--https=8443`, then `https://<machine>.<tailnet>.ts.net:8443/`). To stop:
+   `sudo tailscale serve --https=443 off`. Never use `tailscale funnel` for it: Funnel requests (from the internet)
+   are refused.
+5. Open `https://<machine>.<tailnet>.ts.net/` and sign in again (the HTTPS address is another site for the browser).
+
+What the server trusts, only with `TRUST_TAILSCALE_SERVE=1`: a request from loopback (in a container, from the Docker
+bridge's gateway, found at start and logged) carrying exactly one tailnet address (100.64.0.0/10 or
+fd7a:115c:a1e0::/48) in `X-Forwarded-For`, which `tailscale serve` sets, and none of `Tailscale-Funnel-Request`,
+`Cf-Connecting-Ip`, `X-Real-Ip`, `Forwarded`. It applies to the gallery and the setup page; the session cookie is
+`Secure` over that HTTPS and the sign-in's `Origin` check uses the `ts.net` name (`X-Forwarded-Host`). Over plain HTTP
+from another computer the gallery shows a line saying downloads need the HTTPS address. Every download is named
+after the original (`Content-Disposition` with `filename*`, and the name at the end of the URL): one file keeps its
+name and extension, a single pair or a photo with its sidecar arrives as `<name>.zip`, a selection as
+`<directory>-<n> photos.zip` (or the capture days when it spans several directories).
 
 - **Gallery**: every photo and video, newest first, with a header per day and a jump bar of years and months; badges
   for RAW+JPG, RAW, videos (duration), motion photos, stars, pick / reject and photos edited in Reveal. Filters: kind,
   camera, stars, picked / rejected / not flagged, folder, dates, edited; the search matches file and folder names.
-- **Viewer**: the screen preview, then the original when the browser can show it (JPEG); Z for 100 %, drag to pan; I
-  for details (exposure, files with downloads, who picked or rated it); videos from the server's proxy.
+- **Viewer**: the screen preview; Z, a double click or the wheel zoom to 100 %, and once the preview would be
+  magnified the viewer swaps in full resolution in place: the original (a JPEG, a pair's camera JPEG) or, for a lone
+  RAW or a HEIF, a full-size JPEG the server makes on demand ("Rendering full resolution…", then "Original (rendered
+  from the RAW)"); drag to pan; I for details (exposure, files with downloads, who picked or rated it); videos from the
+  server's proxy.
 - **Culling** with Hoard's keys: P pick, X reject, U clear, 1-5 stars (0 clears), ←/→, Ctrl+Z; in the grid they apply
   to the selection (Ctrl/Shift-click, Ctrl+A). Decisions sync with Hoard and Reveal (ADR 0016); theirs appear within
   seconds without a reload.
@@ -92,6 +128,8 @@ Changing the admin password signs every browser out. There is no setting to turn
 | `--proxy-workers` | `PROXY_WORKERS` | `1` | video proxies made at a time (1-8) |
 | `--preview-threads` | `PREVIEW_THREADS` | `2` | threads of one vips/ffmpeg run (1-32) |
 | `--preview-backlog` | `PREVIEW_BACKLOG` | `image,proxy` | what is made for every item ahead of requests: `image`, `proxy`, or `none` (the rest only when a client asks) |
+| `--full-cache-mb` | `FULL_CACHE_MB` | `4096` | disk kept for the gallery's full-resolution stills of RAW and HEIF photos (made on demand, least recently viewed dropped first; at least 64) |
+| `--trust-tailscale-serve` | `TRUST_TAILSCALE_SERVE` | off | let the gallery and setup page answer requests `tailscale serve` proxies on this machine (see "HTTPS with `tailscale serve`") |
 
 These are the names reveal-sync used; none was renamed (there were never `REVEAL_SYNC_*` variables). The ffprobe
 settings are new in 0.5.0. Without ffprobe (a binary built by hand) videos are still indexed; their metadata is read
@@ -123,7 +161,8 @@ to expose; the setup page is **not** reachable through a tunnel or proxy unless 
   run time from your secret store (never a file in a repository):
   `CLOUDFLARE_TUNNEL_TOKEN=… docker compose --profile tunnel up -d`. Pair devices with the `https://` hostname.
 - **Tailscale**: bind the port to the Tailscale address (`BIND_IP=100.x.y.z docker compose up -d`) and pair with
-  `http://<tailscale name>:3071`, or put `tailscale serve --https=443 http://localhost:3071` in front for HTTPS.
+  `http://<tailscale name>:3071`, or put `tailscale serve --bg --https=443 http://127.0.0.1:3071` in front for HTTPS
+  (and `TRUST_TAILSCALE_SERVE=1` for the gallery and setup page there: "HTTPS with `tailscale serve`").
   The setup page answers Tailscale addresses (100.64.0.0/10, fd7a:115c:a1e0::/48) directly.
 
 ## Upgrading from reveal-sync
@@ -164,6 +203,13 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
+
+## Upgrading to 0.8.1 (web gallery fixes)
+
+No migration and nothing to do for Reveal or Hoard. New: sharp 100 % zoom (full resolution on demand; RAW and HEIF
+renders kept under `<previews dir>`, at most `FULL_CACHE_MB`), downloads named after the originals, and HTTPS for the
+gallery behind `tailscale serve` with `TRUST_TAILSCALE_SERVE=1` (above). Culling set in the gallery reaches Hoard and
+Reveal through the culling feed (ADR 0016); a Reveal release that does not pull culling yet shows it once it does.
 
 ## Upgrading to 0.8.0 (web gallery)
 

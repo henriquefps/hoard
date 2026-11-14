@@ -1094,6 +1094,27 @@ paths:
         "202": { $ref: "#/components/responses/PreviewPending" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/PreviewNotFound" }
+  /web/items/{itemId}/full:
+    get:
+      tags: [web]
+      summary: "The still at full resolution for 100 % zoom (0.8.1, ADR 0018 \"Full resolution\"): the original, or a JPEG made on demand"
+      description: >-
+        A JPEG photo or a pair's camera JPEG is answered as the file itself (X-Hoard-Full: original). A HEIF rendering
+        (converted) or a lone RAW (raw: its full-size embedded JPEG, else a LibRaw decode) is made on demand in the
+        preview queue's full-resolution lane and cached (bounded by --full-cache-mb); 202 with Retry-After while it is
+        made.
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: "The image (image/jpeg for a made one); header X-Hoard-Full: original | converted | raw"
+        "206": { description: A range of it }
+        "202": { $ref: "#/components/responses/PreviewPending" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/PreviewNotFound" }
+        "503": { description: "The NAS file is offline or changed (Retry-After), or previews are off" }
   /web/items/{itemId}/files/{fingerprint}:
     get:
       tags: [web]
@@ -1105,6 +1126,31 @@ paths:
           in: path
           required: true
           schema: { $ref: "#/components/schemas/Fingerprint" }
+        - name: download
+          in: query
+          schema: { type: string, enum: ["1"] }
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200": { description: "The file; Content-Type by extension, Content-Disposition with its name (filename and filename*=UTF-8'')" }
+        "206": { description: A range of it }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { description: The NAS file is offline or changed since it was indexed (Retry-After) }
+  /web/items/{itemId}/files/{fingerprint}/{name}:
+    get:
+      tags: [web]
+      summary: "As /files/{fingerprint} (0.8.1): the file's name ends the URL so a browser naming a download by its URL keeps it; the name is ignored"
+      security: [{ webSession: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ItemId"
+        - name: fingerprint
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Fingerprint" }
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
         - name: download
           in: query
           schema: { type: string, enum: ["1"] }
@@ -1176,8 +1222,8 @@ paths:
               schema:
                 type: object
                 properties:
-                  url: { type: string, examples: ["/web/downloads/3f2a…"] }
-                  name: { type: string, examples: ["hoard-2026-11-14-3.zip"] }
+                  url: { type: string, examples: ["/web/downloads/3f2a…/Snow-3%20photos.zip"] }
+                  name: { type: string, examples: ["Snow-3 photos.zip", "DSC01000.zip", "2024-05-03–2024-05-10-12 photos.zip"] }
                   items: { type: integer }
                   files: { type: integer }
                   bytes: { type: integer, format: int64 }
@@ -1191,6 +1237,24 @@ paths:
       security: [{ webSession: [] }]
       parameters:
         - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: application/zip }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /web/downloads/{token}/{name}:
+    get:
+      tags: [web]
+      summary: "As /web/downloads/{token} (0.8.1): the zip's name ends the URL; the name is ignored"
+      security: [{ webSession: [] }]
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+        - name: name
           in: path
           required: true
           schema: { type: string }
