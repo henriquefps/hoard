@@ -33,7 +33,11 @@ fun HoardApp(container: AppContainer, systemBars: @Composable (dark: Boolean) ->
         val importer: ImportViewModel = viewModel(factory = ImportViewModel.factory(container.importer))
         val state by importer.state.collectAsStateWithLifecycle()
         when (val current = state) {
-            ImportUiState.Ready -> HoardShell(container)
+            ImportUiState.Ready -> {
+                // The native services start once the Hoard 1 data has settled (transfers, Reveal links, routes).
+                androidx.compose.runtime.LaunchedEffect(Unit) { container.start() }
+                HoardShell(container)
+            }
             // A fresh install or an earlier import: decided in a few milliseconds, show the window background.
             ImportUiState.Checking -> Box(Modifier.fillMaxSize().background(HfpsTheme.colors.background))
             else -> ImportScreen(

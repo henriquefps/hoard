@@ -1,19 +1,41 @@
 package dev.hfps.hoard.app
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.lifecycleScope
 import dev.hfps.hoard.app.ui.HoardApp
+import dev.hfps.hoard.app.ui.shell.ShellRequests
+import dev.hfps.hoard.app.ui.transfers.NotificationsPermission
+import dev.hfps.hoard.smb.share.IncomingShares
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = (application as HoardApplication).container
+        // Transfers and streams run as foreground services: ask once per run for their notification (Android 13+).
+        NotificationsPermission.ask = {
+            if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                runCatching { notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
+            }
+        }
+        // Launched from another app's share sheet (ADR 0007, share in).
+        if (savedInstanceState == null) receiveShare(intent)
         setContent {
             HoardApp(container) { dark ->
                 // Transparent bars; their icons follow the theme the user picked, not only the system's.
@@ -23,6 +45,28 @@ class MainActivity : ComponentActivity() {
                     onDispose {}
                 }
             }
+        }
+    }
+
+    /** `singleTask`: a share while Hoard is running arrives here. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receiveShare(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        (application as HoardApplication).container.onResume()
+    }
+
+    private fun receiveShare(intent: Intent?) {
+        if (!IncomingShares.isShare(intent)) return
+        IncomingShares.init(this)
+        val share = intent!!
+        setIntent(Intent(Intent.ACTION_MAIN))
+        lifecycleScope.launch {
+            val received = withContext(Dispatchers.IO) { runCatching { IncomingShares.receive(applicationContext, share) }.getOrNull() }
+            if (received != null) ShellRequests.openSave.value = true
         }
     }
 }

@@ -1,14 +1,56 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       Hoard 2 (ADR 0019). Backup stays off as in the Capacitor app (ADR 0003): the Keystore key behind the saved
-      passwords never migrates. Components of the Capacitor app (stream provider, transfer service, share targets)
-      come over screen by screen with the features that use them.
+      passwords never migrates. Phase 2b brings the Files side's components over from the Capacitor app's manifest:
+      the stream provider and service, the FileProvider, the in-app web viewer, WorkManager's transfer service and the
+      share targets.
     -->
-    <!-- :core:smb's streaming and transfer notifications (the same permission as the Capacitor app; asked for when
-         the screens that start them arrive). -->
+
+    <!-- SMB over TCP, probes. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Network changes (route rechecks) and WorkManager's network constraint. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Discovery: multicast lock while browsing _smb._tcp with NSD (mDNS). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- Transfers and streams keep running with the screen off as a foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Transfer and streaming notifications (Android 13+, asked at the first transfer or stream). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Locations (ADR 0005): "All files access" on Android 11+, the storage permissions before. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <!-- Tells USB drives from SD cards. Not required. -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
+    <!-- Open with / tap to open, Edit in Reveal, the web viewer's "open in browser" (package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="*/*" />
+        </intent>
+        <intent>
+            <action android:name="dev.hfps.reveal.action.DEVELOP" />
+            <data android:mimeType="image/*" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+    </queries>
 
     <application
         android:name=".HoardApplication"
@@ -19,18 +61,77 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
+        android:requestLegacyExternalStorage="true"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.Hoard">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Share to Hoard (ADR 0007): any files from another app's share sheet → "Save to Hoard". -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
+
+        <!-- Opener / ShareOut: cached SMB files and local files shared with the viewing app. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!--
+          Streaming and Reveal's links: content://<applicationId>.stream/…, a seekable proxy file descriptor per open.
+          Not exported; apps get in only through the grant on the intent (ADR 0004, ADR 0010).
+        -->
+        <provider
+            android:name="dev.hfps.hoard.smb.stream.StreamProvider"
+            android:authorities="${applicationId}.stream"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
+        <!-- Keeps the process un-frozen while another app streams from Hoard or a page is served. -->
+        <service
+            android:name="dev.hfps.hoard.smb.stream.StreamService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- In-app viewer for HTML pages served by the local web server (127.0.0.1 only). -->
+        <activity
+            android:name="dev.hfps.hoard.smb.stream.WebViewerActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode|density"
+            android:exported="false"
+            android:theme="@style/Theme.Hoard.WebViewer" />
+
+        <!-- Transfers: WorkManager's foreground service runs as a dataSync service. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!-- Cancel action of the transfer notification (only reachable through Hoard's PendingIntent). -->
+        <receiver
+            android:name="dev.hfps.hoard.smb.transfer.TransferCancelReceiver"
+            android:exported="false" />
     </application>
 </manifest>

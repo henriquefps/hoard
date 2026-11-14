@@ -6,4 +6,6 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+    <!-- WebViewerActivity (:core:smb): follows the system light/dark setting, draws its own toolbar. -->
+    <style name="Theme.Hoard.WebViewer" parent="Theme.AppCompat.DayNight.NoActionBar" />
 </resources>
