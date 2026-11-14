@@ -20,4 +20,6 @@ ext {
     workVersion = '2.11.0'
     exifInterfaceVersion = '1.4.1'
     mlkitFaceDetectionVersion = '16.1.7'
+    // NDK of the image core (:core:image builds LibRaw with it; :app and :native strip the .so with it, ADR 0019)
+    ndkVersion = '28.2.13676358'
 }

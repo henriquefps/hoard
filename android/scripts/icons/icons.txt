@@ -1,0 +1,55 @@
+# Phosphor icons of the app (kebab-case, one per line; regular and fill weights are generated).
+# Add a name and run: python3 scripts/icons/generate_icons.py --package <pkg>.designsystem.icons --out <icons dir>
+# The design-system templates need the first block; keep it.
+
+# Used by the templates (top bar back, choices, checklist, slider numeric input)
+arrow-left
+circle
+radio-button
+square
+check-square
+plus
+minus
+
+# Common starters
+caret-left
+caret-right
+caret-down
+caret-up
+check
+x
+dots-three
+dots-three-vertical
+magnifying-glass
+gear
+info
+warning
+trash
+pencil-simple
+share-network
+copy
+sun
+moon
+circle-half
+
+# Hoard (ADR 0019): shell, Files tab, import, settings
+images
+folders
+folder-simple
+hard-drives
+desktop-tower
+laptop
+device-mobile
+usb
+hard-drive
+desktop
+cloud
+house
+monitor-play
+cpu
+star
+arrows-clockwise
+check-circle
+warning-circle
+database
+scroll

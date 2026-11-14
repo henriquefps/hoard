@@ -1,4 +1,12 @@
 include ':app'
+// ADR 0019: the native modules. :core:* are used by the Capacitor :app (the shipped app until parity) and by the
+// Compose app :native.
+include ':core:xmp'
+include ':core:image'
+include ':core:smb'
+include ':core:data'
+include ':core:designsystem'
+include ':native'
 include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 

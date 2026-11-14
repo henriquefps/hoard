@@ -1,0 +1,113 @@
+/* Optional: per-user color palettes. Append to src/index.css AFTER theme.css (it must come after .dark).
+   Pair with assets/theme-picker/. Notes: the app-specific --live token is not part of this file. */
+/* Palettes (data-palette on <html>, saved next to the theme choice). Blue, the default, has no
+   attribute and uses the tokens above (data-palette="blue" is kept so older saved choices and
+   apps that set it still render blue). The others change only the neutrals' hue and strength
+   (--nh, --nc), the brand colour (--bh hue, --bc chroma: primary, ring, chart-1, sidebar-primary)
+   and nothing else. --live, --destructive and --warning are semantic and identical in every
+   palette. One block serves light and dark through light-dark(); color-scheme follows the OS
+   unless <html> has .light or .dark. test/theme-contrast.test.ts checks every palette. */
+:root[data-palette] {
+  color-scheme: light dark;
+  --background: light-dark(
+    oklch(0.966 calc(0.005 * var(--nc)) var(--nh)),
+    oklch(0.153 calc(0.006 * var(--nc)) var(--nh))
+  );
+  --foreground: light-dark(
+    oklch(0.153 calc(0.006 * var(--nc)) var(--nh)),
+    oklch(0.988 calc(0.003 * var(--nc)) var(--nh))
+  );
+  --card: light-dark(oklch(1 0 0), oklch(0.228 calc(0.013 * var(--nc)) var(--nh)));
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(oklch(0.5 var(--bc) var(--bh)), oklch(0.72 var(--bc) var(--bh)));
+  --primary-foreground: light-dark(
+    oklch(0.988 calc(0.003 * var(--nc)) var(--nh)),
+    oklch(0.153 calc(0.006 * var(--nc)) var(--nh))
+  );
+  --secondary: light-dark(
+    oklch(0.925 calc(0.008 * var(--nc)) var(--nh)),
+    oklch(0.286 calc(0.016 * var(--nc)) var(--nh))
+  );
+  --secondary-foreground: light-dark(
+    oklch(0.228 calc(0.013 * var(--nc)) var(--nh)),
+    oklch(0.988 calc(0.003 * var(--nc)) var(--nh))
+  );
+  --muted: var(--secondary);
+  --muted-foreground: light-dark(
+    oklch(0.5 calc(0.031 * var(--nc)) var(--nh)),
+    oklch(0.737 calc(0.021 * var(--nc)) var(--nh))
+  );
+  --accent: var(--secondary);
+  --accent-foreground: var(--secondary-foreground);
+  --destructive: light-dark(oklch(0.54 0.22 27.325), oklch(0.704 0.191 22.216));
+  --warning: light-dark(oklch(0.555 0.163 48.998), oklch(0.828 0.189 84.429));
+  --border: light-dark(oklch(0.9 calc(0.008 * var(--nc)) var(--nh)), oklch(1 0 0 / 10%));
+  --input: light-dark(oklch(0.9 calc(0.008 * var(--nc)) var(--nh)), oklch(1 0 0 / 15%));
+  --ring: light-dark(oklch(0.72 calc(var(--bc) * 0.9) var(--bh)), oklch(0.5 var(--bc) var(--bh)));
+  --chart-1: var(--primary);
+  --chart-2: light-dark(oklch(0.58 0.09 220), oklch(0.72 0.09 220));
+  --chart-3: light-dark(oklch(0.6 0.13 75), oklch(0.8 0.14 80));
+  --chart-4: light-dark(oklch(0.55 0.12 300), oklch(0.72 0.12 300));
+  --chart-5: light-dark(oklch(0.55 0.08 50), oklch(0.72 0.09 55));
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: oklch(0.988 calc(0.003 * var(--nc)) var(--nh));
+  --sidebar-accent: light-dark(
+    oklch(0.915 calc(0.008 * var(--nc)) var(--nh)),
+    oklch(0.286 calc(0.016 * var(--nc)) var(--nh))
+  );
+  --sidebar-accent-foreground: var(--secondary-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: light-dark(
+    oklch(0.737 calc(0.021 * var(--nc)) var(--nh)),
+    oklch(0.58 calc(0.031 * var(--nc)) var(--nh))
+  );
+}
+
+:root[data-palette].light {
+  color-scheme: light;
+}
+
+:root[data-palette].dark {
+  color-scheme: dark;
+}
+
+:root[data-palette='blue'] {
+  --nh: 250;
+  --nc: 1.5;
+  --bh: 255;
+  --bc: 0.14;
+}
+
+:root[data-palette='olive'] {
+  --nh: 107;
+  --nc: 1;
+  --bh: 135;
+  --bc: 0.09;
+}
+
+:root[data-palette='violet'] {
+  --nh: 295;
+  --nc: 1.5;
+  --bh: 295;
+  --bc: 0.16;
+  /* chart-4 is violet in the other palettes; keep the chart colors apart from chart-1. */
+  --chart-4: light-dark(oklch(0.55 0.12 340), oklch(0.72 0.12 340));
+}
+
+:root[data-palette='rose'] {
+  --nh: 5;
+  --nc: 1.2;
+  --bh: 355;
+  --bc: 0.16;
+}
+
+:root[data-palette='graphite'] {
+  --nh: 260;
+  --nc: 0.3;
+  --bh: 260;
+  --bc: 0.02;
+}

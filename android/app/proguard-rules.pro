@@ -30,30 +30,8 @@
 }
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# smbj: keep its classes (they are small next to Bouncy Castle); its event bus (mbassador) dispatches
-# to @Handler methods by reflection.
--keep class com.hierynomus.** { *; }
--keep class net.engio.mbassy.** { *; }
--keepclassmembers class * {
-    @net.engio.mbassy.listener.Handler *;
-}
--dontwarn com.hierynomus.**
--dontwarn net.engio.mbassy.**
-
-# smbj's SPNEGO/Kerberos path is skipped on Android; its javax.security.auth.kerberos / GSS types
-# are absent there.
--dontwarn javax.security.auth.kerberos.**
--dontwarn org.ietf.jgss.**
--dontwarn javax.naming.**
-
-# Bouncy Castle: smbj uses the lightweight API directly (digests, ciphers, MACs); R8 keeps what is
-# referenced. Optional JCA/LDAP bits reference classes Android does not ship.
--dontwarn org.bouncycastle.**
-
-# SLF4J 2 finds its (no-op) provider through ServiceLoader.
--keep class org.slf4j.nop.** { *; }
--keep class * implements org.slf4j.spi.SLF4JServiceProvider { *; }
--dontwarn org.slf4j.**
+# smbj, mbassador, Bouncy Castle and SLF4J rules ship with :core:smb (core/smb/consumer-rules.pro), the LibRaw JNI
+# rules with :core:image (core/image/consumer-rules.pro): R8 applies them to this app as before (ADR 0019).
 
 # Keep line numbers for readable crash reports.
 -keepattributes SourceFile,LineNumberTable
@@ -62,13 +40,3 @@
 # annotations.
 -dontwarn com.google.errorprone.annotations.**
 -dontwarn javax.annotation.**
-
-# --- Native image core (dev.hfps.hoard.image, libhoardimage.so) --------------------------------
-# JNI: native methods are bound by name; the native code constructs LibRawException(int, String)
-# and calls RawProgressListener.onProgress(int, int, int) by name.
--keepclasseswithmembernames,includedescriptorclasses class dev.hfps.hoard.image.raw.LibRawNative {
-    native <methods>;
-}
--keep class dev.hfps.hoard.image.raw.LibRawException { <init>(int, java.lang.String); }
--keep interface dev.hfps.hoard.image.raw.RawProgressListener { boolean onProgress(int, int, int); }
--keep class * implements dev.hfps.hoard.image.raw.RawProgressListener { boolean onProgress(int, int, int); }

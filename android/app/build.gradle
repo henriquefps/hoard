@@ -4,6 +4,8 @@ apply plugin: 'org.jetbrains.kotlin.android'
 android {
     namespace = "dev.hfps.hoard"
     compileSdk = rootProject.ext.compileSdkVersion
+    // Strips libhoardimage.so (built by :core:image) with the NDK that built it.
+    ndkVersion = rootProject.ext.ndkVersion
     defaultConfig {
         applicationId "dev.hfps.hoard"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -61,18 +63,10 @@ android {
             ]
         }
     }
+    // The JVM tests of the native code moved with it to core/* (ADR 0019); their opt-in variables are set there.
     testOptions {
         unitTests {
-            // android.* stubs return defaults instead of throwing in JVM unit tests (pure logic only).
             returnDefaultValues = true
-            all {
-                // The opt-in GUID smoke test (SmbSmokeTest) reads its targets from this variable.
-                environment 'HOARD_SMOKE_HOSTS', System.getenv('HOARD_SMOKE_HOSTS') ?: ''
-                environment 'HOARD_SMOKE_SMB', System.getenv('HOARD_SMOKE_SMB') ?: ''
-                // Opt-in read-only multi-share test (SmbMultiShareTest).
-                ['HOARD_SMOKE_SHARES', 'HOARD_SMOKE_USER', 'HOARD_SMOKE_PASSWORD'].each { environment it, System.getenv(it) ?: '' }
-                testLogging { events 'passed', 'skipped', 'failed'; showStandardStreams = true }
-            }
         }
     }
 }
@@ -94,15 +88,11 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
 
-    // Native HoardSmb plugin (dev.hfps.hoard.smb): SMB2/3, coroutines, background transfers.
-    implementation "com.hierynomus:smbj:$smbjVersion"
-    implementation "org.slf4j:slf4j-nop:$slf4jVersion"
+    // The native core (ADR 0019): SMB, locations, transfers, streaming, hand-off (:core:smb), which brings the image
+    // core (:core:image, LibRaw + ML Kit) and XMP (:core:xmp). The Capacitor plugin facade (HoardSmbPlugin) is here.
+    implementation project(':core:smb')
     implementation "androidx.core:core-ktx:$androidxCoreVersion"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:$coroutinesVersion"
-    implementation "androidx.work:work-runtime-ktx:$workVersion"
-    implementation "androidx.exifinterface:exifinterface:$exifInterfaceVersion"
-    // Assisted culling (ADR 0009): face + eye detection with the bundled model (no Play services).
-    implementation "com.google.mlkit:face-detection:$mlkitFaceDetectionVersion"
 
     testImplementation "junit:junit:$junitVersion"
     testImplementation "org.jetbrains.kotlinx:kotlinx-coroutines-test:$coroutinesVersion"
@@ -114,7 +104,7 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
-apply from: 'image-native.gradle'
+apply from: 'mlkit-packaging.gradle'
 
 try {
     def servicesJSON = file('google-services.json')

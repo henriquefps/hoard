@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- :native strings (ADR 0019). Every string has its pt-BR twin in values-pt-rBR/strings.xml. -->
+    <string name="app_name">Hoard</string>
+
+    <string name="nav_gallery">Gallery</string>
+    <string name="nav_files">Files</string>
+    <string name="action_settings">Settings</string>
+
+    <string name="gallery_title">Gallery</string>
+    <string name="gallery_empty_title">Your photos will be here</string>
+    <string name="gallery_empty_text">Photos on this phone and in your hoard-server library arrive in a later version of Hoard 2. Your files are in the Files tab.</string>
+
+    <string name="files_title">Files</string>
+    <string name="files_machines">Machines</string>
+    <string name="files_machines_empty">No machines yet. The machines you saved in Hoard 1 show up here after the import.</string>
+    <string name="files_machine_no_address">No address</string>
+    <plurals name="files_machine_more_addresses">
+        <item quantity="one">%1$s and %2$d more address</item>
+        <item quantity="other">%1$s and %2$d more addresses</item>
+    </plurals>
+    <string name="files_on_this_phone">On this phone</string>
+    <string name="files_this_phone">This phone</string>
+    <string name="files_no_removable">No USB drive or SD card connected.</string>
+    <string name="files_volume_usb">USB drive</string>
+    <string name="files_volume_sd">SD card</string>
+    <string name="files_volume_other">Drive</string>
+    <string name="files_volume_free">%1$s free of %2$s</string>
+    <string name="files_volume_read_only">Read-only</string>
+    <string name="files_volume_unavailable">Not available</string>
+    <string name="files_volume_unknown">Drive %1$s</string>
+    <string name="files_favorites">Favorites</string>
+    <string name="files_root">Root</string>
+
+    <string name="import_title">Welcome to Hoard 2</string>
+    <string name="import_running_text">Bringing over your machines, favorites and culling decisions from Hoard 1…</string>
+    <string name="import_running_progress">%1$d of %2$d tables</string>
+    <string name="import_done_title">Your data is here</string>
+    <string name="import_done_text">Everything Hoard 1 saved came over. Passwords stay in the phone\'s keystore and keep working.</string>
+    <string name="import_done_counts">Imported</string>
+    <plurals name="import_count_machines">
+        <item quantity="one">%d machine</item>
+        <item quantity="other">%d machines</item>
+    </plurals>
+    <plurals name="import_count_favorites">
+        <item quantity="one">%d favorite</item>
+        <item quantity="other">%d favorites</item>
+    </plurals>
+    <plurals name="import_count_decisions">
+        <item quantity="one">%d culling decision</item>
+        <item quantity="other">%d culling decisions</item>
+    </plurals>
+    <plurals name="import_count_transfers">
+        <item quantity="one">%d transfer in the history</item>
+        <item quantity="other">%d transfers in the history</item>
+    </plurals>
+    <string name="import_continue">Continue</string>
+    <string name="import_failed_title">Hoard 1 data could not be imported</string>
+    <string name="import_failed_too_new">It comes from a newer Hoard 1 than this version knows. Update Hoard 2 and try again.</string>
+    <string name="import_failed_unreadable">The Hoard 1 database could not be read.</string>
+    <string name="import_failed_schema">The Hoard 1 database is not in the shape this version expects.</string>
+    <string name="import_failed_other">Something went wrong while copying.</string>
+    <string name="import_failed_note">Nothing was changed, here or in the Hoard 1 data. Hoard tries again on the next launch.</string>
+    <string name="import_retry">Try again</string>
+    <string name="import_skip">Continue without importing</string>
+
+    <string name="settings_title">Settings</string>
+    <string name="settings_theme">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="settings_palette">Palette</string>
+    <string name="palette_blue">Blue</string>
+    <string name="palette_olive">Olive</string>
+    <string name="palette_violet">Violet</string>
+    <string name="palette_rose">Rose</string>
+    <string name="palette_graphite">Graphite</string>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version</string>
+    <string name="settings_import">Hoard 1 data</string>
+    <string name="settings_import_done">Imported on %1$s</string>
+    <string name="settings_import_none">Nothing to import (new install)</string>
+    <string name="settings_import_pending">Not imported</string>
+    <string name="settings_licences">Open-source licences</string>
+    <string name="settings_licences_subtitle">Hoard is free software (AGPL-3.0)</string>
+    <string name="licences_title">Licences</string>
+    <string name="licence_libraw_terms">LGPL 2.1 or CDDL 1.0</string>
+    <string name="licence_mlkit_terms">ML Kit terms of service</string>
+</resources>

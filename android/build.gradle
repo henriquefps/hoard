@@ -9,8 +9,15 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:8.13.0'
         classpath 'com.google.gms:google-services:4.4.4'
-        // Kotlin for the native HoardSmb plugin (app/src/main/java/dev/hfps/hoard/smb).
-        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.21'
+        // Kotlin for the native modules (core/*, the HoardSmb plugin in :app, :native; ADR 0019). One version for
+        // the whole build, the one in gradle/libs.versions.toml.
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${libs.versions.kotlin.get()}"
+        // :native and :core:designsystem (Compose), :native (type-safe navigation), :core:data (Room through KSP),
+        // screenshot tests (Roborazzi).
+        classpath "org.jetbrains.kotlin:compose-compiler-gradle-plugin:${libs.versions.kotlin.get()}"
+        classpath "org.jetbrains.kotlin:kotlin-serialization:${libs.versions.kotlin.get()}"
+        classpath "com.google.devtools.ksp:symbol-processing-gradle-plugin:${libs.versions.ksp.get()}"
+        classpath "io.github.takahirom.roborazzi:roborazzi-gradle-plugin:${libs.versions.roborazzi.get()}"
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files

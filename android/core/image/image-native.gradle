@@ -1,0 +1,27 @@
+// Native image core (dev.hfps.hoard.image): LibRaw + JNI, built from src/main/cpp with CMake.
+// Kept apart from build.gradle.kts so the module's build file stays short. See ADR 0006 and ADR 0019.
+android {
+    ndkVersion = rootProject.ext.ndkVersion
+    defaultConfig {
+        externalNativeBuild {
+            cmake {
+                // Phones (arm64) and the emulator on x86 hosts. Other ABIs ship without
+                // libhoardimage: RAW files then fall back to their embedded previews.
+                abiFilters 'arm64-v8a', 'x86_64'
+                arguments '-DANDROID_STL=c++_static'
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path = file('src/main/cpp/CMakeLists.txt')
+            version = '3.22.1'
+        }
+    }
+}
+
+// Opt-in tests on real camera files (never committed): HOARD_ARW_DIR=/path/to/a/shoot.
+tasks.withType(Test).configureEach {
+    environment 'HOARD_ARW_DIR', System.getenv('HOARD_ARW_DIR') ?: ''
+}
