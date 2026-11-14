@@ -25,6 +25,7 @@ tags:
   - name: blobs
   - name: originals
   - name: nas
+  - name: items
 paths:
   /v1/health:
     get:
@@ -446,6 +447,162 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/items/changes:
+    get:
+      tags: [items]
+      summary: The items feed (ADR 0014; hoard-server 0.5.0)
+      description: |
+        Every item whose revision is greater than the cursor, once, at its latest state, oldest revision first.
+        Tombstones (`deleted: true`) are kept forever. Own revision counter and cursors (not interchangeable with
+        `/v1/changes` or `/v1/nas/files`).
+      parameters:
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: A page of the items feed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, cursor, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+                  cursor: { type: string }
+                  hasMore: { type: boolean }
+        "400":
+          description: "`invalid_cursor`, `invalid_request`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/items:
+    get:
+      tags: [items]
+      summary: Live items in capture-time order, filtered (ADR 0014; hoard-server 0.5.0)
+      description: |
+        A query, not a change feed: live items only, ordered by `sortTime` then `id`, paged with a keyset cursor
+        that is only valid with the same `order`. Repeat the same filters with each cursor.
+      parameters:
+        - name: kind
+          in: query
+          description: Comma-separated kinds.
+          schema: { type: string, example: "photo,pair" }
+        - name: from
+          in: query
+          description: "`sortTime` at least this (Unix ms)."
+          schema: { type: integer }
+        - name: to
+          in: query
+          description: "`sortTime` below this (Unix ms)."
+          schema: { type: integer }
+        - name: folder
+          in: query
+          description: A NAS folder id (`folderId` of a location).
+          schema: { $ref: "#/components/schemas/Uuid" }
+        - name: path
+          in: query
+          description: With `folder`, a directory relative to it ('/'-separated, no leading or trailing '/'); its sub-directories are included.
+          schema: { type: string }
+        - name: order
+          in: query
+          schema: { type: string, enum: [desc, asc], default: desc }
+        - name: cursor
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        "200":
+          description: A page of items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, cursor, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+                  cursor:
+                    description: The next page's cursor; null on the last page.
+                    oneOf:
+                      - type: string
+                      - type: "null"
+                  hasMore: { type: boolean }
+        "400":
+          description: "`invalid_request`, `invalid_cursor`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/items/{itemId}:
+    get:
+      tags: [items]
+      summary: One item (a tombstone too)
+      parameters:
+        - name: itemId
+          in: path
+          required: true
+          schema: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "200":
+          description: The item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/items/lookup:
+    post:
+      tags: [items]
+      summary: The live items that have any of these fingerprints as a member file
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprints]
+              properties:
+                fingerprints:
+                  type: array
+                  maxItems: 1000
+                  items: { $ref: "#/components/schemas/Fingerprint" }
+      responses:
+        "200":
+          description: Matches, the items they name (each once) and the fingerprints no item has
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, matches, missing]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+                  matches:
+                    type: array
+                    items:
+                      type: object
+                      required: [fingerprint, itemId, role]
+                      properties:
+                        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+                        itemId: { $ref: "#/components/schemas/Uuid" }
+                        role: { $ref: "#/components/schemas/Role" }
+                  missing:
+                    type: array
+                    items: { $ref: "#/components/schemas/Fingerprint" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 components:
   securitySchemes:
     deviceKey:
@@ -594,6 +751,7 @@ components:
         blobs: { type: integer }
         nasFiles: { type: integer }
         pendingUploads: { type: integer }
+        items: { type: integer, description: "Live items (hoard-server 0.5.0)" }
     ServerInfo:
       type: object
       required: [serverId, serverName, version, api, deviceId, limits, storageConfigured]
@@ -604,6 +762,10 @@ components:
         api: { type: integer, const: 1 }
         deviceId: { $ref: "#/components/schemas/Uuid" }
         storageConfigured: { type: boolean }
+        features:
+          type: array
+          description: Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014.
+          items: { type: string, enum: [items] }
         limits:
           type: object
           properties:
@@ -617,6 +779,101 @@ components:
             maxUploadsPerDevice: { type: integer }
             requestsPerSecond: { type: integer }
             requestBurst: { type: integer }
+    Role:
+      type: string
+      enum: [raw, rendered, video, sidecar]
+    Capture:
+      type: object
+      required: [source]
+      description: ADR 0014 "Capture time".
+      properties:
+        local: { type: string, description: "Wall clock, 2006-01-02T15:04:05[.000]" }
+        offset: { type: string, description: "UTC offset of local, +09:00" }
+        utc: { type: integer, description: "The instant, Unix ms, when known" }
+        source: { type: string, enum: [exif, exif-gps, quicktime, mtime, upload] }
+    Gps:
+      type: object
+      required: [lat, lon]
+      properties:
+        lat: { type: number }
+        lon: { type: number }
+        alt: { type: number }
+    VideoInfo:
+      type: object
+      properties:
+        durationMs: { type: integer }
+        container: { type: string }
+        codec: { type: string }
+        profile: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        rotation: { type: integer, enum: [0, 90, 180, 270], description: "Clockwise, to apply for display" }
+        fps: { type: number }
+        bitDepth: { type: integer }
+        hdr: { type: string, enum: [pq, hlg, dolby-vision] }
+        colorSpace: { type: string }
+        audio: { type: string }
+    ItemLocation:
+      type: object
+      required: [source]
+      properties:
+        source: { type: string, enum: [nas, backup] }
+        folderId: { $ref: "#/components/schemas/Uuid" }
+        folderName: { type: string }
+        path: { type: string, description: "nas: relative to the folder, /-separated" }
+        modifiedAt: { type: integer, description: "nas: the file's mtime, Unix ms" }
+        sha256: { type: string, description: "backup: the uploaded blob" }
+    ItemFile:
+      type: object
+      required: [fingerprint, role, size, locations]
+      properties:
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        role: { $ref: "#/components/schemas/Role" }
+        name: { type: string }
+        format: { type: string, description: "Content format: jpeg, heif, tiff, cr3, raf, mp4, mov, xmp, …" }
+        size: { type: integer }
+        locations:
+          type: array
+          items: { $ref: "#/components/schemas/ItemLocation" }
+    Item:
+      type: object
+      required: [id, rev, deleted, createdAt, updatedAt]
+      description: |
+        One shot (ADR 0014). A tombstone (`deleted: true`) carries only `id`, `rev`, `deleted`, the timestamps and
+        `replacedBy` when another item took its main file over. Unknown fields are ignored by clients.
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        rev: { type: integer }
+        deleted: { type: boolean }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+        replacedBy: { $ref: "#/components/schemas/Uuid" }
+        kind: { type: string, enum: [photo, pair, video, motion] }
+        mainFingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        sortTime: { type: integer, description: "capture.utc, else the wall clock read as UTC, else 0" }
+        capture: { $ref: "#/components/schemas/Capture" }
+        make: { type: string }
+        model: { type: string }
+        lensMake: { type: string }
+        lens: { type: string }
+        gps: { $ref: "#/components/schemas/Gps" }
+        width: { type: integer }
+        height: { type: integer }
+        orientation: { type: integer, minimum: 1, maximum: 8, description: "EXIF orientation of the still" }
+        video: { $ref: "#/components/schemas/VideoInfo" }
+        motion:
+          type: object
+          required: [source, fingerprint]
+          properties:
+            source: { type: string, enum: [file, embedded] }
+            fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+            format: { type: string, enum: [google, microvideo, samsung] }
+            offset: { type: integer }
+            length: { type: integer }
+            presentationUs: { type: integer }
+        files:
+          type: array
+          items: { $ref: "#/components/schemas/ItemFile" }
     Error:
       type: object
       required: [error]
