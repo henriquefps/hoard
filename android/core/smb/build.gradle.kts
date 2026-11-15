@@ -14,6 +14,8 @@ android {
     defaultConfig {
         minSdk = rootProject.extra["minSdkVersion"] as Int
         consumerProguardFiles("consumer-rules.pro")
+        // The androidTest APK is the hand-off burst client (its own uid): docs/testing/handoff-burst.md.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
@@ -53,6 +55,8 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:${rootProject.extra["exifInterfaceVersion"]}")
     implementation("com.google.mlkit:face-detection:${rootProject.extra["mlkitFaceDetectionVersion"]}")
 
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
     testImplementation("junit:junit:${rootProject.extra["junitVersion"]}")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:${rootProject.extra["coroutinesVersion"]}")
     // Real org.json for JVM tests (android.jar only has stubs).
