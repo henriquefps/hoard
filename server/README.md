@@ -150,20 +150,21 @@ Memory: the example compose file gives the container 1.5 GiB; a 4K HEVC 10-bit p
 740 MiB; everything together stayed under 900 MiB on the bench). Without libvips/ffmpeg (a binary built by hand) the server runs and previews wait until they are
 installed.
 
-## Away from home: Cloudflare Tunnel or Tailscale
+## Away from home: Tailscale (recommended) or a tunnel
 
 Devices sync through anything that forwards HTTPS to port 3071. The device API always requires a key, so it is safe
 to expose; the setup page is **not** reachable through a tunnel or proxy unless you turn that on in Status → Settings
 (only possible from your network). Keep it off unless you need it, and put Cloudflare Access in front if you do.
 
-- **Cloudflare Tunnel**: create a tunnel in the Cloudflare dashboard with a public hostname pointing at
-  `http://hoard-server:3071`, then start the `cloudflared` service of `docker-compose.yml` with the token passed at
-  run time from your secret store (never a file in a repository):
-  `CLOUDFLARE_TUNNEL_TOKEN=… docker compose --profile tunnel up -d`. Pair devices with the `https://` hostname.
-- **Tailscale**: bind the port to the Tailscale address (`BIND_IP=100.x.y.z docker compose up -d`) and pair with
+- **Tailscale** (recommended; the owner's own deployment uses only this, with `tailscale serve` for HTTPS and the
+  LAN port at home): bind the port to the Tailscale address (`BIND_IP=100.x.y.z docker compose up -d`) and pair with
   `http://<tailscale name>:3071`, or put `tailscale serve --bg --https=443 http://127.0.0.1:3071` in front for HTTPS
   (and `TRUST_TAILSCALE_SERVE=1` for the gallery and setup page there: "HTTPS with `tailscale serve`").
   The setup page answers Tailscale addresses (100.64.0.0/10, fd7a:115c:a1e0::/48) directly.
+- **Cloudflare Tunnel** (optional, public): create a tunnel in the Cloudflare dashboard with a public hostname pointing at
+  `http://hoard-server:3071`, then start the `cloudflared` service of `docker-compose.yml` with the token passed at
+  run time from your secret store (never a file in a repository):
+  `CLOUDFLARE_TUNNEL_TOKEN=… docker compose --profile tunnel up -d`. Pair devices with the `https://` hostname.
 
 ## Upgrading from reveal-sync
 

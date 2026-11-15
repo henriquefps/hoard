@@ -83,8 +83,8 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   `TestRevealProtocolContract`; video tests need ffmpeg/ffprobe on PATH), `docker build -t hoard-server .`, `gofmt`/golangci-lint as in
   `.github/workflows/server.yml`. Releases: tag `server-v<version>` (`server-release.yml` → GHCR); the app keeps `v*`.
   Run test servers on temp dirs and other ports;
-  never touch the owner's deployed server (`~/Apps/reveal-sync` on cachyos-fps, containers `reveal-sync` and
-  `reveal-sync-tunnel`) or its data.
+  never touch the owner's deployed server (`~/Apps/hoard-server` on cachyos-fps, container `hoard-server`, reached
+  only through Tailscale) or its data.
 - **Web gallery** (`server/web/`, ADR 0018): Vite + React + shadcn in the hfps identity, built into
   `server/internal/webui/dist` and embedded in the binary; API under `/web/` (LAN/Tailscale only, admin-password session
   cookie). `cd server/web && bun run lint && bun run typecheck && bun run test && bun run e2e` (Playwright against the

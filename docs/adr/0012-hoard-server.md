@@ -97,3 +97,7 @@ imported commit) and checks admin login with the old password, both device keys,
 - The fingerprint vectors (`server/testdata/fingerprint-vectors.txt`) are still shared with Reveal's
   `FileFingerprintVectorsTest`: a change to the `v1:` rule is a protocol change made here first.
 - The Hoard app build ignores `server/` (ESLint and Prettier ignore it; Vitest and TypeScript only see `src/`).
+
+**Deployment note (2026-11-15).** The owner's deployment no longer uses the Cloudflare Tunnel (container, tunnel and
+DNS record removed): devices reach hoard-server only through Tailscale (`tailscale serve` HTTPS on the tailnet, plain
+HTTP on the LAN port at home). The tunnel stays a documented option for other installations (`server/README.md`).
