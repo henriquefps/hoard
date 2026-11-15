@@ -146,6 +146,9 @@
     <string name="gallery_viewer_edited">Edited</string>
     <string name="gallery_viewer_original">Original</string>
     <string name="gallery_viewer_play">Play</string>
+    <string name="gallery_viewer_offline_low_res">Offline · low resolution</string>
+    <string name="gallery_viewer_offline_title">Not available offline</string>
+    <string name="gallery_viewer_offline_text">This photo has no copy on the phone yet. It shows when the server can be reached.</string>
     <string name="gallery_viewer_info_folder">Folder</string>
     <string name="gallery_video_failed">This video cannot be played.</string>
     <string name="gallery_reveal_update">This photo is only on your photo server: update Reveal to 0.9 or later to edit it from there.</string>

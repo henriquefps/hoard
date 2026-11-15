@@ -11,7 +11,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -43,6 +42,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -97,6 +98,7 @@ import dev.hfps.hoard.designsystem.icons.PhosphorRegular
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.server.sync.SyncEngine
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -129,9 +131,9 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     val total by vm.total.collectAsStateWithLifecycle()
     val dismissed by vm.dismissed.collectAsStateWithLifecycle()
     val open by vm.open.collectAsStateWithLifecycle()
+    val lastViewed by vm.lastViewed.collectAsStateWithLifecycle()
     var filters by remember { mutableStateOf(false) }
-    val grid = rememberLazyGridState()
-    var lastViewed by remember { mutableStateOf<String?>(null) }
+    val grid = vm.grid
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermission() }
     val askMedia = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refreshPermission() }
@@ -152,25 +154,50 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
         onDismiss = vm::dismiss,
     )
 
-    // Back from the viewer: the shot last viewed comes into view.
-    LaunchedEffect(lastViewed, layout) {
-        val key = lastViewed ?: return@LaunchedEffect
-        val row = layout?.rowOf(key) ?: -1
-        if (row >= 0) grid.scrollToItem(row)
-        lastViewed = null
-    }
+    KeepGridPosition(grid, layout, anchor = { vm.anchor }, setAnchor = { vm.anchor = it }, lastViewed = lastViewed, onRevealed = { vm.lastViewed.value = null })
 
     androidx.compose.runtime.DisposableEffect(open != null) {
         GalleryChrome.viewerOpen = open != null
         onDispose { GalleryChrome.viewerOpen = false }
     }
     open?.let { request ->
-        GalleryViewer(container, vm, request, onClose = { last ->
-            vm.closeViewer()
-            lastViewed = last
-        })
+        GalleryViewer(container, vm, request, onClose = { last -> vm.closeViewer(last) })
     }
     if (filters) GalleryFilterSheet(vm, onDismiss = { filters = false })
+}
+
+/**
+ * The grid stays on its shot (2.2.2): after a reload (a sync adding shots above, a decision changing a filtered list,
+ * a new process) the anchor's row is found again by key ([GridAnchors]); back from the viewer, the shot it closed on
+ * (the one opened, or the one swiped to) is brought into view when it is not on screen.
+ */
+@Composable
+fun KeepGridPosition(grid: LazyGridState, layout: GalleryLayout?, anchor: () -> GridAnchor?, setAnchor: (GridAnchor) -> Unit, lastViewed: String?, onRevealed: () -> Unit) {
+    LaunchedEffect(grid, layout) {
+        val current = layout ?: return@LaunchedEffect
+        if (!grid.isScrollInProgress) {
+            GridAnchors.restore(current, anchor(), grid.firstVisibleItemIndex, grid.firstVisibleItemScrollOffset)?.let { (row, offset) -> grid.scrollToItem(row, offset) }
+        }
+        snapshotFlow { grid.firstVisibleItemIndex to grid.firstVisibleItemScrollOffset }.collect { (index, offset) ->
+            GridAnchors.at(current, index, offset)?.let(setAnchor)
+        }
+    }
+    LaunchedEffect(grid, lastViewed, layout) {
+        val key = lastViewed ?: return@LaunchedEffect
+        val current = layout ?: return@LaunchedEffect
+        if (current.rows.isEmpty()) return@LaunchedEffect
+        val info = snapshotFlow { grid.layoutInfo }.first { it.visibleItemsInfo.isNotEmpty() }
+        fun fully(i: androidx.compose.foundation.lazy.grid.LazyGridLayoutInfo) = i.visibleItemsInfo
+            .filter { it.offset.y >= i.viewportStartOffset && it.offset.y + it.size.height <= i.viewportEndOffset }.map { it.index }.toSet()
+        val columns = info.visibleItemsInfo.groupingBy { it.row }.eachCount().values.maxOrNull() ?: 1
+        val lines = info.visibleItemsInfo.map { it.row }.distinct().size
+        GridAnchors.reveal(current, key, fully(info), columns, lines)?.let { target ->
+            grid.scrollToItem(target)
+            val row = current.rowOf(key)
+            if (row !in fully(grid.layoutInfo)) grid.scrollToItem(row)
+        }
+        onRevealed()
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -189,6 +216,7 @@ fun GalleryContent(
     onOpen: (String) -> Unit = {},
     onRefresh: () -> Unit = {},
     onDismiss: (String) -> Unit = {},
+    scroller: FastScrollerState = rememberFastScrollerState(),
 ) {
     var searching by remember { mutableStateOf(ui.filter.query.isNotEmpty()) }
     var goTo by remember { mutableStateOf(false) }
@@ -249,6 +277,7 @@ fun GalleryContent(
                         grid = grid,
                         onColumns = onColumns,
                         onOpen = onOpen,
+                        scroller = scroller,
                     )
                 }
             }
@@ -329,8 +358,10 @@ fun GalleryGrid(
     grid: LazyGridState,
     onColumns: (Int) -> Unit,
     onOpen: (String) -> Unit,
+    scroller: FastScrollerState = rememberFastScrollerState(),
 ) {
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     val configuration = LocalConfiguration.current
     val locale = remember(configuration) { configuration.locales[0] }
     // Tablets and landscape get more columns at the same zoom.
@@ -356,6 +387,7 @@ fun GalleryGrid(
     Box(
         Modifier
             .fillMaxSize()
+            .fastScrollerInput(scroller, layout, grid, scope)
             .pointerInput(columns) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
@@ -404,7 +436,7 @@ fun GalleryGrid(
                 }
             }
         }
-        FastScroller(layout, grid, locale, Modifier.align(Alignment.CenterEnd))
+        FastScroller(layout, grid, scroller, locale, Modifier.align(Alignment.CenterEnd))
     }
 }
 
@@ -534,56 +566,126 @@ fun GalleryCell(entry: GalleryEntry, thumbs: ThumbSource, px: Int, compact: Bool
     }
 }
 
-/** The fast scroller: a thumb on the right edge, dragged to jump; a bubble with the month while it moves. */
+/**
+ * The fast scroller (2.2.2): a thumb on the right edge that shows while the grid moves and fades out when it stops.
+ * Only a touch that starts on the thumb, inside a 24 dp strip at the edge, drags it ([ScrollerGeometry.onThumb]); any
+ * other touch, the strip included, scrolls the grid as usual, so a flick near the edge never jumps across the library.
+ * Dragging scrubs, with the month in a bubble and the years along the track.
+ */
+@Stable
+class FastScrollerState(visible: Boolean = false, val hideAfterMs: Long = 1500) {
+    /** Shown (the grid moved lately, or the thumb is held). */
+    var visible by mutableStateOf(visible)
+    var dragging by mutableStateOf(false)
+    /** The thumb's top while dragging, as a fraction of its travel (0 = first row, 1 = last). */
+    var dragFraction by mutableFloatStateOf(0f)
+}
+
 @Composable
-private fun FastScroller(layout: GalleryLayout, grid: LazyGridState, locale: Locale, modifier: Modifier) {
-    val rows = layout.rows.size
-    if (rows < 60) return
-    val scope = rememberCoroutineScope()
-    var dragging by remember { mutableStateOf(false) }
-    var visible by remember { mutableStateOf(false) }
-    var trackHeight by remember { mutableFloatStateOf(1f) }
-    var dragY by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(grid) {
-        snapshotFlow { grid.isScrollInProgress }.collect { moving ->
-            if (moving) visible = true else if (!dragging) {
-                delay(1500)
-                if (!dragging) visible = false
+fun rememberFastScrollerState() = remember { FastScrollerState() }
+
+/** The scroller's geometry in the grid's coordinates (px), shared by the drawing and the touch handling. */
+object ScrollerGeometry {
+    /** Rows below which there is no scroller. */
+    const val MIN_ROWS = 60
+    val STRIP = 24.dp
+    val THUMB_HEIGHT = 44.dp
+    val THUMB_WIDTH = 8.dp
+    val PADDING = 12.dp
+    /** Extra height around the thumb that still grabs it (fingers are wider than 44 dp). */
+    val SLOP = 8.dp
+
+    /** The thumb's top for [fraction] of the travel, in a grid [height] px tall. */
+    fun thumbTop(fraction: Float, height: Float, thumb: Float, padding: Float): Float = padding + fraction.coerceIn(0f, 1f) * (height - 2 * padding - thumb).coerceAtLeast(0f)
+
+    /** The travel fraction for a thumb whose top is at [top]. */
+    fun fractionAt(top: Float, height: Float, thumb: Float, padding: Float): Float {
+        val travel = (height - 2 * padding - thumb).coerceAtLeast(1f)
+        return ((top - padding) / travel).coerceIn(0f, 1f)
+    }
+
+    /** Whether a touch at ([x], [y]) starts on the shown thumb: inside the edge strip and the thumb's height (± slop). */
+    fun onThumb(x: Float, y: Float, width: Float, height: Float, fraction: Float, visible: Boolean, strip: Float, thumb: Float, padding: Float, slop: Float): Boolean {
+        if (!visible || x < width - strip || x > width) return false
+        val top = thumbTop(fraction, height, thumb, padding)
+        return y >= top - slop && y <= top + thumb + slop
+    }
+
+    /** Where the grid is, as a fraction of its rows. */
+    fun fractionOf(firstIndex: Int, rows: Int): Float = firstIndex.toFloat() / (rows - 1).coerceAtLeast(1)
+
+    fun rowAt(fraction: Float, rows: Int): Int = (fraction.coerceIn(0f, 1f) * (rows - 1)).roundToInt()
+}
+
+/** The thumb's drag, on the grid's own box (Initial pass): a touch not on the thumb is left to the grid untouched. */
+private fun Modifier.fastScrollerInput(state: FastScrollerState, layout: GalleryLayout, grid: LazyGridState, scope: kotlinx.coroutines.CoroutineScope): Modifier =
+    if (layout.rows.size < ScrollerGeometry.MIN_ROWS) this else pointerInput(layout, grid, state) {
+        val rows = layout.rows.size
+        val strip = ScrollerGeometry.STRIP.toPx()
+        val thumb = ScrollerGeometry.THUMB_HEIGHT.toPx()
+        val padding = ScrollerGeometry.PADDING.toPx()
+        val slop = ScrollerGeometry.SLOP.toPx()
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            val w = size.width.toFloat()
+            val h = size.height.toFloat()
+            val fraction = ScrollerGeometry.fractionOf(grid.firstVisibleItemIndex, rows)
+            if (!ScrollerGeometry.onThumb(down.position.x, down.position.y, w, h, fraction, state.visible, strip, thumb, padding, slop)) return@awaitEachGesture
+            down.consume()
+            // The finger keeps its place on the thumb: grabbing never jumps.
+            val grab = down.position.y - ScrollerGeometry.thumbTop(fraction, h, thumb, padding)
+            state.dragFraction = fraction
+            state.dragging = true
+            try {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!change.pressed) {
+                        change.consume()
+                        break
+                    }
+                    change.consume()
+                    val next = ScrollerGeometry.fractionAt(change.position.y - grab, h, thumb, padding)
+                    if (next != state.dragFraction) {
+                        state.dragFraction = next
+                        val target = ScrollerGeometry.rowAt(next, rows)
+                        scope.launch { grid.scrollToItem(target) }
+                    }
+                }
+            } finally {
+                state.dragging = false
             }
         }
     }
-    val fraction = if (dragging) (dragY / trackHeight).coerceIn(0f, 1f) else grid.firstVisibleItemIndex.toFloat() / (rows - 1).coerceAtLeast(1)
-    val mark = layout.markAt((fraction * (rows - 1)).roundToInt())
+
+@Composable
+private fun FastScroller(layout: GalleryLayout, grid: LazyGridState, state: FastScrollerState, locale: Locale, modifier: Modifier) {
+    val rows = layout.rows.size
+    if (rows < ScrollerGeometry.MIN_ROWS) return
+    LaunchedEffect(grid, state) {
+        snapshotFlow { grid.isScrollInProgress || state.dragging }.collectLatest { moving ->
+            if (moving) {
+                state.visible = true
+            } else if (state.hideAfterMs > 0) {
+                delay(state.hideAfterMs)
+                state.visible = false
+            }
+        }
+    }
+    val dragging = state.dragging
+    val fraction = if (dragging) state.dragFraction else ScrollerGeometry.fractionOf(grid.firstVisibleItemIndex, rows)
+    val mark = layout.markAt(ScrollerGeometry.rowAt(fraction, rows))
     val density = LocalDensity.current
-    AnimatedVisibility(visible || dragging, modifier = modifier.fillMaxHeight().width(120.dp), enter = fadeIn(), exit = fadeOut()) {
-        BoxWithConstraints(
-            Modifier
-                .fillMaxSize()
-                .padding(vertical = 12.dp)
-                .testTag("gallery-scroller")
-                .pointerInput(rows) {
-                    detectVerticalDragGestures(
-                        onDragStart = { offset ->
-                            dragging = true
-                            trackHeight = size.height.toFloat()
-                            dragY = offset.y
-                        },
-                        onDragEnd = { dragging = false },
-                        onDragCancel = { dragging = false },
-                    ) { change, amount ->
-                        change.consume()
-                        dragY = (dragY + amount).coerceIn(0f, trackHeight)
-                        val target = ((dragY / trackHeight) * (rows - 1)).roundToInt()
-                        scope.launch { grid.scrollToItem(target) }
-                    }
-                },
-        ) {
+    AnimatedVisibility(state.visible || dragging, modifier = modifier.fillMaxHeight().width(120.dp), enter = fadeIn(), exit = fadeOut()) {
+        BoxWithConstraints(Modifier.fillMaxSize().testTag("gallery-scroller")) {
             val h = constraints.maxHeight.toFloat()
-            val thumbY = (fraction * (h - with(density) { 44.dp.toPx() })).roundToInt()
+            val thumbPx = with(density) { ScrollerGeometry.THUMB_HEIGHT.toPx() }
+            val padPx = with(density) { ScrollerGeometry.PADDING.toPx() }
+            val thumbY = ScrollerGeometry.thumbTop(fraction, h, thumbPx, padPx).roundToInt()
             // Year ticks while dragging.
             if (dragging) {
                 layout.marks.filter { it.yearStart }.forEach { m ->
-                    val y = (m.row.toFloat() / (rows - 1) * (h - with(density) { 16.dp.toPx() })).roundToInt()
+                    val y = (padPx + m.row.toFloat() / (rows - 1) * (h - 2 * padPx - with(density) { 16.dp.toPx() })).roundToInt()
                     Text(
                         m.year.toString(),
                         style = HfpsTheme.typography.ui.copy(fontSize = 10.sp),
@@ -602,7 +704,14 @@ private fun FastScroller(layout: GalleryLayout, grid: LazyGridState, locale: Loc
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Box(Modifier.padding(end = 2.dp).size(width = 8.dp, height = 44.dp).clip(RoundedCornerShape(4.dp)).background(HfpsTheme.colors.primary.copy(alpha = if (dragging) 1f else 0.7f)))
+                Box(
+                    Modifier
+                        .padding(end = 2.dp)
+                        .size(width = ScrollerGeometry.THUMB_WIDTH, height = ScrollerGeometry.THUMB_HEIGHT)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(HfpsTheme.colors.primary.copy(alpha = if (dragging) 1f else 0.7f))
+                        .testTag("gallery-scroller-thumb"),
+                )
             }
         }
     }

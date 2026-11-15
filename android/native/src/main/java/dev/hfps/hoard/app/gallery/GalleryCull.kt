@@ -212,25 +212,58 @@ class GalleryCullBackend(
 
     private fun usesServer(e: GalleryEntry) = e.device == null || edited(e)
 
+    private val serverImages = ServerShotImages(repo.previews, repo.offlineThumbs)
+
+    private fun editOf(e: GalleryEntry) = if (edited(e)) e.editPrimary else null
+
+    /**
+     * A server shot's thumbnail (filmstrip, grid of the viewer): what the phone holds first (the cached thumb, the
+     * offline thumbnail), else the server; a shot also on the phone falls back to its own file.
+     */
     override suspend fun thumbnail(shotId: String, maxSize: Int): File {
         val e = entry(shotId)
-        if (usesServer(e)) return serverPreview(e, PreviewSize.Thumb) ?: smbFail(ErrorCode.NOT_FOUND, "No preview")
+        if (usesServer(e)) {
+            val itemId = e.itemId
+            if (itemId != null) {
+                serverImages.cachedThumb(itemId, editOf(e))?.let { return it }
+                (serverImages.fetch(itemId, PreviewSize.Thumb, editOf(e)) as? ServerShotImages.Fetched.Ready)?.let { return it.file }
+            }
+            if (e.device == null) smbFail(ErrorCode.NOT_FOUND, "No preview")
+        }
         if (e.isVideo) return videoFrame(e, maxSize)
         val r = request(e) ?: smbFail(ErrorCode.NOT_FOUND, "No image")
         return core.thumbnailFile(r, maxSize, priority = 50).future.awaitIt().file
     }
 
+    /**
+     * A server shot's screen image (2.2.2): the fast step is whatever the phone holds (the screen preview, final; else
+     * a thumbnail, low resolution) so the viewer never waits on the network for something to show; the final step is
+     * the screen preview from the server. Nothing on the phone and no network: [ErrorCode.UNREACHABLE] (the viewer's
+     * offline placeholder), never the error of a broken photo.
+     */
+    private suspend fun serverScreen(e: GalleryEntry, fast: Boolean): ScreenFile? {
+        val itemId = e.itemId ?: return null
+        val edit = editOf(e)
+        if (fast) serverImages.cachedScreen(itemId, edit)?.let { local -> return screenFileOf(local.file, final = !local.lowRes, lowRes = local.lowRes) }
+        return when (val got = serverImages.fetch(itemId, PreviewSize.Screen, edit)) {
+            is ServerShotImages.Fetched.Ready -> screenFileOf(got.file, final = true, lowRes = false)
+            ServerShotImages.Fetched.Offline -> if (e.device == null) smbFail(ErrorCode.UNREACHABLE, "Offline") else null
+            ServerShotImages.Fetched.Missing -> if (e.device == null) smbFail(ErrorCode.NOT_FOUND, "No preview") else null
+        }
+    }
+
+    private fun screenFileOf(file: File, final: Boolean, lowRes: Boolean): ScreenFile {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(file.absolutePath, it) }
+        return ScreenFile(file, bounds.outWidth, bounds.outHeight, ScreenSource.RENDERED, final = final, lowRes = lowRes)
+    }
+
     override suspend fun screen(shotId: String, longSide: Int, fast: Boolean, background: Boolean): ScreenFile {
         val e = entry(shotId)
-        if (usesServer(e)) {
-            val file = serverPreview(e, PreviewSize.Screen) ?: smbFail(ErrorCode.NOT_FOUND, "No preview")
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(file.absolutePath, it) }
-            return ScreenFile(file, bounds.outWidth, bounds.outHeight, ScreenSource.RENDERED, final = true)
-        }
+        // An edited shot also on the phone shows its own file when the edit cannot be had.
+        if (usesServer(e)) serverScreen(e, fast)?.let { return it }
         if (e.isVideo) {
             val file = videoFrame(e, longSide)
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(file.absolutePath, it) }
-            return ScreenFile(file, bounds.outWidth, bounds.outHeight, ScreenSource.RENDERED, final = true)
+            return screenFileOf(file, final = true, lowRes = false)
         }
         val r = request(e) ?: smbFail(ErrorCode.NOT_FOUND, "No image")
         return core.screenFile(r, longSide, fast, priority = if (background) 2 else 0).future.awaitIt()

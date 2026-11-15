@@ -24,7 +24,7 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /** A screen image ready to draw, with what it was made from and whether it is the plan's final quality. */
-data class ScreenImage(val bitmap: ImageBitmap, val width: Int, val height: Int, val source: ScreenSource, val final: Boolean)
+data class ScreenImage(val bitmap: ImageBitmap, val width: Int, val height: Int, val source: ScreenSource, val final: Boolean, val lowRes: Boolean = false)
 
 /** A 100 % tile ready to draw at its place in the full-resolution image. */
 data class TileImage(val tile: Tile, val bitmap: ImageBitmap)
@@ -100,7 +100,7 @@ class CullImages(private val backend: CullBackend, private val scope: CoroutineS
             val file = backend.screen(shot.id, longSide, fast, background)
             val bitmap = decodeOrNull(file.file, hardware = true, rgb565 = false)
                 ?: throw dev.hfps.hoard.smb.HoardSmbException(dev.hfps.hoard.smb.ErrorCode.UNKNOWN, "Could not decode ${file.file.name}")
-            val image = ScreenImage(bitmap.asImageBitmap(), file.width, file.height, file.source, file.final)
+            val image = ScreenImage(bitmap.asImageBitmap(), file.width, file.height, file.source, file.final, file.lowRes)
             screens.put(key, image)
             if (file.final) screens.put(shotKey(shot) + "|final", image)
             timings.record("image:${if (fast) "fast" else "final"}", SystemClock.elapsedRealtime() - started)

@@ -85,7 +85,8 @@ data class ImageCoreConfig(
 data class ImageFileResult(val file: File, val width: Int, val height: Int)
 
 /** A screen image file: what it was made from and whether it is the plan's final quality. */
-data class ScreenFile(val file: File, val width: Int, val height: Int, val source: ScreenSource, val final: Boolean)
+/** [lowRes]: a thumbnail standing in for the screen image (the Gallery's viewer offline, Hoard 2.2.2). */
+data class ScreenFile(val file: File, val width: Int, val height: Int, val source: ScreenSource, val final: Boolean, val lowRes: Boolean = false)
 
 /** An analysis (ADR 0009) and which image it was measured on. */
 data class ShotAnalysisResult(val analysis: AnalysisResult, val source: ScreenSource, val millis: Long)
