@@ -3,7 +3,9 @@
 Android file manager and photo culling app, native since 2.0.0 (Kotlin + Jetpack Compose, ADR 0019): the phone's
 storage, USB drives, SD cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share between any of them
 (ADR 0007), and a Gallery tab (photos on the phone and on hoard-server). Hoard 1.x (Capacitor + React) was removed in
-2.0.0; ADRs 0001–0018 describe it where they mention `src/`, the plugin contract or the WebView. Read `README.md` and
+2.0.0; ADRs 0001–0018 describe it where they mention `src/`, the plugin contract or the WebView. Every contract with
+Reveal (owners, versions, the hand-off policy, the compatibility table) is listed in `docs/integration/README.md`;
+change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
 `docs/adr/` first.
 
 ## Commands
