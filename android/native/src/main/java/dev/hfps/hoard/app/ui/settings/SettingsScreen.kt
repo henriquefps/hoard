@@ -115,6 +115,26 @@ fun SettingsScreen(
                     icon = PhosphorRegular.Database,
                 )
                 HfpsRowDivider(Modifier.padding(start = 54.dp))
+                Text(
+                    stringResource(R.string.t_settings_about_body),
+                    style = HfpsTheme.typography.ui,
+                    color = HfpsTheme.colors.mutedForeground,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                HfpsListRow(
+                    title = stringResource(R.string.t_settings_source_code),
+                    subtitle = REPOSITORY.removePrefix("https://"),
+                    icon = PhosphorRegular.ArrowSquareOut,
+                    onClick = { runCatching { uriHandler.openUri(REPOSITORY) } },
+                )
+                HfpsRowDivider(Modifier.padding(start = 54.dp))
+                HfpsListRow(
+                    title = stringResource(R.string.t_settings_license),
+                    icon = PhosphorRegular.Scroll,
+                    onClick = { runCatching { uriHandler.openUri("$REPOSITORY/blob/main/LICENSE") } },
+                )
+                HfpsRowDivider(Modifier.padding(start = 54.dp))
                 HfpsListRow(
                     title = stringResource(R.string.settings_licences),
                     subtitle = stringResource(R.string.settings_licences_subtitle),
@@ -125,6 +145,9 @@ fun SettingsScreen(
         }
     }
 }
+
+/** Hoard's repository (Hoard 1's Settings › About links). */
+const val REPOSITORY = "https://github.com/henriquefps/hoard"
 
 @Composable
 private fun Section(title: Int) {
