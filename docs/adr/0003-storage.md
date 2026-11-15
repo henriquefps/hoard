@@ -70,6 +70,16 @@ Theme, palette and language are per-device conveniences in `localStorage`, as in
 phase 2c they are also mirrored into `settings` (`themeMode`, `palette`, `language`, `textViewer`, written by
 `AppearanceMirror`, never read by Hoard 1) so the native importer carries them (ADR 0019).
 
+### Room version 2 (Hoard 2.2.0)
+
+`HoardMigrations.MIGRATION_1_2` (schema `core/data/schemas/…/2.json`, `MigrationTest`):
+
+- **`reveal_copies`** (`source_key`, `source_path`, `size`, `modified_ms`, `uri`, `copied_at`; primary key
+  `(source_key, source_path)`): each photo copied into MediaStore for Reveal, with the source's size and mtime when
+  copied, so the next hand-off of an unchanged source reuses the copy (ADR 0010 amendment "2.2.0: local copies").
+  `source_key` is the location's cache key (`<machine id>/<share>`, `device`, `vol-<uuid>`).
+- `settings.cullSaveXmp` set to `false` (ADR 0011 amendment "export on demand").
+
 ## Consequences
 
 - No secret ever reaches a backup. The app opts out of Android backup and device-to-device

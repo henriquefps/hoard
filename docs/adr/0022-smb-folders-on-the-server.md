@@ -100,7 +100,8 @@ RAW's item comes before its JPEG's. Edit in Reveal is stricter (below).
 - **Badges**: mapped files in Files and mapped shots in the culling grid show the Gallery's "on the server" mark (the
   cloud). Unmapped folders and files look exactly as before.
 - **Culling: dual write** (`MappedCullStore` over `FolderCullStore`). A decision on a mapped shot is saved as before
-  (the folder's `cull_decisions` row, and its XMP sidecar when Save ratings is on, ADR 0011 unchanged) **and** queued
+  (the folder's `cull_decisions` row; until 2.2.0 also its XMP sidecar when Save ratings was on, see "Amendment: no
+  sidecar half" below) **and** queued
   for the server's culling of the same item (ADR 0016 rule 2: per field, `baseRev` = the cached rev, `modifiedAt` = the
   decision's time), pushed by the Gallery's sync soon after. A decision imported from a sidecar is queued dated by the
   sidecar's mtime (rule 4). Unmapped shots: unchanged.
@@ -159,13 +160,32 @@ From Files and folder culling on an SMB share (`FileActions.editInReveal`, plan 
   item, and sending it would give Reveal the JPEG and neither reference nor send the RAW. Found → a server item (even
   when the mapping was wrong: the server holds the photo; the mapping is then forgotten); not found, or over the
   budget → every file of the shot as URIs.
-- Everything else goes as URIs, exactly as before (ClipData, grants, sidecars, `CULLING` for those only). One intent
-  may carry both.
+- Everything else goes as MediaStore URIs (the photo's own on the phone, else a copy in `Pictures/Hoard/…`; ADR 0010
+  amendment "2.2.0: local copies"), with `CULLING` for those only and a plain read grant; no sidecar. One intent may
+  carry both.
 - The pending culling of the items is pushed first (best effort, 3 s), as in the Gallery.
-- When every photo of an SMB hand-off is mapped in the folder's cached resolution, the "photos are read through
-  Hoard" confirmation is not shown (a hint only: Reveal's versionCode is read off the main thread when the screen
-  starts and on resume, never during composition).
+- (Until the local copies) the "photos are read through Hoard" confirmation was skipped when every photo was
+  mapped; since 2.2.0 nothing streams and that confirmation is gone.
 - An older Reveal gets every file as a URI, as before.
+
+### Amendment: no sidecar half (2.2.0, owner's decision of 2026-11-15)
+
+Hoard no longer writes sidecars automatically (ADR 0011 amendment "export on demand"), so the dual write keeps one
+half: the folder row and the server's queue. The re-dating to the sidecar's mtime ("One time for both writes") has
+nothing to re-date and never fires; a decision goes to the server dated by the decision's own time (ADR 0016 rule 2).
+
+**Why it still converges.** Culling between Hoard, Reveal, the web gallery and the server goes **only** through the
+server's per-field records (ADR 0016): `(modifiedAt, deviceId)` orders every write the same way everywhere, and Hoard
+never writes a pulled value anywhere but its rows. The server's NAS import (ADR 0016 "The NAS sidecars") now only sees
+sidecars written by other tools or by an explicit "Export XMP". An exported sidecar
+usually carries a value Hoard has already pushed, so its import is step 2 (`unchanged`, no revision). **Known
+limit:** an export is dated by its mtime like any other tool's sidecar, so exporting a value that a newer decision
+elsewhere (not yet pulled into Hoard) has replaced makes the import a newer write that wins: the user's explicit
+export is treated as an edit. It converges all the same (one ordering everywhere), and nothing writes back
+automatically, so there is no loop. Sidecars
+written by other tools are imported as before, as writes by `"nas"`. Hoard still reads sidecars when a folder opens
+(rule 4: dated by the sidecar's mtime). `DualWriteTest` keeps its push-first / import-first cases (the import of a
+sidecar holding the pushed value is still `unchanged`).
 
 ### Settings
 
