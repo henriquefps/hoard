@@ -1,0 +1,10 @@
+label: after-200  scenario: smb  date: 2026-11-15T01:54:56-03:00
+summary=after-200-smb: 200 opens of 60 links in 10229 ms (finished=true), outcomes={ok=158, busy=42}, open ms p50=4808 p95=10117 max=10196, total ms p50=6302 p95=10114 max=10207, peak open fds=2, retries=0
+system_server pid: 668 -> 668  vold pid: 237 -> 237
+dumpsys mount: 34 samples, mean 34 ms, max 132 ms, failed 0
+system_server appfuse opens (Watchdog '#openFile might be slow' pauses): 32
+watchdog kills / blocked checks: 0
+Hoard ANRs: 0  Hoard crashes: 0  
+hoard threads after: 52
+hoard log lines (HoardHandoff): 1
+  open x200 in 9.7 s, 16 concurrent, 42 refused (126 cached, 32 proxied, 0 failed), 0 descriptors open, appfuse open avg 4 ms max 90 ms

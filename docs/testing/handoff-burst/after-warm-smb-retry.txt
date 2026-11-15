@@ -1,9 +1,0 @@
-label: after-warm  scenario: smb-retry  date: 2026-11-15T01:27:05-03:00
-summary=after-warm-smb-retry: 200 opens of 60 links in 14320 ms (finished=true), outcomes={ok=200}, open ms p50=6935 p95=14278 max=14294, total ms p50=8201 p95=14279 max=14296, peak open fds=2, retries=0
-system_server pid: 669 -> 669  vold pid: 237 -> 237
-dumpsys mount: 42 samples, mean 20 ms, max 33 ms, failed 0
-watchdog lines: 70
-appfuse / vold lines: 4
-hoard threads after: 52
-hoard log lines (HoardHandoff): 1
-  open x200 in 13.8 s, 16 concurrent, 0 refused (140 cached, 60 proxied, 0 failed), 0 descriptors open, appfuse open avg 1 ms max 5 ms

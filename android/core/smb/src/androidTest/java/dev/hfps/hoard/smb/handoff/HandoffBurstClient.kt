@@ -75,8 +75,10 @@ class HandoffBurstClient {
                         break
                     } catch (e: FileNotFoundException) {
                         val busy = e.message?.startsWith("busy:") == true
-                        if (busy && retry && tries < 8) {
-                            Thread.sleep(minOf(4_000L, 250L shl (tries - 1)))
+                        // The busy contract's client side: 250 ms doubling up to 4 s, giving up after about 30 s.
+                        val backoff = minOf(4_000L, 250L shl minOf(tries - 1, 4))
+                        if (busy && retry && SystemClock.elapsedRealtime() - t0 + backoff <= 30_000L) {
+                            Thread.sleep(backoff)
                             continue
                         }
                         openMs = SystemClock.elapsedRealtime() - t0

@@ -9,13 +9,14 @@
 #
 # Scenarios: smb (200 opens at once, read + close), smb-hold (200 at once, every descriptor held 5 s),
 # smb-retry (smb, retrying busy: as Reveal does), local (200 FileProvider opens), local-hold.
-# Results: docs/testing/handoff-burst/<label>-*.txt. BURST_COLD=1 deletes Hoard's small-file copies before each run.
+# Results: docs/testing/handoff-burst/<label>-*.txt. BURST_OPENS (200) sets the opens per burst (step up: 50, 100, 200). BURST_COLD=1 deletes Hoard's small-file copies before each run.
 set -euo pipefail
 
 LABEL=${1:?label}
 shift
 SCENARIOS=${*:-smb smb-hold smb-retry local local-hold}
 SERIAL=${ANDROID_SERIAL:?set ANDROID_SERIAL to the emulator}
+OPENS=${BURST_OPENS:-200}
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 OUT=$ROOT/docs/testing/handoff-burst
 WORK=${BURST_WORK:-$(mktemp -d)}
@@ -104,11 +105,11 @@ run() {
 
 for s in $SCENARIOS; do
   case $s in
-    smb) run smb "$SMB_URIS" "-e opens 200" ;;
-    smb-hold) run smb-hold "$SMB_URIS" "-e opens 200 -e hold 5000" ;;
-    smb-retry) run smb-retry "$SMB_URIS" "-e opens 200 -e retry true" ;;
-    local) run local "$LOCAL_URIS" "-e opens 200" ;;
-    local-hold) run local-hold "$LOCAL_URIS" "-e opens 200 -e hold 5000" ;;
+    smb) run smb "$SMB_URIS" "-e opens $OPENS" ;;
+    smb-hold) run smb-hold "$SMB_URIS" "-e opens $OPENS -e hold 5000" ;;
+    smb-retry) run smb-retry "$SMB_URIS" "-e opens $OPENS -e retry true" ;;
+    local) run local "$LOCAL_URIS" "-e opens $OPENS" ;;
+    local-hold) run local-hold "$LOCAL_URIS" "-e opens $OPENS -e hold 5000" ;;
     *) echo "unknown scenario $s"; exit 1 ;;
   esac
 done

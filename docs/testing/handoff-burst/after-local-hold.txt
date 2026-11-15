@@ -1,8 +1,0 @@
-label: after  scenario: local-hold  date: 2026-11-15T01:23:16-03:00
-summary=after-local-hold: 200 opens of 60 links in 6254 ms (finished=true), outcomes={ok=200}, open ms p50=1088 p95=1170 max=1176, total ms p50=6199 p95=6209 max=6212, peak open fds=200, retries=0
-system_server pid: 669 -> 669  vold pid: 237 -> 237
-dumpsys mount: 27 samples, mean 19 ms, max 28 ms, failed 0
-watchdog lines: 0
-appfuse / vold lines: 0
-hoard threads after: 21
-hoard log lines (HoardHandoff): 0

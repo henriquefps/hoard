@@ -1,0 +1,9 @@
+label: after-200  scenario: local  date: 2026-11-15T01:55:59-03:00
+summary=after-200-local: 200 opens of 60 links in 731 ms (finished=true), outcomes={ok=200}, open ms p50=645 p95=692 max=697, total ms p50=646 p95=694 max=699, peak open fds=4, retries=0
+system_server pid: 668 -> 668  vold pid: 237 -> 237
+dumpsys mount: 16 samples, mean 15 ms, max 22 ms, failed 0
+system_server appfuse opens (Watchdog '#openFile might be slow' pauses): 0
+watchdog kills / blocked checks: 0
+Hoard ANRs: 0  Hoard crashes: 0  
+hoard threads after: 22
+hoard log lines (HoardHandoff): 0
