@@ -7,6 +7,8 @@
   sidecars), 0010 (Edit in Reveal; amended in the same PR for server references).
 - **Amended**: 2026-11-15 (Hoard 2.2.0, ADR 0022): `gallery.db` version 2 (SMB ↔ NAS mappings), `items-by-path` is
   called, and the sync engine also carries folder culling of mapped SMB shots (sections "Modules", "Seams", "Consequences").
+- **Amended**: 2026-11-15 (Hoard 2.2.2): the grid's place, the fast scroller's touch area, the viewer offline
+  ("Amendment 2.2.2").
 
 ## Context
 
@@ -192,6 +194,39 @@ whose every file is on the server), video compression and server-side analysis p
 `items-by-path`) is called since Hoard 2.2.0 by the SMB path mapping (ADR 0022, `:core:server` `paths/`), with
 `GET /v1/items?folder=&path=`; its culling dual write queues through this ADR's `SyncEngine` (plus `redate`, which dates a
 pending change by the sidecar written with it).
+
+## Amendment 2.2.2: the grid's place, the fast scroller, the viewer offline
+
+Owner feedback on 2.2.1 with ~19,000 server items.
+
+- **The grid keeps its place.** The cause of the reset was the shell, not the grid: `TabbedLayout` put the screens in
+  a different place of the composition when the navigation was hidden, so the Gallery's viewer (which hides the tab
+  bar) recomposed the whole `NavHost` from scratch, and with it the grid's `rememberLazyGridState()` and the "bring the
+  last viewed shot into view" state. The screens now keep one place whatever the bar shows. The grid's
+  `LazyGridState` lives in `GalleryViewModel` (it survives the viewer, the bar and the tabs), with an **anchor by key**
+  (`GridAnchor`: the first visible shot and its offset) in the ViewModel's `SavedStateHandle`. On every new layout
+  (a sync adding shots above, a decision changing a filtered list, a new process) the grid goes back to the anchor's
+  row, found by key (the lazy grid's own key lookup only searches near the old index, so hundreds of new shots above
+  moved it). Back from the viewer, the shot it closed on (the one opened, or the one swiped to) is scrolled into view,
+  mid-screen, only when it is not already fully visible.
+- **The fast scroller** takes a touch only when it starts on its shown thumb (44 dp tall, ± 8 dp) inside a 24 dp strip
+  at the right edge (`ScrollerGeometry.onThumb`). The handling sits on the grid's own box at the Initial pass, so any
+  other touch, the strip included, reaches the grid untouched (2.2.1's 120 dp box took every vertical drag as a jump).
+  Grabbing keeps the finger's place on the thumb; the thumb shows while the grid moves and fades 1.5 s after.
+- **The viewer offline.** For a server shot (`ServerShotImages`), the fast step is what the phone holds, without the
+  network: the screen preview (final), else a thumbnail as a **low-resolution stand-in** (`ScreenFile.lowRes`): the
+  server thumb in the preview cache (the shown edit's, then the original's), else the 256 px offline thumbnail. The
+  final step is the screen preview from the server. While it loads a spinner shows over the stand-in; if it fails, a
+  subtle "Offline · low resolution" note stays. A shot with no copy at all and no network gets an offline placeholder
+  (`ErrorCode.UNREACHABLE`), never "This shot could not be shown" (kept for a server that answers without a preview).
+  The filmstrip's thumbnails follow the same chain, and grid cells too large for the offline thumbnail fall back to
+  it when the server cannot be reached.
+- **Why the filmstrip was empty**: the grid draws server cells up to 384 px from the offline thumbnails
+  (`noBackupFilesDir/gallery-thumbs/<id>.webp`, no network), and only larger cells or edits from the preview cache
+  (`cacheDir/gallery-previews`, `<id>-thumb-o-o.webp`). The viewer and its filmstrip read only the preview cache. A
+  phone in portrait at 3–5 columns has 270–360 px cells, so for every shot the grid showed from an offline thumbnail
+  the preview cache had no thumb: offline, the filmstrip and the viewer found nothing. Same item, two keys in two
+  stores; not an eviction, not a size cap. The fix reads both. Limits that remain, see "Measurements 2.2.2".
 
 ## Consequences
 
