@@ -19,6 +19,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object TransfersRoute
 
+/** The machines whose password is still missing after an import from Hoard 1 (ADR 0019 phase 2d). */
+@Serializable data object PasswordsRoute
+
 /** "Save to Hoard": files another app shared (ADR 0007). */
 @Serializable data object SaveRoute
 

@@ -70,6 +70,24 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   `nativeStrings.test.ts` checks it); E2E: `docs/testing/native-2b.md`. A Capacitor migration also regenerates `LegacyMigrations.kt`
   (`bun scripts/legacy-db/export-migrations.ts`) and the fixtures (`bun scripts/legacy-db/fixtures.ts`). Upgrade test
   with `-Phoard.native.sameId=true` on the emulator only: `docs/testing/native-2a.md`.
+- **Running `:native`** (from `android/`; a fresh worktree needs `local.properties` and, for `:app`, `bun run build &&
+  bunx cap sync android` once): `./gradlew :native:assembleDebug` (debug, `dev.hfps.hoard.next`), `:native:assembleRelease`
+  (R8; signed only under `skv run hoard`), `testDebugUnitTest` (JVM + Robolectric for every module),
+  `:native:recordRoborazziDebug` / `verifyRoborazziDebug` (goldens in `native/src/test/screenshots/`, copied to
+  `docs/testing/native-2*/`), `lint`. Gradle on cachy: `--max-workers=4`, the `-Xmx3g` of `gradle.properties`; one
+  emulator, `-memory 3072`; wrap every `adb` call in `timeout`. Modules: `:core:smb` (SMB, locations, transfers,
+  streaming, hand-off, culling's native side, the import bridge contract), `:core:image` (LibRaw, analysis),
+  `:core:xmp`, `:core:data` (Room + importer), `:core:designsystem` (hfps theme, Phosphor), `:native` (`route/`,
+  `transfers/`, `files/`, `cull/`, `importer/`, `ui/`). Rules as in Hoard 1: strings in both languages (Hoard 1's
+  via `export_strings.py`, native-only ones in `native/src/main/res/values{,-pt-rBR}/strings.xml`), one transfer
+  engine, passwords only in the Keystore, licences of new libraries in Settings › Licences (`LicencesScreen.kt`).
+- **Hoard Next** (phase 2d, ADR 0019): `bun run android:next` builds the side-by-side test build
+  (`nextRelease`: `dev.hfps.hoard.next`, "Hoard Next", violet icon with a dot from `scripts/glyph-next.svg`) as
+  `android/native/build/outputs/hoard-next/hoard-next-<version>.apk`, signed with the Hoard keystore under
+  `skv run hoard` (unsigned with a warning otherwise; `-Phoard.next.debugSigned=true` for the emulator only). It reads
+  Hoard 1.11+'s data through the import bridge (`ImportBridgeProvider` in `:app`, signature permission
+  `dev.hfps.hoard.permission.IMPORT_BRIDGE`, contract `ImportBridgeContract`); passwords are typed again once (the
+  Passwords step). E2E: `docs/testing/native-2d.md`.
 - Package manager is **bun**. Never commit secrets; credentials live in `skv`.
 
 ## Rules

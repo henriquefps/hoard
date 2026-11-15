@@ -388,6 +388,7 @@ fun CullViewer(
             CompareView(
                 view = view,
                 images = images,
+                focusScore = vm::focusScore,
                 order = compareState.ids.mapNotNull { view.byId[it] },
                 a = current,
                 b = other,

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.11.0
+
+- **Import bridge for Hoard Next** ([ADR 0019](docs/adr/0019-native-app.md)): Hoard can hand a read-only snapshot of its data (machines, favorites, transfers, culling decisions and analyses, settings) to **Hoard Next**, the native Hoard 2 test build installed next to it. Only an app signed with Hoard's own key can ask (a signature permission, plus a check of the calling app); nothing in Hoard changes, and no password leaves it: Hoard Next asks for each machine's password once.
+
 ## 1.10.1
 
 - **✕ on a burst rejects the whole burst**: in the culling viewer, on a burst shown as one item (with "View burst (N)"), ✕ — the button, `X`, or swiping down when swipe-to-decide is on — now rejects every frame of the burst, in one step that Undo reverts (toast "Rejected N photos of the burst" with Undo). Stars are kept, and each frame's sidecar is written as usual. ✓ still picks only the frame shown, "View burst" → "Keep this one" is unchanged, and inside the burst ✕ still rejects only the frame on screen.

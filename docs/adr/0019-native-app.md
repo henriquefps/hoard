@@ -1,7 +1,10 @@
 # ADR 0019: Hoard 2, a native app built next to the Capacitor app
 
 - **Date**: 2026-11-14
-- **Status**: Accepted (phase 2a: foundations; phase 2b: the Files tab; phase 2c: culling at parity, the Files gaps, the parity audit)
+- **Status**: Accepted. Done: phase 2a (foundations: core modules, Room schema = Capacitor v7, the one-time import,
+  the Compose shell), phase 2b (the Files tab at parity), phase 2c (culling at parity, the Files gaps, the parity
+  audit), phase 2d (the audit's "Partly" rows closed; **Hoard Next 2.0.0-beta.1**, a side-by-side release build with
+  the import bridge of Hoard 1.11.0). Left: the Gallery tab (phase 3) and the swap.
 
 ## Context
 
@@ -81,6 +84,8 @@ analysis (ML Kit)
 - **The swap PR** drops the `.next` suffix in `:native`'s release build, keeps the release signing (skv group
   `hoard`, the same keystore as 1.x), and removes `:app`. The owner's phone then upgrades in place: same package,
   same signature, higher version.
+- **Hoard Next** (phase 2d, below): the `nextRelease` build type is a release build of `dev.hfps.hoard.next`, named
+  "Hoard Next", with its own icon, for the owner to try on the real phone next to Hoard 1.
 - **Testing the upgrade before the swap**: `-Phoard.native.sameId=true` builds a debug `:native` with id
   `dev.hfps.hoard` (the build refuses it for release tasks). `adb install -r` over the Capacitor debug app is exactly
   the swap's upgrade. On the emulator only (`docs/testing/native-2a.md`).
@@ -195,7 +200,67 @@ does not change.
   languages in the system's per-app language page); before 13 a preferences file and `attachBaseContext` apply it.
 - **The parity audit** (`docs/testing/native-2c.md`) lists every Hoard 1 route and feature with its native
   equivalent; the few "Partly" rows say what differs and why (Markdown images, a split editor, the highlighter's
-  depth, the transfers drawer, compare's focus-score fallback).
+  depth, the transfers drawer, compare's focus-score fallback). Phase 2d closes them.
+
+### Phase 2d: the parity gaps closed, Hoard Next side by side
+
+**The audit's "Partly" rows** (`docs/testing/native-2c.md`), closed in `:native`:
+
+- **Markdown images** load by Hoard 1's rules (`MarkdownImages`, `imageSource`): a relative path (or `/` = the share's
+  root) is a file on the same location, shown through the native thumbnailer at 1600 px (types without a thumbnail
+  are not shown), `http(s)` is fetched (12 MB cap, no cookies), `data:image/…` is decoded; another scheme, a path above
+  the root or with a backslash is never followed. A failure shows the alt text with a broken-image mark. Linked images
+  (`[![badge](…)](…)`) follow their link; a paragraph of images flows them in a row. SVG images (badges) show their alt
+  text: Android's decoders have no SVG.
+- **"Copy code"** on every fenced block (a check for two seconds), which is also highlighted by its language.
+- **Syntax highlighting with grammars**: SnipMe's [Highlights](https://github.com/SnipMeDev/Highlights)
+  (`dev.snipme:highlights` 1.2.0, Apache-2.0, AGPL-compatible, maintained, pure Kotlin: no TextMate runtime, no
+  Oniguruma) for its 17 languages (Kotlin, Java, JS/TS, Python, shell, Go, Rust, C/C++, C#, Swift, Dart, PHP, Ruby,
+  Perl, CoffeeScript): keywords, literals, strings, line and block comments across lines, annotations. It runs on the
+  whole text off the main thread (up to 256 K characters); formats it does not know (JSON, YAML, TOML, INI, SQL,
+  XML…) and huge files keep the light per-line tokenizer. Listed in Settings › Licences. TextMate grammars were
+  considered: the JVM runtimes are Eclipse tm4e (EPL-2.0, not on Maven Central) or Sora's fork (LGPL), and they need
+  Oniguruma regexes (joni); far more weight for the same colours.
+- **Split editor + preview** while editing a Markdown, Mermaid or CSV file on windows ≥ 840 dp (Material's expanded
+  width; a phone in landscape at 914 dp qualifies): Editor / Split / Preview chips, Split by default where it fits,
+  the preview following the draft 200 ms after typing stops. Narrower windows get Editor / Preview.
+- **Transfers**: the indicator, the clipboard bar and the "View" actions open a bottom sheet on phones (< 600 dp;
+  `TransfersSheet`: the summary, the active jobs, the last five finished, "Open all transfers"), the screen on tablets,
+  as Hoard 1's drawer did.
+- **Compare**: shots the analysis has not reached show the ADR 0006 focus score (variance of the Laplacian, best
+  tile, on the 1600 px screen image: `CullBackend.focusScore`, Hoard 1's `cullSharpness`), and the crown goes to the
+  higher score; with both analysed, the ADR 0009 ranking decides (no crown on a tie).
+
+**Side-by-side test build.** The owner tries Hoard 2 on the real phone before the swap, next to Hoard 1:
+
+- `:native`'s **`nextRelease`** build type: `initWith(release)` (R8, resource shrinking), `dev.hfps.hoard.next`, label
+  "Hoard Next", the icon from the same pipeline (hfps-kit's `build-icons.mjs` on `scripts/glyph-next.svg`: the glyph
+  with a dot, on the violet tile, in `native/src/nextRelease/res/`), version **2.0.0-beta.1** (versionCode 101).
+  Signed with Hoard 1's keystore (skv group `hoard`). `bun run android:next` builds
+  `android/native/build/outputs/hoard-next/hoard-next-2.0.0-beta.1.apk` (task `:native:hoardNextApk`); without the
+  skv variables it is `-unsigned.apk` with a warning. On the emulator only, `-Phoard.next.debugSigned=true` signs it
+  with the debug key, to sit next to a debug Hoard 1.
+- **The import bridge.** An app cannot read another app's private database, so Hoard 1 (**1.11.0**, versionCode 20)
+  gains `ImportBridgeProvider`: authority `dev.hfps.hoard.importbridge`, exported only behind the **signature**
+  permission `dev.hfps.hoard.permission.IMPORT_BRIDGE` (declared by both apps, so the install order does not matter),
+  plus a check that the caller is `dev.hfps.hoard.next` with the same certificate, read-only opens only. It serves a
+  consistent snapshot of `hoardSQLite.db` (`VACUUM INTO` on a read-only connection; a file copy under a read
+  transaction before Android 11), made per request and unlinked once its descriptor is open, and `settings.json`
+  (bridge version, app version, schema version, counts, and the appearance rows Hoard 1 mirrors from the WebView's
+  localStorage into `settings`). The shared contract is `ImportBridgeContract` in `:core:smb`.
+- **First launch of Hoard Next** (`ImportBridge`, `ImportViewModel`): with no import recorded and Hoard 1's provider
+  there, it offers **Import from Hoard** (what comes over, with the counts) or **Start without importing**; Hoard 1
+  older than 1.11 gets "update Hoard, then check again"; a Hoard signed with another key "did not share its data". The
+  import copies the snapshot into `noBackupFilesDir/legacy-import-bridge/`, runs the same `CapacitorImporter` as the
+  in-place upgrade (recorded once, source `capacitor`) and deletes the copy. Nothing is written to Hoard 1.
+- **Passwords cannot cross**: Hoard 1's Keystore key is bound to its app. After a bridge import, every machine with a
+  user name and no password in Hoard Next goes into the `passwordsAfterImport` setting, and a **Passwords** step
+  follows the import: one row per machine ("Signs in as `DOMAIN\user`"), the password stored in Hoard Next's own
+  Keystore (never the database) and proven by listing the shares (connected / saved but not reachable now / refused,
+  type it again); "Later" leaves it to a Files-tab notice ("2 machines need their password · Enter") that opens the
+  same screen. The machine form still works for any change.
+- **At the swap** nothing of this stays in the path: the swap build has Hoard 1's id and imports in place (the bridge
+  is not offered to `dev.hfps.hoard`). The provider can go with `:app`.
 
 ### UI stack
 
@@ -237,7 +302,7 @@ still need importing.
 ## Consequences
 
 - One build, two apps. `bun run android:debug` / `android:release` and their outputs are unchanged. `:native` builds
-  with `./gradlew :native:assembleDebug`.
+  with `./gradlew :native:assembleDebug`; the side-by-side test build with `bun run android:next`.
 - Every native change lands once and both apps get it. Until the swap, a change to `:core:smb` is checked against
   the Capacitor app (still the plugin contract rule) and against `:native`.
 - A Capacitor schema change before the swap (a migration v8) needs, in the same PR, the regenerated

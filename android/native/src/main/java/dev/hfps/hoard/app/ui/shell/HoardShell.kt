@@ -93,6 +93,7 @@ import dev.hfps.hoard.app.ui.storage.StorageAccessIntents
 import dev.hfps.hoard.app.ui.storage.StorageAccessScreen
 import dev.hfps.hoard.app.ui.transfers.TransferConflicts
 import dev.hfps.hoard.app.ui.transfers.TransfersScreen
+import dev.hfps.hoard.app.ui.transfers.TransfersSheet
 import dev.hfps.hoard.app.ui.transfers.rememberStartTransfer
 import dev.hfps.hoard.app.ui.viewer.ImageViewerScreen
 import dev.hfps.hoard.app.ui.viewer.TextViewerScreen
@@ -119,6 +120,9 @@ enum class Tab { Gallery, Files }
  * sidebar rail, so the content keeps the height.
  */
 fun usesRail(width: Dp, height: Dp): Boolean = width >= 600.dp || height <= 500.dp
+
+/** Phones (narrower than 600dp) see the transfers in a bottom sheet; tablets go to the Transfers screen. */
+fun usesTransfersSheet(width: Dp): Boolean = width < 600.dp
 
 /** Set by the activity when another app shared files to Hoard: the shell opens "Save to Hoard". */
 object ShellRequests {
@@ -151,6 +155,14 @@ fun HoardShell(container: AppContainer) {
     fun openLocation(locationId: String, share: String?, path: String) =
         navController.navigate(BrowseRoute(locationId, share, path))
 
+    // The transfer indicator and "View" actions: a bottom sheet on phones, the Transfers screen on tablets (Hoard 1's
+    // TransfersDrawer below 768 px).
+    var transfersSheet by remember { mutableStateOf(false) }
+    val windowWidth = with(androidx.compose.ui.platform.LocalDensity.current) { androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.toDp() }
+    fun openTransfers() {
+        if (usesTransfersSheet(windowWidth)) transfersSheet = true else navController.navigate(TransfersRoute) { launchSingleTop = true }
+    }
+
     CompositionLocalProvider(LocalToaster provides toaster) {
         Box(Modifier.fillMaxSize()) {
             ShellLayout(navController) { inFilesTab ->
@@ -167,7 +179,7 @@ fun HoardShell(container: AppContainer) {
                         ) {
                             composable<GalleryRoute> { GalleryScreen(onOpenSettings = { navController.navigate(SettingsRoute) }) }
                             composable<FilesRoute> {
-                                FilesTab(container, files, navController, ::openLocation)
+                                FilesTab(container, files, navController, ::openLocation, ::openTransfers)
                             }
                             composable<BrowseRoute> { entry ->
                                 val route = entry.toRoute<BrowseRoute>()
@@ -187,7 +199,7 @@ fun HoardShell(container: AppContainer) {
                                         editMachine = { navController.navigate(MachineFormRoute(it)) },
                                         image = { loc, path -> navController.navigate(ImageViewerRoute(loc.id, loc.share, path)) },
                                         text = { loc, path, edit -> navController.navigate(TextViewerRoute(loc.id, loc.share, path, edit)) },
-                                        transfers = { navController.navigate(TransfersRoute) },
+                                        transfers = { openTransfers() },
                                         cull = { loc, path -> navController.navigate(CullRoute(loc.id, loc.share, path)) },
                                     ),
                                 )
@@ -200,7 +212,7 @@ fun HoardShell(container: AppContainer) {
                                     share = route.share,
                                     path = route.path,
                                     onBack = { navController.popBackStack() },
-                                    onTransfers = { navController.navigate(TransfersRoute) },
+                                    onTransfers = { openTransfers() },
                                     onOpenSettings = { navController.navigate(SettingsRoute) },
                                 )
                             }
@@ -229,8 +241,11 @@ fun HoardShell(container: AppContainer) {
                                     },
                                 )
                             }
+                            composable<PasswordsRoute> {
+                                dev.hfps.hoard.app.ui.machines.PasswordsRoute(container, onDone = { navController.popBackStack() }, onBack = { navController.popBackStack() })
+                            }
                             composable<SaveRoute> {
-                                SaveScreen(onBack = { navController.popBackStack() }, onTransfers = { navController.navigate(TransfersRoute) })
+                                SaveScreen(onBack = { navController.popBackStack() }, onTransfers = { openTransfers() })
                             }
                             composable<StorageAccessRoute> { StorageAccessScreen(onDone = { navController.popBackStack() }) }
                             composable<ImageViewerRoute> { entry ->
@@ -265,7 +280,7 @@ fun HoardShell(container: AppContainer) {
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
                         }
                     }
-                    if (inFilesTab) ClipboardBar(container, onTransfers = { navController.navigate(TransfersRoute) })
+                    if (inFilesTab) ClipboardBar(container, onTransfers = { openTransfers() })
                 }
             }
             SnackbarHost(
@@ -276,6 +291,15 @@ fun HoardShell(container: AppContainer) {
                 Snackbar(data, containerColor = HfpsTheme.colors.foreground, contentColor = HfpsTheme.colors.background, actionColor = HfpsTheme.colors.primary.copy(alpha = 1f))
             }
             TransferConflicts()
+            if (transfersSheet) {
+                TransfersSheet(
+                    onDismiss = { transfersSheet = false },
+                    onOpenAll = { navController.navigate(TransfersRoute) { launchSingleTop = true } },
+                    onOpenDestination = { t ->
+                        if (t.row.destLocationId != TREE_LOCATION_ID) openLocation(t.row.destLocationId, t.row.destShare.ifEmpty { null }, t.row.destPath)
+                    },
+                )
+            }
         }
     }
     @Suppress("UNUSED_EXPRESSION") context
@@ -290,7 +314,13 @@ private fun navigateToFolder(nav: NavHostController, locationId: String, share: 
 }
 
 @Composable
-private fun FilesTab(container: AppContainer, files: FilesViewModel, navController: NavHostController, openLocation: (String, String?, String) -> Unit) {
+private fun FilesTab(
+    container: AppContainer,
+    files: FilesViewModel,
+    navController: NavHostController,
+    openLocation: (String, String?, String) -> Unit,
+    openTransfers: () -> Unit,
+) {
     val context = LocalContext.current
     val res = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
@@ -337,8 +367,12 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
         context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         openLocation("vol-$uuid", null, "")
     }
+    // After an import from Hoard 1: machines still without their password (ADR 0019 phase 2d).
+    val pendingPasswords by remember { container.settingsStore.observeJson(dev.hfps.hoard.app.importer.PasswordsAfterImport.KEY) }.collectAsStateWithLifecycle(null)
+    val passwordsNeeded = dev.hfps.hoard.app.importer.PasswordsAfterImport.parse(pendingPasswords).count { id -> state.machines.any { it.id == id } }
     FilesScreen(
         state = state,
+        passwordsNeeded = passwordsNeeded,
         onOpenSettings = { navController.navigate(SettingsRoute) },
         actions = FilesActions(
             openLocation = openLocation,
@@ -348,7 +382,7 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
                 scope.launch { container.database.machines().get(id)?.let { container.routes.check(it.engineMachine(), force = true) } }
             },
             deleteMachine = { deleting = it },
-            transfers = { navController.navigate(TransfersRoute) },
+            transfers = openTransfers,
             storageAccess = { navController.navigate(StorageAccessRoute) },
             renameFavorite = { renaming = it },
             removeFavorite = { f ->
@@ -384,6 +418,7 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
                 granting = uuid
                 runCatching { grantLauncher.launch(intent) }
             },
+            passwords = { navController.navigate(PasswordsRoute) },
             storageSettings = {
                 listOf(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS), Intent(Settings.ACTION_SETTINGS))
                     .firstOrNull { it.resolveActivity(context.packageManager) != null }?.let { runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }

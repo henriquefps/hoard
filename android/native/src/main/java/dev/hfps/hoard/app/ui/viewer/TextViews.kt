@@ -47,11 +47,43 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import dev.hfps.hoard.app.R
+import dev.hfps.hoard.app.files.InlineSpan
 import dev.hfps.hoard.app.files.MdBlock
+import dev.hfps.hoard.app.files.Token
 import dev.hfps.hoard.app.files.TokenKind
+import dev.hfps.hoard.app.files.fenceExtension
+import dev.hfps.hoard.app.files.grammarOf
+import dev.hfps.hoard.app.files.grammarTokens
 import dev.hfps.hoard.app.files.highlightLine
 import dev.hfps.hoard.app.files.inlineSpans
+import dev.hfps.hoard.app.files.tokensPerLine
+import dev.hfps.hoard.designsystem.components.HfpsIconButton
+import dev.hfps.hoard.designsystem.icons.PhosphorRegular
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 
 /** The code / plain view: line numbers, highlighting, find highlights (current one stronger), wrap and size. */
@@ -71,12 +103,12 @@ fun CodeLines(
     val digits = lines.size.toString().length
     val found = HfpsTheme.colors.warning.copy(alpha = 0.3f)
     val current = HfpsTheme.colors.warning.copy(alpha = 0.7f)
-    val colors = mapOf(
-        TokenKind.Keyword to HfpsTheme.colors.primary,
-        TokenKind.String to Color(0xFF3FA06B),
-        TokenKind.Comment to HfpsTheme.colors.mutedForeground,
-        TokenKind.Number to Color(0xFFC07A2C),
-    )
+    val colors = syntaxColors()
+    // The grammar pass (Highlights) runs off the main thread on the whole text; lines show the light tokenizer until
+    // it is there, and for formats without a grammar.
+    val grammar by produceState<List<List<Token>>?>(null, text, ext, highlight) {
+        value = if (highlight) withContext(Dispatchers.Default) { grammarTokens(text, ext)?.let { tokensPerLine(text, it) } } else null
+    }
     val style = HfpsTheme.typography.mono.copy(fontSize = fontSize.sp, lineHeight = (fontSize * 1.5).sp, color = HfpsTheme.colors.cardForeground)
     SelectionContainer {
         val scroll = if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState())
@@ -91,7 +123,10 @@ fun CodeLines(
                     )
                     val annotated = buildAnnotatedString {
                         append(line)
-                        if (highlight) highlightLine(line, ext).forEach { addStyle(SpanStyle(color = colors.getValue(it.kind), fontStyle = if (it.kind == TokenKind.Comment) FontStyle.Italic else null), it.start, it.end) }
+                        if (highlight) {
+                            val tokens = grammar?.getOrNull(index) ?: highlightLine(line, ext)
+                            tokens.forEach { t -> addToken(t, colors, line.length) }
+                        }
                         val q = query?.takeIf { it.isNotEmpty() }
                         if (q != null) {
                             var from = 0
@@ -143,16 +178,36 @@ fun CsvTable(rows: List<List<String>>, truncated: Boolean, fontSize: Int) {
     }
 }
 
-/** Inline Markdown as an annotated string: bold, italic, code, strike, links (tagged `link`). */
+/** The code colours of the hfps theme per token kind (the code view and Markdown fences). */
 @Composable
-fun inline(text: String): AnnotatedString {
+fun syntaxColors(): Map<TokenKind, Color> = mapOf(
+    TokenKind.Keyword to HfpsTheme.colors.primary,
+    TokenKind.String to Color(0xFF3FA06B),
+    TokenKind.Comment to HfpsTheme.colors.mutedForeground,
+    TokenKind.Number to Color(0xFFC07A2C),
+    TokenKind.Annotation to Color(0xFF9B6BD3),
+)
+
+private fun AnnotatedString.Builder.addToken(t: Token, colors: Map<TokenKind, Color>, length: Int) {
+    val color = colors[t.kind] ?: return
+    val start = t.start.coerceIn(0, length)
+    val end = t.end.coerceIn(start, length)
+    if (end > start) addStyle(SpanStyle(color = color, fontStyle = if (t.kind == TokenKind.Comment) FontStyle.Italic else null), start, end)
+}
+
+/** Inline Markdown as an annotated string: bold, italic, code, strike, links (tagged `link`); images as their alt. */
+@Composable
+fun inline(text: String): AnnotatedString = inline(remember(text) { inlineSpans(text) })
+
+@Composable
+fun inline(spans: List<InlineSpan>): AnnotatedString {
     val link = HfpsTheme.colors.primary
     val codeBg = HfpsTheme.colors.muted
     return buildAnnotatedString {
-        for (span in inlineSpans(text)) {
+        for (span in spans) {
             val style = SpanStyle(
                 fontWeight = if (span.bold) FontWeight.SemiBold else null,
-                fontStyle = if (span.italic) FontStyle.Italic else null,
+                fontStyle = if (span.italic || span.image != null) FontStyle.Italic else null,
                 fontFamily = if (span.code) FontFamily.Monospace else null,
                 background = if (span.code) codeBg else Color.Unspecified,
                 color = if (span.link != null) link else Color.Unspecified,
@@ -169,12 +224,22 @@ fun inline(text: String): AnnotatedString {
     }
 }
 
-/** The Markdown preview (Hoard 1's MarkdownView): blocks, inline markup, links; ```mermaid blocks drawn. */
+/** What a Markdown preview needs from its page: links and images of the file's location ([MarkdownImages]). */
+class MarkdownHost(val onLink: (String) -> Unit = {}, val loadImage: suspend (String) -> ImageBitmap? = { null })
+
+private val LocalMarkdownHost = staticCompositionLocalOf { MarkdownHost() }
+
+/**
+ * The Markdown preview (Hoard 1's MarkdownView): blocks, inline markup, links, images (from the share, the web or
+ * `data:`), code blocks highlighted with a "Copy code" button; ```mermaid blocks drawn.
+ */
 @Composable
-fun MarkdownView(blocks: List<MdBlock>, fontSize: Int, dark: Boolean, onLink: (String) -> Unit, state: LazyListState) {
+fun MarkdownView(blocks: List<MdBlock>, fontSize: Int, dark: Boolean, host: MarkdownHost, state: LazyListState, modifier: Modifier = Modifier) {
     val body = HfpsTheme.typography.body.copy(fontSize = fontSize.sp, lineHeight = (fontSize * 1.55).sp, color = HfpsTheme.colors.cardForeground)
-    LazyColumn(Modifier.fillMaxSize().testTag("markdown"), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        itemsIndexed(blocks) { _, block -> MdBlockView(block, body, fontSize, dark, onLink) }
+    CompositionLocalProvider(LocalMarkdownHost provides host) {
+        LazyColumn(modifier.fillMaxSize().testTag("markdown"), state = state, contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            itemsIndexed(blocks) { _, block -> MdBlockView(block, body, fontSize, dark, host.onLink) }
+        }
     }
 }
 
@@ -185,12 +250,12 @@ private fun MdBlockView(block: MdBlock, body: TextStyle, fontSize: Int, dark: Bo
             inline(block.text),
             style = body.copy(fontSize = (fontSize * (when (block.level) { 1 -> 1.7; 2 -> 1.4; 3 -> 1.2; else -> 1.05 })).sp, fontWeight = FontWeight.SemiBold, lineHeight = (fontSize * 2.0).sp),
         )
-        is MdBlock.Paragraph -> LinkText(inline(block.text), body, onLink)
+        is MdBlock.Paragraph -> RichText(block.text, body, onLink)
         is MdBlock.ListItems -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             block.items.forEachIndexed { i, (depth, text) ->
                 Row(Modifier.padding(start = (depth * 16).dp)) {
                     Text(if (block.ordered) "${block.start + i}." else "•", style = body, modifier = Modifier.width(24.dp))
-                    LinkText(inline(text.removePrefix("[ ] ").let { t -> if (text.startsWith("[x] ", true)) "☑ " + text.substring(4) else if (text.startsWith("[ ] ")) "☐ $t" else t }), body, onLink)
+                    RichText(text.removePrefix("[ ] ").let { t -> if (text.startsWith("[x] ", true)) "☑ " + text.substring(4) else if (text.startsWith("[ ] ")) "☐ $t" else t }, body, onLink)
                 }
             }
         }
@@ -203,12 +268,7 @@ private fun MdBlockView(block: MdBlock, body: TextStyle, fontSize: Int, dark: Bo
         is MdBlock.Code -> if (block.language == "mermaid") {
             MermaidView(block.code, dark, Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 520.dp))
         } else {
-            Text(
-                block.code,
-                style = HfpsTheme.typography.mono.copy(fontSize = (fontSize - 1).sp, color = HfpsTheme.colors.cardForeground),
-                softWrap = false,
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(HfpsTheme.colors.muted).horizontalScroll(rememberScrollState()).padding(12.dp),
-            )
+            CodeBlock(block.code, block.language, fontSize)
         }
         is MdBlock.Table -> Column(Modifier.horizontalScroll(rememberScrollState()).border(0.5.dp, HfpsTheme.colors.hairline)) {
             (listOf(block.header) + block.rows).forEachIndexed { r, row ->
@@ -224,6 +284,142 @@ private fun MdBlockView(block: MdBlock, body: TextStyle, fontSize: Int, dark: Bo
             }
         }
         MdBlock.Rule -> HorizontalDivider(color = HfpsTheme.colors.border)
+    }
+}
+
+/**
+ * A fenced code block (MarkdownView.tsx `CodeBlock`): highlighted by its language, scrolling sideways, with a "Copy
+ * code" button that turns into a check for two seconds.
+ */
+@Composable
+private fun CodeBlock(code: String, language: String, fontSize: Int) {
+    val context = LocalContext.current
+    val colors = syntaxColors()
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(2000)
+            copied = false
+        }
+    }
+    val ext = remember(language) { if (grammarOf(language) != null) language else fenceExtension(language) }
+    val tokens by produceState<List<List<Token>>?>(null, code, ext) {
+        value = withContext(Dispatchers.Default) { grammarTokens(code, ext)?.let { tokensPerLine(code, it) } }
+    }
+    val annotated = remember(code, tokens, colors) {
+        buildAnnotatedString {
+            val lines = code.split('\n')
+            lines.forEachIndexed { i, line ->
+                val start = length
+                append(line)
+                val lineTokens = tokens?.getOrNull(i) ?: if (language.isNotEmpty()) highlightLine(line, ext) else emptyList()
+                lineTokens.forEach { t -> addToken(t.copy(start = t.start + start, end = t.end + start), colors, length) }
+                if (i < lines.lastIndex) append('\n')
+            }
+        }
+    }
+    val copyLabel = stringResource(if (copied) R.string.t_text_copied else R.string.t_text_copy_code)
+    val failed = stringResource(R.string.t_text_copy_failed)
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(HfpsTheme.colors.muted).testTag("md-code")) {
+        Text(
+            annotated,
+            style = HfpsTheme.typography.mono.copy(fontSize = (fontSize - 1).sp, color = HfpsTheme.colors.cardForeground),
+            softWrap = false,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 52.dp),
+        )
+        Box(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(8.dp)).background(HfpsTheme.colors.card)) {
+            HfpsIconButton(
+                if (copied) PhosphorRegular.Check else PhosphorRegular.Copy,
+                copyLabel,
+                {
+                    val manager = context.getSystemService(ClipboardManager::class.java)
+                    if (manager == null) {
+                        android.widget.Toast.makeText(context, failed, android.widget.Toast.LENGTH_SHORT).show()
+                    } else {
+                        manager.setPrimaryClip(ClipData.newPlainText(copyLabel, code))
+                        copied = true
+                    }
+                },
+                tint = if (copied) HfpsTheme.colors.primary else HfpsTheme.colors.foreground,
+                modifier = Modifier.testTag("md-copy-code"),
+            )
+        }
+    }
+}
+
+/**
+ * A paragraph or list item: text with inline markup; images in it drawn ([MdImage]). A paragraph of images only
+ * (badges) flows them in a row.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RichText(text: String, style: TextStyle, onLink: (String) -> Unit) {
+    val spans = remember(text) { inlineSpans(text) }
+    if (spans.none { it.image != null }) {
+        LinkText(inline(spans), style, onLink)
+        return
+    }
+    val runs = remember(spans) {
+        val out = ArrayList<List<InlineSpan>>()
+        var current = ArrayList<InlineSpan>()
+        for (span in spans) {
+            if (span.image != null) {
+                if (current.isNotEmpty()) out += current
+                out += listOf(span)
+                current = ArrayList()
+            } else {
+                current += span
+            }
+        }
+        if (current.isNotEmpty()) out += current
+        out
+    }
+    val imagesOnly = runs.all { run -> run.single().image != null || run.all { it.text.isBlank() } }
+    if (imagesOnly) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            runs.forEach { run -> run.singleOrNull()?.takeIf { it.image != null }?.let { MdImage(it, onLink) } }
+        }
+    } else {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            runs.forEach { run ->
+                val image = run.singleOrNull()?.takeIf { it.image != null }
+                if (image != null) MdImage(image, onLink) else if (run.any { it.text.isNotBlank() }) LinkText(inline(run), style, onLink)
+            }
+        }
+    }
+}
+
+private sealed interface MdImageState {
+    data object Loading : MdImageState
+    data class Image(val bitmap: ImageBitmap) : MdImageState
+    data object Failed : MdImageState
+}
+
+/** One Markdown image at its natural size (never wider than the column); a linked one follows its link. */
+@Composable
+private fun MdImage(span: InlineSpan, onLink: (String) -> Unit) {
+    val host = LocalMarkdownHost.current
+    val src = span.image ?: return
+    val state by produceState<MdImageState>(MdImageState.Loading, src) {
+        value = runCatching { host.loadImage(src) }.getOrNull()?.let { MdImageState.Image(it) } ?: MdImageState.Failed
+    }
+    val click = span.link?.let { link -> Modifier.clickable { onLink(link) } } ?: Modifier
+    when (val s = state) {
+        MdImageState.Loading -> Box(Modifier.size(width = 96.dp, height = 20.dp).clip(RoundedCornerShape(4.dp)).background(HfpsTheme.colors.muted).testTag("md-image-loading"))
+        is MdImageState.Image -> androidx.compose.foundation.Image(
+            s.bitmap,
+            span.text,
+            Modifier.widthIn(max = s.bitmap.width.dp).aspectRatio(s.bitmap.width.toFloat() / s.bitmap.height.coerceAtLeast(1)).then(click).testTag("md-image"),
+            contentScale = ContentScale.Fit,
+        )
+        MdImageState.Failed -> Row(
+            Modifier.then(click).semantics { contentDescription = span.text }.testTag("md-image-broken"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(PhosphorRegular.FileImage, null, Modifier.size(18.dp), tint = HfpsTheme.colors.mutedForeground)
+            if (span.text.isNotEmpty()) Text(span.text, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        }
     }
 }
 

@@ -12,6 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.platform.testTag
+import dev.hfps.hoard.designsystem.components.HfpsBottomSheet
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
@@ -76,7 +81,6 @@ fun TransfersScreen(onBack: () -> Unit, onOpenDestination: (TransferView) -> Uni
     val list by service.transfers.collectAsState(initial = null)
     val machines by container.database.machines().observeAll().collectAsState(initial = emptyList())
     var answering by remember { mutableStateOf<String?>(null) }
-    val active = list.orEmpty().filter { it.active }
     val finished = list.orEmpty().filter { !it.active }
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
@@ -90,33 +94,102 @@ fun TransfersScreen(onBack: () -> Unit, onOpenDestination: (TransferView) -> Uni
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize()) {
-                when {
-                    list == null -> Unit
-                    list!!.isEmpty() -> item {
-                        StateMessage(PhosphorRegular.ArrowsDownUp, stringResource(R.string.t_transfers_empty_title), body = stringResource(R.string.t_transfers_empty_body))
+                transferItems(list, machines, service, limitFinished = null, onAnswer = { answering = it }, onOpenDestination = onOpenDestination)
+            }
+        }
+    }
+    answering?.let { id -> ConflictDialog(id, onDismiss = { answering = null }) }
+}
+
+/**
+ * The queue as list items, for the screen and the phone sheet (TransfersList.tsx): the active jobs, then the history
+ * ([limitFinished] of it in the sheet, "N more on the Transfers page"), "Clear finished".
+ */
+fun LazyListScope.transferItems(
+    list: List<TransferView>?,
+    machines: List<MachineWithAddresses>,
+    service: TransferService,
+    limitFinished: Int?,
+    onAnswer: (String) -> Unit,
+    onOpenDestination: (TransferView) -> Unit,
+) {
+    val active = list.orEmpty().filter { it.active }
+    val finished = list.orEmpty().filter { !it.active }
+    val shown = if (limitFinished != null) finished.take(limitFinished) else finished
+    when {
+        list == null -> Unit
+        list.isEmpty() -> item {
+            StateMessage(PhosphorRegular.ArrowsDownUp, stringResource(R.string.t_transfers_empty_title), body = stringResource(R.string.t_transfers_empty_body))
+        }
+        else -> {
+            if (active.isNotEmpty()) {
+                item { Eyebrow(pluralStringResource(R.plurals.t_transfers_active, active.size, active.size.toString()), Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)) }
+                items(active, key = { it.row.id }) { t ->
+                    TransferRow(t, machines, service, onAnswer = { onAnswer(t.row.id) }, onOpenDestination = onOpenDestination)
+                    HfpsRowDivider(Modifier.padding(start = 16.dp))
+                }
+            }
+            if (finished.isNotEmpty()) {
+                item { Eyebrow(stringResource(R.string.t_transfers_finished), Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)) }
+                items(shown, key = { it.row.id }) { t ->
+                    TransferRow(t, machines, service, onAnswer = {}, onOpenDestination = onOpenDestination)
+                    HfpsRowDivider(Modifier.padding(start = 16.dp))
+                }
+                if (shown.size < finished.size) {
+                    item {
+                        Text(
+                            pluralStringResource(R.plurals.t_transfers_more, finished.size - shown.size, (finished.size - shown.size).toString()),
+                            style = HfpsTheme.typography.ui,
+                            color = HfpsTheme.colors.mutedForeground,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
                     }
-                    else -> {
-                        if (active.isNotEmpty()) {
-                            item { Eyebrow(pluralStringResource(R.plurals.t_transfers_active, active.size, active.size.toString()), Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)) }
-                            items(active, key = { it.row.id }) { t ->
-                                TransferRow(t, machines, service, onAnswer = { answering = t.row.id }, onOpenDestination = onOpenDestination)
-                                HfpsRowDivider(Modifier.padding(start = 16.dp))
-                            }
-                        }
-                        if (finished.isNotEmpty()) {
-                            item { Eyebrow(stringResource(R.string.t_transfers_finished), Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)) }
-                            items(finished, key = { it.row.id }) { t ->
-                                TransferRow(t, machines, service, onAnswer = {}, onOpenDestination = onOpenDestination)
-                                HfpsRowDivider(Modifier.padding(start = 16.dp))
-                            }
-                            item {
-                                Box(Modifier.padding(16.dp)) { GhostButton(stringResource(R.string.t_transfers_clear_finished), { scope.launch { service.clearFinished() } }, icon = PhosphorRegular.Trash) }
-                            }
-                        }
-                    }
+                }
+                item {
+                    val scope = rememberCoroutineScope()
+                    Box(Modifier.padding(16.dp)) { GhostButton(stringResource(R.string.t_transfers_clear_finished), { scope.launch { service.clearFinished() } }, icon = PhosphorRegular.Trash) }
                 }
             }
         }
+    }
+}
+
+/**
+ * Phones: the queue in a bottom sheet from the transfer indicator (Hoard 1's TransfersDrawer): the summary, the active
+ * jobs and the last five finished, "Open all transfers" for the screen. Tablets open the screen instead.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun TransfersSheet(onDismiss: () -> Unit, onOpenAll: () -> Unit, onOpenDestination: (TransferView) -> Unit) {
+    val context = LocalContext.current
+    val container = (context.applicationContext as HoardApplication).container
+    val service = container.transfers
+    val list by service.transfers.collectAsState(initial = null)
+    val machines by container.database.machines().observeAll().collectAsState(initial = emptyList())
+    var answering by remember { mutableStateOf<String?>(null) }
+    val indicator = dev.hfps.hoard.app.transfers.TransfersIndicator.of(list.orEmpty())
+    HfpsBottomSheet(onDismissRequest = onDismiss, modifier = Modifier.testTag("transfers-sheet")) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp)) {
+            Text(stringResource(R.string.t_transfers_title), style = HfpsTheme.typography.title, color = HfpsTheme.colors.cardForeground)
+            Text(
+                if (indicator.count > 0) {
+                    pluralStringResource(R.plurals.t_transfers_active_summary, indicator.count, indicator.count.toString(), indicator.percent.toInt().toString())
+                } else {
+                    stringResource(R.string.t_transfers_description)
+                },
+                style = HfpsTheme.typography.ui,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+        }
+        LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 560.dp)) {
+            transferItems(list, machines, service, limitFinished = 5, onAnswer = { answering = it }, onOpenDestination = { onDismiss(); onOpenDestination(it) })
+        }
+        HorizontalDivider(color = HfpsTheme.colors.hairline)
+        SecondaryButton(
+            stringResource(R.string.t_transfers_open_page),
+            { onDismiss(); onOpenAll() },
+            modifier = Modifier.fillMaxWidth().padding(16.dp).testTag("transfers-open-all"),
+        )
     }
     answering?.let { id -> ConflictDialog(id, onDismiss = { answering = null }) }
 }

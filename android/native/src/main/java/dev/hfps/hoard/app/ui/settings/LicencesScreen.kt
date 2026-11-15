@@ -34,6 +34,8 @@ val LICENCES = listOf(
     Licence(R.string.licence_inter, R.string.licence_ofl),
     Licence(R.string.licence_phosphor, R.string.licence_mit),
     Licence(R.string.licence_mermaid, R.string.licence_mit),
+    // Syntax highlighting of the text viewer (phase 2d): dev.snipme:highlights, Apache-2.0 (AGPL-compatible).
+    Licence(R.string.licence_highlights, R.string.licence_apache2),
 )
 
 @Composable

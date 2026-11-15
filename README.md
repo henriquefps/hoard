@@ -6,6 +6,14 @@ A file manager for Android: the phone's own storage, USB drives and SD cards, an
 
 Free and open source (AGPL-3.0-or-later). The whole UI is built and runs in the browser against an in-memory SMB mock; on Android the native Kotlin plugin (smbj, Storage Access Framework, WorkManager transfers) implements the same contract ([ADR 0001](docs/adr/0001-capacitor-native-smb-plugin.md)).
 
+## Hoard 2 (native, in progress)
+
+Hoard is being rebuilt as a native Kotlin + Jetpack Compose app next to this one ([ADR 0019](docs/adr/0019-native-app.md)), with two tabs: **Files** (everything above) and **Gallery** (photos on the phone and on [hoard-server](server/), phase 3). Status:
+
+- **Done**: the shared native modules (`android/core/*`), Room with the Capacitor schema and the one-time import, the Compose shell (2a); the Files tab at parity (2b); culling at parity and the parity audit (2c); the audit's last gaps closed: Markdown images and "Copy code", syntax highlighting with per-language grammars, the split editor on wide screens, the transfers sheet on phones, compare's focus score (2d).
+- **Try it: Hoard Next 2.0.0-beta.1** (`bun run android:next`, `hoard-next-2.0.0-beta.1.apk`): installs next to Hoard 1 as "Hoard Next" (violet icon with a dot), signed with the same key. On first launch it offers **Import from Hoard**: Hoard 1.11.0 hands over a read-only snapshot of its data through a signature-protected bridge; then it asks once for each machine's password (passwords never leave the app that saved them). Hoard 1 keeps working, unchanged.
+- **Next**: the Gallery tab, then the swap (Hoard 2 takes Hoard 1's id and upgrades it in place).
+
 **Burst mode** (1.7.0, browser build with synthetic photos): tap a stack to choose within the burst ("Keep this one" picks the frame on screen and rejects the others, with undo), resolved and pending bursts in the grid, compact icons on the photo and the details in a sheet you swipe up, like the phone's gallery.
 
 | Burst mode                                                  | Keep this one                                                     | Grid                                                             | On the photo                                              | Details                                                     |

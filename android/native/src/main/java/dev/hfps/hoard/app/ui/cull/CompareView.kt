@@ -54,6 +54,8 @@ import kotlinx.coroutines.delay
 fun CompareView(
     view: CullView,
     images: CullImages,
+    /** ADR 0006 focus score of a shot not analysed yet (null = cannot be measured); see [dev.hfps.hoard.app.cull.CullBackend.focusScore]. */
+    focusScore: suspend (String) -> Double? = { null },
     order: List<Shot>,
     a: Shot,
     b: Shot,
@@ -74,8 +76,18 @@ fun CompareView(
             focus = focusFace to 1
         }
     }
-    val ranked = remember(a.id, b.id, view.core.analyses, view.settings) { rankBurst(listOf(a.id, b.id), view.core.analyses, view.settings.assist).map { it.shotId } }
-    val better = ranked.firstOrNull()?.takeIf { ranked.size == 2 }
+    // Shots without an analysis yet fall back to the ADR 0006 focus score (CompareView.tsx), measured once per shot.
+    var scores by remember { mutableStateOf<Map<String, Double>>(emptyMap()) }
+    LaunchedEffect(a.id, b.id) {
+        for (id in listOf(a.id, b.id)) {
+            if (id in scores || view.core.analyses.containsKey(id)) continue
+            val score = runCatching { focusScore(id) }.getOrNull() ?: continue
+            scores = scores + (id to score)
+        }
+    }
+    val bothAnalysed = view.core.analyses.containsKey(a.id) && view.core.analyses.containsKey(b.id)
+    val ranked = remember(a.id, b.id, view.core.analyses, view.settings) { rankBurst(listOf(a.id, b.id), view.core.analyses, view.settings.assist) }
+    val better = betterOfPair(a.id, b.id, if (bothAnalysed) ranked.map { it.shotId to it.score } else null, scores)
     val bIndex = order.indexOfFirst { it.id == b.id }
 
     Column(Modifier.fillMaxSize().background(ViewerColors.background).testTag("cull-compare")) {
@@ -89,8 +101,8 @@ fun CompareView(
             HfpsIconButton(PhosphorRegular.CaretRight, stringResource(R.string.t_cull_compare_next), { order.getOrNull(bIndex + 1)?.takeIf { it.id != a.id }?.let { onB(it.id) } ?: order.getOrNull(bIndex + 2)?.let { onB(it.id) } }, enabled = bIndex < order.size - 1, tint = ViewerColors.foreground)
         }
         val panes: @Composable (Modifier) -> Unit = { m ->
-            Pane(view, images, a, zoom, better == a.id, focus, onDecide, onKeep, m.testTag("compare-a"))
-            Pane(view, images, b, zoom, better == b.id, null, onDecide, onKeep, m.testTag("compare-b"))
+            Pane(view, images, a, zoom, better == a.id, focus, scores[a.id], onDecide, onKeep, m.testTag("compare-a"))
+            Pane(view, images, b, zoom, better == b.id, null, scores[b.id], onDecide, onKeep, m.testTag("compare-b"))
         }
         if (sideBySide) {
             Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) { panes(Modifier.weight(1f)) }
@@ -103,6 +115,24 @@ fun CompareView(
     }
 }
 
+/**
+ * The frame the crown marks (CompareView.tsx): with both shots analysed, the better ADR 0009 ranking unless it is a
+ * tie; else the higher ADR 0006 focus score when both are measured and differ; else none.
+ */
+fun betterOfPair(a: String, b: String, ranked: List<Pair<String, Double>>?, focus: Map<String, Double>): String? {
+    if (ranked != null) {
+        if (ranked.size != 2) return null
+        return ranked[0].first.takeIf { ranked[0].second != ranked[1].second }
+    }
+    val fa = focus[a] ?: return null
+    val fb = focus[b] ?: return null
+    return when {
+        fa > fb -> a
+        fb > fa -> b
+        else -> null
+    }
+}
+
 @Composable
 private fun Pane(
     view: CullView,
@@ -111,6 +141,7 @@ private fun Pane(
     zoom: ZoomState,
     better: Boolean,
     focus: Pair<Face, Int>?,
+    focusScore: Double?,
     onDecide: (Shot, Flag) -> Unit,
     onKeep: (Shot) -> Unit,
     modifier: Modifier,
@@ -124,10 +155,16 @@ private fun Pane(
             Column(Modifier.weight(1f)) {
                 Text(shot.stem, style = HfpsTheme.typography.uiMedium, color = ViewerColors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 val score = analysis?.let { sharpnessScore(it) }
+                val label = when {
+                    score != null -> stringResource(R.string.t_cull_compare_sharpness, score.toString())
+                    focusScore != null -> stringResource(R.string.t_cull_compare_focus, Math.round(focusScore).toString())
+                    else -> null
+                }
                 Text(
-                    listOfNotNull(stringResource(kindText(shot.kind)), score?.let { stringResource(R.string.t_cull_compare_sharpness, it.toString()) }).joinToString(" · "),
+                    listOfNotNull(stringResource(kindText(shot.kind)), label).joinToString(" · "),
                     style = HfpsTheme.typography.ui,
                     color = ViewerColors.foreground.copy(alpha = 0.75f),
+                    modifier = Modifier.testTag("compare-score"),
                 )
             }
             FlagMark(decision)
