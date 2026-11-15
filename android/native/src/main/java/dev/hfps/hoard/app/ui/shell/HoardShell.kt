@@ -353,6 +353,13 @@ private fun FilesTab(container: AppContainer, files: FilesViewModel, navControll
                     toaster.show(res.getString(R.string.t_favorites_removed, f.label))
                 }
             },
+            reorderFavorites = { ids -> scope.launch { container.database.favorites().reorder(ids) } },
+            reorderMachines = { ids -> scope.launch { container.database.machines().reorder(ids) } },
+            moveMachine = { m, delta ->
+                val ids = state.machines.map { it.id }
+                val from = ids.indexOf(m.id)
+                scope.launch { container.database.machines().reorder(dev.hfps.hoard.app.ui.common.moved(ids, from, from + delta)) }
+            },
             moveFavorite = { f, delta ->
                 scope.launch {
                     val ids = state.favorites.map { it.id }.toMutableList()

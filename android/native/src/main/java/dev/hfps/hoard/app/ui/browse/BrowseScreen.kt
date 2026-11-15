@@ -1,5 +1,13 @@
 package dev.hfps.hoard.app.ui.browse
 
+import androidx.compose.foundation.layout.widthIn
+
+import androidx.compose.foundation.border
+
+import dev.hfps.hoard.app.ui.common.addressKindText
+
+import dev.hfps.hoard.app.ui.common.problemText
+
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -766,7 +774,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.folderContent(
     }
     when {
         error != null && entries == null -> item(key = "error") {
-            LocationError(error, location, state.listing.errorRoute != null, state.listing.loading, viewModel::retry, onBackHome, onUp, onEditMachine)
+            LocationError(error, location, state.listing.errorRoute != null, state.listing.loading, viewModel::retry, onBackHome, onUp, onEditMachine, state.listing.errorRoute?.attempts.orEmpty())
         }
         entries == null -> items(8, contentType = { "skeleton" }) { SkeletonRow(it) }
         entries.isEmpty() -> item(key = "empty") {
@@ -836,7 +844,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.sharesContent(
     val error = state.listing.error
     when {
         error != null && shares == null -> item(key = "error") {
-            LocationError(error, location, state.listing.errorRoute != null, state.listing.loading, onRetry, nav.home, nav.back, onEditMachine)
+            LocationError(error, location, state.listing.errorRoute != null, state.listing.loading, onRetry, nav.home, nav.back, onEditMachine, state.listing.errorRoute?.attempts.orEmpty())
         }
         shares == null -> items(6, contentType = { "skeleton" }) { SkeletonRow(it) }
         shares.isEmpty() -> item(key = "empty") {
@@ -1104,6 +1112,7 @@ private fun LocationError(
     onHome: () -> Unit,
     onUp: () -> Unit,
     onEditMachine: (String) -> Unit,
+    attempts: List<dev.hfps.hoard.app.route.AddressAttempt> = emptyList(),
 ) {
     val context = LocalContext.current
     val res = androidx.compose.ui.platform.LocalResources.current
@@ -1116,7 +1125,31 @@ private fun LocationError(
         ErrorCode.STORAGE_PERMISSION -> stringResource(if (location.kind == LocationKind.Volume) R.string.t_locations_permission_volume_body else R.string.t_locations_permission_body)
         else -> stringResource(errorBody(code))
     }
-    StateMessage(PhosphorRegular.WarningCircle, title, body = body, tint = HfpsTheme.colors.destructive) {
+    // Unreachable, timed out or a different server: which addresses were tried and what each answered (SmbErrorState).
+    val showRoutes = routeFailure && (code == ErrorCode.UNREACHABLE || code == ErrorCode.TIMEOUT || code == ErrorCode.GUID_MISMATCH) && attempts.isNotEmpty()
+    if (showRoutes) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            StateMessage(PhosphorRegular.WarningCircle, title, body = body, tint = HfpsTheme.colors.destructive) { LocationErrorActions(code, location, routeFailure, retrying, onRetry, onUp, onEditMachine) }
+            TriedRoutes(attempts, Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp))
+        }
+        return
+    }
+    StateMessage(PhosphorRegular.WarningCircle, title, body = body, tint = HfpsTheme.colors.destructive) { LocationErrorActions(code, location, routeFailure, retrying, onRetry, onUp, onEditMachine) }
+    @Suppress("UNUSED_EXPRESSION") onHome
+}
+
+@Composable
+private fun LocationErrorActions(
+    code: ErrorCode,
+    location: BrowseLocation,
+    routeFailure: Boolean,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+    onUp: () -> Unit,
+    onEditMachine: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    run {
         when {
             code == ErrorCode.STORAGE_PERMISSION -> SecondaryButton(stringResource(R.string.t_locations_permission_allow), {
                 dev.hfps.hoard.app.ui.storage.StorageAccessIntents.open(context)
@@ -1130,7 +1163,32 @@ private fun LocationError(
         }
         SecondaryButton(stringResource(R.string.t_common_retry), onRetry, enabled = !retrying, icon = PhosphorRegular.ArrowsClockwise)
     }
-    @Suppress("UNUSED_EXPRESSION") onHome
+}
+
+/** One line per address tried: host, kind and what happened (Hoard 1's TriedRoutes). */
+@Composable
+fun TriedRoutes(attempts: List<dev.hfps.hoard.app.route.AddressAttempt>, modifier: Modifier = Modifier) {
+    Column(
+        modifier.widthIn(max = 420.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).border(1.dp, HfpsTheme.colors.border, RoundedCornerShape(10.dp)).testTag("tried-routes"),
+    ) {
+        attempts.forEachIndexed { i, attempt ->
+            if (i > 0) HorizontalDivider(color = HfpsTheme.colors.hairline)
+            val connectCode = attempt.connect?.takeIf { it != "ok" }?.let { name -> ErrorCode.entries.firstOrNull { it.name == name } ?: ErrorCode.UNKNOWN }
+            val outcome = when {
+                connectCode != null -> stringResource(problemText(connectCode))
+                attempt.probe != null -> if (attempt.probe.reachable) {
+                    stringResource(R.string.t_route_reachable, (attempt.probe.latencyMs ?: 0).toString())
+                } else {
+                    stringResource(problemText(attempt.probe.reason ?: ErrorCode.UNREACHABLE))
+                }
+                else -> stringResource(R.string.t_route_not_tried)
+            }
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Text(attempt.host + if (attempt.port != 445) ":${attempt.port}" else "", style = HfpsTheme.typography.monoSmall, color = HfpsTheme.colors.cardForeground, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(stringResource(addressKindText(attempt.kind)) + " · " + outcome, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+            }
+        }
+    }
 }
 
 @Composable
