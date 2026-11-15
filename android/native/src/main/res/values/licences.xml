@@ -3,12 +3,15 @@
     <!-- Names of components and licences: proper nouns, the same in every language. -->
     <string name="licence_hoard" translatable="false">Hoard</string>
     <string name="licence_libraw" translatable="false">LibRaw</string>
-    <string name="licence_smbj" translatable="false">smbj</string>
+    <string name="licence_smbj" translatable="false">smbj, asn-one</string>
+    <string name="licence_mbassador" translatable="false">MBassador</string>
     <string name="licence_bouncycastle" translatable="false">Bouncy Castle</string>
     <string name="licence_slf4j" translatable="false">SLF4J</string>
     <string name="licence_androidx" translatable="false">AndroidX, Jetpack Compose, Room</string>
-    <string name="licence_kotlin" translatable="false">Kotlin, kotlinx.coroutines, kotlinx.serialization</string>
-    <string name="licence_mlkit" translatable="false">ML Kit face detection</string>
+    <string name="licence_kotlin" translatable="false">Kotlin, kotlinx.coroutines, kotlinx.serialization, JetBrains annotations</string>
+    <string name="licence_guava" translatable="false">Guava, javax.inject, JSpecify</string>
+    <string name="licence_desugar" translatable="false">Java core library desugaring (desugar_jdk_libs)</string>
+    <string name="licence_mlkit" translatable="false">ML Kit face detection, with its Google Play services and Firebase components</string>
     <string name="licence_inter" translatable="false">Inter</string>
     <string name="licence_phosphor" translatable="false">Phosphor Icons</string>
     <string name="licence_mermaid" translatable="false">Mermaid</string>
@@ -16,5 +19,6 @@
     <string name="licence_agpl3" translatable="false">AGPL-3.0-or-later</string>
     <string name="licence_apache2" translatable="false">Apache License 2.0</string>
     <string name="licence_mit" translatable="false">MIT</string>
+    <string name="licence_gpl2_classpath" translatable="false">GPL-2.0 with the Classpath Exception</string>
     <string name="licence_ofl" translatable="false">SIL Open Font License 1.1</string>
 </resources>

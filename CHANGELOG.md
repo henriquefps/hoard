@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0
+
+**Hoard 2: the native app replaces Hoard 1** ([ADR 0019](docs/adr/0019-native-app.md)). Hoard is now a Kotlin + Jetpack Compose app, rebuilt screen by screen at parity with 1.11 (Files, culling, assisted culling, sidecars, transfers, viewers, Edit in Reveal, settings), with a built-in image viewer and a Gallery tab on the way. It installs **over** Hoard 1 (same app, same signing key):
+
+- **Your data comes with you.** The first launch imports Hoard 1's database once: machines and their addresses, favorites, culling decisions, analyses and sidecar records, transfer history and settings, including theme, palette, language and the text viewer's preferences. Hoard 1's file is only read; a failed import changes nothing and is tried again on the next launch.
+- **Passwords keep working**, without typing them again: they stay in the phone's keystore, which the same app keeps reading.
+- **Reveal's links keep working**: photos handed to Reveal from a network share still reopen.
+- **Home-screen icons and shortcuts** pinned from Hoard 1 still open Hoard.
+- **Hoard Next** (the 2.0.0-beta.1 test build) is no longer needed: Hoard 2.0.0 does nothing about it, so uninstall it yourself. Your data is in Hoard; whatever you did only in Hoard Next stays there.
+- Gone with the WebView app: the browser build and its demo data (the web gallery is hoard-server's).
+- Requires Android 7.0 or later, as before.
+
 ## 1.11.0
 
 - **Import bridge for Hoard Next** ([ADR 0019](docs/adr/0019-native-app.md)): Hoard can hand a read-only snapshot of its data (machines, favorites, transfers, culling decisions and analyses, settings) to **Hoard Next**, the native Hoard 2 test build installed next to it. Only an app signed with Hoard's own key can ask (a signature permission, plus a check of the calling app); nothing in Hoard changes, and no password leaves it: Hoard Next asks for each machine's password once.

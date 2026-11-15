@@ -241,9 +241,6 @@ fun HoardShell(container: AppContainer) {
                                     },
                                 )
                             }
-                            composable<PasswordsRoute> {
-                                dev.hfps.hoard.app.ui.machines.PasswordsRoute(container, onDone = { navController.popBackStack() }, onBack = { navController.popBackStack() })
-                            }
                             composable<SaveRoute> {
                                 SaveScreen(onBack = { navController.popBackStack() }, onTransfers = { openTransfers() })
                             }
@@ -367,12 +364,8 @@ private fun FilesTab(
         context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
         openLocation("vol-$uuid", null, "")
     }
-    // After an import from Hoard 1: machines still without their password (ADR 0019 phase 2d).
-    val pendingPasswords by remember { container.settingsStore.observeJson(dev.hfps.hoard.app.importer.PasswordsAfterImport.KEY) }.collectAsStateWithLifecycle(null)
-    val passwordsNeeded = dev.hfps.hoard.app.importer.PasswordsAfterImport.parse(pendingPasswords).count { id -> state.machines.any { it.id == id } }
     FilesScreen(
         state = state,
-        passwordsNeeded = passwordsNeeded,
         onOpenSettings = { navController.navigate(SettingsRoute) },
         actions = FilesActions(
             openLocation = openLocation,
@@ -418,7 +411,6 @@ private fun FilesTab(
                 granting = uuid
                 runCatching { grantLauncher.launch(intent) }
             },
-            passwords = { navController.navigate(PasswordsRoute) },
             storageSettings = {
                 listOf(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS), Intent(Settings.ACTION_SETTINGS))
                     .firstOrNull { it.resolveActivity(context.packageManager) != null }?.let { runCatching { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } }

@@ -53,8 +53,8 @@ data class ShotMetadata(
 }
 
 /**
- * The analysis as the contract's `CullAnalysis` JSON, with the rounding of `CullAnalysisJson` in `:app`: the format of
- * the `cull_analysis` cache, so rows written by Hoard 1 are read here and the other way round.
+ * The analysis as Hoard 1's `CullAnalysis` JSON, with the rounding of its `CullAnalysisJson`: the format of
+ * the `cull_analysis` cache, so rows written by Hoard 1 are read here after the upgrade.
  */
 object AnalysisJson {
     private fun r(value: Double, digits: Int): Double {

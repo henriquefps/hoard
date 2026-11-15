@@ -17,8 +17,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
-    // Capacitor databases made by the real JS migrations (scripts/legacy-db/fixtures.ts): JVM tests read them as
-    // resources, the instrumented importer test as assets.
+    // Hoard 1 databases made by Hoard 1's real JS migrations (scripts/legacy-db/fixtures.ts, removed with Hoard 1 in
+    // 2.0.0: the files are frozen): JVM tests read them as resources, the instrumented importer test as assets.
     sourceSets["test"].resources.srcDir("fixtures")
     sourceSets["androidTest"].assets.srcDir("fixtures")
     testOptions.unitTests.isIncludeAndroidResources = true

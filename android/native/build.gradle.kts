@@ -1,17 +1,10 @@
-// :native (ADR 0019): Hoard 2, the Kotlin + Jetpack Compose app. Gallery and Files tabs over :core:* and :core:data.
-// Until it reaches parity with the Capacitor :app it is installed NEXT to it: application id dev.hfps.hoard + ".next"
-// in every build type. The swap PR drops the suffix in release so the owner's install upgrades in place.
+// :native (ADR 0019): Hoard 2, the Kotlin + Jetpack Compose app, and since 2.0.0 the only app: application id
+// dev.hfps.hoard (debug and release), signed with Hoard 1's keystore (skv group "hoard"), so a Hoard 1.x install
+// upgrades in place and its first launch imports Hoard 1's database (CapacitorImporter, :core:data).
 //
-// `nextRelease` (phase 2d) is the side-by-side test build for the owner's phone: "Hoard Next", its own icon (the
-// glyph with a dot, src/nextRelease/res), release-signed with the same keystore as Hoard 1 (skv group "hoard"), so
-// Hoard 1.11's import bridge (signature permission) lets it read Hoard 1's data. `bun run android:next` builds
-// hoard-next-<version>.apk (task :native:hoardNextApk). Emulator only: `-Phoard.next.debugSigned=true` signs it
-// with the debug key instead, to sit next to a debug Hoard 1.
-//
-// Emulator only: `-Phoard.native.sameId=true` builds a debug APK with the Capacitor app's id (dev.hfps.hoard), same
-// debug signing, a higher versionCode: `adb install -r` upgrades the Capacitor debug app in place, exactly what the
-// swap does, so the first-launch import runs on that app's real database (docs/testing/native-2a.md). Never install
-// it on a phone that has the real app.
+// Debug builds carry the same id, signed with the debug key: they install over a Hoard 1 debug build on an emulator,
+// which is the upgrade test (docs/testing/hoard-2.0.0.md). Never install a debug build on a phone with the real app
+// (different signature: Android refuses it, and uninstalling first deletes the data).
 
 plugins {
     id("com.android.application")
@@ -19,12 +12,6 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
     id("io.github.takahirom.roborazzi")
-}
-
-val sameId = providers.gradleProperty("hoard.native.sameId").orNull == "true"
-val nextDebugSigned = providers.gradleProperty("hoard.next.debugSigned").orNull == "true"
-if (sameId && gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }) {
-    throw GradleException("hoard.native.sameId is for debug builds on an emulator only")
 }
 
 android {
@@ -38,13 +25,16 @@ android {
         applicationId = "dev.hfps.hoard"
         minSdk = rootProject.extra["minSdkVersion"] as Int
         targetSdk = rootProject.extra["targetSdkVersion"] as Int
-        // Above every Capacitor release (1.x is 19 at 1.10.1), so the swap and the same-id test install over it.
-        versionCode = 101
-        versionName = "2.0.0-beta.1"
+        // Above every Hoard 1 release (1.11.0 is 20) and Hoard Next's betas (101), so 2.0.0 upgrades 1.x in place.
+        versionCode = 200
+        versionName = "2.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Release signing as in :app (skv group "hoard", ADR 0019 keeps one signing identity for the swap).
+    // Release signing reads the keystore from the environment, never from the repo: `bun run android:release` runs
+    // Gradle under `skv run hoard`, which exports HOARD_KEYSTORE (a temp copy of the .jks), HOARD_KEYSTORE_PASSWORD,
+    // HOARD_KEY_ALIAS and HOARD_KEY_PASSWORD. The same keystore as Hoard 1 (ADR 0019): the upgrade in place needs it.
+    // Without them the release APK is built unsigned (CI, contributors) with a warning.
     val releaseKeystore = System.getenv("HOARD_KEYSTORE")
     val releaseSigning = releaseKeystore != null && file(releaseKeystore).exists() &&
         System.getenv("HOARD_KEYSTORE_PASSWORD") != null && System.getenv("HOARD_KEY_ALIAS") != null
@@ -60,28 +50,17 @@ android {
     }
 
     buildTypes {
-        debug {
-            if (!sameId) applicationIdSuffix = ".next"
-        }
         release {
-            applicationIdSuffix = ".next"
             if (releaseSigning) signingConfig = signingConfigs.getByName("release")
+            // R8 shrinks smbj's Bouncy Castle dependency (several MB); keep rules in proguard-rules.pro and the
+            // core modules' consumer-rules.pro.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
-        create("nextRelease") {
-            initWith(getByName("release"))
-            applicationIdSuffix = ".next"
-            signingConfig = when {
-                releaseSigning -> signingConfigs.getByName("release")
-                nextDebugSigned -> signingConfigs.getByName("debug")
-                else -> null
-            }
-            // :core:* libraries publish debug and release only.
-            matchingFallbacks += listOf("release")
-        }
     }
+    // The contour model of ML Kit's face detection is not used (contour mode is off, ADR 0009): not packaged.
+    androidResources.ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~:!contours.tfl"
     compileOptions {
         // java.time (ISO dates of rows and listings) on minSdk 24.
         isCoreLibraryDesugaringEnabled = true
@@ -107,8 +86,6 @@ android {
     }
     // The importer test on a device reads the same Capacitor fixtures as :core:data's JVM tests.
     sourceSets["androidTest"].assets.srcDir("../core/data/fixtures")
-    // The import bridge's JVM test serves the same fixtures as Hoard 1's snapshot.
-    sourceSets["test"].resources.srcDir("../core/data/fixtures")
     testOptions.unitTests.isIncludeAndroidResources = true
     testOptions.unitTests.all {
         it.testLogging { events("passed", "skipped", "failed") }
@@ -117,25 +94,29 @@ android {
 
 kotlin { jvmToolchain(21) }
 
-if (gradle.startParameter.taskNames.any { it.contains("nextRelease", ignoreCase = true) || it.contains("hoardNextApk") }) {
+if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }) {
     val keystore = System.getenv("HOARD_KEYSTORE")
-    if ((keystore == null || !file(keystore).exists()) && !nextDebugSigned) {
-        logger.warn("Hoard Next: HOARD_KEYSTORE / HOARD_KEYSTORE_PASSWORD / HOARD_KEY_ALIAS not set: the APK will be UNSIGNED. Use `bun run android:next` (skv run hoard).")
+    if (keystore == null || !file(keystore).exists()) {
+        logger.warn("Hoard: HOARD_KEYSTORE / HOARD_KEYSTORE_PASSWORD / HOARD_KEY_ALIAS not set: the release APK will be UNSIGNED. Use `bun run android:release` (skv run hoard) for a signed build.")
     }
 }
 
-/** `bun run android:next`: the signed side-by-side build as hoard-next-<version>.apk (unsigned: -unsigned.apk). */
-tasks.register<Copy>("hoardNextApk") {
-    dependsOn("assembleNextRelease")
+/** `bun run android:release`: the release APK as hoard-<version>.apk (unsigned: hoard-<version>-unsigned.apk). */
+tasks.register<Copy>("hoardReleaseApk") {
+    dependsOn("assembleRelease")
     val version = android.defaultConfig.versionName
-    from(layout.buildDirectory.dir("outputs/apk/nextRelease"))
+    from(layout.buildDirectory.dir("outputs/apk/release"))
     include("*.apk")
-    into(layout.buildDirectory.dir("outputs/hoard-next"))
-    rename { name -> if (name.contains("unsigned")) "hoard-next-$version-unsigned.apk" else "hoard-next-$version.apk" }
-    doLast { logger.lifecycle("Hoard Next: ${destinationDir.listFiles()?.joinToString { it.path }}") }
+    into(layout.buildDirectory.dir("outputs/hoard"))
+    rename { name -> if (name.contains("unsigned")) "hoard-$version-unsigned.apk" else "hoard-$version.apk" }
+    doLast { logger.lifecycle("Hoard: ${destinationDir.listFiles()?.joinToString { it.path }}") }
 }
 
-apply(from = "../app/mlkit-packaging.gradle")
+// ML Kit face detection (ADR 0009) ships its native library for four ABIs (~33 MB uncompressed in a universal APK).
+// Keep it for the ABIs libhoardimage is built for; on 32-bit and x86 devices face detection reports itself
+// unavailable (analysis still runs, without faces).
+android.packaging.jniLibs.excludes += listOf("lib/armeabi-v7a/libface_detector_v2_jni.so", "lib/x86/libface_detector_v2_jni.so")
+
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")

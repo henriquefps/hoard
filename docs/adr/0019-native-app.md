@@ -4,7 +4,8 @@
 - **Status**: Accepted. Done: phase 2a (foundations: core modules, Room schema = Capacitor v7, the one-time import,
   the Compose shell), phase 2b (the Files tab at parity), phase 2c (culling at parity, the Files gaps, the parity
   audit), phase 2d (the audit's "Partly" rows closed; **Hoard Next 2.0.0-beta.1**, a side-by-side release build with
-  the import bridge of Hoard 1.11.0). Left: the Gallery tab (phase 3) and the swap.
+  the import bridge of Hoard 1.11.0), **the swap: Hoard 2.0.0** (2026-11-15; `:native` is `dev.hfps.hoard`, Hoard 1
+  removed, below "The swap (2.0.0)"). Left: the Gallery tab (phase 3) and the move to AGP 9.
 
 ## Context
 
@@ -299,12 +300,56 @@ successor: the web gallery is hoard-server's (ADR 0018), and Compose previews pl
 `src/db/migrations.ts` freezes at v7. Its Kotlin copy stays in `:core:data` for as long as a Hoard 1 database may
 still need importing.
 
+### The swap (2.0.0)
+
+The owner ran Hoard Next 2.0.0-beta.1 next to Hoard 1 on the phone and approved parity. 2.0.0:
+
+- **`:native` is Hoard**: application id `dev.hfps.hoard` in every build type, label "Hoard" ("Hoard debug" for
+  debug builds), the normal icon, **2.0.0, versionCode 200** (Hoard 1.11.0 is 20; Hoard Next's 101 is another id),
+  release-signed with Hoard 1's keystore (skv group `hoard`, `bun run android:release` → `hoard-2.0.0.apk`, task
+  `:native:hoardReleaseApk`). The phone's Hoard upgrades in place and its first launch runs `CapacitorImporter` on
+  Hoard 1's `hoardSQLite.db` in the same data directory.
+- **What the upgrade keeps without a copy**: the Keystore passwords (same package, same alias), Reveal's persisted
+  links (the `StreamProvider` authority `dev.hfps.hoard.stream` follows the id; `HandoffStore` stays in
+  `noBackupFilesDir`), WorkManager's database, and the launcher entry: Hoard 1's launcher component was
+  `dev.hfps.hoard/.MainActivity` (`dev.hfps.hoard.MainActivity`), Hoard 2's activity is `dev.hfps.hoard.app.MainActivity`,
+  so the LAUNCHER intent filter moved to an `<activity-alias android:name="dev.hfps.hoard.MainActivity">` that targets
+  it: icons and shortcuts pinned before the upgrade keep opening Hoard.
+- **Debug builds** carry the release's id with the debug key (no `.next` suffix, no `-Phoard.native.sameId`): a debug
+  build installed over a Hoard 1 debug build on an emulator *is* the upgrade test (`docs/testing/hoard-2.0.0.md`).
+  `FirstLaunchTest` replaces the install's databases, so it became opt-in (`-e hoardFirstLaunch true`).
+- **Removed**: the Capacitor `:app` (plugin facade, `SystemUiPlugin`, `ImportBridgeProvider`), Capacitor and its
+  generated modules, `src/` (React UI, web mock, plugin contract), Vite / ESLint / Prettier / Vitest / tsc config and
+  the JS dependencies, `public/`, `scripts/legacy-db/` (it ran Hoard 1's TypeScript), `export_strings.py` (Hoard 1's
+  words now live in `strings_hoard1.xml`, edited by hand in both languages), the import bridge (`ImportBridge`,
+  `ImportBridgeContract`, the Passwords step and its Files notice, the `passwordsAfterImport` setting is no longer
+  read) and the `nextRelease` build type with its icon. `server/` and `server/web/` (its own `package.json`) are
+  untouched.
+- **Frozen**: `LegacyMigrations.kt`, the fixtures in `core/data/fixtures/` and `SchemaParityTest`'s reference: they
+  were generated from Hoard 1's sources, which are gone. They stay for as long as a Hoard 1 database may still need
+  importing.
+- **Hoard Next users** (the owner): after 2.0.0, Hoard Next (`dev.hfps.hoard.next`) is redundant: Hoard 2.0.0 does
+  nothing about it, uninstall it by hand. Its data is its own (a separate data directory); Hoard imports from Hoard 1's
+  database, not from Hoard Next.
+- **Not in this PR: AGP 9.** The plan was to move to AGP 9 / compileSdk 37 and Reveal's AndroidX versions with the
+  swap and drop the R8 pin. It changes every module's build (built-in Kotlin, the new DSL) while the Gallery tab is
+  built in parallel in `:native`, so it is its own PR. Nothing Capacitor-related holds it back any more.
+
+### After the swap: a side-by-side beta
+
+The bridge was for two *different* apps (Hoard 1's WebView app, Hoard Next) holding two copies of the data. With one
+codebase a beta does not need it: a future beta would be a build type like `nextRelease` was (`initWith(release)`,
+`applicationIdSuffix = ".beta"`, its own label and icon under `src/<buildType>/res`, the same keystore), installed
+next to Hoard and starting empty, or with its own data. If a beta ever needs Hoard's data, the way back is the
+2d bridge (git history: `ImportBridgeProvider`, `ImportBridgeContract`, `ImportBridge`): a signature-permission
+provider in Hoard serving a `VACUUM INTO` snapshot of Room's `hoard.db`, copied into the beta (no `CapacitorImporter`: the schema is Room's); the
+Keystore passwords still cannot cross apps. Usually a debug build on the emulator is enough.
+
 ## Consequences
 
-- One build, two apps. `bun run android:debug` / `android:release` and their outputs are unchanged. `:native` builds
-  with `./gradlew :native:assembleDebug`; the side-by-side test build with `bun run android:next`.
-- Every native change lands once and both apps get it. Until the swap, a change to `:core:smb` is checked against
-  the Capacitor app (still the plugin contract rule) and against `:native`.
-- A Capacitor schema change before the swap (a migration v8) needs, in the same PR, the regenerated
-  `LegacyMigrations.kt`, the Room entity and a Room migration, and regenerated fixtures.
-- The AndroidX versions stay one step behind Reveal's until the swap.
+- Until 2.0.0: one build, two apps; every native change landed once and both apps got it, checked against the
+  Capacitor app (the plugin contract rule) and against `:native`.
+- Since 2.0.0: one app. `bun run android:debug` / `android:release` build `:native`; the plugin contract rule, the
+  web mock and the browser development loop are gone (Compose previews and Roborazzi replace them).
+- Hoard 1's schema is frozen at v7: schema changes are Room migrations of `:core:data`.
+- The AndroidX versions stay one step behind Reveal's until the move to AGP 9.

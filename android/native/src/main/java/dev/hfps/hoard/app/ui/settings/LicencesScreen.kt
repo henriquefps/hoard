@@ -21,15 +21,18 @@ import dev.hfps.hoard.designsystem.components.rememberCollapsingHeaderState
 /** A component Hoard ships and its licence (names are not translated: res/values/licences.xml). */
 data class Licence(val name: Int, val licence: Int)
 
-/** What the APK of :native contains, Hoard itself first. */
+/** What the APK of :native contains, Hoard itself first (the same list as docs/licences.md). */
 val LICENCES = listOf(
     Licence(R.string.licence_hoard, R.string.licence_agpl3),
     Licence(R.string.licence_libraw, R.string.licence_libraw_terms),
     Licence(R.string.licence_smbj, R.string.licence_apache2),
     Licence(R.string.licence_bouncycastle, R.string.licence_mit),
+    Licence(R.string.licence_mbassador, R.string.licence_mit),
     Licence(R.string.licence_slf4j, R.string.licence_mit),
     Licence(R.string.licence_androidx, R.string.licence_apache2),
     Licence(R.string.licence_kotlin, R.string.licence_apache2),
+    Licence(R.string.licence_guava, R.string.licence_apache2),
+    Licence(R.string.licence_desugar, R.string.licence_gpl2_classpath),
     Licence(R.string.licence_mlkit, R.string.licence_mlkit_terms),
     Licence(R.string.licence_inter, R.string.licence_ofl),
     Licence(R.string.licence_phosphor, R.string.licence_mit),

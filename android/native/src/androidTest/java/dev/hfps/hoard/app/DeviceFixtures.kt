@@ -6,7 +6,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 
-/** The Capacitor fixtures (core/data/fixtures, scripts/legacy-db/fixtures.ts) from the test APK's assets. */
+/** The Capacitor fixtures (core/data/fixtures, frozen since 2.0.0) from the test APK's assets. */
 object DeviceFixtures {
     fun copy(name: String, to: File): File {
         to.parentFile?.mkdirs()

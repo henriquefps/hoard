@@ -1,10 +1,9 @@
-# Versions of the native modules (core/*, :native), ADR 0019. The Capacitor :app keeps its own versions in
-# variables.gradle until the swap; shared libraries (smbj, coroutines, WorkManager…) are read from there too so
-# :app and :core:* never resolve two versions of the same thing.
+# Versions of the native modules (core/*, :native), ADR 0019. Libraries shared with the core modules' Groovy scripts
+# (smbj, coroutines, WorkManager…) are in variables.gradle.
 #
-# AGP stays 8.13 and compileSdk 36 while the Capacitor modules are in this build, so the AndroidX lines are the last
-# ones that support them (Compose 1.12, Navigation 2.10 and Lifecycle 2.11 need AGP 9.1 + compileSdk 37). The swap
-# PR moves to AGP 9 / compileSdk 37 and these to Reveal's versions.
+# AGP is still 8.13 and compileSdk 36 (the Capacitor modules needed them until Hoard 2.0.0 removed them), so the
+# AndroidX lines are the last ones that support them (Compose 1.12, Navigation 2.10 and Lifecycle 2.11 need AGP 9.1 +
+# compileSdk 37). Moving to AGP 9 / compileSdk 37 and Reveal's versions is a separate PR (ADR 0019).
 
 [versions]
 kotlin = "2.4.21"

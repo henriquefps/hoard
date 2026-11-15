@@ -1,4 +1,4 @@
-# :core:smb rules, applied by R8 to every app that uses the module (:app, :native). Moved from
+# :core:smb rules, applied by R8 to every app that uses the module (:native). Moved from Hoard 1's
 # app/proguard-rules.pro unchanged (ADR 0019).
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 

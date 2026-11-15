@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Hoard Next (nextRelease, ADR 0019 phase 2d): the violet tile and the glyph with a dot (scripts/glyph-next.svg)
-         tell it apart from Hoard 1 on the same phone. Built with hfps-kit's build-icons.mjs, tile #6c4ab3. -->
-    <color name="ic_launcher_background">#6c4ab3</color>
-    <color name="splash_background">#6c4ab3</color>
-</resources>

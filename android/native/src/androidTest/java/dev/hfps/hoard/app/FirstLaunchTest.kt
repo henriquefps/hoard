@@ -12,7 +12,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import dev.hfps.hoard.data.HoardDatabase
 import dev.hfps.hoard.data.legacy.LegacyDatabase
-import org.junit.Assume.assumeFalse
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,7 +21,8 @@ import org.junit.runner.RunWith
 /**
  * The first launch after the upgrade, end to end in the app: a Capacitor database where the Capacitor app keeps it,
  * no native database yet → the import screen with the counts → the Files tab with the imported machines.
- * Replaces this install's databases, so it never runs on the same-id build (that one holds the E2E data).
+ * Replaces this install's databases, so it is opt-in (`-e hoardFirstLaunch true`): never on an install that holds
+ * the upgrade test's data (docs/testing/hoard-2.0.0.md).
  */
 @RunWith(AndroidJUnit4::class)
 class FirstLaunchTest {
@@ -28,7 +30,10 @@ class FirstLaunchTest {
 
     @Test fun importsThenShowsTheFilesTab() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        assumeFalse("same-id build: the E2E data lives here", context.packageName == "dev.hfps.hoard")
+        assumeTrue(
+            "opt-in: -e hoardFirstLaunch true (replaces this install's databases)",
+            InstrumentationRegistry.getArguments().getString("hoardFirstLaunch") == "true",
+        )
         context.deleteDatabase(HoardDatabase.FILE_NAME)
         DeviceFixtures.copy("hoard-v7.db", context.getDatabasePath(LegacyDatabase.FILE_NAME))
 

@@ -1,7 +1,7 @@
 // :core:smb (ADR 0001, 0004, 0005, 0007, 0010, 0011, ADR 0019): everything native that is not the image core or XMP
 // parsing: SMB over smbj, locations (HoardFs: SmbFs, PathFs, SafFs, volumes), the transfer engine, streaming and the
 // StreamProvider, share in/out, Reveal hand-off, culling's native side, credentials (Android Keystore).
-// No Capacitor here: the plugin facade (HoardSmbPlugin) stays in :app. ADR 0019 says why transfer and hand-off are
+// Used by :native (Hoard 1's Capacitor :app used it too until 2.0.0). ADR 0019 says why transfer and hand-off are
 // not separate modules yet (they import locations and streams, which import them back).
 plugins {
     id("com.android.library")

@@ -22,8 +22,6 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import dev.hfps.hoard.app.R
-import dev.hfps.hoard.app.importer.BridgeOffer
-import androidx.compose.ui.platform.testTag
 import dev.hfps.hoard.data.legacy.ImportFailure
 import dev.hfps.hoard.designsystem.components.Eyebrow
 import dev.hfps.hoard.designsystem.components.GhostButton
@@ -35,9 +33,6 @@ import dev.hfps.hoard.designsystem.components.PrimaryButton
 import dev.hfps.hoard.designsystem.icons.PhosphorRegular
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 
-/** The side-by-side build's choices on the first launch (ADR 0019 "Side-by-side test build"). */
-data class OfferActions(val import: () -> Unit = {}, val fresh: () -> Unit = {}, val checkAgain: () -> Unit = {})
-
 /** The first launch after the upgrade from Hoard 1: progress, then what came over (or why nothing did). */
 @Composable
 fun ImportScreen(
@@ -45,7 +40,6 @@ fun ImportScreen(
     onContinue: () -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
-    offer: OfferActions = OfferActions(),
 ) {
     HfpsScaffold(
         modifier = modifier,
@@ -60,7 +54,6 @@ fun ImportScreen(
         ) {
             Column(Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
                 when (state) {
-                    is ImportUiState.Offer -> Offer(state.offer, offer)
                     is ImportUiState.Imported -> Imported(state, onContinue)
                     is ImportUiState.Failed -> Failed(state, onRetry, onContinue)
                     else -> Running(state as? ImportUiState.Running)
@@ -103,45 +96,6 @@ private fun Running(state: ImportUiState.Running?) {
 }
 
 @Composable
-private fun Offer(offer: BridgeOffer, actions: OfferActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.testTag("import-offer")) {
-        when (offer) {
-            is BridgeOffer.Available -> {
-                Status(
-                    icon = { Icon(PhosphorRegular.ArrowsDownUp, null, Modifier.size(28.dp), tint = HfpsTheme.colors.primary) },
-                    title = stringResource(R.string.import_offer_title),
-                    text = stringResource(R.string.import_offer_text, offer.summary.appVersion),
-                )
-                Eyebrow(stringResource(R.string.import_offer_brings), Modifier.padding(start = 16.dp, top = 16.dp))
-                CountRows(offer.summary.counts)
-                Text(
-                    stringResource(R.string.import_offer_passwords_note),
-                    style = HfpsTheme.typography.ui,
-                    color = HfpsTheme.colors.mutedForeground,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton(stringResource(R.string.import_offer_import), actions.import, icon = PhosphorRegular.DownloadSimple, modifier = Modifier.fillMaxWidth().testTag("import-from-hoard"))
-                    GhostButton(stringResource(R.string.import_offer_fresh), actions.fresh, modifier = Modifier.fillMaxWidth().testTag("import-fresh"))
-                }
-            }
-            is BridgeOffer.NeedsUpdate, BridgeOffer.Refused -> {
-                val update = offer is BridgeOffer.NeedsUpdate
-                Status(
-                    icon = { Icon(PhosphorRegular.WarningCircle, null, Modifier.size(28.dp), tint = HfpsTheme.colors.warning) },
-                    title = stringResource(if (update) R.string.import_offer_update_title else R.string.import_offer_refused_title),
-                    text = if (offer is BridgeOffer.NeedsUpdate) stringResource(R.string.import_offer_update_text, offer.installedVersion) else stringResource(R.string.import_offer_refused_text),
-                )
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PrimaryButton(stringResource(R.string.import_offer_check_again), actions.checkAgain, icon = PhosphorRegular.ArrowsClockwise, modifier = Modifier.fillMaxWidth())
-                    GhostButton(stringResource(R.string.import_offer_fresh), actions.fresh, modifier = Modifier.fillMaxWidth().testTag("import-fresh"))
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun CountRows(counts: Map<String, Int>) {
     val rows = listOf(
         Triple(PhosphorRegular.HardDrives, R.plurals.import_count_machines, counts["machines"] ?: 0),
@@ -163,11 +117,7 @@ private fun Imported(state: ImportUiState.Imported, onContinue: () -> Unit) {
         Status(
             icon = { Icon(PhosphorRegular.CheckCircle, null, Modifier.size(28.dp), tint = HfpsTheme.colors.primary) },
             title = stringResource(R.string.import_done_title),
-            text = if (state.passwords > 0) {
-                stringResource(R.string.import_done_text_bridge) + "\n\n" + pluralStringResource(R.plurals.import_done_passwords, state.passwords, state.passwords)
-            } else {
-                stringResource(R.string.import_done_text)
-            },
+            text = stringResource(R.string.import_done_text),
         )
         Eyebrow(stringResource(R.string.import_done_counts), Modifier.padding(start = 16.dp, top = 16.dp))
         CountRows(state.counts)
