@@ -576,6 +576,17 @@ func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []Sid
 				cands = append(cands, cand{CullLabel, json.RawMessage(`""`)}) // present last time, gone now: cleared
 			}
 			for _, c := range cands {
+				// A default (0, none, "") for a field never written is no information: no revision (ADR 0016, hoard-server 0.10.1).
+				if isCullDefault(c.field, c.value) {
+					var one int
+					err := tx.QueryRowContext(ctx, "SELECT 1 FROM culling_fields WHERE item_id = ? AND field = ?", r.ItemID, c.field).Scan(&one)
+					if errors.Is(err, sql.ErrNoRows) {
+						continue
+					}
+					if err != nil {
+						return err
+					}
+				}
 				res, err := applyCull(ctx, tx, r.ItemID, c.field, c.value, nil, r.MTime/1e6, WriterNAS, now)
 				if err != nil {
 					return err
@@ -594,6 +605,19 @@ func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []Sid
 		return nil
 	})
 	return n, err
+}
+
+// isCullDefault: the value a field has when nobody set it (rating 0, flag none, no label).
+func isCullDefault(field string, v json.RawMessage) bool {
+	switch field {
+	case CullRating:
+		return string(v) == "0"
+	case CullFlag:
+		return string(v) == `"none"`
+	case CullLabel:
+		return string(v) == `""`
+	}
+	return false
 }
 
 func contains(list []string, v string) bool { return slices.Contains(list, v) }
