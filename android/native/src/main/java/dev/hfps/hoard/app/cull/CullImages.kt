@@ -153,7 +153,7 @@ class CullImages(private val backend: CullBackend, private val scope: CoroutineS
         return deferred.await()
     }
 
-    private suspend fun decodeOrNull(file: File, hardware: Boolean, rgb565: Boolean): Bitmap? = withContext(Dispatchers.IO) {
+    private suspend fun decodeOrNull(file: File, hardware: Boolean, rgb565: Boolean): Bitmap? = withContext(decodeDispatcher) {
         try {
             if (!file.isFile) return@withContext null
             val options = BitmapFactory.Options().apply {
@@ -181,6 +181,9 @@ class CullImages(private val backend: CullBackend, private val scope: CoroutineS
 
         /** Robolectric cannot draw HARDWARE bitmaps; screenshot tests switch them off. */
         @Volatile var forceSoftware = false
+
+        /** Where files are decoded; Robolectric's native graphics must stay on the test's thread. */
+        @Volatile var decodeDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
 
         fun zoomSourceName(source: ZoomSource) = when (source) {
             ZoomSource.RENDERED -> "rendered"

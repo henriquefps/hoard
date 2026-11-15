@@ -58,10 +58,12 @@ class CullScreenTest {
 
     @Before fun setUp() {
         CullImages.forceSoftware = true
+        CullImages.decodeDispatcher = Dispatchers.Unconfined
         db = HoardDatabase.open(ApplicationProvider.getApplicationContext(), name = null)
     }
 
     @After fun tearDown() {
+        CullImages.decodeDispatcher = Dispatchers.IO
         store.clear()
         db.close()
     }

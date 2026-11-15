@@ -11,16 +11,22 @@ describe("appearance mirror (ADR 0019)", () => {
     await migrate(db)
     const rows = mirrorRows("dark", "olive", "pt-BR", { wrap: false, wrapCode: true, fontSize: 18 })
     await mirrorAppearance(db, rows)
-    await mirrorAppearance(db, mirrorRows("light", "olive", "pt-BR", { wrap: false, wrapCode: true, fontSize: 18 }))
+    await mirrorAppearance(
+      db,
+      mirrorRows("light", "olive", "pt-BR", { wrap: false, wrapCode: true, fontSize: 18 })
+    )
     const stored = new Map(
-      (await db.query<{ key: string; value: string }>("SELECT key, value FROM settings")).map((r) => [
-        r.key,
-        JSON.parse(r.value) as unknown,
-      ])
+      (await db.query<{ key: string; value: string }>("SELECT key, value FROM settings")).map(
+        (r) => [r.key, JSON.parse(r.value) as unknown]
+      )
     )
     expect(stored.get(MIRROR_KEYS.theme)).toBe("light")
     expect(stored.get(MIRROR_KEYS.palette)).toBe("olive")
     expect(stored.get(MIRROR_KEYS.language)).toBe("pt-BR")
-    expect(stored.get(MIRROR_KEYS.textViewer)).toEqual({ wrap: false, wrapCode: true, fontSize: 18 })
+    expect(stored.get(MIRROR_KEYS.textViewer)).toEqual({
+      wrap: false,
+      wrapCode: true,
+      fontSize: 18,
+    })
   })
 })
