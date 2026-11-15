@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 data class GalleryOpen(val id: Int, val entries: List<GalleryEntry>, val startKey: String)
 
 /** The Gallery tab's state (ADR 0021): filters, density, the layout derived off the main thread, the server's state. */
-class GalleryViewModel(private val repo: GalleryRepository, context: Context, private val saved: SavedStateHandle = SavedStateHandle()) : ViewModel() {
+class GalleryViewModel(private val repo: GalleryRepository, context: Context, private val saved: SavedStateHandle) : ViewModel() {
     private val appContext = context.applicationContext
     val filter = MutableStateFlow(GalleryFilter())
     val columns = MutableStateFlow(DEFAULT_COLUMNS)
