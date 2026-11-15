@@ -1,5 +1,11 @@
 package dev.hfps.hoard.app.ui.settings
 
+import androidx.compose.ui.platform.testTag
+
+import dev.hfps.hoard.designsystem.theme.HfpsTheme
+
+import androidx.compose.material3.Text
+
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,6 +44,11 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     /** The Files side's settings (Hoard 1's browsing, transfers, network, storage, Reveal links). */
     files: (@Composable () -> Unit)? = null,
+    /** Culling's settings (assist sensitivities, burst gap, sidecars). */
+    culling: (@Composable () -> Unit)? = null,
+    /** The in-app language (null = the system's), and its setter; the section shows when [onLanguage] is given. */
+    language: String? = null,
+    onLanguage: ((String?) -> Unit)? = null,
 ) {
     HfpsScaffold(
         modifier = modifier,
@@ -70,7 +81,27 @@ fun SettingsScreen(
                     }
                 }
                 HfpsRowDivider(Modifier.padding(top = 8.dp))
+                if (onLanguage != null) {
+                    Section(R.string.t_settings_language)
+                    Column(Modifier.selectableGroup().padding(horizontal = 16.dp).testTag("settings-language")) {
+                        HfpsChoiceRow(stringResource(R.string.language_system), language == null, { onLanguage(null) })
+                        HfpsChoiceRow(stringResource(R.string.t_language_en), language == "en", { onLanguage("en") })
+                        HfpsChoiceRow(stringResource(R.string.t_language_pt_br), language == "pt-BR", { onLanguage("pt-BR") })
+                    }
+                    HfpsRowDivider(Modifier.padding(top = 8.dp))
+                }
                 files?.invoke()
+                if (culling != null) {
+                    Section(R.string.t_settings_culling)
+                    Text(
+                        stringResource(R.string.t_settings_culling_hint),
+                        style = HfpsTheme.typography.ui,
+                        color = HfpsTheme.colors.mutedForeground,
+                        modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp),
+                    )
+                    Box(Modifier.padding(horizontal = 16.dp).testTag("settings-culling")) { culling() }
+                    HfpsRowDivider(Modifier.padding(top = 16.dp))
+                }
                 Section(R.string.settings_about)
                 HfpsListRow(
                     title = stringResource(R.string.settings_version),
@@ -84,6 +115,26 @@ fun SettingsScreen(
                     icon = PhosphorRegular.Database,
                 )
                 HfpsRowDivider(Modifier.padding(start = 54.dp))
+                Text(
+                    stringResource(R.string.t_settings_about_body),
+                    style = HfpsTheme.typography.ui,
+                    color = HfpsTheme.colors.mutedForeground,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+                HfpsListRow(
+                    title = stringResource(R.string.t_settings_source_code),
+                    subtitle = REPOSITORY.removePrefix("https://"),
+                    icon = PhosphorRegular.ArrowSquareOut,
+                    onClick = { runCatching { uriHandler.openUri(REPOSITORY) } },
+                )
+                HfpsRowDivider(Modifier.padding(start = 54.dp))
+                HfpsListRow(
+                    title = stringResource(R.string.t_settings_license),
+                    icon = PhosphorRegular.Scroll,
+                    onClick = { runCatching { uriHandler.openUri("$REPOSITORY/blob/main/LICENSE") } },
+                )
+                HfpsRowDivider(Modifier.padding(start = 54.dp))
                 HfpsListRow(
                     title = stringResource(R.string.settings_licences),
                     subtitle = stringResource(R.string.settings_licences_subtitle),
@@ -94,6 +145,9 @@ fun SettingsScreen(
         }
     }
 }
+
+/** Hoard's repository (Hoard 1's Settings › About links). */
+const val REPOSITORY = "https://github.com/henriquefps/hoard"
 
 @Composable
 private fun Section(title: Int) {

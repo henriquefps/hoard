@@ -74,6 +74,8 @@ data class FilesUiState(
     /** All files access (ADR 0005); off shows the "Allow access" card. */
     val storageGranted: Boolean = true,
     val activeTransfers: Int = 0,
+    /** The ring on the Transfers button (overall progress of the running jobs, a recent failure). */
+    val transfers: dev.hfps.hoard.app.transfers.TransfersIndicator = dev.hfps.hoard.app.transfers.TransfersIndicator(),
 )
 
 /** The Files tab: machines with their live route, this phone, USB drives / SD cards attached now, favourites. */
@@ -82,7 +84,7 @@ class FilesViewModel(
     favorites: Flow<List<FavoriteEntity>>,
     volumes: Flow<List<VolumeInfo>>,
     routes: Flow<Map<String, RouteState>> = flowOf(emptyMap()),
-    activeTransfers: Flow<Int> = flowOf(0),
+    transfers: Flow<dev.hfps.hoard.app.transfers.TransfersIndicator> = flowOf(dev.hfps.hoard.app.transfers.TransfersIndicator()),
     private val onMachines: (List<MachineWithAddresses>) -> Unit = {},
 ) : ViewModel() {
     val storageGranted = MutableStateFlow(true)
@@ -92,8 +94,8 @@ class FilesViewModel(
         filesState(m, f, v)
     }
 
-    val state: StateFlow<FilesUiState> = combine(base, routes, storageGranted, activeTransfers) { s, r, granted, active ->
-        s.copy(routes = r, storageGranted = granted, activeTransfers = active)
+    val state: StateFlow<FilesUiState> = combine(base, routes, storageGranted, transfers) { s, r, granted, indicator ->
+        s.copy(routes = r, storageGranted = granted, activeTransfers = indicator.count, transfers = indicator)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), FilesUiState())
 
     companion object {
@@ -104,7 +106,7 @@ class FilesViewModel(
                     container.database.favorites().observeAll(),
                     container.volumes.observe(),
                     container.routes.states,
-                    container.transfers.transfers.map { list -> list.count { it.active } },
+                    container.transfers.transfers.map { list -> dev.hfps.hoard.app.transfers.TransfersIndicator.of(list) },
                     // A machine shown is a machine whose route is checked (Hoard 1's useMachineRoute).
                     onMachines = { list -> container.scope.launch { list.forEach { container.routes.ensure(it.engineMachine()) } } },
                 )

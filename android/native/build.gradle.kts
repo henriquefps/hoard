@@ -21,6 +21,8 @@ if (sameId && gradle.startParameter.taskNames.any { it.contains("release", ignor
 }
 
 android {
+    // Android 13+'s per-app language page lists Hoard's languages (res/resources.properties names the default).
+    androidResources.generateLocaleConfig = true
     namespace = "dev.hfps.hoard.app"
     compileSdk = rootProject.extra["compileSdkVersion"] as Int
     ndkVersion = rootProject.extra["ndkVersion"] as String

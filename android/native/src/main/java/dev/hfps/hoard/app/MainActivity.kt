@@ -54,6 +54,15 @@ class MainActivity : ComponentActivity() {
         receiveShare(intent)
     }
 
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(dev.hfps.hoard.app.data.AppLanguage.wrap(newBase))
+    }
+
+    override fun onStop() {
+        (application as HoardApplication).container.onStop()
+        super.onStop()
+    }
+
     override fun onResume() {
         super.onResume()
         (application as HoardApplication).container.onResume()

@@ -389,6 +389,22 @@ export async function setSetting(db: Db, key: SettingKey, value: unknown): Promi
   )
 }
 
+/**
+ * Rows Hoard 1 keeps only for Hoard 2's importer (ADR 0019): the appearance it holds in localStorage. Written in one
+ * transaction, never read by Hoard 1.
+ */
+export async function mirrorSettings(db: Db, rows: readonly [string, unknown][]): Promise<void> {
+  if (rows.length === 0) return
+  await db.transaction(async () => {
+    for (const [key, value] of rows) {
+      await db.run(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [key, JSON.stringify(value)]
+      )
+    }
+  })
+}
+
 // --- Culling (ADR 0008) ----------------------------------------------------------------------
 
 const folderParams = (key: CullFolderKey) => [key.locationId, key.share, key.path]

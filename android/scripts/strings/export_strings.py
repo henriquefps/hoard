@@ -2,7 +2,7 @@
 """Hoard 1's i18next strings as Android resources for the native app (ADR 0019, phase 2b).
 
 The Files side of Hoard 2 says what Hoard 1 says, in both languages: this script turns the keys of
-src/i18n/locales/{en,pt-BR}.json (all namespaces except culling's, which phase 2c brings) into
+src/i18n/locales/{en,pt-BR}.json (every namespace; culling came in phase 2c) into
 native/src/main/res/values{,-pt-rBR}/strings_hoard1.xml.
 
     python3 android/scripts/strings/export_strings.py           # from the repository root
@@ -26,7 +26,7 @@ from xml.sax.saxutils import escape
 ROOT = Path(__file__).resolve().parents[3]
 LOCALES = ROOT / "src/i18n/locales"
 RES = ROOT / "android/native/src/main/res"
-SKIP = {"cull"}
+SKIP: set = set()
 PLURAL = re.compile(r"^(.*)_(zero|one|two|few|many|other)$")
 VAR = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
 

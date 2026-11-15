@@ -135,6 +135,10 @@ data class TransferRequest(
     val itemsTotal: Int,
     val destination: FolderPlace,
     val conflict: String,
+    /** Source path → the culling fields of its XMP sidecar at the destination (ADR 0011, copies only: "Copy picks"). */
+    val sidecars: Map<String, dev.hfps.hoard.xmp.XmpFields> = emptyMap(),
+    /** New sidecars are hidden (`.<stem>.xmp`). */
+    val hiddenSidecars: Boolean = false,
 )
 
 fun transferRequest(op: String, source: TransferPlace, entries: List<PickedEntry>, destination: FolderPlace, conflict: String) = TransferRequest(

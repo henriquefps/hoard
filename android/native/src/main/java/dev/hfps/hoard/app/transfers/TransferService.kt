@@ -274,11 +274,21 @@ class TransferService(
                 finishedAt = null,
             ),
         )
-        run(id, request.op, source, request.paths, destination, request.conflict, resume = false)
+        run(id, request.op, source, request.paths, destination, request.conflict, resume = false, request.sidecars, request.hiddenSidecars)
         return id
     }
 
-    private suspend fun run(id: String, op: String, source: TransferPlace, paths: List<String>, destination: FolderPlace, conflict: String, resume: Boolean) {
+    private suspend fun run(
+        id: String,
+        op: String,
+        source: TransferPlace,
+        paths: List<String>,
+        destination: FolderPlace,
+        conflict: String,
+        resume: Boolean,
+        sidecars: Map<String, dev.hfps.hoard.xmp.XmpFields> = emptyMap(),
+        hiddenSidecars: Boolean = false,
+    ) {
         _live.update { it + (id to (it[id] ?: LiveTransfer(TransferStates.QUEUED)).copy(state = TransferStates.QUEUED, errorCode = null, errorMessage = null)) }
         try {
             val from = resolve(source)
@@ -292,6 +302,8 @@ class TransferService(
                     destPath = destination.path,
                     conflict = conflict,
                     resume = resume,
+                    sidecars = if (op == "copy") sidecars else emptyMap(),
+                    hiddenSidecars = hiddenSidecars,
                 ),
             )
         } catch (e: Throwable) {
@@ -354,5 +366,25 @@ class TransferService(
             itemsFailed = row.itemsFailed,
             itemsSkipped = row.itemsSkipped,
         )
+    }
+}
+
+/** The top-bar indicator (TransfersIndicator.tsx): jobs running and their overall progress, or a recent failure. */
+data class TransfersIndicator(val count: Int = 0, val percent: Double = 0.0, val failedRecently: Boolean = false) {
+    val active: Boolean get() = count > 0
+
+    companion object {
+        /** A failure counts for this long after it finished (Hoard 1's `isRecent`, 30 minutes). */
+        const val RECENT_MS = 30 * 60_000L
+
+        fun of(views: List<TransferView>, now: Long = System.currentTimeMillis()): TransfersIndicator {
+            val active = views.filter { it.active }
+            val total = active.sumOf { it.total }
+            val done = active.sumOf { it.bytesDone }
+            val failed = views.any { v ->
+                v.state == TransferStates.FAILED && v.row.finishedAt?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }?.let { now - it < RECENT_MS } == true
+            }
+            return TransfersIndicator(active.size, if (total > 0) done * 100.0 / total else 0.0, failed)
+        }
     }
 }

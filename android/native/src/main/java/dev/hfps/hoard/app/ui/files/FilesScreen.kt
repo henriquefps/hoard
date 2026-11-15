@@ -1,5 +1,15 @@
 package dev.hfps.hoard.app.ui.files
 
+import dev.hfps.hoard.app.ui.common.reorderable
+
+import dev.hfps.hoard.app.ui.common.rememberDragReorder
+
+import dev.hfps.hoard.app.ui.common.moved
+
+import dev.hfps.hoard.app.ui.common.DragReorder
+
+import dev.hfps.hoard.app.ui.common.DragHandle
+
 import android.text.format.Formatter
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,6 +79,10 @@ class FilesActions(
     val renameFavorite: (FavoriteItem) -> Unit = {},
     val removeFavorite: (FavoriteItem) -> Unit = {},
     val moveFavorite: (FavoriteItem, Int) -> Unit = { _, _ -> },
+    /** Drag reorder (Hoard 1's handles): the new order of every favourite / machine. */
+    val reorderFavorites: (List<String>) -> Unit = {},
+    val reorderMachines: (List<String>) -> Unit = {},
+    val moveMachine: (MachineItem, Int) -> Unit = { _, _ -> },
     /** A drive Hoard cannot read by path: pick a folder on it (SAF). */
     val grantVolume: (VolumeItem) -> Unit = {},
     val storageSettings: () -> Unit = {},
@@ -85,22 +99,14 @@ fun FilesScreen(state: FilesUiState, onOpenSettings: () -> Unit, modifier: Modif
         header = rememberCollapsingHeaderState(),
         topBar = {
             HfpsTopBar(title = stringResource(R.string.files_title)) {
-                Box {
-                    HfpsIconButton(PhosphorRegular.ArrowsDownUp, stringResource(R.string.t_nav_transfers), actions.transfers, active = state.activeTransfers > 0)
-                    if (state.activeTransfers > 0) {
-                        Box(
-                            Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(16.dp).clip(CircleShape).background(HfpsTheme.colors.primary),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(state.activeTransfers.toString(), style = HfpsTheme.typography.eyebrow, color = HfpsTheme.colors.primaryForeground)
-                        }
-                    }
-                }
+                TransfersButton(state.transfers, actions.transfers)
                 HfpsIconButton(PhosphorRegular.Gear, stringResource(R.string.action_settings), onOpenSettings)
             }
         },
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            val favoriteDrag = rememberDragReorder(state.favorites.size) { from, to -> actions.reorderFavorites(moved(state.favorites.map { it.id }, from, to)) }
+            val machineDrag = rememberDragReorder(state.machines.size) { from, to -> actions.reorderMachines(moved(state.machines.map { it.id }, from, to)) }
             LazyColumn(
                 modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().testTag("files-list"),
                 contentPadding = PaddingValues(vertical = 8.dp),
@@ -124,8 +130,10 @@ fun FilesScreen(state: FilesUiState, onOpenSettings: () -> Unit, modifier: Modif
                     section(R.string.files_favorites)
                     state.favorites.forEachIndexed { index, favorite ->
                         item(key = "f-" + favorite.id) {
-                            if (index > 0) HfpsRowDivider(Modifier.padding(start = 68.dp))
-                            FavoriteRow(favorite, state.routes[favorite.machineId], index, state.favorites.size, actions)
+                            Column(Modifier.reorderable(favoriteDrag, index).background(HfpsTheme.colors.card)) {
+                                if (index > 0) HfpsRowDivider(Modifier.padding(start = 68.dp))
+                                FavoriteRow(favorite, state.routes[favorite.machineId], index, state.favorites.size, actions, favoriteDrag)
+                            }
                         }
                     }
                 }
@@ -136,8 +144,10 @@ fun FilesScreen(state: FilesUiState, onOpenSettings: () -> Unit, modifier: Modif
                 } else {
                     state.machines.forEachIndexed { index, machine ->
                         item(key = "m-" + machine.id) {
-                            if (index > 0) HfpsRowDivider(Modifier.padding(start = 68.dp))
-                            MachineRow(machine, state.routes[machine.id] ?: RouteState.IDLE, actions)
+                            Column(Modifier.reorderable(machineDrag, index).background(HfpsTheme.colors.card)) {
+                                if (index > 0) HfpsRowDivider(Modifier.padding(start = 68.dp))
+                                MachineRow(machine, state.routes[machine.id] ?: RouteState.IDLE, actions, index, state.machines.size, machineDrag)
+                            }
                         }
                     }
                     item(key = "add-machine") {
@@ -264,12 +274,13 @@ private fun VolumeRow(volume: VolumeItem, actions: FilesActions) {
 }
 
 @Composable
-private fun FavoriteRow(favorite: FavoriteItem, route: RouteState?, index: Int, count: Int, actions: FilesActions) {
+private fun FavoriteRow(favorite: FavoriteItem, route: RouteState?, index: Int, count: Int, actions: FilesActions, drag: DragReorder? = null) {
     var menu by remember { mutableStateOf(false) }
     val connected = favorite.place !is Place.Drive || (favorite.place as Place.Drive).label != null
     RowShell(
         onClick = { actions.openLocation(favorite.locationId, favorite.share.ifEmpty { null }, favorite.path) },
         menu = {
+            if (drag != null && count > 1) DragHandle(drag, index, stringResource(R.string.t_favorites_reorder))
             Box {
                 HfpsIconButton(PhosphorRegular.DotsThreeVertical, stringResource(R.string.t_favorites_actions_for, favorite.label), { menu = true })
                 DropdownMenu(menu, { menu = false }, containerColor = HfpsTheme.colors.card) {
@@ -295,16 +306,21 @@ private fun FavoriteRow(favorite: FavoriteItem, route: RouteState?, index: Int, 
 }
 
 @Composable
-private fun MachineRow(machine: MachineItem, route: RouteState, actions: FilesActions) {
+private fun MachineRow(machine: MachineItem, route: RouteState, actions: FilesActions, index: Int = 0, count: Int = 1, drag: DragReorder? = null) {
     var menu by remember { mutableStateOf(false) }
     RowShell(
         onClick = { actions.openLocation(machine.id, null, "") },
         menu = {
+            if (drag != null && count > 1) DragHandle(drag, index, stringResource(R.string.t_favorites_reorder))
             Box {
                 HfpsIconButton(PhosphorRegular.DotsThreeVertical, stringResource(R.string.t_machines_actions_for, machine.name), { menu = true })
                 DropdownMenu(menu, { menu = false }, containerColor = HfpsTheme.colors.card) {
                     MenuItem(stringResource(R.string.t_common_edit), PhosphorRegular.PencilSimple, { menu = false; actions.editMachine(machine.id) })
                     MenuItem(stringResource(R.string.t_route_recheck), PhosphorRegular.ArrowsClockwise, { menu = false; actions.recheck(machine.id) })
+                    if (drag != null && count > 1) {
+                        MenuItem(stringResource(R.string.t_common_move_up_short), PhosphorRegular.ArrowUp, { menu = false; actions.moveMachine(machine, -1) }, enabled = index > 0)
+                        MenuItem(stringResource(R.string.t_common_move_down_short), PhosphorRegular.ArrowDown, { menu = false; actions.moveMachine(machine, 1) }, enabled = index < count - 1)
+                    }
                     HorizontalDivider(color = HfpsTheme.colors.hairline)
                     MenuItem(stringResource(R.string.t_common_delete), PhosphorRegular.Trash, { menu = false; actions.deleteMachine(machine) }, destructive = true)
                 }
@@ -408,4 +424,47 @@ private fun favoriteSubtitle(favorite: FavoriteItem): String {
     // As Hoard 1 says it: the machine, its share, then the folder ("NAS · photos · 2026/Lisboa").
     val where = listOf(favorite.share, favorite.path).filter { it.isNotEmpty() }
     return listOf(place).plus(where.ifEmpty { listOf(stringResource(R.string.files_root)) }).joinToString(" · ")
+}
+
+/**
+ * The Transfers button with Hoard 1's progress ring while jobs run (overall bytes), the count when more than one, and
+ * a red dot after a recent failure (TransfersIndicator.tsx). It always leads to the Transfers screen.
+ */
+@Composable
+fun TransfersButton(indicator: dev.hfps.hoard.app.transfers.TransfersIndicator, onClick: () -> Unit) {
+    val label = when {
+        indicator.active -> androidx.compose.ui.res.pluralStringResource(R.plurals.t_transfers_indicator, indicator.count, indicator.count.toString(), kotlin.math.floor(indicator.percent).toInt().toString())
+        indicator.failedRecently -> stringResource(R.string.t_transfers_indicator_failed)
+        else -> stringResource(R.string.t_nav_transfers)
+    }
+    val track = HfpsTheme.colors.muted
+    val ring = HfpsTheme.colors.primary
+    val sweep by androidx.compose.animation.core.animateFloatAsState((indicator.percent / 100.0).toFloat().coerceIn(0f, 1f), label = "transfers")
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.testTag("transfers-indicator")) {
+        if (indicator.active) {
+            androidx.compose.foundation.Canvas(Modifier.size(36.dp)) {
+                val stroke = 2.5.dp.toPx()
+                val inset = stroke / 2
+                val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+                val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+                drawArc(track, 0f, 360f, false, topLeft, arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke))
+                drawArc(ring, -90f, 360f * sweep, false, topLeft, arcSize, style = androidx.compose.ui.graphics.drawscope.Stroke(stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            }
+        }
+        HfpsIconButton(
+            PhosphorRegular.ArrowsDownUp,
+            label,
+            onClick,
+            active = indicator.active,
+            tint = if (indicator.failedRecently && !indicator.active) HfpsTheme.colors.destructive else if (indicator.active) HfpsTheme.colors.primary else HfpsTheme.colors.foreground,
+        )
+        if (indicator.count > 1) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp).size(16.dp).clip(CircleShape).background(HfpsTheme.colors.primary),
+                contentAlignment = Alignment.Center,
+            ) { Text(indicator.count.toString(), style = HfpsTheme.typography.eyebrow, color = HfpsTheme.colors.primaryForeground) }
+        } else if (indicator.failedRecently && !indicator.active) {
+            Box(Modifier.align(Alignment.TopEnd).padding(top = 10.dp, end = 10.dp).size(8.dp).clip(CircleShape).background(HfpsTheme.colors.destructive))
+        }
+    }
 }

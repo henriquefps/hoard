@@ -3,6 +3,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { DbProvider } from "@/db/DbProvider"
+import { AppearanceMirror } from "@/features/settings/appearanceMirror"
 import { VolumesProvider } from "@/features/locations/VolumesProvider"
 import { RevealProvider } from "@/features/reveal/RevealProvider"
 import { RouteProvider } from "@/features/route/RouteProvider"
@@ -20,6 +21,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <TooltipProvider delayDuration={300}>
       <DbProvider>
+        <AppearanceMirror />
         <RouteProvider>
           <VolumesProvider>
             <TransfersProvider>
