@@ -68,15 +68,16 @@ their own concurrent opens at or below the limit, and never mark a busy file as 
 constants: 6 concurrent reads (`HandoffServer.MAX_READS`), a 1.5 s wait (`BUSY_WAIT_MS`); ADR 0010 "Bursts of opens".
 
 **Descriptors.** Files up to 8 MiB are served as plain descriptors from Hoard's cache, and their slot is freed at
-once. Bigger files, which means every RAW, are appfuse proxy descriptors. Each one **holds a slot until the client
-closes it**: in 2.0.1 there is no idle reclaim (planned).
+once. Bigger files, which means every RAW, are appfuse proxy descriptors. In 2.0.1 each one **holds a slot until the client
+closes it**. Since 2.0.2, a proxy descriptor idle for 12 s gives its slot back and takes one again on its next read. That read can fail with `EIO` after 1.5 s if all 6 slots are taken: read again. A descriptor idle for 10 min, or a parked one whose looper is needed, is closed on Hoard's side: its reads fail with `EIO` ("open the link again"). The `busy:` wording, limit and wait are unchanged.
 
 So clients:
 
 - close every hand-off descriptor as soon as the read is done;
 - never keep long-lived descriptors in caches, decoders or the editor (copy to a local file or memory instead);
 - never hold more than 6 at once, and cap their own concurrent opens at 4;
-- treat a proxy read that fails with `EIO` after 10 s (a slow share) as transient, not as unreadable.
+- treat a proxy read that fails with `EIO` (a slow share, a parked or retired descriptor) as transient: close and
+  reopen the URI, never mark the file unreadable.
 
 ## Shared fixtures
 
@@ -94,7 +95,7 @@ server:
 | Reveal | Hoard | hoard-server | Status |
 | --- | --- | --- | --- |
 | 0.8.0 | 2.0.0 | 0.9.0 | **Installed** on the owner's phone and tablet (2026-11-15). Hoard 2.0.0 has **no server client yet**: culling sync and edited previews work between Reveal, the server and the web gallery only. Hoard ↔ Reveal is the URI hand-off plus sidecars. Open issue: a burst of hand-off opens when Reveal starts can hang storage. |
-| 0.9.0 (W3/C, W3/D, W3/H) | 2.0.1 (`busy:` only) | 0.9.0 | **Planned pair.** They ship together and fix the start-up burst. Reveal understands server references from this version on. |
+| 0.9.0 (W3/C, W3/D, W3/H) | 2.0.2 (`busy:` 2.0.1 + idle reclaim) | 0.9.0 | **Planned pair.** They ship together and fix the start-up burst. Reveal understands server references from this version on. |
 | ≥ 0.9.0 | 2.1.0 (Gallery: server client, culling sync, server-reference sender for Gallery items, edited thumbnails) | ≥ 0.9.0 | In review (Hoard PR #44). SMB files still go as URIs. |
 | ≥ 0.9.0 | 2.2.0 (SMB path mapping: server references from Files and culling on the share) | 0.10.0 (`POST /v1/items/by-path`; `devices[].revoked`, `lastSeenAt`) | Planned. Reveal does not need 0.10.0. |
 
