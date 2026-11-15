@@ -1,5 +1,9 @@
 package dev.hfps.hoard.app.ui.browse
 
+import androidx.compose.ui.focus.focusRequester
+
+import androidx.compose.runtime.derivedStateOf
+
 import androidx.compose.foundation.layout.widthIn
 
 import androidx.compose.foundation.border
@@ -167,6 +171,12 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
     val location = state.location
     var dialog by remember { mutableStateOf<BrowseDialog?>(null) }
     val listState = rememberLazyListState()
+    // The toolbar (search, filter, sort) is item 1: once it has scrolled away, the top bar offers the search.
+    val toolbarGone by remember { derivedStateOf { listState.firstVisibleItemIndex >= 2 } }
+    var searchOpen by remember { mutableStateOf(false) }
+    val searchFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val compactSearch = searchOpen && toolbarGone
+    LaunchedEffect(toolbarGone) { if (!toolbarGone) searchOpen = false }
     val header = rememberCollapsingHeaderState()
     val startTransfer = rememberStartTransfer(nav.transfers)
     val reveal = rememberReveal(actions)
@@ -323,7 +333,24 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
                     onDelete = { if (state.selectedEntries.isNotEmpty()) dialog = BrowseDialog.Delete(state.selectedEntries) },
                 )
             } else {
-                HfpsTopBar(title = state.title, onBack = nav.back, titleIsFileName = state.path.isNotEmpty()) {
+                if (compactSearch) {
+                    // 1.9.1's compact bar: the folder's search while its toolbar is scrolled away.
+                    Row(
+                        Modifier.fillMaxWidth().height(56.dp).padding(start = 4.dp, end = 12.dp).testTag("compact-search"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        HfpsIconButton(PhosphorRegular.ArrowLeft, stringResource(R.string.t_common_close), {
+                            searchOpen = false
+                            viewModel.setQuery("")
+                        })
+                        SearchField(state.query, viewModel::setQuery, Modifier.weight(1f).focusRequester(searchFocus))
+                    }
+                    LaunchedEffect(Unit) { runCatching { searchFocus.requestFocus() } }
+                } else HfpsTopBar(title = state.title, onBack = nav.back, titleIsFileName = state.path.isNotEmpty()) {
+                    if (toolbarGone && state.listing.entries != null && !state.showsShares) {
+                        HfpsIconButton(PhosphorRegular.MagnifyingGlass, stringResource(R.string.t_browse_search), { searchOpen = true }, Modifier.testTag("compact-search-open"), active = state.query.isNotEmpty())
+                    }
                     if (location != null && !state.showsShares && state.photos >= CULL_MIN_PHOTOS) {
                         HfpsIconButton(
                             icon = PhosphorRegular.Aperture,
