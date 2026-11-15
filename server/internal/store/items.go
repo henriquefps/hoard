@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -503,4 +504,90 @@ func (t *ItemTx) ItemMain(id string) (string, error) {
 // FileMetas returns the stored metadata (JSON) of the given fingerprints.
 func (s *Store) FileMetas(ctx context.Context, fps []string) (map[string][]byte, error) {
 	return fileMetas(ctx, s.db, fps)
+}
+
+// PathMatch is a NAS file of a folder resolved to its live item (POST /v1/items/by-path).
+type PathMatch struct {
+	Path       string
+	ItemID     string
+	Role       string
+	Size       int64
+	ModifiedAt int64 // ms
+}
+
+// ItemsByPath resolves relative paths of one NAS folder to the live items that have the file as a member. The
+// file's fingerprint (nas_files) finds the item (item_files) among those the folder's own sources produced; an item
+// that is a tombstone with replacedBy is followed once to its live replacement. Paths that match no live item are
+// absent from the result.
+func (s *Store) ItemsByPath(ctx context.Context, folderID string, paths []string) ([]PathMatch, error) {
+	type row struct {
+		PathMatch
+		fp      string
+		deleted bool
+		data    string
+	}
+	var rs []row
+	for start := 0; start < len(paths); start += 500 {
+		chunk := paths[start:min(start+500, len(paths))]
+		args := make([]any, 0, len(chunk)+1)
+		args = append(args, folderID)
+		for _, p := range chunk {
+			args = append(args, p)
+		}
+		//nolint:gosec // placeholders only; the paths are arguments
+		rows, err := s.db.QueryContext(ctx, `SELECT n.rel_path, n.size, n.mtime, n.fingerprint, f.item_id, f.role, i.deleted, i.data
+			FROM nas_files n JOIN item_files f ON f.fingerprint = n.fingerprint JOIN items i ON i.id = f.item_id
+			WHERE n.folder_id = ? AND n.removed = 0 AND n.rel_path IN (`+placeholders(len(chunk))+`)
+			AND EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = f.item_id AND s.source = 'nas' AND s.folder_id = n.folder_id)
+			ORDER BY n.rel_path, i.deleted, (i.main_fp = f.fingerprint) DESC, f.item_id`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var r row
+			var mtime int64
+			if err := rows.Scan(&r.Path, &r.Size, &mtime, &r.fp, &r.ItemID, &r.Role, &r.deleted, &r.data); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			r.ModifiedAt = mtime / 1e6
+			rs = append(rs, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	var out []PathMatch
+	seen := map[string]bool{}
+	for _, r := range rs {
+		if seen[r.Path] {
+			continue
+		}
+		if r.deleted {
+			var t struct {
+				ReplacedBy string `json:"replacedBy"`
+			}
+			_ = json.Unmarshal([]byte(r.data), &t)
+			if t.ReplacedBy == "" {
+				continue
+			}
+			var role sql.NullString
+			err := s.db.QueryRowContext(ctx, `SELECT f.role FROM items i LEFT JOIN item_files f ON f.item_id = i.id AND f.fingerprint = ?
+				WHERE i.id = ? AND i.deleted = 0`, r.fp, t.ReplacedBy).Scan(&role)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if role.Valid {
+				r.Role = role.String
+			}
+			r.ItemID = t.ReplacedBy
+		}
+		seen[r.Path] = true
+		out = append(out, r.PathMatch)
+	}
+	return out, nil
 }

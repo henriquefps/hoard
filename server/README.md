@@ -204,6 +204,12 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.10.0 (items by path, device liveness)
+
+0.10.0 adds two things for Hoard's hand-off of photos to Reveal, both additive on `/v1` and with no database migration:
+`POST /v1/items/by-path` (the live item of each file path in a NAS folder; `features` gains `items-by-path`, ADR 0014)
+and `revoked` / `lastSeenAt` on the devices of `GET /v1/device` (ADR 0017). No step to take.
+
 ## Upgrading to 0.9.0 (Reveal's edited previews)
 
 0.9.0 lets Reveal upload a preview of each edited photo and virtual copy (ADR 0020): the gallery then shows Reveal's

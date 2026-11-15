@@ -30,10 +30,18 @@ type deviceEntry struct {
 	Model        *string `json:"model"`
 }
 
+// physicalEntry is a device of physicalDevice.devices, which also lists the revoked ones; revoked and lastSeenAt
+// (ms, null: never) are hoard-server 0.10.0 (ADR 0017 "Liveness"). Candidates list live devices only.
+type physicalEntry struct {
+	deviceEntry
+	Revoked    bool   `json:"revoked"`
+	LastSeenAt *int64 `json:"lastSeenAt"`
+}
+
 type physicalView struct {
-	ID      string        `json:"id"`
-	Name    string        `json:"name"`
-	Devices []deviceEntry `json:"devices"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Devices []physicalEntry `json:"devices"`
 }
 
 type candidate struct {
@@ -131,16 +139,18 @@ func (s *Server) deviceView(ctx context.Context, id string) (deviceView, error) 
 	}
 	v := deviceView{DeviceID: d.ID, Name: d.Name, Platform: d.Platform, App: d.App, Manufacturer: d.Manufacturer, Model: d.Model,
 		Features:       []string{},
-		PhysicalDevice: physicalView{ID: d.PhysicalID, Name: d.Name, Devices: []deviceEntry{}}, Candidates: candidatesFor(d, all)}
+		PhysicalDevice: physicalView{ID: d.PhysicalID, Name: d.Name, Devices: []physicalEntry{}}, Candidates: candidatesFor(d, all)}
 	if d.CullingSince != nil {
 		v.Features = append(v.Features, featureCulling)
 	}
-	members := groups(all)[d.PhysicalID]
-	if len(members) > 0 {
+	if members := groups(all)[d.PhysicalID]; len(members) > 0 {
 		v.PhysicalDevice.Name = members[0].Name
 	}
-	for _, m := range members {
-		v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, entry(m))
+	// Every device of the physical device, revoked ones included, oldest first (Devices lists newest first).
+	for i := len(all) - 1; i >= 0; i-- {
+		if m := all[i]; m.PhysicalID == d.PhysicalID {
+			v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, physicalEntry{entry(m), m.RevokedAt != nil, m.LastSeenAt})
+		}
 	}
 	return v, nil
 }

@@ -6,6 +6,7 @@
   variant (`reveal`, `reveal-debug`, `reveal-bench`; `hoard`, `hoard-debug`) and variants are distinct apps of one
   phone, so a debug or bench build next to the release no longer gets `409 same_app`; and `PATCH /v1/device` takes
   `features` (ADR 0016 finding A). Changed sections: "Model", "Client calls", "Storage".
+- **Amended**: 2026-11-15, hoard-server 0.10.0: liveness in `GET /v1/device` (section "Liveness", below).
 - **Amends**: ADR 0013 (additions under `/v1`, written there in "Physical devices (hoard-server 0.7.0)")
 
 This ADR is meant to be implemented from on its own: "Client calls" lists exactly what Hoard and Reveal send.
@@ -164,6 +165,23 @@ Migration `0005_culling_devices.sql` (with ADR 0016's tables): `physical_devices
 pairing), `app`, `manufacturer`, `model` (nullable: not reported). Backfill: one physical device per existing device, with the device's id.
 Migration `0006_culling_capability.sql` adds `devices.culling_since` (ADR 0016 finding A). Finding E changes no data:
 existing `deviceId`s, physical device ids and `rvk1_` keys stay valid, and an `app` already stored keeps its value.
+
+## Liveness in `GET /v1/device` (hoard-server 0.10.0)
+
+Hoard needs to know whether Reveal on the same phone is really paired with this server before it hands photos to it as
+server references. Each entry of `physicalDevice.devices` gains `"revoked": bool` and `"lastSeenAt": <Unix ms | null>`
+(`null`: never seen). The list now includes the group's **revoked** devices too (it listed live devices only), so a
+client can tell "revoked" from "not there"; `candidates` still list live devices only and have no new fields, and
+`GET /v1/devices` is unchanged. The order is still oldest first, and `name` still comes from the oldest live device.
+
+```json
+"devices": [{"id": "a0e4…", "name": "Pixel 8", "app": "reveal", "platform": "android", "manufacturer": "Google",
+             "model": "Pixel 8", "revoked": false, "lastSeenAt": 1731600000000}]
+```
+
+**Client rule:** an app on the same physical device counts as paired with this server when it is listed, not revoked,
+and seen in the last 90 days (`lastSeenAt` not null and within 90 days of now). `lastSeenAt` is updated when the device
+authenticates (rate-limited writes as before), so an installation that stopped syncing falls out of the rule by itself.
 
 ## Consequences
 
