@@ -62,6 +62,11 @@ class TransferEndpoints(private val context: Context, private val credentials: C
         is Endpoint.Volume -> local(Location.Volume(endpoint.uuid))
         is Endpoint.Tree -> DocumentTransferFs.forTree(context, Uri.parse(endpoint.uri))
         is Endpoint.Incoming -> IncomingTransferFs(context, endpoint.shareId)
+        Endpoint.MediaStore -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStoreTransferFs(context)
+        } else {
+            smbFail(ErrorCode.UNAVAILABLE, "Copies for Reveal need Android 10")
+        }
     }
 
     /** A device or volume: by path with all files access, else its SAF grants. */
