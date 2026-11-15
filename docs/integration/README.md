@@ -14,10 +14,13 @@ recorded here in the same cycle.
 | --- | --- | --- |
 | **hoard-server** (`server/`) | Source of truth for the catalogue (items, originals, previews), culling (per field) and edited previews. Both apps are clients. | Hoard |
 | **Hoard** (`dev.hfps.hoard`) | Finds, browses, moves and culls photos everywhere: phone, SMB, USB/SD, the server's Gallery. | Hoard |
-| **Reveal** (`dev.hfps.reveal`) | Edits. Gives its results back through the server (records, edited previews) and XMP sidecars. | Reveal |
-| **Intent hand-off** | Opens a photo in Reveal. Content URIs **only for photos the server does not hold**. A photo the server holds goes as a server reference. | Reveal (intent), Hoard (sender) |
-| **XMP sidecars** | Portable copy of culling (and Reveal's edit) for other tools (Lightroom). **Not** a sync channel between the two apps. | Shared (see below) |
+| **Reveal** (`dev.hfps.reveal`) | Edits. Gives its results back through the server (records, edited previews). | Reveal |
+| **Intent hand-off** | Opens a photo in Reveal. A photo the server holds goes as a **server reference**. A photo already on the phone goes as its MediaStore URI. Any other photo (SMB, USB, SD) is first **copied to the phone** (`Pictures/Hoard/…`) and goes as the copy's MediaStore URI. No streaming, no persistable or write grants, no sidecars. | Reveal (intent), Hoard (sender) |
+| **XMP sidecars** | **Export on demand only** ("Export XMP" in each app, to where the user chooses), for other tools such as Lightroom. Neither app nor the server writes sidecars automatically. Existing sidecars are still read. **Not** a sync channel between the two apps. | Shared (see below) |
 | **Deployed server** (cachyos-fps) | Upgrades and restarts, each one with the owner's OK. | Hoard orchestrator |
+
+**Decided 2026-11-15 (owner):** no automatic XMP writes; hand-off by server reference, MediaStore URI or local copy.
+This ships in Hoard 2.2.0 and Reveal 0.9.0. Contracts 8, 11 and 12 below describe the earlier behaviour until those ship.
 
 ## Contracts
 
