@@ -392,6 +392,50 @@ class TransferRunnerTest {
     }
 
     @Test
+    fun `2_2_0 - a copy without sidecars writes no XMP anywhere`() {
+        // Copy picks and the copies for Reveal start jobs without sidecars (ADR 0011 amendment "export on demand").
+        fsOf(nas).file("shoot/DSC1.ARW", bytes(20, 1))
+        fsOf(nas).file("shoot/DSC1.JPG", bytes(10, 2))
+        val job = TransferJob("t", "copy", listOf("DSC1.ARW", "DSC1.JPG").map { TransferSource(nas, "shoot/$it") }, phone, "Pictures", Conflicts.RENAME, "now")
+        run(job)
+        assertEquals(TransferStates.COMPLETED, job.state)
+        assertTrue(fsOf(phone).nodes.keys.none { it.endsWith(".xmp") })
+        assertTrue(fsOf(nas).nodes.keys.none { it.endsWith(".xmp") })
+    }
+
+    @Test
+    fun `a job stopped mid-copy never publishes its part and closes the destination`() {
+        // The MediaStore destination deletes the rows it never published when it is closed: a cancelled copy for
+        // Reveal leaves nothing (ADR 0010 amendment "2.2.0: local copies").
+        val source = MemoryFs("nas", isNetwork = true).apply { file("shoot/DSC1.ARW", bytes(64, 1)) }
+        val inner = MemoryFs("mediastore")
+        var closed = 0
+        val dest = object : TransferFs by inner {
+            override fun close() { closed++ }
+        }
+        var stopped = false
+        val stopping = object : RunnerHooks {
+            override fun now(): Long { clock += 300; return clock }
+            override fun emit(job: TransferJob, bytesPerSecond: Long?) { if (job.bytesDone() >= 16) stopped = true }
+            override fun persist(job: TransferJob) {}
+            override fun sleep(ms: Long) {}
+            override fun isStopped() = stopped
+        }
+        val job = TransferJob("t", "copy", listOf(TransferSource(nas, "shoot/DSC1.ARW")), Endpoint.MediaStore, "2026-11-15", Conflicts.RENAME, "now")
+        TransferRunner(job, { e -> if (e is Endpoint.MediaStore) dest else source }, stopping, bufferSize = 8).run()
+        assertNull(inner.bytes("2026-11-15/DSC1.ARW"))
+        assertEquals(1, closed)
+        assertTrue(job.items.none { it.state == TransferStates.COMPLETED })
+    }
+
+    @Test
+    fun `the MediaStore destination survives a job's JSON round trip`() {
+        val job = TransferJob("t", "copy", listOf(TransferSource(nas, "shoot/DSC1.ARW")), Endpoint.MediaStore, "Trip", Conflicts.RENAME, "now")
+        assertEquals(Endpoint.MediaStore, TransferJob.fromJson(job.toJson()).destination)
+        assertEquals("mediastore", Endpoint.MediaStore.key)
+    }
+
+    @Test
     fun `XMP sidecars are written at the destination only, follow renames, skip skipped files`() {
         fsOf(phone).file("DCIM/DSC1.ARW", bytes(20, 1))
         fsOf(phone).file("DCIM/DSC1.JPG", bytes(10, 2))

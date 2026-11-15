@@ -79,21 +79,24 @@ class CullViewModelTest {
     }
 
     @Test
-    fun `a decision is saved, written as a sidecar and undone as one step`() = runBlocking {
+    fun `a decision is saved in Hoard only, never as a sidecar, and undone as one step`() = runBlocking {
+        // 2.2.0 (ADR 0011 amendment): no automatic sidecar, whatever the stored setting says.
+        settings.value = CullSettings(saveXmp = true)
         val backend = FakeCullBackend(tmp.newFolder())
         val vm = vm(backend)
         vm.decide(listOf("dsc00001")) { d, _ -> d.withFlag(Flag.Pick).withRating(3) }
         idle()
         assertThat(db.cull().forFolder("m1", "photos", "shoot").single().flag).isEqualTo("pick")
-        assertThat(backend.sidecars["dsc00001"]?.first).isEqualTo(XmpFields(3, XmpFlag.PICK))
+        assertThat(backend.written).isEmpty()
+        assertThat(backend.sidecars["dsc00001"]).isNull()
         val row = db.cull().sidecars("m1", "photos", "shoot").single()
-        assertThat(row.synced).isEqualTo(1)
+        assertThat(row.synced).isEqualTo(0)
         assertThat(vm.view.value.core.undo).hasSize(1)
         vm.undo()
         idle()
         assertThat(vm.view.value.core.decisions).isEmpty()
         assertThat(db.cull().forFolder("m1", "photos", "shoot")).isEmpty()
-        assertThat(backend.sidecars["dsc00001"]?.first).isEqualTo(XmpFields(0, XmpFlag.NONE))
+        assertThat(backend.written).isEmpty()
         vm.close()
     }
 
@@ -127,26 +130,10 @@ class CullViewModelTest {
     fun `a read-only folder keeps decisions in Hoard and never writes`() = runBlocking {
         val backend = FakeCullBackend(tmp.newFolder(), access = SmbAccess.READ)
         val vm = vm(backend)
-        assertThat(vm.view.value.sidecarsReadOnly).isTrue()
         vm.decide(listOf("dsc00002")) { d, _ -> d.withFlag(Flag.Pick) }
         idle()
         assertThat(backend.written).isEmpty()
         assertThat(db.cull().forFolder("m1", "photos", "shoot")).hasSize(1)
-        // With "Save ratings as XMP" off the note is not shown either.
-        settings.value = CullSettings(saveXmp = false)
-        idle()
-        assertThat(vm.view.value.sidecarsReadOnly).isFalse()
-        vm.close()
-    }
-
-    @Test
-    fun `sidecar writes stop when Save ratings as XMP is off`() = runBlocking {
-        settings.value = CullSettings(saveXmp = false)
-        val backend = FakeCullBackend(tmp.newFolder())
-        val vm = vm(backend)
-        vm.decide(listOf("dsc00004")) { d, _ -> d.withFlag(Flag.Reject) }
-        idle()
-        assertThat(backend.written).isEmpty()
         vm.close()
     }
 
@@ -203,7 +190,8 @@ class CullViewModelTest {
         vm.apply(keepThisOne(vm.view.value.core.decisions, burst, burst[2]))
         idle()
         assertThat(burstStatus(burst, vm.view.value.core.decisions)).isEqualTo(BurstStatus(4, 1, 4, true))
-        assertThat(backend.sidecars.filterKeys { it in burst }.values.map { it.first.flag }).containsExactly(XmpFlag.PICK, XmpFlag.REJECT, XmpFlag.REJECT, XmpFlag.REJECT)
+        assertThat(db.cull().forFolder("m1", "photos", "shoot").filter { it.shotId in burst }.map { it.flag }).containsExactly("pick", "reject", "reject", "reject")
+        assertThat(backend.written).isEmpty()
         vm.close()
     }
 
