@@ -54,7 +54,7 @@ class CullImages(private val backend: CullBackend, private val scope: CoroutineS
     /** Measurements (ADR 0008), read with `adb logcat -s HoardCull`. */
     val timings = CullTimings()
 
-    private fun shotKey(shot: Shot) = "${shot.id}|${shot.raw?.size}:${shot.raw?.modifiedAt}|${shot.rendered?.size}:${shot.rendered?.modifiedAt}"
+    private fun shotKey(shot: Shot) = "${shot.id}|${shot.raw?.size}:${shot.raw?.modifiedAt}|${shot.rendered?.size}:${shot.rendered?.modifiedAt}|${backend.imageVariant(shot.id)}"
 
     fun peekThumbnail(shot: Shot): ImageBitmap? = thumbs.get(shotKey(shot))
 

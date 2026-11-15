@@ -26,8 +26,8 @@ android {
         minSdk = rootProject.extra["minSdkVersion"] as Int
         targetSdk = rootProject.extra["targetSdkVersion"] as Int
         // Above every Hoard 1 release (1.11.0 is 20) and Hoard Next's betas (101), so 2.0.0 upgrades 1.x in place.
-        versionCode = 202
-        versionName = "2.0.2"
+        versionCode = 210
+        versionName = "2.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -49,9 +49,20 @@ android {
         }
     }
 
+    // Emulator only (ADR 0021 measurements): `-Phoard.native.debugSuffix=.gallery` gives the debug build another id, and
+    // `-Phoard.native.benchRelease=true` signs the R8 release build with the debug key as `<id>.bench`, so frame
+    // times are measured on shrunk code without the owner's keystore. Never for a phone with Hoard.
+    val benchRelease = providers.gradleProperty("hoard.native.benchRelease").orNull == "true"
     buildTypes {
+        debug {
+            providers.gradleProperty("hoard.native.debugSuffix").orNull?.let { applicationIdSuffix = it }
+        }
         release {
             if (releaseSigning) signingConfig = signingConfigs.getByName("release")
+            if (benchRelease) {
+                signingConfig = signingConfigs.getByName("debug")
+                applicationIdSuffix = ".bench"
+            }
             // R8 shrinks smbj's Bouncy Castle dependency (several MB); keep rules in proguard-rules.pro and the
             // core modules' consumer-rules.pro.
             isMinifyEnabled = true
@@ -123,6 +134,7 @@ dependencies {
     implementation(project(":core:designsystem"))
     implementation(project(":core:data"))
     implementation(project(":core:smb"))
+    implementation(project(":core:server"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -137,6 +149,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     // Syntax highlighting of the text viewer (phase 2d): per-language grammars, maintained, Apache-2.0.
     implementation(libs.highlights)
+    // Pairing with hoard-server (ADR 0021): Google's code scanner reads the QR code without a camera permission.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     implementation("androidx.core:core-ktx:${rootProject.extra["androidxCoreVersion"]}")
     // WebViewerActivity (:core:smb) is an AppCompatActivity: its theme comes from here.
     implementation("androidx.appcompat:appcompat:${rootProject.extra["androidxAppCompatVersion"]}")

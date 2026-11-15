@@ -110,6 +110,11 @@ class AppContainer(context: Context) {
         if (cullStarted.get()) runCatching { cull.sidecars.flushAll() }
     }
 
+    /** The Gallery (ADR 0021): the hoard-server client, the device index, the merged items. */
+    val gallery: dev.hfps.hoard.app.gallery.GalleryRepository by lazy {
+        dev.hfps.hoard.app.gallery.GalleryRepository(appContext, database.cull(), scope, BuildConfig.VERSION_NAME, BuildConfig.DEBUG).also { it.settings = settingsStore }
+    }
+
     val transfers: TransferService by lazy {
         TransferService(scope, NativeTransferManager(TransferManager.get(appContext)), database.transfers(), ::endpointOf)
     }
@@ -161,6 +166,7 @@ class AppContainer(context: Context) {
             dev.hfps.hoard.app.data.AppLanguage.applyImported(appContext, imported)
         }
         network = NetworkMonitor(appContext) { scope.launch { routes.recheckAll() } }.also { it.start() }
+        gallery.start()
     }
 
     /** The app came back to the foreground: routes and transfers are checked again (Hoard 1's `resume`). */

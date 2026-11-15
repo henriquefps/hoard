@@ -1,0 +1,194 @@
+package dev.hfps.hoard.server.db
+
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+/*
+ * `gallery.db` (ADR 0021): the Gallery's own database, apart from Hoard 1's schema in :core:data (`hoard.db`, which
+ * stays table for table the Capacitor v7 schema). Most of it is a cache of the paired server (items, culling records)
+ * that "Clear cache" or unpairing may drop; the pending culling queue and the device index are not a cache.
+ */
+
+/** The pairing (one row, id 1): where the server is, who this installation is there, how far the feed was read. */
+@Entity(tableName = "server_account")
+data class ServerAccountEntity(
+    @PrimaryKey val id: Int = 1,
+    val url: String,
+    @ColumnInfo(name = "server_id") val serverId: String,
+    @ColumnInfo(name = "server_name") val serverName: String?,
+    @ColumnInfo(name = "server_version") val serverVersion: String?,
+    @ColumnInfo(name = "device_id") val deviceId: String,
+    @ColumnInfo(name = "physical_device_id") val physicalDeviceId: String?,
+    /** `hoard` or `hoard-debug` (ADR 0017: the app id with its build variant). */
+    val app: String,
+    /** The server's `features`, comma-separated. */
+    val features: String,
+    /** The items feed cursor (opaque, ADR 0013); null = pull from the start. */
+    val cursor: String?,
+    /** The first full pull finished (until then device items are also checked with `POST /v1/items/lookup`). */
+    @ColumnInfo(name = "caught_up", defaultValue = "0") val caughtUp: Boolean = false,
+    @ColumnInfo(name = "paired_at") val pairedAt: Long,
+    @ColumnInfo(name = "last_sync_at") val lastSyncAt: Long? = null,
+    @ColumnInfo(name = "last_error") val lastError: String? = null,
+    @ColumnInfo(name = "last_error_at") val lastErrorAt: Long? = null,
+    /** ADR 0017 candidates to offer once after pairing (JSON), null when there is nothing to ask. */
+    @ColumnInfo(name = "claim_candidates") val claimCandidates: String? = null,
+    /** `culling` declared with `PATCH /v1/device` (ADR 0016 rule 6). */
+    @ColumnInfo(name = "culling_declared", defaultValue = "0") val cullingDeclared: Boolean = false,
+) {
+    fun has(feature: String): Boolean = feature in features.split(',')
+}
+
+/** A live server item (ADR 0014), flattened for the grid and its filters; [json] keeps the whole item. */
+@Entity(
+    tableName = "server_items",
+    indices = [
+        Index(value = ["sort_time"], name = "idx_server_items_sort"),
+        Index(value = ["kind"], name = "idx_server_items_kind"),
+    ],
+)
+data class ServerItemEntity(
+    @PrimaryKey val id: String,
+    val rev: Long,
+    /** `photo`, `pair`, `video`, `motion`. */
+    val kind: String,
+    @ColumnInfo(name = "main_fingerprint") val mainFingerprint: String,
+    @ColumnInfo(name = "sort_time") val sortTime: Long,
+    /** The camera's wall clock (`capture.local`), for date headers in the shot's own time zone. */
+    @ColumnInfo(name = "capture_local") val captureLocal: String?,
+    val make: String?,
+    val model: String?,
+    val lens: String?,
+    val width: Int?,
+    val height: Int?,
+    val orientation: Int?,
+    @ColumnInfo(name = "duration_ms") val durationMs: Long?,
+    /** The main file's name (`DSC01000.ARW`). */
+    val name: String,
+    /** The first location's folder: `<NAS folder name>/<directory>` (`photos/2024/Trip`), or `""` for an upload. */
+    val folder: String,
+    /** Lower-case names of every member file and the folder, for search. */
+    val search: String,
+    @ColumnInfo(name = "has_raw") val hasRaw: Boolean,
+    /** The primary edit's version id (ADR 0020), null when none. */
+    @ColumnInfo(name = "edit_primary") val editPrimary: String?,
+    @ColumnInfo(name = "edit_count") val editCount: Int,
+    @ColumnInfo(name = "edited_at") val editedAt: Long?,
+    val json: String,
+)
+
+/** Which item holds which file (any member, ADR 0014): the "backed up" join of device items. */
+@Entity(
+    tableName = "server_item_files",
+    primaryKeys = ["fingerprint", "item_id"],
+    indices = [Index(value = ["item_id"], name = "idx_server_item_files_item")],
+)
+data class ServerItemFileEntity(
+    val fingerprint: String,
+    @ColumnInfo(name = "item_id") val itemId: String,
+    val role: String,
+)
+
+/**
+ * The server's culling record of an item (ADR 0016), per field: value, rev, modifiedAt, deviceId. A null value = the
+ * field was never written. [flag] is `pick` / `reject` / `none`.
+ */
+@Entity(tableName = "culling")
+data class CullingEntity(
+    @PrimaryKey @ColumnInfo(name = "item_id") val itemId: String,
+    val rev: Long,
+    @ColumnInfo(name = "replaced_by") val replacedBy: String?,
+    val rating: Int?,
+    @ColumnInfo(name = "rating_rev") val ratingRev: Long?,
+    @ColumnInfo(name = "rating_at") val ratingAt: Long?,
+    @ColumnInfo(name = "rating_device") val ratingDevice: String?,
+    val flag: String?,
+    @ColumnInfo(name = "flag_rev") val flagRev: Long?,
+    @ColumnInfo(name = "flag_at") val flagAt: Long?,
+    @ColumnInfo(name = "flag_device") val flagDevice: String?,
+    val label: String?,
+    @ColumnInfo(name = "label_rev") val labelRev: Long?,
+    @ColumnInfo(name = "label_at") val labelAt: Long?,
+    @ColumnInfo(name = "label_device") val labelDevice: String?,
+)
+
+/** A culling record's member fingerprints ("Mapping a record": any member matches). */
+@Entity(
+    tableName = "culling_fingerprints",
+    primaryKeys = ["fingerprint", "item_id"],
+    indices = [Index(value = ["item_id"], name = "idx_culling_fingerprints_item")],
+)
+data class CullingFingerprintEntity(
+    val fingerprint: String,
+    @ColumnInfo(name = "item_id") val itemId: String,
+)
+
+/**
+ * A local culling change not yet acknowledged by the server (ADR 0016 rule 2): one per item and field, the last
+ * decision wins, with the time it was made. [value] is JSON (`4`, `"pick"`, `"Red"`).
+ */
+@Entity(tableName = "culling_pending", primaryKeys = ["item_id", "field"])
+data class PendingCullingEntity(
+    @ColumnInfo(name = "item_id") val itemId: String,
+    val field: String,
+    val value: String,
+    @ColumnInfo(name = "base_rev") val baseRev: Long,
+    @ColumnInfo(name = "modified_at") val modifiedAt: Long,
+    @ColumnInfo(defaultValue = "0") val attempts: Int = 0,
+)
+
+/**
+ * One photo or video of the phone (MediaStore). [shotKey] groups files into shots as the server does (folder +
+ * directory + case-insensitive stem, ADR 0014). [fingerprint] is computed lazily in the background; it is valid while
+ * [size] and [modified] are those it was computed for ([fpSize], [fpModified]).
+ */
+@Entity(
+    tableName = "device_media",
+    indices = [
+        Index(value = ["shot_key"], name = "idx_device_media_shot"),
+        Index(value = ["fingerprint"], name = "idx_device_media_fingerprint"),
+    ],
+)
+data class DeviceMediaEntity(
+    @PrimaryKey val id: Long,
+    /** Absolute path (`/storage/emulated/0/DCIM/Camera/PXL_1.jpg`). */
+    val path: String,
+    /** Hoard's location of the file (`device`, `vol-<uuid>`, ADR 0005) and its folder inside it. */
+    @ColumnInfo(name = "location_id") val locationId: String,
+    val dir: String,
+    val name: String,
+    @ColumnInfo(name = "shot_key") val shotKey: String,
+    val mime: String?,
+    val size: Long,
+    /** MediaStore DATE_MODIFIED in ms. */
+    val modified: Long,
+    /** MediaStore DATE_TAKEN (ms, UTC), else [modified]. */
+    val taken: Long,
+    @ColumnInfo(name = "duration_ms") val durationMs: Long?,
+    val width: Int?,
+    val height: Int?,
+    val orientation: Int?,
+    val video: Boolean,
+    val fingerprint: String? = null,
+    @ColumnInfo(name = "fp_size") val fpSize: Long? = null,
+    @ColumnInfo(name = "fp_modified") val fpModified: Long? = null,
+    /** A Google / Samsung motion photo (MP4 inside the still), checked with the fingerprint. */
+    @ColumnInfo(defaultValue = "0") val motion: Boolean = false,
+)
+
+/** Folders the owner added to the device index beyond the defaults (DCIM, Pictures, Movies, WhatsApp). */
+@Entity(tableName = "device_folders")
+data class DeviceFolderEntity(
+    @PrimaryKey val path: String,
+    @ColumnInfo(name = "added_at") val addedAt: Long,
+)
+
+/** Device shots whose local decisions were already handed to the server queue once they reached it (rule 2). */
+@Entity(tableName = "device_pushed")
+data class DevicePushedEntity(
+    @PrimaryKey @ColumnInfo(name = "shot_key") val shotKey: String,
+    @ColumnInfo(name = "item_id") val itemId: String,
+    @ColumnInfo(name = "pushed_at") val pushedAt: Long,
+)

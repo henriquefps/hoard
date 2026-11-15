@@ -42,6 +42,8 @@ fun SettingsScreen(
     onPalette: (HfpsPalette) -> Unit,
     onOpenLicences: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The Gallery's photo server and phone folders (ADR 0021). */
+    server: (@Composable () -> Unit)? = null,
     /** The Files side's settings (Hoard 1's browsing, transfers, network, storage, Reveal links). */
     files: (@Composable () -> Unit)? = null,
     /** Culling's settings (assist sensitivities, burst gap, sidecars). */
@@ -63,6 +65,7 @@ fun SettingsScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 8.dp),
             ) {
+                server?.invoke()
                 Section(R.string.settings_theme)
                 Column(Modifier.selectableGroup().padding(horizontal = 16.dp)) {
                     listOf(

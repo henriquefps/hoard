@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.hfps.hoard.app.AppContainer
@@ -36,7 +38,10 @@ fun HoardApp(container: AppContainer, systemBars: @Composable (dark: Boolean) ->
             ImportUiState.Ready -> {
                 // The native services start once the Hoard 1 data has settled (transfers, Reveal links, routes).
                 androidx.compose.runtime.LaunchedEffect(Unit) { container.start() }
-                HoardShell(container)
+                // Debug builds expose test tags as resource ids, so uiautomator drives the E2E runs (ADR 0021).
+                Box(if (dev.hfps.hoard.app.BuildConfig.DEBUG) Modifier.semantics { testTagsAsResourceId = true } else Modifier) {
+                    HoardShell(container)
+                }
             }
             // A fresh install or an earlier import: decided in a few milliseconds, show the window background.
             ImportUiState.Checking -> Box(Modifier.fillMaxSize().background(HfpsTheme.colors.background))

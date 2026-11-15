@@ -144,48 +144,125 @@ class RevealHandoff(private val context: Context, private val opener: Opener, pr
     }
 
     /** Starts Reveal. `NO_APP` when it is not installed (or was uninstalled since the UI checked). */
-    fun launch(activity: Activity, files: List<Outgoing>, title: String?, initialPath: String?, culling: Map<String, Culling> = emptyMap()) {
+    fun launch(activity: Activity, files: List<Outgoing>, title: String?, initialPath: String?, culling: Map<String, Culling> = emptyMap()) =
+        launchMixed(activity, files, title, initialPath, culling, server = null)
+
+    /** The installed Reveal's versionCode (0 when none): server references need [MIN_SERVER_REF_VERSION_CODE]. */
+    fun targetVersionCode(): Long {
+        val target = target() ?: return 0
+        return runCatching {
+            val info = context.packageManager.getPackageInfo(target, 0)
+            if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else @Suppress("DEPRECATION") info.versionCode.toLong()
+        }.getOrDefault(0)
+    }
+
+    /** Reveal takes server references (Reveal ADR 0011 amendment W3/H: 0.9.0, versionCode 90000, and later). */
+    fun acceptsServerReferences(): Boolean = targetVersionCode() >= MIN_SERVER_REF_VERSION_CODE
+
+    /**
+     * One hand-off of URI items ([files]: photos the server does not have, unchanged contract: ClipData, grants,
+     * `CULLING`) and server items ([server]: references to items of the paired hoard-server, no URI, no grant, no
+     * culling keys). Server items go [MAX_SERVER_ITEMS] per intent; a larger batch is several intents with the same
+     * title (the URI items and the initial item ride on the first).
+     */
+    fun launchMixed(
+        activity: Activity,
+        files: List<Outgoing>,
+        title: String?,
+        initialPath: String?,
+        culling: Map<String, Culling>,
+        server: ServerItems?,
+    ) {
         val target = target() ?: smbFail(ErrorCode.NO_APP, "Reveal is not installed")
-        val plan = plan(files.map { Triple(it.path, it.uri, it.sidecar) }, title, initialPath)
-        val intent = Intent(ACTION).setType("image/*").setPackage(target).addFlags(plan.flags)
-        plan.title?.let { intent.putExtra(EXTRA_TITLE, it) }
-        plan.initial?.let { intent.putExtra(EXTRA_INITIAL_URI, it) }
-        val values = cullingValues(files.filter { !it.sidecar }.map { it.path to it.uri.toString() }, culling)
-        if (values.isNotEmpty()) {
-            intent.putExtra(EXTRA_CULLING_VERSION, CULLING_VERSION)
-            intent.putExtra(
-                EXTRA_CULLING,
-                Bundle().apply {
-                    values.forEach { (uri, value) ->
-                        putBundle(uri, Bundle().apply {
-                            putInt(KEY_RATING, value.rating)
-                            putString(KEY_FLAG, value.flag)
-                            value.label?.let { putString(KEY_LABEL, it) }
-                        })
-                    }
-                },
-            )
+        val batches = server?.let { serverBatches(it.items) }.orEmpty()
+        if (files.isEmpty() && batches.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No photos to edit")
+        val cleanTitle = title?.trim()?.take(MAX_TITLE)?.trim()?.takeIf { it.isNotEmpty() }
+        val intents = ArrayList<Intent>()
+        var writable: List<Uri> = emptyList()
+        val first = Intent(ACTION).setType("image/*").setPackage(target)
+        cleanTitle?.let { first.putExtra(EXTRA_TITLE, it) }
+        if (files.isNotEmpty()) {
+            val plan = plan(files.map { Triple(it.path, it.uri, it.sidecar) }, cleanTitle, initialPath)
+            first.addFlags(plan.flags)
+            plan.initial?.let { first.putExtra(EXTRA_INITIAL_URI, it) }
+            val values = cullingValues(files.filter { !it.sidecar }.map { it.path to it.uri.toString() }, culling)
+            if (values.isNotEmpty()) {
+                // Version 2 (the `*Device` keys) only to a Reveal that reads it (0.9.0+); older ones get version 1.
+                val version = cullingVersionFor(targetVersionCode())
+                first.putExtra(EXTRA_CULLING_VERSION, version)
+                first.putExtra(EXTRA_CULLING, Bundle().apply { values.forEach { (uri, value) -> putBundle(uri, cullingBundle(value, version)) } })
+            }
+            // The ClipData carries the read grants: exactly these URIs, nothing else (no folder, no tree).
+            val clip = ClipData(ClipDescription(plan.title ?: "Reveal", arrayOf("image/*", XMP_MIME)), ClipData.Item(plan.items[0]))
+            plan.items.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
+            first.clipData = clip
+            writable = plan.writable
         }
-        // The ClipData carries the read grants: exactly these URIs, nothing else (no folder, no tree).
-        val clip = ClipData(ClipDescription(plan.title ?: "Reveal", arrayOf("image/*", XMP_MIME)), ClipData.Item(plan.items[0]))
-        plan.items.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
-        intent.clipData = clip
-        if (intent.resolveActivity(context.packageManager) == null) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        if (server != null && batches.isNotEmpty()) {
+            batches.forEachIndexed { i, batch ->
+                val intent = if (i == 0) first else Intent(ACTION).setType("image/*").setPackage(target).also { next -> cleanTitle?.let { next.putExtra(EXTRA_TITLE, it) } }
+                intent.putExtra(EXTRA_SERVER_REF_VERSION, SERVER_REF_VERSION)
+                intent.putExtra(EXTRA_SERVER_ID, server.serverId)
+                intent.putParcelableArrayListExtra(EXTRA_SERVER_ITEMS, ArrayList(batch.map(::serverItemBundle)))
+                if (i == 0) server.initialItemId?.takeIf { id -> server.items.any { it.itemId == id } }?.let { intent.putExtra(EXTRA_INITIAL_ITEM, it) }
+                if (i > 0) intents += intent
+            }
+        }
+        intents.add(0, first)
+        if (first.resolveActivity(context.packageManager) == null) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
         // Write only on the sidecar items, to the one package chosen.
-        plan.writable.forEach { context.grantUriPermission(target, it, SIDECAR_GRANT) }
+        writable.forEach { context.grantUriPermission(target, it, SIDECAR_GRANT) }
         try {
-            activity.startActivity(intent)
+            if (intents.size == 1) activity.startActivity(first) else activity.startActivities(intents.toTypedArray())
         } catch (e: ActivityNotFoundException) {
-            plan.writable.forEach { runCatching { context.revokeUriPermission(target, it, SIDECAR_GRANT) } }
+            writable.forEach { runCatching { context.revokeUriPermission(target, it, SIDECAR_GRANT) } }
             smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        }
+    }
+
+    /** Items of the paired hoard-server sent by reference (Reveal ADR 0011 amendment W3/H). */
+    data class ServerItems(val serverId: String, val items: List<ServerItem>, val initialItemId: String? = null)
+
+    private fun cullingBundle(value: Culling, version: Int) = Bundle().apply {
+        cullingFields(value, version).forEach { (k, v) ->
+            when (v) {
+                is Int -> putInt(k, v)
+                is Long -> putLong(k, v)
+                else -> putString(k, v.toString())
+            }
+        }
+    }
+
+    private fun serverItemBundle(item: ServerItem) = Bundle().apply {
+        serverItemFields(item).forEach { (k, v) ->
+            when (v) {
+                is Array<*> -> putStringArray(k, v.map { it.toString() }.toTypedArray())
+                else -> putString(k, v.toString())
+            }
         }
     }
 
     /** `openInReveal`'s `sidecars`: send writable sidecars, new ones hidden or not (the culling setting). */
     data class SidecarOptions(val hidden: Boolean)
 
-    /** A shot's decision as Reveal's `CULLING` extra carries it: stars 0..5 and `pick` / `reject` / `none`. */
-    data class Culling(val rating: Int, val flag: String, val label: String? = null)
+    /**
+     * A shot's decision as Reveal's `CULLING` extra carries it: stars 0..5 and `pick` / `reject` / `none`; since
+     * `CULLING_VERSION` 2, when each field was decided (ms) and by which server device (only when Hoard is paired).
+     */
+    data class Culling(
+        val rating: Int,
+        val flag: String,
+        val label: String? = null,
+        val ratingModifiedAt: Long? = null,
+        val flagModifiedAt: Long? = null,
+        val labelModifiedAt: Long? = null,
+        val ratingDevice: String? = null,
+        val flagDevice: String? = null,
+        val labelDevice: String? = null,
+    )
+
+    /** One shot by reference: its item id, the main file's fingerprint, every member's (pairs) and the main name. */
+    data class ServerItem(val itemId: String, val fingerprint: String?, val fingerprints: List<String>, val name: String)
 
     /** One file to send: its path in the location, the URI Reveal reads, and whether it is a (writable) sidecar. */
     data class Outgoing(val path: String, val uri: Uri, val sidecar: Boolean = false)
@@ -205,10 +282,60 @@ class RevealHandoff(private val context: Context, private val opener: Opener, pr
         const val EXTRA_INITIAL_URI = "dev.hfps.reveal.extra.INITIAL_URI"
         const val EXTRA_CULLING = "dev.hfps.reveal.extra.CULLING"
         const val EXTRA_CULLING_VERSION = "dev.hfps.reveal.extra.CULLING_VERSION"
-        const val CULLING_VERSION = 1
+        const val CULLING_VERSION = 2
         const val KEY_RATING = "rating"
         const val KEY_FLAG = "flag"
         const val KEY_LABEL = "label"
+
+        // Server references (Reveal ADR 0011 amendment W3/H, Hoard ADR 0010 "Server items").
+        const val EXTRA_SERVER_REF_VERSION = "dev.hfps.reveal.extra.SERVER_REF_VERSION"
+        const val EXTRA_SERVER_ID = "dev.hfps.reveal.extra.SERVER_ID"
+        const val EXTRA_SERVER_ITEMS = "dev.hfps.reveal.extra.SERVER_ITEMS"
+        const val EXTRA_INITIAL_ITEM = "dev.hfps.reveal.extra.INITIAL_ITEM"
+        const val SERVER_REF_VERSION = 1
+        const val MAX_SERVER_ITEMS = 500
+        const val MAX_NAME = 255
+        /** Reveal 0.9.0: the first release that reads server references. */
+        const val MIN_SERVER_REF_VERSION_CODE = 90000L
+
+        /** Server items in intents of at most [MAX_SERVER_ITEMS], order kept, duplicates (same item id) dropped. */
+        fun serverBatches(items: List<ServerItem>): List<List<ServerItem>> =
+            items.distinctBy { it.itemId }.chunked(MAX_SERVER_ITEMS)
+
+        /** One server item's Bundle keys (pure): `itemId`, `fingerprint` when known, `fingerprints` for pairs, `name`. */
+        fun serverItemFields(item: ServerItem): LinkedHashMap<String, Any> {
+            require(item.itemId.isNotBlank()) { "itemId is required" }
+            val out = LinkedHashMap<String, Any>()
+            out["itemId"] = item.itemId
+            item.fingerprint?.let { out["fingerprint"] = it }
+            val all = (listOfNotNull(item.fingerprint) + item.fingerprints).distinct()
+            if (all.size > 1) out["fingerprints"] = all.toTypedArray()
+            if (item.name.isNotEmpty()) out["name"] = item.name.take(MAX_NAME)
+            return out
+        }
+
+        /** The `CULLING_VERSION` a Reveal of [versionCode] reads: 2 from 0.9.0, else 1. */
+        fun cullingVersionFor(versionCode: Long): Int = if (versionCode >= MIN_SERVER_REF_VERSION_CODE) CULLING_VERSION else 1
+
+        /**
+         * One URI item's `CULLING` keys (pure): `rating`, `flag`, `label`, the per-field `*ModifiedAt` (read since Reveal
+         * 0.8.0 under version 1) and, for [version] 2 only, the per-field `*Device`.
+         */
+        fun cullingFields(value: Culling, version: Int = CULLING_VERSION): LinkedHashMap<String, Any> {
+            val out = LinkedHashMap<String, Any>()
+            out[KEY_RATING] = value.rating
+            out[KEY_FLAG] = value.flag
+            value.label?.let { out[KEY_LABEL] = it }
+            value.ratingModifiedAt?.let { out["ratingModifiedAt"] = it }
+            value.flagModifiedAt?.let { out["flagModifiedAt"] = it }
+            value.labelModifiedAt?.let { out["labelModifiedAt"] = it }
+            if (version >= 2) {
+                value.ratingDevice?.let { out["ratingDevice"] = it }
+                value.flagDevice?.let { out["flagDevice"] = it }
+                value.labelDevice?.let { out["labelDevice"] = it }
+            }
+            return out
+        }
 
         /** Reveal trims the title to this length; Hoard does it first. */
         const val MAX_TITLE = 120
@@ -354,7 +481,7 @@ class RevealHandoff(private val context: Context, private val opener: Opener, pr
                 val value = byPath[SmbPaths.normalize(path)] ?: continue
                 val flag = value.flag.lowercase()
                 if (flag != "pick" && flag != "reject" && flag != "none") continue
-                out[uri] = Culling(value.rating.coerceIn(0, 5), flag, value.label?.take(64))
+                out[uri] = value.copy(rating = value.rating.coerceIn(0, 5), flag = flag, label = value.label?.take(64))
             }
             return out
         }

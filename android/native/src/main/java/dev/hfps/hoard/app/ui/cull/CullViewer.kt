@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -155,6 +157,8 @@ fun CullViewer(
     onEditInReveal: ((Shot) -> Unit)?,
     onAccept: (List<String>, Collection<Suggestion>?) -> Int,
     onClose: (String?) -> Unit,
+    /** What the Gallery adds (ADR 0021): Edited / Original, play for videos. */
+    extras: ViewerExtras? = null,
 ) {
     val res = androidx.compose.ui.platform.LocalResources.current
     val toaster = LocalToaster.current
@@ -426,6 +430,7 @@ fun CullViewer(
                         val shot = order.getOrNull(page) ?: return@HorizontalPager
                         val active = page == index
                         val own = remember(shot.id) { ZoomState() }
+                        androidx.compose.runtime.key(extras?.imageKey?.invoke(shot)) {
                         ZoomableShot(
                             images = images,
                             shot = shot,
@@ -451,7 +456,9 @@ fun CullViewer(
                                 }
                             },
                         )
+                        }
                     }
+                    extras?.overlay?.invoke(this, current)
                     if (view.settings.swipeDecide && swipeDy != 0f) SwipeHints(swipeDy / 0.6f, flagDistance)
                     Column(Modifier.fillMaxWidth()) {
                         AnimatedVisibility(chrome, enter = fadeIn(), exit = fadeOut()) {
@@ -473,6 +480,7 @@ fun CullViewer(
                                 onAutoAdvance = { vm.setAutoAdvance(it) },
                                 onSwipeDecide = { vm.setSwipeDecide(it) },
                                 onEditInReveal = onEditInReveal?.let { { it(current) } },
+                                extra = extras?.topActions?.let { actions -> { actions(current) } },
                             )
                         }
                         if (chrome && !(details && !wide)) {
@@ -552,6 +560,7 @@ private fun TopBar(
     onAutoAdvance: (Boolean) -> Unit,
     onSwipeDecide: (Boolean) -> Unit,
     onEditInReveal: (() -> Unit)?,
+    extra: (@Composable RowScope.() -> Unit)? = null,
 ) {
     Row(
         Modifier.fillMaxWidth().background(ViewerColors.scrim).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)).height(56.dp).padding(horizontal = 4.dp),
@@ -567,6 +576,7 @@ private fun TopBar(
             Text(current.stem, style = HfpsTheme.typography.uiMedium, color = ViewerColors.foreground, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.testTag("viewer-stem"))
             Text(position, style = HfpsTheme.typography.ui, color = ViewerColors.foreground.copy(alpha = 0.7f), maxLines = 1, modifier = Modifier.testTag("viewer-position"))
         }
+        extra?.invoke(this)
         FlagMark(decision, Modifier.padding(horizontal = 4.dp))
         if (loadingFinal) CircularProgressIndicator(Modifier.padding(horizontal = 4.dp).size(16.dp), color = ViewerColors.foreground.copy(alpha = 0.7f), strokeWidth = 1.5.dp)
         HfpsIconButton(PhosphorRegular.ArrowCounterClockwise, stringResource(R.string.t_cull_undo), onUndo, enabled = canUndo, tint = ViewerColors.foreground)
@@ -881,3 +891,13 @@ fun exposureLine(m: ShotMetadata?, locale: java.util.Locale): String? {
     val parts = listOfNotNull(m.exposure?.let { "$it s" }, m.fNumber?.let { "f/" + number.format(it) }, m.iso?.let { "ISO $it" })
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
+
+/** What a screen adds to the culling viewer (the Gallery, ADR 0021). */
+class ViewerExtras(
+    /** Before the flag mark in the top bar. */
+    val topActions: (@Composable RowScope.(Shot) -> Unit)? = null,
+    /** Over the photo (a play button). */
+    val overlay: (@Composable BoxScope.(Shot) -> Unit)? = null,
+    /** When it changes, the shot's image is loaded again (Edited / Original). */
+    val imageKey: ((Shot) -> Any?)? = null,
+)

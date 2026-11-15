@@ -114,3 +114,14 @@ translate
 text-aa
 arrows-out
 aperture
+# Gallery (phase 3, ADR 0021)
+cloud-check
+cloud-slash
+film-strip
+video-camera
+qr-code
+calendar-blank
+camera
+magic-wand
+play-circle
+image

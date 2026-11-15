@@ -110,12 +110,16 @@ class CullViewModelTest {
         val decisions = vm.view.value.core.decisions
         assertThat(decisions["dsc00001"]).isEqualTo(Decision(Flag.Reject, 0))
         assertThat(decisions["dsc00002"]).isEqualTo(Decision(null, 4))
-        assertThat(db.cull().forFolder("m1", "photos", "shoot").first { it.shotId == "dsc00002" }.rating).isEqualTo(4)
+        val imported = db.cull().forFolder("m1", "photos", "shoot").first { it.shotId == "dsc00002" }
+        assertThat(imported.rating).isEqualTo(4)
+        // ADR 0016 rule 4: the imported decision is dated by the sidecar's mtime, not by the import.
+        assertThat(java.time.Instant.parse(imported.updatedAt).toEpochMilli()).isEqualTo(3_000L)
         // A sidecar changed in Reveal while Hoard was in the background is read on resume.
         backend.sidecars["dsc00003"] = XmpFields(0, XmpFlag.REJECT) to 9_000L
         vm.onResume()
         idle()
         assertThat(vm.view.value.core.decisions["dsc00003"]?.flag).isEqualTo(Flag.Reject)
+        assertThat(java.time.Instant.parse(db.cull().forFolder("m1", "photos", "shoot").first { it.shotId == "dsc00003" }.updatedAt).toEpochMilli()).isEqualTo(9_000L)
         vm.close()
     }
 

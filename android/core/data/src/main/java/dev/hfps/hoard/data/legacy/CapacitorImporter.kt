@@ -218,6 +218,9 @@ class CapacitorImporter(
 }
 
 /** Now as the Capacitor app writes times: ISO-8601 UTC with milliseconds (`2026-11-14T10:00:00.000Z`). */
-fun isoNow(): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT)
+fun isoNow(): String = isoOf(System.currentTimeMillis())
+
+/** [millis] in Hoard 1's timestamp format (`2024-05-01T12:00:00.000Z`, UTC). */
+fun isoOf(millis: Long): String = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT)
     .apply { timeZone = TimeZone.getTimeZone("UTC") }
-    .format(Date())
+    .format(Date(millis))
