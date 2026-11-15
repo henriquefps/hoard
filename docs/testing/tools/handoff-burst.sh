@@ -9,7 +9,7 @@
 #
 # Scenarios: smb (200 opens at once, read + close), smb-hold (200 at once, every descriptor held 5 s),
 # smb-retry (smb, retrying busy: as Reveal does), local (200 FileProvider opens), local-hold.
-# Results: docs/testing/handoff-burst/<label>-*.txt
+# Results: docs/testing/handoff-burst/<label>-*.txt. BURST_COLD=1 deletes Hoard's small-file copies before each run.
 set -euo pipefail
 
 LABEL=${1:?label}
@@ -27,7 +27,8 @@ NATIVE_APKS=$ROOT/android/native/build/outputs/apk
 CLIENT_APK=$ROOT/android/core/smb/build/outputs/apk/androidTest/debug/smb-debug-androidTest.apk
 mkdir -p "$OUT"
 
-adb() { timeout "${ADB_TIMEOUT:-60}" command adb -s "$SERIAL" "$@"; }
+ADB_BIN=$(command -v adb)
+adb() { timeout "${ADB_TIMEOUT:-60}" "$ADB_BIN" -s "$SERIAL" "$@"; }
 
 echo "== Samba container on port $PORT"
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER"; then
@@ -41,7 +42,7 @@ fi
 FILES=$(docker exec "$CONTAINER" ls /srv/photos/burst | sed 's#^#burst/#' | paste -sd, -)
 
 echo "== Install"
-ADB_TIMEOUT=300 adb install -r -t "$NATIVE_APKS/debug/native-debug.apk" >/dev/null
+ADB_TIMEOUT=300 adb install -r -t "${HOARD_APK:-$NATIVE_APKS/debug/native-debug.apk}" >/dev/null
 ADB_TIMEOUT=300 adb install -r -t "$NATIVE_APKS/androidTest/debug/native-debug-androidTest.apk" >/dev/null
 ADB_TIMEOUT=300 adb install -r -t "$CLIENT_APK" >/dev/null
 
@@ -70,6 +71,8 @@ run() {
   local file=$OUT/$LABEL-$name.txt
   echo "== $name"
   adb shell am force-stop "$APP" # a cold start, as when Reveal reopens links after a restart
+  # BURST_COLD=1: no small-file copies yet (the first burst after an install or "Revoke all").
+  [ "${BURST_COLD:-0}" = 1 ] && adb shell run-as "$APP" rm -rf cache/handoff
   adb logcat -c
   local ss_before; ss_before=$(adb shell pidof system_server | tr -d '\r')
   local vold_before; vold_before=$(adb shell pidof vold | tr -d '\r')
@@ -90,8 +93,9 @@ run() {
     grep -o 'summary=.*' "$WORK/client.$name" | head -1 || echo "client: no summary"; grep -h 'example failure' "$WORK/logcat.$name" | sed 's/^.*HoardBurst: /  /' | head -5 || true
     echo "system_server pid: $ss_before -> $ss_after  vold pid: $vold_before -> $vold_after"
     awk '{n++; s+=$2; if ($2>m) m=$2; if ($3!=0) f++} END {printf "dumpsys mount: %d samples, mean %.0f ms, max %d ms, failed %d\n", n, s/n, m, f}' "$WORK/dumpsys.$name"
-    echo "watchdog lines: $(grep -c -E 'Watchdog|WATCHDOG|Blocked in monitor' "$WORK/logcat.$name" || true)"
-    echo "appfuse / vold lines: $(grep -ciE 'appfuse|fuseapploop' "$WORK/logcat.$name" || true)"
+    echo "system_server appfuse opens (Watchdog '#openFile might be slow' pauses): $(grep -c 'openFile might be slow' "$WORK/logcat.$name" || true)"
+    echo "watchdog kills / blocked checks: $(grep -cE 'WATCHDOG KILLING|Blocked in (handler|monitor)' "$WORK/logcat.$name" || true)"
+    echo "Hoard ANRs: $(grep -c 'ANR in dev.hfps.hoard$' "$WORK/logcat.$name" || true)  Hoard crashes: $(grep -c 'AndroidRuntime: Process: dev.hfps.hoard, ' "$WORK/logcat.$name" || true)  $(grep -o 'ForegroundServiceDidNotStartInTimeException' "$WORK/logcat.$name" | head -1)"
     echo "hoard threads after: $(adb shell 'ls /proc/$(pidof '"$APP"')/task 2>/dev/null | wc -l' | tr -d '\r')"
     echo "hoard log lines (HoardHandoff): $(grep -c 'HoardHandoff' "$WORK/logcat.$name" || true)"
     grep -h 'HoardHandoff' "$WORK/logcat.$name" | grep -E 'open x|not readable' | sed 's/^.*HoardHandoff: /  /' | head -8 || true

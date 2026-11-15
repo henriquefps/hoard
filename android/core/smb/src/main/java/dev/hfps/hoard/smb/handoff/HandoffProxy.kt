@@ -16,6 +16,8 @@ import dev.hfps.hoard.smb.stream.StreamReader
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * The proxy descriptors of hand-off links (ADR 0010 "Bursts of opens"). Every proxy descriptor is an appfuse file:
@@ -46,6 +48,19 @@ internal object HandoffProxy {
     val slots = HandoffLimiter(MAX_FDS, SLOT_QUEUE, SLOT_WAIT_MS, "hand-off reads in progress")
     private val openLock = Any()
     private val loopers = arrayOfNulls<HandlerThread>(MAX_FDS)
+    private val proxyOpens = AtomicInteger()
+    private val proxyOpenNanos = AtomicLong()
+    private val proxyOpenMaxNanos = AtomicLong()
+
+    /** For the burst summary: descriptors open now and the system's time per open since the last call. */
+    fun stats(): String {
+        val n = proxyOpens.getAndSet(0)
+        val total = proxyOpenNanos.getAndSet(0)
+        val max = proxyOpenMaxNanos.getAndSet(0)
+        val avg = if (n > 0) total / n / 1_000_000 else 0
+        return "${slots.active} descriptors open, appfuse open avg $avg ms max ${max / 1_000_000} ms"
+    }
+
     private val reads = Executors.newCachedThreadPool { r -> Thread(r, "hoard-handoff-read").apply { isDaemon = true } }
 
     @Synchronized
@@ -93,7 +108,17 @@ internal object HandoffProxy {
         entry.touch()
         try {
             val storage = context.getSystemService(StorageManager::class.java)
-            return synchronized(openLock) { storage.openProxyFileDescriptor(mode, callback, handler(slot.index)) }
+            return synchronized(openLock) {
+                val t0 = System.nanoTime()
+                try {
+                    storage.openProxyFileDescriptor(mode, callback, handler(slot.index))
+                } finally {
+                    val took = System.nanoTime() - t0
+                    proxyOpens.incrementAndGet()
+                    proxyOpenNanos.addAndGet(took)
+                    proxyOpenMaxNanos.accumulateAndGet(took) { a, b -> maxOf(a, b) }
+                }
+            }
         } catch (e: Throwable) {
             entry.openFds.decrementAndGet()
             cleanup()

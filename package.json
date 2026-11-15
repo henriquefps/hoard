@@ -1,7 +1,7 @@
 {
   "name": "hoard",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.0.1",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "android:debug": "cd android && ANDROID_HOME=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}\" JAVA_HOME=\"${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}\" ./gradlew :native:assembleDebug",

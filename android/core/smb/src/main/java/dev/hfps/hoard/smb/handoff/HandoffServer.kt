@@ -154,14 +154,20 @@ object HandoffServer {
             throw FileNotFoundException(e.message)
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) throw FileNotFoundException("Streaming needs Android 8")
-        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "open ${item.name} ($mode) for $caller")
+        val debug = Log.isLoggable(TAG, Log.DEBUG)
+        val t0 = System.nanoTime()
         burst.begin()
         scheduleSummary()
         var outcome = OpenOutcome.FAILED
         try {
-            val result = opening.acquire().use { openGated(item, access) }
-            outcome = result.second
-            return result.first
+            // Network work (stat, a small copy) under the gate; a proxy descriptor is opened after it, under its own
+            // limit, so cheap opens are not stuck behind the system's (slow, serialised) appfuse opens.
+            val opened = opening.acquire().use { slot ->
+                if (debug) Log.d(TAG, "open ${item.name} ($mode) for $caller: gate after ${(System.nanoTime() - t0) / 1_000_000} ms")
+                openGated(item, access).also { if (debug) Log.d(TAG, "open ${item.name}: ${it.outcome} after ${(System.nanoTime() - t0) / 1_000_000} ms") }
+            }
+            outcome = opened.outcome
+            return opened.descriptor ?: opened.proxy!!().also { if (debug) Log.d(TAG, "open ${item.name}: descriptor after ${(System.nanoTime() - t0) / 1_000_000} ms") }
         } catch (e: FileNotFoundException) {
             if (HandoffBusy.isBusy(e)) outcome = OpenOutcome.REFUSED
             throw e
@@ -170,8 +176,11 @@ object HandoffServer {
         }
     }
 
+    /** What [openGated] decided: a descriptor already, or a proxy descriptor to open outside the gate. */
+    private class Opened(val outcome: OpenOutcome, val descriptor: ParcelFileDescriptor? = null, val proxy: (() -> ParcelFileDescriptor)? = null)
+
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun openGated(item: HandoffItem, access: HandoffAccess): Pair<ParcelFileDescriptor, OpenOutcome> {
+    private fun openGated(item: HandoffItem, access: HandoffAccess): Opened {
         val machine = store.machine(item.machineId)
             ?: throw FileNotFoundException("${item.name}: its machine is no longer in Hoard")
         if (machine.serverGuid == null) throw FileNotFoundException("${item.name}: the machine is not pinned yet")
@@ -189,7 +198,7 @@ object HandoffServer {
             source.smb.activeAddress?.let { store.setLastGood(machine.id, it) }
             if (info?.isDirectory == true) throw FileNotFoundException("${item.name} is a folder now")
             store.touch(item.id)
-            if (access != HandoffAccess.READ) return openWrite(item, machine, source, info, access) to OpenOutcome.WRITE
+            if (access != HandoffAccess.READ) return Opened(OpenOutcome.WRITE, descriptor = openWrite(item, machine, source, info, access))
             info ?: throw FileNotFoundException("${item.name} is no longer on the share")
             store.updateFile(item.id, info.size, info.modifiedMillis)
             // Small files: a private copy and a plain descriptor (no appfuse); a slow copy falls back to a proxy.
@@ -199,10 +208,13 @@ object HandoffServer {
                 } catch (e: Throwable) {
                     throw unreadable(item, SmbErrors.map(e), null)
                 }
-                if (copy != null) return ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY) to OpenOutcome.CACHED
+                if (copy != null) return Opened(OpenOutcome.CACHED, descriptor = ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY))
             }
+            // The lease holds its own reference to the connection, so it outlives this handle.
             val entry = lease(item, machine)
-            return HandoffProxy.openRead(context(), entry, { entry.source.reader(item.path, info.size, entry.fetched) }, info.size) to OpenOutcome.PROXIED
+            return Opened(OpenOutcome.PROXIED) {
+                HandoffProxy.openRead(context(), entry, { entry.source.reader(item.path, info.size, entry.fetched) }, info.size)
+            }
         } finally {
             source.close()
         }
@@ -250,7 +262,8 @@ object HandoffServer {
         }
         summaryScheduled.set(false)
         if (burst.pending() > 0) scheduleSummary()
-        Log.i(TAG, "$line, ${HandoffProxy.slots.active} descriptors open")
+        val proxies = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ", ${HandoffProxy.stats()}" else ""
+        Log.i(TAG, "$line$proxies")
         // Last-use times of the burst, written once (not once per open).
         runCatching { store.flush() }
     }

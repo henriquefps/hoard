@@ -1,0 +1,8 @@
+label: after  scenario: local  date: 2026-11-15T01:23:02-03:00
+summary=after-local: 200 opens of 60 links in 1283 ms (finished=true), outcomes={ok=200}, open ms p50=1182 p95=1243 max=1254, total ms p50=1184 p95=1245 max=1256, peak open fds=4, retries=0
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 18 samples, mean 20 ms, max 34 ms, failed 0
+watchdog lines: 0
+appfuse / vold lines: 0
+hoard threads after: 22
+hoard log lines (HoardHandoff): 0

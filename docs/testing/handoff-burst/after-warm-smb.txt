@@ -1,0 +1,9 @@
+label: after-warm  scenario: smb  date: 2026-11-15T01:26:42-03:00
+summary=after-warm-smb: 200 opens of 60 links in 16938 ms (finished=true), outcomes={ok=200}, open ms p50=8801 p95=16877 max=16886, total ms p50=10497 p95=16882 max=16887, peak open fds=2, retries=0
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 47 samples, mean 32 ms, max 95 ms, failed 0
+watchdog lines: 70
+appfuse / vold lines: 4
+hoard threads after: 50
+hoard log lines (HoardHandoff): 1
+  open x200 in 16.3 s, 16 concurrent, 0 refused (140 cached, 60 proxied, 0 failed), 0 descriptors open, appfuse open avg 2 ms max 20 ms

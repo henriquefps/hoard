@@ -3,6 +3,7 @@
 - **Date**: 2026-11-11
 - **Status**: Accepted (1.8.0); amended 2026-11-12 (1.10.0): persistable hand-offs, stable SMB links served after a
   restart, sidecar write-back, explicit Reveal package. Sections marked **(1.10.0)** replace what 1.8.0 said.
+  Amended 2026-11-15 (2.0.1): "Bursts of opens" (limits on the provider, the `busy:` failure contract).
 
 ## Context
 
@@ -109,10 +110,54 @@ WebView). Everything the provider needs is native:
   share stops at once. A machine without a pinned GUID is never connected to natively. The JS engine stays the app's
   route engine; this one only serves links.
 - **Connections and the service**: one SMB connection per machine + share for every link being read (reference
-  counted). Every open takes a **lease** in the stream registry (`h-<id>`, not a token: unreachable over HTTP) that
+  counted). Every proxied open takes a **lease** in the stream registry (`h-<id>`, not a token: unreachable over HTTP) that
   ends 2 min after the last read (`HandoffServer.LEASE_IDLE_MS`); while a lease lives, the `dataSync` streaming
   service keeps the process un-frozen (Android lets the provider start it from the background: verified on API 36),
   and the "Streaming" notification shows. With no lease left the service stops: no permanent notification.
+
+### Bursts of opens (2.0.1)
+
+Reveal opened every link it held at start-up (thumbnails, backup, library refresh). On the owner's Samsung S24
+(Android 16) a burst of `HoardHandoff: open …` lines was followed by the storage service hanging and the
+`system_server` watchdog restarting the phone. Reproduced on an emulator (`docs/testing/handoff-burst.md`: 200
+concurrent opens from a test app with its own uid). With 2.0.0, every SMB link open was a proxy descriptor
+(`StorageManager.openProxyFileDescriptor`: an appfuse file that system_server opens through vold, which asks Hoard
+for the file's size while it holds the open). Every Hoard binder thread sat in an SMB call, system_server parked
+its binder threads in `openFile` for Hoard (188 watchdog pauses in one burst), and Hoard's own `startForeground`
+could not get through for 20 s. Android then killed Hoard (`ForegroundServiceDidNotStartInTimeException`), and Reveal
+died with it because it held the provider. Holding descriptors open meant a thread for each one (98 threads, 112
+descriptors). The provider is now bounded whatever a client does:
+
+- **Gate** (`HandoffLimiter`, JVM-tested): at most `MAX_OPENING` = 4 opens do network work (stat, a small copy) at
+  once. Up to 16 more wait, first come first served, at most 3 s. Beyond that, or after the wait, the open fails at
+  once. No binder thread waits longer than that bound.
+- **Busy contract**: a refused open is a `FileNotFoundException` whose message **starts with `busy:`**
+  (`HandoffBusy`, e.g. `busy: 6 hand-off reads in progress, retry`). Clients retry these with backoff and treat every
+  other `FileNotFoundException` as before: the link is unknown or revoked, or the file is unreadable, so Reveal shows
+  its preview. Reveal's side is Reveal's ADR.
+- **Small files, no appfuse** (`HandoffCache`): files of at most 8 MiB (sidecars, JPEGs, previews) are copied once
+  into `cacheDir/handoff/`, keyed by link id, size and mtime from the stat that every open does anyway. They are
+  served as plain file descriptors (`ParcelFileDescriptor.open`): no vold, no thread of Hoard's per read. A copy
+  slower than 6 s is abandoned for a proxy descriptor. The folder is capped at 256 MiB (least recently used first) and
+  emptied by "Revoke all". Read-only opens only: sidecar writes are unchanged.
+- **Proxy descriptors capped** (`HandoffProxy`): at most `MAX_FDS` = 6 hand-off proxy descriptors are open at once
+  (a queue of 8, 2 s, then `busy:`). They are opened *after* the gate, so cheap opens are not stuck behind them.
+  `openProxyFileDescriptor` is called by one thread at a time (vold serialises it anyway), so system_server never has
+  more than one of its threads in an appfuse open for Hoard (1–5 ms each when serialised). Each slot has its own
+  looper, started once and reused: a slow read on one descriptor never delays another descriptor's size or read.
+  Reads run on a shared executor, and a callback waits at most 10 s (`TimedReader`) before answering `EIO`.
+  `RemoteReader`'s read-ahead serves sequential reads from memory.
+- **Connections**: one SMB connection per machine + share for every open, lease and write, kept for 60 s after the
+  last use (`Sources.LINGER_MS`), so cached opens, which take no lease, do not reconnect each time. An unreachable
+  machine, a refused login or a GUID mismatch makes the next opens of that share fail at once for 10 s
+  (`ConnectBackoff`): no connect timeout per open.
+- `query()` / `getType()` read only the in-memory store. Last-use and size updates stay in memory and are written once
+  per burst (`HandoffStore.flush`), not as one JSON rewrite per open.
+- **Logging**: one line per burst, once 2 s pass with no open
+  (`open x200 in 22.1 s, 16 concurrent, 8 refused (132 cached, 60 proxied, 0 failed), 0 descriptors open, appfuse open
+  avg 1 ms max 9 ms`). Per-open timings only at debug level (`setprop log.tag.HoardHandoff DEBUG`).
+- FileProvider links (phone files) were already plain file descriptors, opened by `androidx.core`'s `FileProvider`
+  with no appfuse: measured cheap and left as they were.
 
 ### Write-back (1.10.0)
 

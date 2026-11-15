@@ -1,0 +1,9 @@
+label: after  scenario: smb-retry  date: 2026-11-15T01:26:03-03:00
+summary=after-smb-retry: 200 opens of 60 links in 23988 ms (finished=true), outcomes={ok=200}, open ms p50=16923 p95=23324 max=23457, total ms p50=18246 p95=23326 max=23964, peak open fds=3, retries=11
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 60 samples, mean 25 ms, max 55 ms, failed 0
+watchdog lines: 76
+appfuse / vold lines: 6
+hoard threads after: 52
+hoard log lines (HoardHandoff): 1
+  open x211 in 22.9 s, 16 concurrent, 11 refused (140 cached, 60 proxied, 0 failed), 0 descriptors open, appfuse open avg 2 ms max 15 ms

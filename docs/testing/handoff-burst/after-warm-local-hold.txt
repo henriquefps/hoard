@@ -1,0 +1,8 @@
+label: after-warm  scenario: local-hold  date: 2026-11-15T01:27:29-03:00
+summary=after-warm-local-hold: 200 opens of 60 links in 6646 ms (finished=true), outcomes={ok=200}, open ms p50=1434 p95=1543 max=1559, total ms p50=6590 p95=6601 max=6607, peak open fds=200, retries=0
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 28 samples, mean 30 ms, max 63 ms, failed 0
+watchdog lines: 0
+appfuse / vold lines: 0
+hoard threads after: 20
+hoard log lines (HoardHandoff): 0

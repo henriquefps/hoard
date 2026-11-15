@@ -1,0 +1,8 @@
+label: before  scenario: smb-hold  date: 2026-11-15T01:19:26-03:00
+summary=before-smb-hold: 200 opens of 60 links in 73809 ms (finished=true), outcomes={ok=200}, open ms p50=31774 p95=58712 max=62714, total ms p50=69860 p95=73786 max=73789, peak open fds=112, retries=0
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 148 samples, mean 47 ms, max 138 ms, failed 0
+watchdog lines: 204
+appfuse / vold lines: 1
+hoard threads after: 98
+hoard log lines (HoardHandoff): 200

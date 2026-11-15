@@ -1,0 +1,9 @@
+label: after  scenario: smb-hold  date: 2026-11-15T01:25:30-03:00
+summary=after-smb-hold: 200 opens of 60 links in 16337 ms (finished=true), outcomes={busy=55, ok=145}, open ms p50=9280 p95=9576 max=9594, total ms p50=16314 p95=16319 max=16320, peak open fds=145, retries=0
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 46 samples, mean 22 ms, max 36 ms, failed 0
+watchdog lines: 10
+appfuse / vold lines: 2
+hoard threads after: 53
+hoard log lines (HoardHandoff): 1
+  open x200 in 10.7 s, 16 concurrent, 55 refused (139 cached, 6 proxied, 0 failed), 6 descriptors open, appfuse open avg 4 ms max 6 ms
