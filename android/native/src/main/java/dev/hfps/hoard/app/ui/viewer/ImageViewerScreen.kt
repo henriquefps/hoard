@@ -166,7 +166,7 @@ fun ImageViewerScreen(locationId: String, share: String?, path: String, onBack: 
                             Text(current?.name.orEmpty(), color = Color.White, style = HfpsTheme.typography.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (current != null && current.size > 0) {
                                 Text(
-                                    "${pager.currentPage + 1} / ${list.size} · " + formatBytes(current.size) + " · " + dev.hfps.hoard.app.ui.common.formatRelativeDate(context, current.modifiedAt),
+                                    "${pager.currentPage + 1} / ${list.size} · " + formatBytes(current.size) + " · " + dev.hfps.hoard.app.ui.common.relativeDate(context, current.modifiedAt),
                                     color = Color.White.copy(alpha = 0.7f),
                                     style = HfpsTheme.typography.ui,
                                     maxLines = 1,

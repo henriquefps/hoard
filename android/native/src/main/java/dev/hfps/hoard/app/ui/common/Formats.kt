@@ -3,11 +3,22 @@ package dev.hfps.hoard.app.ui.common
 import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import dev.hfps.hoard.app.files.formatBytes
 import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+
+/**
+ * "Now" for relative dates on screen: the real clock, a fixed instant in screenshot tests (so goldens that show
+ * "today" or "yesterday" do not depend on the day they are verified).
+ */
+val LocalNow = staticCompositionLocalOf<() -> Long> { System::currentTimeMillis }
+
+/** [formatRelativeDate] against [LocalNow]. */
+@Composable
+fun relativeDate(context: Context, iso: String?): String = formatRelativeDate(context, iso, LocalNow.current())
 
 /**
  * Relative date without time (the hfps card-list rule, src/lib/format.ts): today, yesterday, N days ago up to 6, then

@@ -70,7 +70,7 @@ class Phase2dTest {
 
     private fun shoot(name: String, qualifiers: String, dark: Boolean, content: @Composable () -> Unit) {
         RuntimeEnvironment.setQualifiers("+$qualifiers")
-        compose.setContent { HfpsTheme(darkTheme = dark) { content() } }
+        compose.setContent { FixedNowTheme(darkTheme = dark) { content() } }
         compose.onRoot().captureRoboImage("src/test/screenshots/$name.png")
     }
 
@@ -133,14 +133,14 @@ class Phase2dTest {
     }
 
     @Test fun markdownShowsImagesAndBrokenOnesWithTheirAlt() {
-        compose.setContent { HfpsTheme(darkTheme = false) { markdown() } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { markdown() } }
         compose.waitUntil(5_000) { runCatching { compose.onNodeWithText("missing").assertIsDisplayed() }.isSuccess }
         compose.onNodeWithTag("md-image-broken").assertIsDisplayed()
         assertThat(compose.onAllNodes(androidx.compose.ui.test.hasTestTag("md-image")).fetchSemanticsNodes()).hasSize(2)
     }
 
     @Test fun copyCodePutsTheBlockOnTheClipboard() {
-        compose.setContent { HfpsTheme(darkTheme = false) { markdown() } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { markdown() } }
         compose.onNodeWithTag("md-copy-code").performClick()
         val clipboard = ApplicationProvider.getApplicationContext<android.content.Context>().getSystemService(ClipboardManager::class.java)
         assertThat(clipboard.primaryClip!!.getItemAt(0).text.toString()).isEqualTo("// pick the sharpest\nfun best(shots: List<Shot>) = shots.maxBy { it.score }")
@@ -193,7 +193,7 @@ class Phase2dTest {
         seedTransfers()
         RuntimeEnvironment.setQualifiers("+$PHONE")
         var all = 0
-        compose.setContent { HfpsTheme(darkTheme = false) { Samples2b.Toasts { TransfersSheet(onDismiss = {}, onOpenAll = { all++ }, onOpenDestination = {}) } } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { Samples2b.Toasts { TransfersSheet(onDismiss = {}, onOpenAll = { all++ }, onOpenDestination = {}) } } }
         compose.waitUntil(5_000) { runCatching { compose.onNodeWithText("clip.mp4").assertIsDisplayed() }.isSuccess }
         captureScreenRoboImage("src/test/screenshots/transfers_sheet_phone_light.png")
         compose.onNodeWithTag("transfers-open-all").performClick()

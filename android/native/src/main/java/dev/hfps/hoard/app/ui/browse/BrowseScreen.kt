@@ -109,7 +109,7 @@ import dev.hfps.hoard.app.ui.common.errorBody
 import dev.hfps.hoard.app.ui.common.errorTitle
 import dev.hfps.hoard.app.ui.common.filterText
 import dev.hfps.hoard.app.ui.common.formatNumber
-import dev.hfps.hoard.app.ui.common.formatRelativeDate
+import dev.hfps.hoard.app.ui.common.relativeDate
 import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.app.ui.common.openErrorText
 import dev.hfps.hoard.app.ui.common.sortDirectionText
@@ -956,8 +956,8 @@ private fun FileRow(
     var menu by remember { mutableStateOf(false) }
     val details = when {
         entry.restricted -> stringResource(R.string.t_browse_restricted_short)
-        entry.isDirectory -> formatRelativeDate(context, entry.modifiedAt)
-        else -> bytes(entry.size) + " · " + formatRelativeDate(context, entry.modifiedAt)
+        entry.isDirectory -> relativeDate(context, entry.modifiedAt)
+        else -> bytes(entry.size) + " · " + relativeDate(context, entry.modifiedAt)
     }
     Row(
         Modifier

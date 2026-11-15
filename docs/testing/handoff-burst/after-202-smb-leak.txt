@@ -1,0 +1,13 @@
+label: after-202  scenario: smb-leak  date: 2026-11-15T04:09:51-03:00
+summary=after-202-smb-leak: 60 opens of 60 links in 3883 ms (finished=true), outcomes={ok=60}, open ms p50=244 p95=3519 max=3523, total ms p50=588 p95=3519 max=3872, peak open fds=1, retries=7, leaked re-read after the burst: {errno 5=9, ok=7} in 12307 ms
+system_server pid: 675 -> 675  vold pid: 239 -> 239
+dumpsys mount: 102 samples, mean 17 ms, max 57 ms, failed 0
+system_server appfuse opens (Watchdog '#openFile might be slow' pauses): 36
+watchdog kills / blocked checks: 0
+Hoard ANRs: 0  Hoard crashes: 0  
+hoard threads after: 64
+hoard log lines (HoardHandoff): 23
+  open x76 in 12.0 s, 16 concurrent, 70 refused (0 cached, 6 proxied, 0 failed), 6 descriptors open (6 parked, 0 reacquired, 0 retired), appfuse open avg 6 ms max 17 ms
+  open x14 in 2.2 s, 8 concurrent, 8 refused (0 cached, 6 proxied, 0 failed), 12 descriptors open (6 parked, 0 reacquired, 0 retired), appfuse open avg 0 ms max 1 ms
+  open x8 in 2.2 s, 8 concurrent, 8 refused (0 cached, 0 proxied, 0 failed), 12 descriptors open (6 parked, 0 reacquired, 0 retired), appfuse open avg 0 ms max 0 ms
+  open x75 in 5.7 s, 16 concurrent, 11 refused (40 cached, 24 proxied, 0 failed), 10 descriptors open (4 parked, 2 reacquired, 6 retired), appfuse open avg 0 ms max 3 ms

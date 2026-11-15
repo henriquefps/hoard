@@ -24,6 +24,7 @@ import dev.hfps.hoard.app.data.CullSettings
 import dev.hfps.hoard.app.ui.cull.AssistSettingsFields
 import dev.hfps.hoard.app.ui.cull.CullFolderScreen
 import dev.hfps.hoard.data.HoardDatabase
+import dev.hfps.hoard.app.FixedNowTheme
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.smb.SmbAccess
 import kotlinx.coroutines.Dispatchers
@@ -91,7 +92,7 @@ class CullScreenTest {
         settle()
         before(vm)
         compose.setContent {
-            HfpsTheme(darkTheme = dark) {
+            FixedNowTheme(darkTheme = dark) {
                 Samples2b.Toasts { CullFolderScreen(Samples2b.container, vm, Samples2b.location, "shoot", {}, {}, {}) }
             }
         }
@@ -238,7 +239,7 @@ class CullScreenTest {
 
     @Test fun settingsPhoneLight() {
         RuntimeEnvironment.setQualifiers("+${ShellScreenshotTest.PHONE}")
-        compose.setContent { HfpsTheme(darkTheme = false) { Samples2b.Toasts { androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.background(HfpsTheme.colors.card).padding(16.dp)) { AssistSettingsFields(Samples2b.container) } } } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { Samples2b.Toasts { androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.background(HfpsTheme.colors.card).padding(16.dp)) { AssistSettingsFields(Samples2b.container) } } } }
         capture("cull_settings_phone_light")
     }
 }

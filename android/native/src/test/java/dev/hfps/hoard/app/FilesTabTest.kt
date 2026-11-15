@@ -61,7 +61,7 @@ class FilesTabTest {
 
     private fun shoot(name: String, qualifiers: String, dark: Boolean, content: @Composable () -> Unit) {
         RuntimeEnvironment.setQualifiers("+$qualifiers")
-        compose.setContent { HfpsTheme(darkTheme = dark) { content() } }
+        compose.setContent { FixedNowTheme(darkTheme = dark) { content() } }
         compose.onRoot().captureRoboImage("src/test/screenshots/$name.png")
     }
 
@@ -74,7 +74,7 @@ class FilesTabTest {
     // --- Behaviour -------------------------------------------------------------------------------------------
 
     @Test fun aFolderListsFoldersFirstWithSizesAndHidesDotFiles() {
-        compose.setContent { HfpsTheme(darkTheme = false) { Samples2b.Browse(Samples2b.folder()) } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { Samples2b.Browse(Samples2b.folder()) } }
         compose.onNodeWithText("Local · 192.168.1.155 · 4 ms").assertIsDisplayed()
         compose.onNodeWithText("Lisboa").assertIsDisplayed()
         compose.onNodeWithTag("browse-list").performScrollToNode(hasText("6.1 MB · ", substring = true))
@@ -84,7 +84,7 @@ class FilesTabTest {
     }
 
     @Test fun theRowMenuHasHoard1sFileActions() {
-        compose.setContent { HfpsTheme(darkTheme = false) { Samples2b.Browse(Samples2b.folder()) } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { Samples2b.Browse(Samples2b.folder()) } }
         compose.onNodeWithTag("browse-list").performScrollToNode(hasText("notes.md"))
         compose.onNodeWithContentDescription("Actions for notes.md").performClick()
         listOf("Open in Hoard", "Open with…", "Copy", "Move", "Copy to…", "Move to…", "Download", "Share", "Copy path", "Rename", "Select", "Delete")
@@ -97,14 +97,14 @@ class FilesTabTest {
 
     @Test fun selectionBarCountsAndReadOnlyDisablesWrites() {
         compose.setContent {
-            HfpsTheme(darkTheme = false) { Samples2b.Browse(Samples2b.folder(selected = setOf("Photos/DSC0001.JPG", "Photos/notes.md"), readOnly = true)) }
+            FixedNowTheme(darkTheme = false) { Samples2b.Browse(Samples2b.folder(selected = setOf("Photos/DSC0001.JPG", "Photos/notes.md"), readOnly = true)) }
         }
         compose.onNodeWithText("2 selected").assertIsDisplayed()
         compose.onNodeWithText("Read-only", substring = true).assertExists()
     }
 
     @Test fun sharesShowAccessAndTheOnesAddedByName() {
-        compose.setContent { HfpsTheme(darkTheme = false) { Samples2b.Browse(Samples2b.shares) } }
+        compose.setContent { FixedNowTheme(darkTheme = false) { Samples2b.Browse(Samples2b.shares) } }
         compose.onNodeWithText("Media files").assertIsDisplayed()
         compose.onNodeWithText("Added by name").assertIsDisplayed()
         compose.onNodeWithText("Read-only").assertIsDisplayed()
@@ -116,7 +116,7 @@ class FilesTabTest {
         var opened: String? = null
         var transfers = 0
         compose.setContent {
-            HfpsTheme(darkTheme = false) {
+            FixedNowTheme(darkTheme = false) {
                 FilesScreen(
                     Samples.files,
                     {},
@@ -139,7 +139,7 @@ class FilesTabTest {
     @Test fun theMachineFormValidatesBeforeSaving() {
         val vm = MachineFormViewModel(Samples2b.container, null)
         compose.setContent {
-            HfpsTheme(darkTheme = false) {
+            FixedNowTheme(darkTheme = false) {
                 Samples2b.Toasts {
                     val state = vm.state.collectAsStateValue()
                     MachineFormScreen(vm, state, {}, {}, {})

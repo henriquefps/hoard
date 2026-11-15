@@ -39,7 +39,7 @@ class ShellScreenshotTest {
 
     private fun shoot(name: String, qualifiers: String, dark: Boolean, palette: HfpsPalette = HfpsPalette.Blue, content: @Composable () -> Unit) {
         RuntimeEnvironment.setQualifiers("+$qualifiers")
-        compose.setContent { HfpsTheme(darkTheme = dark, palette = palette) { content() } }
+        compose.setContent { FixedNowTheme(darkTheme = dark, palette = palette) { content() } }
         compose.onRoot().captureRoboImage("src/test/screenshots/$name.png")
     }
 

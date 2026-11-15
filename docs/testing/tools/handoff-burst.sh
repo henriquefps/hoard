@@ -8,7 +8,8 @@
 #   ANDROID_SERIAL=emulator-5554 docs/testing/tools/handoff-burst.sh <label> [scenario...]
 #
 # Scenarios: smb (200 opens at once, read + close), smb-hold (200 at once, every descriptor held 5 s),
-# smb-retry (smb, retrying busy: as Reveal does), local (200 FileProvider opens), local-hold.
+# smb-retry (smb, retrying busy: as Reveal does), local (200 FileProvider opens), local-hold,
+# smb-leak (a leaking client opens BURST_LEAK (20) RAW links and never closes them, then a normal smb-retry burst).
 # Results: docs/testing/handoff-burst/<label>-*.txt. BURST_OPENS (200) sets the opens per burst (step up: 50, 100, 200). BURST_COLD=1 deletes Hoard's small-file copies before each run.
 set -euo pipefail
 
@@ -108,6 +109,7 @@ for s in $SCENARIOS; do
     smb) run smb "$SMB_URIS" "-e opens $OPENS" ;;
     smb-hold) run smb-hold "$SMB_URIS" "-e opens $OPENS -e hold 5000" ;;
     smb-retry) run smb-retry "$SMB_URIS" "-e opens $OPENS -e retry true" ;;
+    smb-leak) run smb-leak "$SMB_URIS" "-e opens $OPENS -e retry true -e leak ${BURST_LEAK:-20}" ;;
     local) run local "$LOCAL_URIS" "-e opens $OPENS" ;;
     local-hold) run local-hold "$LOCAL_URIS" "-e opens $OPENS -e hold 5000" ;;
     *) echo "unknown scenario $s"; exit 1 ;;

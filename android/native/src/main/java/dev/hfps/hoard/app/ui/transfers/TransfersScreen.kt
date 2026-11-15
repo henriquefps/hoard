@@ -51,7 +51,7 @@ import dev.hfps.hoard.app.transfers.VOLUME_PREFIX
 import dev.hfps.hoard.app.ui.common.MenuItem
 import dev.hfps.hoard.app.ui.common.StateMessage
 import dev.hfps.hoard.app.ui.common.bytes
-import dev.hfps.hoard.app.ui.common.formatRelativeDate
+import dev.hfps.hoard.app.ui.common.relativeDate
 import dev.hfps.hoard.app.ui.common.problemText
 import dev.hfps.hoard.data.MachineWithAddresses
 import dev.hfps.hoard.designsystem.components.Eyebrow
@@ -301,7 +301,7 @@ private fun TransferRow(t: TransferView, machines: List<MachineWithAddresses>, s
                 add(stateText)
                 add(bytes(t.total))
                 if (t.itemsTotal > 1) add(pluralStringResource(R.plurals.t_transfers_items_done, t.itemsTotal, t.itemsDone.toString(), t.itemsTotal.toString()))
-                add(formatRelativeDate(context, row.finishedAt ?: row.createdAt))
+                add(relativeDate(context, row.finishedAt ?: row.createdAt))
             }
             Text(detail.joinToString(" · "), style = HfpsTheme.typography.ui, color = stateTint(t.state).takeIf { t.state == TransferStates.FAILED } ?: HfpsTheme.colors.mutedForeground)
             when {

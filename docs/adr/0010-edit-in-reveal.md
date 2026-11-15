@@ -4,6 +4,7 @@
 - **Status**: Accepted (1.8.0); amended 2026-11-12 (1.10.0): persistable hand-offs, stable SMB links served after a
   restart, sidecar write-back, explicit Reveal package. Sections marked **(1.10.0)** replace what 1.8.0 said.
   Amended 2026-11-15 (2.0.1): "Bursts of opens" (limits on the provider, the `busy:` failure contract).
+  Amended 2026-11-15 (2.0.2): "Idle reclaim" (idle proxy descriptors give their read slot back; the contract unchanged).
 
 ## Context
 
@@ -130,9 +131,10 @@ descriptors). The provider is now bounded whatever a client does:
 
 - **One limit, `MAX_READS` = 6** (`HandoffServer.reads`, a `HandoffLimiter`, JVM-tested): at most 6 hand-off reads
   run at once. A read is an open doing network work (stat, a small copy, opening a descriptor), or a proxy descriptor
-  from its open until the client closes it. Other opens wait their turn, first come first served, at most
-  `BUSY_WAIT_MS` = 1.5 s, then fail. No binder thread waits longer than that; the waiters are bounded by Hoard's
-  binder threads (16), so there is no separate queue limit and no refusal before the wait.
+  from its open until the client closes it (2.0.2: or until it has been idle for 12 s, "Idle reclaim"). Other opens
+  wait their turn, first come first served, at most `BUSY_WAIT_MS` = 1.5 s, then fail. No binder thread waits longer
+  than that; the waiters are bounded by Hoard's binder threads (16) plus, since 2.0.2, its descriptor loopers (12),
+  so there is no separate queue limit and no refusal before the wait.
 - **Busy contract (frozen; [integration](../integration/README.md) contract 11)**: opening a Hoard hand-off URI
   throws `java.io.FileNotFoundException` whose message starts exactly with `busy:` in one case only: the 6 reads are
   taken and the 1.5 s wait freed no slot (`busy: 6 hand-off reads in progress, retry`, `HandoffBusy`). No other
@@ -146,17 +148,17 @@ descriptors). The provider is now bounded whatever a client does:
   served as plain file descriptors (`ParcelFileDescriptor.open`): no vold, no thread of Hoard's per read. A copy
   slower than 6 s is abandoned for a proxy descriptor. The folder is capped at 256 MiB (least recently used first) and
   emptied by "Revoke all". Read-only opens only: sidecar writes are unchanged.
-- **Proxy descriptors** (`HandoffProxy`): since each one holds a read slot until it is closed, at most 6 are open
-  at once. `openProxyFileDescriptor` is called by one thread at a time (vold serialises it anyway), so system_server
-  never has more than one of its threads in an appfuse open for Hoard (1–5 ms each when serialised). Each slot has
-  its own looper, started once and reused: a slow read on one descriptor never delays another descriptor's size or
-  read. Reads run on a shared executor, and a callback waits at most 10 s (`TimedReader`) before answering `EIO`.
-  `RemoteReader`'s read-ahead serves sequential reads from memory.
-  **Client obligation (part of the contract):** a proxy descriptor (every file over 8 MiB, so every RAW) holds one
-  of the 6 slots until the **client** closes it; 2.0.1 has no idle reclaim. A client must close a hand-off descriptor
-  as soon as its read is done and never hold more than 6 at once: a client that keeps 6 RAW descriptors open (or leaks
-  one per photo) makes every later open fail with `busy:` until it closes them or Hoard's process ends. An idle
-  reclaim (a descriptor with no read for a while gives its slot back) is planned as a follow-up.
+- **Proxy descriptors** (`HandoffProxy`): a proxy descriptor holds a read slot while it is read; since 2.0.2 an idle
+  one gives it back (below), so at most 6 are being read at once. `openProxyFileDescriptor` is called by one thread
+  at a time (vold serialises it anyway), so system_server never has more than one of its threads in an appfuse open
+  for Hoard (1–5 ms each when serialised). Each live descriptor has its own looper from a pool started once and
+  reused: a slow read on one descriptor never delays another descriptor's size or read. Reads run on a shared
+  executor, and a callback waits at most 10 s (`TimedReader`) before answering `EIO`. `RemoteReader`'s read-ahead
+  serves sequential reads from memory.
+  **Client obligation (good practice):** a client should close a hand-off descriptor as soon as its read is done and
+  never hold more than 6 at once. In 2.0.1 this was the only protection: a client that kept 6 RAW descriptors open
+  (or leaked one per photo) made every later open fail with `busy:` until it closed them or Hoard's process ended.
+  Since 2.0.2 Hoard reclaims idle descriptors itself, so a leaking client costs others at most `IDLE_RELEASE_MS`.
 - **Connections**: one SMB connection per machine + share for every open, lease and write, kept for 60 s after the
   last use (`Sources.LINGER_MS`), so cached opens, which take no lease, do not reconnect each time. An unreachable
   machine, a refused login or a GUID mismatch makes the next opens of that share fail at once for 10 s
@@ -168,6 +170,37 @@ descriptors). The provider is now bounded whatever a client does:
   avg 1 ms max 6 ms`). Per-open timings only at debug level (`setprop log.tag.HoardHandoff DEBUG`).
 - FileProvider links (phone files) were already plain file descriptors, opened by `androidx.core`'s `FileProvider`
   with no appfuse: measured cheap and left as they were.
+
+### Idle reclaim (2.0.2)
+
+2.0.1 left Hoard at the mercy of its clients: a proxy descriptor (every file over 8 MiB, so every RAW) held one of the
+6 read slots until the client closed it, so a client that leaked 6 descriptors locked every other open into `busy:`.
+Hoard now reclaims them itself (`HandoffHold`, `HandoffDescriptors` in `HandoffReclaim.kt`, JVM-tested by
+`HandoffReclaimTest`). The busy contract is unchanged: same limit, same wait, same message, same single case.
+
+- **Park after `IDLE_RELEASE_MS` = 12 s** without a callback: the descriptor gives its slot back and stays open (its
+  SMB reader too). 12 s is longer than a read may take (`READ_TIMEOUT_MS` = 10 s) and than the pauses of a client
+  reading one photo (a thumbnail then the full decode), and well inside a client's busy retry budget (about 30 s): a
+  client retrying `busy:` while another leaks every slot gets one within about 12 s plus one backoff step. A callback
+  in progress is never idle, however long it takes.
+- **Re-acquire on the next read**: a parked descriptor's next read (on a sidecar, its next read, write or sync) takes a
+  slot through the same `HandoffLimiter`, in the same first-come queue as opens, waiting at most `BUSY_WAIT_MS` =
+  1.5 s. When none frees, that read answers `EIO` instead of blocking (the kernel's request must not wait on other
+  clients), and the next read tries again. A size query is answered from memory and takes no slot.
+- **Retire after `RETIRE_MS` = 10 min** without a callback: Hoard runs what `onRelease` would (the SMB reader closed,
+  so the share's open handle goes; the lease and the connection follow; a sidecar's pending bytes are written first),
+  and every later callback answers `EIO` at once. The client's descriptor stays valid as a file descriptor until it
+  closes it; reading it again means opening the link again. 10 min outlasts the lease (2 min) and an editing pause.
+- **Loopers stay bounded** (`MAX_LIVE` = 12, twice `MAX_READS`): each live descriptor (active or parked) owns one
+  looper of a pool created once. When all 12 are owned, the next open retires the least recently used parked
+  descriptor and reuses its looper (a retired descriptor answers at once, so sharing its looper delays nobody). Only
+  if all 12 are active or inside a callback does a looper get a second owner. Hoard therefore runs at most 12 looper
+  threads whatever a client leaks.
+- Locks: a parked descriptor waiting for a slot holds no lock of its own, parking and retiring never happen inside a
+  callback, and the limiter is never called with a descriptor's lock held, so slots and descriptors cannot deadlock.
+- The burst summary reports `N descriptors open (P parked, R reacquired, X retired)`; retiring logs one line.
+- Measured with a leaking client (20 RAW opens, never closed) followed by a normal client:
+  `docs/testing/handoff-burst.md`, "Idle reclaim".
 
 ### Write-back (1.10.0)
 
