@@ -256,3 +256,23 @@ The software GPU dominates frame times (a plain column scrolls at p50 28 ms ther
 baseline's p90. Real-device numbers are for the owner's phone.
 
 Details, screenshots and the E2E run: `docs/testing/gallery/README.md`.
+
+### Measurements 2.2.2 (thumbnail stores)
+
+| Store | Where, key | Cap | Filled by |
+| --- | --- | --- | --- |
+| Offline thumbnails | `noBackupFilesDir/gallery-thumbs/<id>.webp`, 256 px short edge, WebP q60 | **none** | `OfflineThumbsWorker`: unmetered network + battery not low (+ charging when set), every 6 h and after a sync, 4 at a time, newest first; thumbs the server has not made yet are retried with back-off |
+| Preview cache | `cacheDir/gallery-previews/<id>-{thumb,screen}-<edit>-<version>.<ext>` | 1 GB default (256 MB / 1 GB / 4 GB), LRU, thumbs and screens together; `cacheDir` can also be cleared by Android | cells over 384 px, edits, the viewer and its filmstrip (online) |
+
+Emulator, 4,000 synthetic items: offline thumbnails 34 MB (≈ 8.5 KB each); 2.1.0 measured ≈ 8 KB (bench images) and
+the ADR estimates 8–15 KB for real photos, so **19,000 items ≈ 160–290 MB**, all kept (no cap). Server thumbs (≤ 512 px
+WebP) of real photos are estimated (not measured here) at ≈ 25–50 KB and screens (≤ 2,560 px JPEG) at ≈ 0.4–1.5 MB, so 1 GB holds every thumb of 19k items
+(≈ 0.5–1 GB) only if almost no screens are cached: the preview cache is not a place to keep a whole library, and
+2.2.2 does not ask it to.
+
+The owner's empty filmstrip is explained by the keying alone (the viewer never read the offline thumbnails). If the
+grid also showed empty cells in that region offline, the offline job had not reached it: it fills newest first, only on
+unmetered networks, and item 12,902 of 18,999 is two thirds down. Settings › Photo server shows how many thumbnails are
+kept. Left for later, if measurements on the phone ask for it: write an offline thumbnail whenever a server thumb is
+downloaded for a cell or the filmstrip (so what was seen online stays), and an option to fill them on metered networks
+(≈ 160–290 MB once for 19k items).
