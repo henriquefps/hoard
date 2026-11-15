@@ -1,0 +1,6 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'dev.hfps.probe.reader'
+    compileSdk 36
+    defaultConfig { applicationId 'dev.hfps.probe.reader'; minSdk 29; targetSdk 36; versionCode 1; versionName '1' }
+}
