@@ -298,6 +298,8 @@ Reveal ADR 0011 amendment W3/H (frozen 2026-11-15; `docs/integration/README.md` 
   At most 500 server items per intent; more go as several intents with the same `TITLE` (`startActivities`). One
   intent may also carry URI items (ClipData, grants and `CULLING` for those only). A full batch of 500 pairs is
   ≈ 320 KB of extras, a third of the Binder buffer.
+  When there is more than one intent, every one carries `BATCH_INDEX` (Int, 0 for the first, the one with
+  `INITIAL_ITEM` / `INITIAL_URI`, then 1..n-1 in order) and `BATCH_COUNT` (Int, n); a single intent carries neither.
 - **Culling first.** Before sending, the shots' pending culling changes are pushed (best effort, 3 s); Reveal pulls
   the items' culling records on receipt.
 - **`CULLING` version 2** (URI items): per field `ratingModifiedAt` / `flagModifiedAt` / `labelModifiedAt` (ms, the

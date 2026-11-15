@@ -8,6 +8,7 @@
   - **Edit in Reveal** sends those photos as server photos (Reveal 0.9.0 or later reads them from the server), and only the rest as links through Hoard, as before; one hand-off can have both.
   - Settings › Photo server › **Mapped folders** lists what Hoard recognised, with **Forget**.
   - Folders the server does not have work exactly as before.
+- **Edit in Reveal, big batches**: when a hand-off needs several intents (over 500 server photos), each now says which one it is (`BATCH_INDEX`) and how many there are (`BATCH_COUNT`), so Reveal can tell they belong together ([ADR 0010](docs/adr/0010-edit-in-reveal.md)).
 
 ## 2.1.0
 
