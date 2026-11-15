@@ -250,3 +250,19 @@ data class LegacyImportEntity(
     @ColumnInfo(name = "row_counts", defaultValue = "'{}'") val rowCounts: String,
     @ColumnInfo(name = "imported_at", defaultValue = NOW) val importedAt: String,
 )
+
+/**
+ * A photo Hoard copied into MediaStore for Reveal (ADR 0010, amendment "2.2.0: local copies"; Room version 2): the
+ * source (a location key, `<machine id>/<share>` or `vol-<uuid>` …, and its path there) with its size and mtime when
+ * copied, and the copy's `content://media/…` URI. A hand-off of the same source with the same size and mtime reuses
+ * the copy while MediaStore still has it. Settings › "Photos copied for Reveal" deletes them.
+ */
+@Entity(tableName = "reveal_copies", primaryKeys = ["source_key", "source_path"])
+data class RevealCopyEntity(
+    @ColumnInfo(name = "source_key") val sourceKey: String,
+    @ColumnInfo(name = "source_path") val sourcePath: String,
+    val size: Long,
+    @ColumnInfo(name = "modified_ms") val modifiedMillis: Long?,
+    val uri: String,
+    @ColumnInfo(name = "copied_at", defaultValue = NOW) val copiedAt: String,
+)
