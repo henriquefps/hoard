@@ -606,7 +606,8 @@ private fun BurstActions(status: BurstStatus?, onKeep: () -> Unit, onCompare: ()
         PrimaryButton(stringResource(R.string.t_cull_burst_mode_keep), onKeep, Modifier.weight(1f).testTag("keep-this-one"), icon = PhosphorFill.CheckCircle)
         HfpsIconButton(PhosphorRegular.Columns, stringResource(R.string.t_cull_burst_mode_compare), onCompare, tint = ViewerColors.foreground)
         if (suggestionCount > 0) HfpsIconButton(PhosphorFill.Sparkle, stringResource(R.string.t_cull_burst_mode_accept_suggestion), onAcceptSuggestion, tint = ViewerColors.foreground)
-        if (status != null) BurstStatusText(status)
+        // Phones keep the room for the actions (Hoard 1 hides the status below `sm`).
+        if (status != null && LocalConfiguration.current.screenWidthDp >= 600) BurstStatusText(status)
     }
 }
 
