@@ -171,6 +171,8 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit) {
         HfpsRowDivider(Modifier.padding(start = 54.dp))
         OfflineStorage(container)
         HfpsRowDivider(Modifier.padding(start = 54.dp))
+        MappedFolders(container)
+        HfpsRowDivider(Modifier.padding(start = 54.dp))
         HfpsListRow(
             title = stringResource(R.string.server_unpair),
             icon = PhosphorRegular.XCircle,
@@ -379,6 +381,36 @@ fun ClaimDialog(candidates: List<Candidate>, onAnswer: (String?) -> Unit) {
 private val ORIGINAL_CHOICES = listOf(512L, 2048L, 8192L)
 
 /** Settings › Photo server › storage on this phone (ADR 0021): offline thumbnails and kept originals. */
+/**
+ * Settings › Photo server › Mapped folders (ADR 0022): each SMB share folder Hoard learned is one of the server's NAS
+ * folders, with "Forget" (it is learned again the next time a folder there opens).
+ */
+@Composable
+private fun MappedFolders(container: AppContainer) {
+    val links = container.serverLinks
+    val mappings by links.paths.observe().collectAsState(initial = emptyList())
+    val machines by container.database.machines().observeAll().collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+    HfpsListRow(
+        title = stringResource(R.string.server_mapped_folders),
+        subtitle = stringResource(if (mappings.isEmpty()) R.string.server_mapped_folders_none else R.string.server_mapped_folders_hint),
+        icon = PhosphorRegular.LinkSimple,
+        modifier = Modifier.testTag("server-mapped-folders"),
+    )
+    mappings.forEach { m ->
+        val machine = machines.firstOrNull { it.machine.id == m.machineId }?.machine?.name ?: m.machineId
+        val smb = listOf(m.share, m.smbPrefix).filter { it.isNotEmpty() }.joinToString("/")
+        val nas = listOfNotNull(m.folderName ?: m.folderId.take(8), m.serverPrefix.takeIf { it.isNotEmpty() }).joinToString("/")
+        HfpsListRow(
+            title = stringResource(R.string.server_mapped_folder, machine, smb),
+            subtitle = stringResource(R.string.server_mapped_folder_server, nas),
+            icon = PhosphorRegular.FolderSimple,
+            modifier = Modifier.padding(start = 38.dp).testTag("server-mapping"),
+            trailing = { GhostButton(stringResource(R.string.server_mapped_folder_forget), { scope.launch { links.paths.forget(m) } }, modifier = Modifier.testTag("server-mapping-forget")) },
+        )
+    }
+}
+
 @Composable
 private fun OfflineStorage(container: AppContainer) {
     val repo = container.gallery

@@ -21,9 +21,9 @@ data class SmbFolderRef(val machineId: String, val share: String, val path: Stri
     val key: String get() = "$machineId/${share.lowercase()}/${SharePaths.normalize(path).lowercase()}"
 }
 
-/** Reads the v1 fingerprint of one file of the share (2 MiB: the first and the last MiB). Blocking. */
+/** Reads the v1 fingerprint of one file of the share (2 MiB: the first and the last MiB). */
 fun interface FingerprintReader {
-    fun fingerprint(path: String): String
+    suspend fun fingerprint(path: String): String
 }
 
 /**

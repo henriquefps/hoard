@@ -177,6 +177,10 @@ class CullViewModel(
         appSettings: dev.hfps.hoard.app.data.AppSettings? = null,
     ) : this(key, backend, FolderCullStore(dao, key), settings, compute, now, appSettings)
 
+    /** Shots the paired server holds (ADR 0022), for the grid's "on the server" mark. */
+    val serverShots: StateFlow<Set<String>> = (store.serverShots ?: kotlinx.coroutines.flow.flowOf(emptySet()))
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
     /** Shots decided here in the last seconds (their saved value may not have come back yet). Before `init`. */
     private val recent = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
     private val core = MutableStateFlow(CullCore())

@@ -27,6 +27,9 @@ interface CullStore {
 
     /** Decisions changed elsewhere while the session is open (a sync); null when nothing else writes them. */
     val external: Flow<Map<String, Decision>>? get() = null
+
+    /** Shots the paired server holds (ADR 0022: a mapped SMB folder), for the "on the server" mark; null = none. */
+    val serverShots: Flow<Set<String>>? get() = null
 }
 
 /** A folder's culling, as Hoard 1 keeps it (`cull_decisions`, `cull_sidecars`, `cull_sessions`, `cull_analysis`). */

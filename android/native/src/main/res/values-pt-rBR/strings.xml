@@ -216,4 +216,11 @@
     <string name="server_address_save">Salvar</string>
     <string name="server_address_hint">Outro endereço do mesmo servidor, p. ex. https://box.tailnet.ts.net:8444 (https é o preferido).</string>
     <string name="server_address_failed">Não é este servidor, ou não está ao alcance neste endereço.</string>
+    <!-- Pastas SMB no servidor (ADR 0022). -->
+    <string name="server_mapped_folders">Pastas mapeadas</string>
+    <string name="server_mapped_folders_hint">Pastas de compartilhamentos que o servidor também indexa: as fotos delas vão para o Reveal a partir do servidor, e suas escolhas e estrelas sincronizam como as da Galeria.</string>
+    <string name="server_mapped_folders_none">Nenhuma ainda. Abra uma pasta de compartilhamento que o servidor também indexa, e o Hoard a reconhece lendo duas das fotos.</string>
+    <string name="server_mapped_folder">%1$s › %2$s</string>
+    <string name="server_mapped_folder_server">No servidor: %1$s</string>
+    <string name="server_mapped_folder_forget">Esquecer</string>
 </resources>
