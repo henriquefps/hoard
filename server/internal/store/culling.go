@@ -515,6 +515,25 @@ func (s *Store) SidecarStates(ctx context.Context, folderID string) (map[string]
 	return out, rows.Err()
 }
 
+// DropSidecars forgets the sidecars of a folder at these relative paths (their files are gone), so a sidecar created
+// again at a path is a first read (ADR 0016 "First read of a sidecar"). It returns the number of rows deleted.
+func (s *Store) DropSidecars(ctx context.Context, folderID string, relPaths []string) (int, error) {
+	n := 0
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		n = 0
+		for _, p := range relPaths {
+			res, err := tx.ExecContext(ctx, "DELETE FROM culling_sidecars WHERE folder_id = ? AND rel_path = ?", folderID, p)
+			if err != nil {
+				return err
+			}
+			k, _ := res.RowsAffected()
+			n += int(k)
+		}
+		return nil
+	})
+	return n, err
+}
+
 // SidecarRead is one sidecar file read by a walk.
 type SidecarRead struct {
 	RelPath string
@@ -528,7 +547,7 @@ type SidecarRead struct {
 }
 
 // ImportSidecars records what each sidecar holds and imports the fields that changed since the server last read it
-// as writes by "nas" dated by the file's mtime. A label the sidecar held last time and no longer holds (cleared in
+// (a sidecar with no row yet only fills fields that hold no non-default value) as writes by "nas" dated by the file's mtime. A label the sidecar held last time and no longer holds (cleared in
 // Lightroom) imports as "". It returns the number of fields written.
 func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []SidecarRead) (int, error) {
 	n := 0
@@ -576,6 +595,18 @@ func (s *Store) ImportSidecars(ctx context.Context, folderID string, reads []Sid
 				cands = append(cands, cand{CullLabel, json.RawMessage(`""`)}) // present last time, gone now: cleared
 			}
 			for _, c := range cands {
+				// First read of this sidecar (no row): a field that already holds a non-default value is kept, whatever the
+				// writer and the mtime (ADR 0016 "First read of a sidecar"). Empty fields are filled as below.
+				if !seen {
+					var cur string
+					err := tx.QueryRowContext(ctx, "SELECT value FROM culling_fields WHERE item_id = ? AND field = ?", r.ItemID, c.field).Scan(&cur)
+					if err != nil && !errors.Is(err, sql.ErrNoRows) {
+						return err
+					}
+					if err == nil && !isCullDefault(c.field, json.RawMessage(cur)) {
+						continue
+					}
+				}
 				// A default (0, none, "") for a field never written is no information: no revision (ADR 0016, hoard-server 0.10.1).
 				if isCullDefault(c.field, c.value) {
 					var one int

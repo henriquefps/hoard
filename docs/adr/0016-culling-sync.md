@@ -9,7 +9,8 @@
   variants of an app share a phone (ADR 0017, E). Changed sections: "Wire format", "The NAS sidecars", "Reveal's
   records", "Client rules", "Storage".
 - **Amended**: 2026-11-15, hoard-server 0.10.1: a sidecar import skips a default value for a field the record never
-  held ("When a sidecar is imported", step 2a).
+  held ("When a sidecar is imported", step 2a). Also 2026-11-15, same release (not tagged yet): the first-read rule
+  ("When a sidecar is imported", step 2b).
 - **Amends**: ADR 0013 (protocol additions under `/v1`, written there in "Culling (hoard-server 0.7.0)"), ADR 0014
   (the items feed can carry culling records). Read with Hoard ADR 0008/0009 (culling), ADR 0011 (culling sidecars) and
   Reveal ADR 0006 (library, XMP fields), 0011 (hand-off, `CULLING` extra), 0018 (sync in the app), 0025 (culling is
@@ -262,6 +263,16 @@ last time):
    values read are still stored in `culling_sidecars`, so step 2 keeps comparing against them. A default arriving after
    the field has a value (from any writer) is a real change, a clear, and goes on as step 3. This applies to the NAS
    import only: `POST /v1/culling` from a device may write a default explicitly, and it is applied.
+   **2b. First read of a sidecar (2026-11-15).** A sidecar the reader has never read before (no record of it at that
+   path, or its record was dropped because the file disappeared) only fills fields the reader holds no value for. A
+   field holds a value when a non-default value was set on it by anyone: a rating other than 0, a flag other than none,
+   a non-empty label (the defaults carry no information, as in hoard-server 0.10.1). Fields with a value are kept,
+   whatever the sidecar's mtime. The reader records what it read (path, size, mtime, values). On later reads of the
+   same sidecar (size or mtime changed), only the fields whose value differs from the last read are candidates, and
+   they apply as before (newest by mtime; ADR 0016 LWW on the server). Rationale: with no automatic writes, a sidecar
+   created by another tool starts from that tool's defaults, not from the user's decision. Its creation is not an edit
+   of our fields, but a later change to it is. In hoard-server, the walk deletes the `culling_sidecars` rows whose
+   sidecar file is gone, only after a walk that read every folder (a partial walk deletes nothing).
 3. Each remaining candidate is a write by `"nas"` with **`modifiedAt` = the sidecar's mtime** (ms; clipped like any write), and
    goes through the conflict rule (step 5: no `baseRev`). A sidecar newer than the server's field wins; one older
    loses. The values read are stored either way.

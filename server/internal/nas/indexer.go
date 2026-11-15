@@ -236,6 +236,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	stats := Stats{}
 
 	var files []seen
+	complete := true // false when a sub-folder could not be read: nothing is concluded from what is missing
 	walkErr := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -244,6 +245,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			if p == "." {
 				return err
 			}
+			complete = false
 			return fs.SkipDir // an unreadable sub-folder is skipped, never the reason to drop files
 		}
 		if p != "." && strings.HasPrefix(d.Name(), ".") {
@@ -261,6 +263,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 		}
 		info, err := d.Info()
 		if err != nil {
+			complete = false
 			return nil
 		}
 		files = append(files, seen{rel: p, size: info.Size(), mtime: info.ModTime().UnixNano(), media: mediaClass})
@@ -395,7 +398,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	}
 	stats.Sources, stats.Items = ist.Sources, ist.Items
 	// Culling from the folder's sidecars (ADR 0016): read only, and only the sidecars that changed.
-	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, groups); err != nil {
+	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, groups, present, complete); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

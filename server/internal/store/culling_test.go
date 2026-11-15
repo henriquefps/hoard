@@ -464,3 +464,108 @@ func TestCullingFeedPages(t *testing.T) {
 		t.Fatalf("%s", b)
 	}
 }
+
+// TestSidecarFirstReadRule: ADR 0016 "First read of a sidecar" (hoard-server 0.10.1).
+func TestSidecarFirstReadRule(t *testing.T) {
+	i := func(v int) *int { return &v }
+	str := func(v string) *string { return &v }
+	type seedField struct{ field, value string }
+	type step struct {
+		v          SidecarValues
+		unreadable bool
+		wantN      int
+		wantVals   map[string]string // field -> value after the step ("" = absent)
+	}
+	for _, c := range []struct {
+		name  string
+		seeds []seedField
+		steps []step
+	}{
+		{"first read keeps non-default values and fills empty fields",
+			[]seedField{{CullRating, "4"}, {CullFlag, `"none"`}},
+			[]step{{v: SidecarValues{Rating: i(2), Flag: str("pick"), Label: str("Red")}, wantN: 2,
+				wantVals: map[string]string{CullRating: "4", CullFlag: `"pick"`, CullLabel: `"Red"`}}}},
+		{"first read with only empty fields imports all", nil,
+			[]step{{v: SidecarValues{Rating: i(3), Flag: str("reject"), Label: str("Blue")}, wantN: 3,
+				wantVals: map[string]string{CullRating: "3", CullFlag: `"reject"`, CullLabel: `"Blue"`}}}},
+		{"second read with a changed rating imports (newest wins)",
+			[]seedField{{CullRating, "4"}},
+			[]step{
+				{v: SidecarValues{Rating: i(2)}, wantN: 0, wantVals: map[string]string{CullRating: "4"}},
+				{v: SidecarValues{Rating: i(5)}, wantN: 1, wantVals: map[string]string{CullRating: "5"}},
+			}},
+		{"unchanged second read imports nothing",
+			[]seedField{{CullFlag, `"pick"`}},
+			[]step{
+				{v: SidecarValues{Flag: str("reject")}, wantN: 0, wantVals: map[string]string{CullFlag: `"pick"`}},
+				{v: SidecarValues{Flag: str("reject")}, wantN: 0, wantVals: map[string]string{CullFlag: `"pick"`}},
+			}},
+		{"unreadable sidecar is recorded and imports nothing", nil,
+			[]step{{unreadable: true, wantN: 0, wantVals: map[string]string{}}}},
+		{"a kept field makes no revision, the others do",
+			[]seedField{{CullLabel, `"Green"`}},
+			[]step{{v: SidecarValues{Label: str("Red"), Flag: str("pick")}, wantN: 1,
+				wantVals: map[string]string{CullLabel: `"Green"`, CullFlag: `"pick"`}}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := openTest(t)
+			ctx := context.Background()
+			if _, err := s.db.ExecContext(ctx, "INSERT INTO nas_folders (id, path, name, created_at) VALUES ('f', '/mnt/nas', 'nas', 0)"); err != nil {
+				t.Fatal(err)
+			}
+			item := ItemID(fpShot)
+			for k, sf := range c.seeds {
+				seed(t, s, item, sf.field, sf.value, int64(10+k), 50, devA) // older than any sidecar below
+			}
+			for k, st := range c.steps {
+				head, _ := s.Counter(ctx, "items")
+				n, err := s.ImportSidecars(ctx, "f", []SidecarRead{{RelPath: "a/D.xmp", Size: int64(10 + k), MTime: int64(100+k) * 1e6,
+					ItemID: item, Values: st.v, Unreadable: st.unreadable}})
+				if err != nil || n != st.wantN {
+					t.Fatalf("step %d: n=%d %v", k, n, err)
+				}
+				if h, _ := s.Counter(ctx, "items"); int(h-head) != st.wantN {
+					t.Fatalf("step %d: %d revisions, want %d", k, h-head, st.wantN)
+				}
+				rec, err := s.Culling(ctx, item)
+				if errors.Is(err, ErrNotFound) {
+					if len(st.wantVals) != 0 {
+						t.Fatalf("step %d: no record, want %v", k, st.wantVals)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, f := range []string{CullRating, CullFlag, CullLabel} {
+					if got := string(rec.Fields[f].Value); got != st.wantVals[f] {
+						t.Fatalf("step %d: %s = %q, want %q", k, f, got, st.wantVals[f])
+					}
+				}
+			}
+			if st, _ := s.SidecarStates(ctx, "f"); len(st) != 1 {
+				t.Fatalf("sidecar not recorded: %v", st)
+			}
+		})
+	}
+}
+
+func TestDropSidecars(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := s.db.ExecContext(ctx, "INSERT INTO nas_folders (id, path, name, created_at) VALUES ('f', '/mnt/nas', 'nas', 0)"); err != nil {
+		t.Fatal(err)
+	}
+	item := ItemID(fpShot)
+	for _, p := range []string{"a.xmp", "b.xmp"} {
+		if _, err := s.ImportSidecars(ctx, "f", []SidecarRead{{RelPath: p, Size: 1, MTime: 1e6, ItemID: item, Unreadable: true}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, err := s.DropSidecars(ctx, "f", []string{"a.xmp", "zzz.xmp"}); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	if st, _ := s.SidecarStates(ctx, "f"); len(st) != 1 || st["b.xmp"].Size != 1 {
+		t.Fatalf("%v", st)
+	}
+}

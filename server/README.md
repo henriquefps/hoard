@@ -204,13 +204,20 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
-## Upgrading to 0.10.1 (sidecar import skips first-write defaults)
+## Upgrading to 0.10.1 (sidecar import skips first-write defaults, first read keeps decisions)
 
 0.10.1 changes one thing in how the server imports the culling values of NAS sidecars (ADR 0016): a sidecar value that is the
 default (rating `0`, flag `none`, no label) for a field the item's culling record has never held is no longer written. Hoard
 and Lightroom write such sidecars for undecided shots (`xmp:Rating="0"`, `digiKam:PickLabel="0"`), which used to cost two
 revisions per shot with no visible change. A default that arrives after a real value is still imported as a clear, and
-`POST /v1/culling` from devices is unchanged. No API change, no migration, no step to take; revisions already written stay.
+`POST /v1/culling` from devices is unchanged.
+
+The same release adds the **first-read rule** (ADR 0016, step 2b): a sidecar the server has never read (no record of it, or
+its record was dropped because the file disappeared) only fills the fields that hold no value (rating 0, flag none and no
+label count as no value), whatever its mtime, so a sidecar another tool creates for a shot you already rated or flagged
+does not overwrite that decision. Later changes of the same sidecar apply as before (newest wins). The walk forgets the
+sidecars whose file is gone (only after a walk that read the whole folder), so a recreated sidecar is a first read again.
+No API change, no migration, no step to take; revisions already written stay.
 
 ## Upgrading to 0.10.0 (items by path, device liveness)
 
