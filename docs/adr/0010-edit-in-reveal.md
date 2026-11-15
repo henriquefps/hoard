@@ -366,7 +366,7 @@ Reveal each photo one of three ways, per shot:
 
 **The intent** is the usual `DEVELOP` to one package: ClipData of the `content://media/…` URIs (in order),
 `TITLE`, `INITIAL_URI`, `CULLING` (version 2 to Reveal ≥ 0.9.0, keyed by those URI strings), server items mixed in as
-before. **URI items go at most 200 per intent** (`MAX_URI_ITEMS`), each intent with the ClipData, grant and `CULLING`
+before. **URI items go at most 200 per intent** (`MAX_URI_ITEMS`) and **whole shots only** (Reveal pairs RAW + JPEG and the other members of a shot only within one intent): shots are grouped by folder + case-insensitive stem, as culling does, and fill a chunk in order; a shot that would cross the limit starts the next chunk, and a shot of more than 200 files goes alone in a chunk of its own. Each intent with the ClipData, grant and `CULLING`
 of its own URIs, so 1,000 photos with `CULLING` v2 stay far under the ~1 MB Binder buffer; the chunk holding the
 initial photo goes first. Intent i carries URI chunk i and server batch i (500 per intent), and every intent of a
 multi-intent hand-off carries `BATCH_INDEX` / `BATCH_COUNT` (`RevealHandoff.buildIntents`, built off the main thread by

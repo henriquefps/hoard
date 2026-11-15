@@ -201,6 +201,72 @@ class ServerReferenceIntentTest {
         assertThat(pending[0].clipData!!.itemCount).isEqualTo(200)
     }
 
+    private fun out(path: String, n: Int) = RevealHandoff.Outgoing(path, Uri.parse("content://media/external_primary/images/media/$n"))
+
+    private fun clipNames(intent: Intent, files: List<RevealHandoff.Outgoing>): List<String> {
+        val byUri = files.associateBy { it.uri }
+        return (0 until intent.clipData!!.itemCount).map { byUri.getValue(intent.clipData!!.getItemAt(it).uri).path }
+    }
+
+    private fun sizeOf(intent: Intent): Int {
+        val parcel = android.os.Parcel.obtain()
+        intent.writeToParcel(parcel, 0)
+        return parcel.dataSize().also { parcel.recycle() }
+    }
+
+    @Test
+    fun rawJpegPairsAreNeverSplitAcrossIntents() {
+        // 150 pairs = 300 items: 100 pairs fill the first chunk (200), 50 pairs the second (100).
+        val files = (1..150).flatMap { n -> listOf(out("s/DSC%04d.ARW".format(n), n * 2), out("s/DSC%04d.JPG".format(n), n * 2 + 1)) }
+        val intents = RevealHandoff.buildIntents("dev.hfps.reveal", 90000, files, null, null, emptyMap(), null)
+        assertThat(intents.map { it.clipData!!.itemCount }).containsExactly(200, 100).inOrder()
+        for (intent in intents) {
+            val stems = clipNames(intent, files).groupBy { it.substringBeforeLast('.') }
+            assertThat(stems.values.all { it.size == 2 }).isTrue()
+            assertThat(sizeOf(intent)).isLessThan(400_000)
+        }
+    }
+
+    @Test
+    fun aShotAtTheBoundaryMovesWholeToTheNextIntent() {
+        val files = (1..199).map { out("s/A%04d.ARW".format(it), it) } +
+            listOf(out("s/Z.ARW", 500), out("s/z.jpg", 501), out("s/Z.xmp", 502)) // 3-file shot would cross 200
+        val intents = RevealHandoff.buildIntents("dev.hfps.reveal", 90000, files, null, null, emptyMap(), null)
+        assertThat(intents.map { it.clipData!!.itemCount }).containsExactly(199, 3).inOrder()
+        assertThat(clipNames(intents[1], files)).containsExactly("s/Z.ARW", "s/z.jpg", "s/Z.xmp")
+    }
+
+    @Test
+    fun aShotLargerThanTheLimitGoesAloneAndSameStemInAnotherFolderIsAnotherShot() {
+        // Same folder + same stem for all 250 (the extension differs): one shot.
+        val bigShot = (1..250).map { out("big/X.e$it", 1000 + it) }
+        val before = listOf(out("a/P.ARW", 1), out("a/P.JPG", 2))
+        val after = listOf(out("b/P.ARW", 3), out("b/P.JPG", 4), out("a/Q.ARW", 5))
+        val files = before + bigShot + after
+        val intents = RevealHandoff.buildIntents("dev.hfps.reveal", 90000, files, null, null, emptyMap(), null)
+        assertThat(intents.map { it.clipData!!.itemCount }).containsExactly(2, 250, 3).inOrder()
+        assertThat(clipNames(intents[1], files).all { it.startsWith("big/X.e") }).isTrue()
+    }
+
+    @Test
+    fun theInitialChunkGoesFirstWithWholeShotsMixedWithServerItems() {
+        val files = (1..150).flatMap { n -> listOf(out("s/DSC%04d.ARW".format(n), n * 2), out("s/DSC%04d.JPG".format(n), n * 2 + 1)) }
+        val initial = "s/DSC0140.JPG" // in the second chunk
+        val intents = RevealHandoff.buildIntents(
+            "dev.hfps.reveal", 90000, files, "T", initial, emptyMap(),
+            RevealHandoff.ServerItems("srv-1", (1..600).map { item(it) }, initialItemId = null),
+        )
+        assertThat(intents.map { it.clipData?.itemCount ?: 0 }).containsExactly(100, 200).inOrder()
+        assertThat(clipNames(intents[0], files)).contains(initial)
+        assertThat(clipNames(intents[0], files)).contains("s/DSC0140.ARW")
+        @Suppress("DEPRECATION")
+        assertThat(intents[0].getParcelableExtra<Uri>(RevealHandoff.EXTRA_INITIAL_URI)).isEqualTo(files.first { it.path == initial }.uri)
+        assertThat(intents.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_INDEX, -1) }).containsExactly(0, 1).inOrder()
+        @Suppress("DEPRECATION")
+        assertThat(intents.map { it.getParcelableArrayListExtra<Bundle>(RevealHandoff.EXTRA_SERVER_ITEMS)?.size ?: 0 }).containsExactly(500, 100).inOrder()
+        intents.forEach { assertThat(sizeOf(it)).isLessThan(400_000) }
+    }
+
     @Test
     fun anOlderRevealDoesNotTakeReferences() {
         installReveal(70100)
