@@ -30,10 +30,17 @@ type deviceEntry struct {
 	Model        *string `json:"model"`
 }
 
+// physicalEntry is a live device of physicalDevice.devices (revoked ones are never listed, as before 0.10.0);
+// lastSeenAt (ms, null: never) is hoard-server 0.10.0 (ADR 0017 "Liveness").
+type physicalEntry struct {
+	deviceEntry
+	LastSeenAt *int64 `json:"lastSeenAt"`
+}
+
 type physicalView struct {
-	ID      string        `json:"id"`
-	Name    string        `json:"name"`
-	Devices []deviceEntry `json:"devices"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Devices []physicalEntry `json:"devices"`
 }
 
 type candidate struct {
@@ -131,7 +138,7 @@ func (s *Server) deviceView(ctx context.Context, id string) (deviceView, error) 
 	}
 	v := deviceView{DeviceID: d.ID, Name: d.Name, Platform: d.Platform, App: d.App, Manufacturer: d.Manufacturer, Model: d.Model,
 		Features:       []string{},
-		PhysicalDevice: physicalView{ID: d.PhysicalID, Name: d.Name, Devices: []deviceEntry{}}, Candidates: candidatesFor(d, all)}
+		PhysicalDevice: physicalView{ID: d.PhysicalID, Name: d.Name, Devices: []physicalEntry{}}, Candidates: candidatesFor(d, all)}
 	if d.CullingSince != nil {
 		v.Features = append(v.Features, featureCulling)
 	}
@@ -140,7 +147,7 @@ func (s *Server) deviceView(ctx context.Context, id string) (deviceView, error) 
 		v.PhysicalDevice.Name = members[0].Name
 	}
 	for _, m := range members {
-		v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, entry(m))
+		v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, physicalEntry{entry(m), m.LastSeenAt})
 	}
 	return v, nil
 }

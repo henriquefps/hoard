@@ -45,6 +45,7 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/items/changes", s.device(s.handleItemChanges))
 	mux.HandleFunc("GET /v1/items/{itemId}", s.device(s.handleItem))
 	mux.HandleFunc("POST /v1/items/lookup", s.device(s.handleItemLookup))
+	mux.HandleFunc("POST /v1/items/by-path", s.device(s.handleItemsByPath)) // hoard-server 0.10.0, ADR 0014
 	// Gallery previews (ADR 0015).
 	mux.HandleFunc("GET /v1/items/{itemId}/preview", s.previewDevice(s.handlePreview))
 	mux.HandleFunc("GET /v1/items/{itemId}/poster", s.previewDevice(s.handlePoster))
@@ -165,9 +166,9 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
-// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews).
+// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews), "items-by-path" (ADR 0014, 0.10.0).
 func (s *Server) features() []string {
-	f := []string{"items"}
+	f := []string{"items", "items-by-path"}
 	if s.prev != nil {
 		f = append(f, "previews")
 	}

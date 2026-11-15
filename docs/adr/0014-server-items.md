@@ -5,6 +5,7 @@
 - **Amends**: ADR 0013 (protocol additions under `/v1`, written there in "Items (hoard-server 0.5.0)")
 - **Amended by**: ADR 0016 (culling records share the items counter and travel in the items feed with
   `include=culling`; an item's culling follows it when it is replaced)
+- **Amended**: 2026-11-15, hoard-server 0.10.0: items by path ("Items by path", below).
 
 ## Context
 
@@ -219,6 +220,35 @@ tables `file_meta`, `items` (tombstones keep their row), `item_sources`, `item_f
 the feed (rev), the query (sort time, kind) and the lookup. Upgrading from 0.4.0 needs no step; the first walk reads
 metadata and makes items. **Rolling back** to 0.4.0 after the upgrade is refused by 0.4.0 ("database schema 3 is newer
 than this server"): back up `data/` before upgrading (README).
+
+## Items by path (hoard-server 0.10.0)
+
+**Purpose.** Hoard hands photos the server holds to Reveal as server references instead of content URIs. It needs the
+item id of a file it sees on an SMB share. It maps a share prefix to a NAS folder once, by fingerprinting one file of
+the share and finding it with `POST /v1/items/lookup`; then it resolves a whole folder with
+`GET /v1/items?folder=&path=` and a scattered selection with the call below, checking size and modification time per
+file. On a mismatch (the file changed since the walk, or the path no longer matches) it falls back to
+`POST /v1/items/lookup` with the file's own fingerprint.
+
+`POST /v1/items/by-path` (device key) `{"folder": "<NAS folder id>", "paths": ["2024-05-03/DSC00301.ARW", …]}` →
+
+```json
+{"found": [{"path": "2024-05-03/DSC00301.ARW", "itemId": "…", "role": "raw", "size": 25165824, "modifiedAt": 1714735200000}],
+ "missing": ["2024-05-03/gone.ARW"]}
+```
+
+- At most 1000 paths, each relative to the folder and `/`-separated. The server normalises `a//b/./c` to `a/b/c` before
+  matching; a path that is absolute, has a `..` segment, a backslash or a control character, is empty or longer than
+  1024 bytes is refused (`422 invalid_request`, `details.index`). `422` too for a malformed folder id or too many paths;
+  `404 not_found` for a folder the server does not know.
+- `found` and `missing` echo each path as the client sent it, in request order, each once. `role` is the file's role in
+  its item (`raw`, `rendered`, `video`, `sidecar`, …); `size` and `modifiedAt` (Unix ms) are the NAS file as the index
+  last saw it. A path is found when an indexed, not removed file of that folder is a member of a live item whose
+  sources include that folder.
+- Live items only: if the matching item is a tombstone with `replacedBy` (its RAW appeared), the live replacement is
+  returned once, not followed further; a tombstone with no live replacement counts as missing.
+- No new table or index: `nas_files (folder_id, rel_path)` is unique and `item_files` is keyed by fingerprint (no
+  migration). `GET /v1/server` `features` gains `"items-by-path"` (absent before 0.10.0: a client checks it first).
 
 ## Measurements
 

@@ -697,6 +697,49 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/items/by-path:
+    post:
+      tags: [items]
+      summary: "The live items of the files at these paths of a NAS folder (hoard-server 0.10.0, ADR 0014 \"Items by path\")"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folder, paths]
+              properties:
+                folder: { $ref: "#/components/schemas/Uuid" }
+                paths:
+                  type: array
+                  maxItems: 1000
+                  items: { type: string, maxLength: 1024, description: "Relative to the folder, '/'-separated, no '..'; normalised by the server" }
+      responses:
+        "200":
+          description: The paths with a live item (a tombstone's replacedBy followed once) and those without
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [found, missing]
+                properties:
+                  found:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, itemId, role, size, modifiedAt]
+                      properties:
+                        path: { type: string, description: As sent }
+                        itemId: { $ref: "#/components/schemas/Uuid" }
+                        role: { $ref: "#/components/schemas/Role" }
+                        size: { type: integer, format: int64 }
+                        modifiedAt: { type: integer, format: int64, description: "Unix ms, the NAS file's modification time" }
+                  missing:
+                    type: array
+                    items: { type: string }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
   /v1/items/{itemId}/preview:
     get:
       tags: [previews]
@@ -1954,7 +1997,14 @@ components:
             name: { type: string }
             devices:
               type: array
-              items: { $ref: "#/components/schemas/DeviceEntry" }
+              description: "The live (not revoked) devices of the physical device; revoked ones are never listed. `lastSeenAt` is hoard-server 0.10.0 (ADR 0017 \"Liveness\")"
+              items:
+                allOf:
+                  - $ref: "#/components/schemas/DeviceEntry"
+                  - type: object
+                    required: [lastSeenAt]
+                    properties:
+                      lastSeenAt: { type: [integer, "null"], format: int64, description: "Unix ms; null: never seen" }
         candidates:
           type: array
           items: { $ref: "#/components/schemas/Candidate" }

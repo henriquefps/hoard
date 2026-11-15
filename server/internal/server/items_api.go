@@ -267,3 +267,107 @@ func (s *Server) handleItemLookup(w http.ResponseWriter, r *http.Request) {
 	extra.WriteString("]")
 	writeItems(w, rows, extra.String())
 }
+
+// cleanItemPath normalises a relative NAS path ("a//b/./c" becomes "a/b/c"); ok is false for an absolute path, a ".."
+// segment, a backslash, a control character or a path that is empty once normalised.
+func cleanItemPath(p string) (string, bool) {
+	if len(p) > 1024 || strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\") {
+		return "", false
+	}
+	for _, c := range p {
+		if c < 0x20 || c == 0x7f {
+			return "", false
+		}
+	}
+	var parts []string
+	for _, seg := range strings.Split(p, "/") {
+		switch seg {
+		case "", ".":
+		case "..":
+			return "", false
+		default:
+			parts = append(parts, seg)
+		}
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	return strings.Join(parts, "/"), true
+}
+
+// handleItemsByPath resolves NAS paths to items (ADR 0014 "Items by path", hoard-server 0.10.0).
+func (s *Server) handleItemsByPath(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Folder string   `json:"folder"`
+		Paths  []string `json:"paths"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if !uuidPattern.MatchString(req.Folder) {
+		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "folder is a NAS folder id.", nil)
+		return
+	}
+	if len(req.Paths) > maxLookup {
+		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", fmt.Sprintf("At most %d paths per request.", maxLookup), nil)
+		return
+	}
+	clean := make([]string, len(req.Paths))
+	for i, p := range req.Paths {
+		c, ok := cleanItemPath(p)
+		if !ok {
+			fail(w, r, http.StatusUnprocessableEntity, "invalid_request",
+				"Paths are relative to the folder, '/'-separated, without '..', backslashes or a leading '/'.", map[string]any{"index": i})
+			return
+		}
+		clean[i] = c
+	}
+	if _, err := s.store.NasFolder(r.Context(), req.Folder); errors.Is(err, store.ErrNotFound) {
+		fail(w, r, http.StatusNotFound, "not_found", "No such NAS folder.", nil)
+		return
+	} else if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	matches, err := s.store.ItemsByPath(r.Context(), req.Folder, clean)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	byPath := make(map[string]store.PathMatch, len(matches))
+	for _, m := range matches {
+		byPath[m.Path] = m
+	}
+	var buf bytes.Buffer
+	buf.WriteString(`{"found":[`)
+	var missing []string
+	done := map[string]bool{}
+	n := 0
+	for i, p := range req.Paths { // in request order, each requested path once
+		if done[p] {
+			continue
+		}
+		done[p] = true
+		m, ok := byPath[clean[i]]
+		if !ok {
+			missing = append(missing, p)
+			continue
+		}
+		if n > 0 {
+			buf.WriteByte(',')
+		}
+		n++
+		fmt.Fprintf(&buf, `{"path":%s,"itemId":%s,"role":%s,"size":%d,"modifiedAt":%d}`, jsonString(p), jsonString(m.ItemID), jsonString(m.Role), m.Size, m.ModifiedAt)
+	}
+	buf.WriteString(`],"missing":[`)
+	for i, p := range missing {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(jsonString(p))
+	}
+	buf.WriteString("]}\n")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(buf.Bytes())
+}
