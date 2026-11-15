@@ -581,7 +581,7 @@
     <string name="t_settings_appearance">Appearance</string>
     <string name="t_settings_browsing">Browsing</string>
     <string name="t_settings_culling">Culling</string>
-    <string name="t_settings_culling_hint">Assisted culling (what counts as blurry or eyes closed, how bursts are grouped) and ratings saved as XMP next to the photos.</string>
+    <string name="t_settings_culling_hint">Assisted culling (what counts as blurry or eyes closed, how bursts are grouped) and how \"Export XMP\" names sidecars.</string>
     <string name="t_settings_default">default</string>
     <string name="t_settings_default_conflict">If a file already exists</string>
     <string name="t_settings_default_sort">Default sort</string>

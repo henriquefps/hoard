@@ -2,4 +2,4 @@
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
 dependencyResolutionManagement { repositories { google(); mavenCentral() } }
 rootProject.name = 'mediastore-raw-probe'
-include ':writer', ':reader'
+include ':writer', ':reader', ':receiver'
