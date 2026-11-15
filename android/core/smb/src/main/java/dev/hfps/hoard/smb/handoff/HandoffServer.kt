@@ -53,9 +53,10 @@ import java.util.concurrent.atomic.AtomicLong
  * Every proxied open takes a short lease in [StreamRegistry] ([LEASE_IDLE_MS] after the last read), which keeps the
  * streaming service (and so the process, un-frozen) up while Reveal reads, then lets it stop.
  *
- * Bursts (ADR 0010 "Bursts of opens"): a client may open hundreds of links at once. Opens are gated ([MAX_OPENING]
- * doing network work at once, a bounded queue, then `busy:`), small files are served from a private copy
- * ([HandoffCache]: a plain descriptor, no appfuse), proxy descriptors are capped and read with a timeout
+ * Bursts (ADR 0010 "Bursts of opens"): a client may open hundreds of links at once. At most [MAX_READS] hand-off
+ * reads run at once ([reads]: an open doing network work, or a proxy descriptor until it is closed); the others wait
+ * at most [BUSY_WAIT_MS], then fail with `busy:` ([HandoffBusy], the frozen contract). Small files are served from a
+ * private copy ([HandoffCache]: a plain descriptor, no appfuse), proxy descriptors are read with a timeout
  * ([HandoffProxy]), an unreachable machine fails the rest of the burst at once ([ConnectBackoff]), the connection
  * is shared and kept a little after the last use ([Sources]), and the log has one line per burst ([HandoffBurst]).
  */
@@ -67,10 +68,14 @@ object HandoffServer {
     /** A lease (and the service) ends this long after Reveal last read through a link. */
     const val LEASE_IDLE_MS = 2 * 60_000L
 
-    /** Opens doing network work (stat, a small copy, opening a descriptor) at once; the rest wait or are refused. */
-    const val MAX_OPENING = 4
-    const val OPEN_QUEUE = 16
-    const val OPEN_WAIT_MS = 3_000L
+    /**
+     * The busy contract's limit (ADR 0010, docs/integration contract 11): concurrent hand-off reads, i.e. opens doing
+     * network work (stat, a small copy, opening a descriptor) plus proxy descriptors not closed yet.
+     */
+    const val MAX_READS = 6
+
+    /** How long an open waits for a read slot before `busy:` (the contract: under 2 s). */
+    const val BUSY_WAIT_MS = 1_500L
 
     /** After a machine could not be reached, opens of its share fail at once for this long. */
     const val BACKOFF_MS = 10_000L
@@ -85,7 +90,7 @@ object HandoffServer {
     private lateinit var credentials: CredentialStore
     private lateinit var cache: HandoffCache
 
-    private val opening = HandoffLimiter(MAX_OPENING, OPEN_QUEUE, OPEN_WAIT_MS, "hand-off opens in progress")
+    internal val reads = HandoffLimiter(MAX_READS, BUSY_WAIT_MS, "hand-off reads in progress")
     private val backoff = ConnectBackoff(BACKOFF_MS)
     private val burst = HandoffBurst(BURST_QUIET_MS)
     private val summaryScheduled = AtomicBoolean()
@@ -143,8 +148,8 @@ object HandoffServer {
      * Opens a link for [mode]. Unknown link, unreachable share, missing file, refused login: [FileNotFoundException]
      * with what went wrong (Reveal treats the photo as unreadable and falls back to its preview). Too many opens at
      * once: [FileNotFoundException] whose message starts with `busy:` ([HandoffBusy]; Reveal retries those). A write
-     * on a photo: [SecurityException]. Runs on a binder thread (never the main thread): at most [MAX_OPENING] opens
-     * do network work at once, the others wait at most [OPEN_WAIT_MS] (ADR 0010 "Bursts of opens").
+     * on a photo: [SecurityException]. Runs on a binder thread (never the main thread): at most [MAX_READS] reads run
+     * at once, the others wait at most [BUSY_WAIT_MS] (ADR 0010 "Bursts of opens").
      */
     fun open(uri: Uri, mode: String, caller: String?): ParcelFileDescriptor {
         val item = item(uri) ?: throw FileNotFoundException("This photo is no longer shared with Reveal")
@@ -160,27 +165,39 @@ object HandoffServer {
         scheduleSummary()
         var outcome = OpenOutcome.FAILED
         try {
-            // Network work (stat, a small copy) under the gate; a proxy descriptor is opened after it, under its own
-            // limit, so cheap opens are not stuck behind the system's (slow, serialised) appfuse opens.
-            val opened = opening.acquire().use { slot ->
-                if (debug) Log.d(TAG, "open ${item.name} ($mode) for $caller: gate after ${(System.nanoTime() - t0) / 1_000_000} ms")
-                openGated(item, access).also { if (debug) Log.d(TAG, "open ${item.name}: ${it.outcome} after ${(System.nanoTime() - t0) / 1_000_000} ms") }
+            val slot = try {
+                reads.acquire()
+            } catch (e: FileNotFoundException) {
+                outcome = OpenOutcome.REFUSED
+                throw e
             }
+            if (debug) Log.d(TAG, "open ${item.name} ($mode) for $caller: slot ${slot.index} after ${(System.nanoTime() - t0) / 1_000_000} ms")
+            val opened = try {
+                openGated(item, access, slot)
+            } catch (e: Throwable) {
+                slot.close() // idempotent: a proxy open that took the slot already gave it back
+                throw e
+            }
+            // A plain descriptor is read without Hoard: its slot goes back now. A proxy descriptor keeps it until closed.
+            if (opened.outcome == OpenOutcome.CACHED) slot.close()
+            if (debug) Log.d(TAG, "open ${item.name}: ${opened.outcome} after ${(System.nanoTime() - t0) / 1_000_000} ms")
             outcome = opened.outcome
-            return opened.descriptor ?: opened.proxy!!().also { if (debug) Log.d(TAG, "open ${item.name}: descriptor after ${(System.nanoTime() - t0) / 1_000_000} ms") }
+            return opened.descriptor
         } catch (e: FileNotFoundException) {
-            if (HandoffBusy.isBusy(e)) outcome = OpenOutcome.REFUSED
+            // Only the limiter says `busy:` (the contract); any other message that happens to start so (a file named
+            // "busy:…") is reworded, so a client never retries an unreadable file as busy.
+            if (outcome != OpenOutcome.REFUSED && HandoffBusy.isBusy(e)) throw FileNotFoundException("unreadable: ${e.message}")
             throw e
         } finally {
             burst.end(outcome)
         }
     }
 
-    /** What [openGated] decided: a descriptor already, or a proxy descriptor to open outside the gate. */
-    private class Opened(val outcome: OpenOutcome, val descriptor: ParcelFileDescriptor? = null, val proxy: (() -> ParcelFileDescriptor)? = null)
+    private class Opened(val outcome: OpenOutcome, val descriptor: ParcelFileDescriptor)
 
+    /** Opens [item] holding [slot]; a proxy descriptor takes the slot over (given back when it is closed). */
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun openGated(item: HandoffItem, access: HandoffAccess): Opened {
+    private fun openGated(item: HandoffItem, access: HandoffAccess, slot: HandoffLimiter.Slot): Opened {
         val machine = store.machine(item.machineId)
             ?: throw FileNotFoundException("${item.name}: its machine is no longer in Hoard")
         if (machine.serverGuid == null) throw FileNotFoundException("${item.name}: the machine is not pinned yet")
@@ -198,7 +215,7 @@ object HandoffServer {
             source.smb.activeAddress?.let { store.setLastGood(machine.id, it) }
             if (info?.isDirectory == true) throw FileNotFoundException("${item.name} is a folder now")
             store.touch(item.id)
-            if (access != HandoffAccess.READ) return Opened(OpenOutcome.WRITE, descriptor = openWrite(item, machine, source, info, access))
+            if (access != HandoffAccess.READ) return Opened(OpenOutcome.WRITE, openWrite(item, machine, source, info, access, slot))
             info ?: throw FileNotFoundException("${item.name} is no longer on the share")
             store.updateFile(item.id, info.size, info.modifiedMillis)
             // Small files: a private copy and a plain descriptor (no appfuse); a slow copy falls back to a proxy.
@@ -208,13 +225,14 @@ object HandoffServer {
                 } catch (e: Throwable) {
                     throw unreadable(item, SmbErrors.map(e), null)
                 }
-                if (copy != null) return Opened(OpenOutcome.CACHED, descriptor = ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY))
+                if (copy != null) return Opened(OpenOutcome.CACHED, ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY))
             }
             // The lease holds its own reference to the connection, so it outlives this handle.
             val entry = lease(item, machine)
-            return Opened(OpenOutcome.PROXIED) {
-                HandoffProxy.openRead(context(), entry, { entry.source.reader(item.path, info.size, entry.fetched) }, info.size)
-            }
+            return Opened(
+                OpenOutcome.PROXIED,
+                HandoffProxy.openRead(context(), slot, entry, { entry.source.reader(item.path, info.size, entry.fetched) }, info.size),
+            )
         } finally {
             source.close()
         }
@@ -271,7 +289,7 @@ object HandoffServer {
     // --- Sidecar writes -------------------------------------------------------------------------------------------
 
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun openWrite(item: HandoffItem, machine: HandoffMachine, source: Sources.Handle, info: RemoteFileInfo?, access: HandoffAccess): ParcelFileDescriptor {
+    private fun openWrite(item: HandoffItem, machine: HandoffMachine, source: Sources.Handle, info: RemoteFileInfo?, access: HandoffAccess, slot: HandoffLimiter.Slot): ParcelFileDescriptor {
         val initial = if (access == HandoffAccess.WRITE_TRUNCATE || info == null) {
             ByteArray(0)
         } else {
@@ -285,7 +303,7 @@ object HandoffServer {
         val buffer = SidecarBuffer(initial, append = access == HandoffAccess.APPEND)
         val entry = lease(item, machine)
         val writer = Sources.acquire(machine, item.share.orEmpty(), credentials)
-        return HandoffProxy.openWrite(context(), entry, { slot -> SidecarCallback(item, buffer, writer, entry, slot) }) { writer.close() }
+        return HandoffProxy.openWrite(context(), slot, entry, SidecarCallback(item, buffer, writer, entry, slot)) { writer.close() }
     }
 
     private fun readAll(source: StreamSource, path: String, size: Long): ByteArray {
@@ -359,7 +377,7 @@ object HandoffServer {
                 source.close()
                 entry.openFds.decrementAndGet()
                 entry.touch()
-                slot.close()
+                HandoffProxy.released(slot)
             }
         }
 

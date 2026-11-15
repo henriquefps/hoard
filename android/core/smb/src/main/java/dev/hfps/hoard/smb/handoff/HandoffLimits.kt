@@ -8,12 +8,17 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * The contract of a refused open (ADR 0010 "Bursts of opens"): a [FileNotFoundException] whose message starts with
- * `busy:`. Reveal retries those with backoff, and tells them apart from a revoked or unreadable link (any other
- * message). Pure.
+ * The contract of a refused open (ADR 0010 "Bursts of opens", frozen; docs/integration contract 11): a
+ * [FileNotFoundException] whose message starts exactly with `busy:`, thrown in one case only: the provider already
+ * serves its maximum number of concurrent hand-off reads ([HandoffLimiter.slots]) and a bounded wait
+ * ([HandoffLimiter.waitMs], under 2 s) freed no slot. Clients retry those (250 ms doubling up to 4 s, giving up after
+ * about 30 s) and tell them apart from a revoked or unreadable link (any other message). Pure.
  */
 object HandoffBusy {
     const val PREFIX = "busy:"
+
+    /** The contract's ceiling on [HandoffLimiter.waitMs]. */
+    const val MAX_WAIT_MS = 2_000L
 
     fun exception(detail: String) = FileNotFoundException("$PREFIX $detail, retry")
 
@@ -21,22 +26,22 @@ object HandoffBusy {
 }
 
 /**
- * A bounded, fair slot pool with a bounded queue (pure, JVM-tested): at most [slots] holders at once; up to
- * [maxQueued] callers wait (first come, first served) at most [waitMs] for a slot; beyond the queue, or after the
- * wait, [acquire] throws [HandoffBusy] at once. Never blocks a caller (a binder thread) longer than [waitMs].
+ * A bounded, fair slot pool (pure, JVM-tested): at most [slots] holders at once; other callers wait (first come,
+ * first served) at most [waitMs] for a slot, then [acquire] throws [HandoffBusy]. It never refuses before the wait
+ * (the busy contract), and never blocks a caller (a binder thread) longer than [waitMs]; the number of waiters is
+ * bounded by the binder threads of the process (16).
  *
  * A [Slot] carries its index (`0 until slots`), so a pool of per-slot resources (one looper per proxy descriptor)
  * is reused instead of created per open.
  */
 class HandoffLimiter(
     val slots: Int,
-    val maxQueued: Int,
     val waitMs: Long,
-    /** What is limited, for the busy message (`"8 hand-off reads in progress"`). */
+    /** What is limited, for the busy message (`"6 hand-off reads in progress"`). */
     private val what: String,
 ) {
     init {
-        require(slots > 0 && maxQueued >= 0 && waitMs >= 0)
+        require(slots > 0 && waitMs >= 0 && waitMs < HandoffBusy.MAX_WAIT_MS)
     }
 
     private val lock = ReentrantLock(true)
@@ -64,10 +69,9 @@ class HandoffLimiter(
         }
     }
 
-    /** A slot, waiting at most [waitMs]; [HandoffBusy] when none frees up in time or the queue is full. */
+    /** A slot, waiting at most [waitMs]; [HandoffBusy] when none frees up in time. */
     fun acquire(): Slot = lock.withLock {
         if (queue.isEmpty() && free.isNotEmpty()) return Slot(free.removeFirst())
-        if (queue.size >= maxQueued) throw busy()
         val ticket = Any()
         queue.addLast(ticket)
         try {

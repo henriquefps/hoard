@@ -25,8 +25,8 @@ import java.util.concurrent.atomic.AtomicLong
  * file's size), and every read is a kernel request answered on a looper of ours. A client opening hundreds at once
  * (Reveal's start-up) could pile up system_server's binder threads behind vold and trip the watchdog. So:
  *
- *  - at most [MAX_FDS] hand-off proxy descriptors are open at once ([slots]); beyond that an open waits at most
- *    [SLOT_WAIT_MS] in a queue of at most [SLOT_QUEUE], then fails with [HandoffBusy];
+ *  - a proxy descriptor holds its slot of [HandoffServer.reads] (at most [HandoffServer.MAX_READS] hand-off reads
+ *    at once) from the open until the client closes it, so at most that many proxy descriptors are ever open;
  *  - `openProxyFileDescriptor` itself is called by one thread at a time ([openLock]): vold serialises them anyway;
  *  - each slot has its own looper, started once and reused (not a thread per descriptor), so a slow read on one
  *    descriptor never delays another's size or read;
@@ -37,17 +37,12 @@ import java.util.concurrent.atomic.AtomicLong
 internal object HandoffProxy {
     private const val TAG = "HoardHandoff"
 
-    /** Hand-off proxy descriptors open at once. */
-    const val MAX_FDS = 6
-    const val SLOT_QUEUE = 8
-    const val SLOT_WAIT_MS = 2_000L
-
     /** Longest a read callback waits for the network before answering EIO (vold's watchdog is 60 s). */
     const val READ_TIMEOUT_MS = 10_000L
 
-    val slots = HandoffLimiter(MAX_FDS, SLOT_QUEUE, SLOT_WAIT_MS, "hand-off reads in progress")
     private val openLock = Any()
-    private val loopers = arrayOfNulls<HandlerThread>(MAX_FDS)
+    private val loopers = arrayOfNulls<HandlerThread>(HandoffServer.MAX_READS)
+    private val openNow = AtomicInteger()
     private val proxyOpens = AtomicInteger()
     private val proxyOpenNanos = AtomicLong()
     private val proxyOpenMaxNanos = AtomicLong()
@@ -58,7 +53,7 @@ internal object HandoffProxy {
         val total = proxyOpenNanos.getAndSet(0)
         val max = proxyOpenMaxNanos.getAndSet(0)
         val avg = if (n > 0) total / n / 1_000_000 else 0
-        return "${slots.active} descriptors open, appfuse open avg $avg ms max ${max / 1_000_000} ms"
+        return "${openNow.get()} descriptors open, appfuse open avg $avg ms max ${max / 1_000_000} ms"
     }
 
     private val reads = Executors.newCachedThreadPool { r -> Thread(r, "hoard-handoff-read").apply { isDaemon = true } }
@@ -72,9 +67,11 @@ internal object HandoffProxy {
         return Handler(thread.looper)
     }
 
-    /** A read-only descriptor of [size] bytes over [reader] ([entry]'s lease); [HandoffBusy] when every slot is taken. */
-    fun openRead(context: Context, entry: StreamEntry, reader: () -> StreamReader, size: Long): ParcelFileDescriptor {
-        val slot = slots.acquire()
+    /**
+     * A read-only descriptor of [size] bytes over [reader] ([entry]'s lease). Takes [slot]: released when the client
+     * closes the descriptor, or at once when the open fails.
+     */
+    fun openRead(context: Context, slot: HandoffLimiter.Slot, entry: StreamEntry, reader: () -> StreamReader, size: Long): ParcelFileDescriptor {
         val source = try {
             reader()
         } catch (e: Throwable) {
@@ -85,15 +82,14 @@ internal object HandoffProxy {
         return open(context, slot, entry, ParcelFileDescriptor.MODE_READ_ONLY, ReadCallback(entry, size, timed, slot)) { timed.close() }
     }
 
-    /** A read-write descriptor ([callback]: a sidecar in memory); [HandoffBusy] when every slot is taken. */
-    fun openWrite(context: Context, entry: StreamEntry, callback: (HandoffLimiter.Slot) -> ProxyFileDescriptorCallback, cleanup: () -> Unit): ParcelFileDescriptor {
-        val slot = try {
-            slots.acquire()
-        } catch (e: Throwable) {
-            cleanup()
-            throw e
-        }
-        return open(context, slot, entry, ParcelFileDescriptor.MODE_READ_WRITE, callback(slot), cleanup)
+    /** A read-write descriptor ([callback]: a sidecar in memory); takes [slot] as [openRead] does. */
+    fun openWrite(context: Context, slot: HandoffLimiter.Slot, entry: StreamEntry, callback: ProxyFileDescriptorCallback, cleanup: () -> Unit): ParcelFileDescriptor =
+        open(context, slot, entry, ParcelFileDescriptor.MODE_READ_WRITE, callback, cleanup)
+
+    /** A descriptor's slot goes back (from its callback's `onRelease`). */
+    fun released(slot: HandoffLimiter.Slot) {
+        openNow.decrementAndGet()
+        slot.close()
     }
 
     private fun open(
@@ -111,7 +107,7 @@ internal object HandoffProxy {
             return synchronized(openLock) {
                 val t0 = System.nanoTime()
                 try {
-                    storage.openProxyFileDescriptor(mode, callback, handler(slot.index))
+                    storage.openProxyFileDescriptor(mode, callback, handler(slot.index)).also { openNow.incrementAndGet() }
                 } finally {
                     val took = System.nanoTime() - t0
                     proxyOpens.incrementAndGet()
@@ -152,7 +148,7 @@ internal object HandoffProxy {
             reader.close()
             entry.openFds.decrementAndGet()
             entry.touch()
-            slot.close()
+            released(slot)
         }
     }
 }

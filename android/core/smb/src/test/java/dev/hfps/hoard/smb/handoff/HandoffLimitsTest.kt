@@ -39,8 +39,15 @@ class HandoffLimitsTest {
     // --- Limiter --------------------------------------------------------------------------------------------------
 
     @Test
+    fun `the busy contract's constants - a limit of 4 to 8 reads, a wait under 2 s`() {
+        assertTrue(HandoffServer.MAX_READS in 4..8)
+        assertTrue(HandoffServer.BUSY_WAIT_MS in 1 until HandoffBusy.MAX_WAIT_MS)
+        assertThrows(IllegalArgumentException::class.java) { HandoffLimiter(slots = 1, waitMs = HandoffBusy.MAX_WAIT_MS, what = "things") }
+    }
+
+    @Test
     fun `slots are handed out up to the limit and reused after release`() {
-        val limiter = HandoffLimiter(slots = 2, maxQueued = 0, waitMs = 0, what = "things")
+        val limiter = HandoffLimiter(slots = 2, waitMs = 0, what = "things")
         val a = limiter.acquire()
         val b = limiter.acquire()
         assertEquals(setOf(0, 1), setOf(a.index, b.index))
@@ -57,7 +64,7 @@ class HandoffLimitsTest {
 
     @Test
     fun `a waiter gets the slot released within the wait`() {
-        val limiter = HandoffLimiter(slots = 1, maxQueued = 4, waitMs = 5_000, what = "things")
+        val limiter = HandoffLimiter(slots = 1, waitMs = 1_500, what = "things")
         val held = limiter.acquire()
         val pool = Executors.newSingleThreadExecutor()
         val waiting = pool.submit<Int> { limiter.acquire().use { it.index } }
@@ -68,27 +75,28 @@ class HandoffLimitsTest {
     }
 
     @Test
-    fun `a waiter gives up after the wait, a full queue refuses at once`() {
-        val limiter = HandoffLimiter(slots = 1, maxQueued = 1, waitMs = 300, what = "things")
+    fun `busy only after the bounded wait, never before, however many wait`() {
+        val limiter = HandoffLimiter(slots = 1, waitMs = 300, what = "things")
         limiter.acquire()
-        val pool = Executors.newSingleThreadExecutor()
-        val started = System.nanoTime()
-        val waiting = pool.submit<Throwable?> { runCatching { limiter.acquire() }.exceptionOrNull() }
-        while (limiter.queued == 0) Thread.sleep(2)
-        // The queue (1) is full: refused without waiting.
-        val t0 = System.nanoTime()
-        assertTrue(HandoffBusy.isBusy(runCatching { limiter.acquire() }.exceptionOrNull()))
-        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0) < 100)
-        assertTrue(HandoffBusy.isBusy(waiting.get(5, TimeUnit.SECONDS)))
-        val waited = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
-        assertTrue("waited $waited ms", waited in 250..3_000)
-        assertEquals(0, limiter.queued)
+        val pool = Executors.newFixedThreadPool(20)
+        val results = (1..20).map {
+            pool.submit<Pair<Throwable?, Long>> {
+                val t0 = System.nanoTime()
+                val e = runCatching { limiter.acquire() }.exceptionOrNull()
+                e to TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0)
+            }
+        }.map { it.get(10, TimeUnit.SECONDS) }
         pool.shutdown()
+        results.forEach { (e, ms) ->
+            assertTrue(HandoffBusy.isBusy(e))
+            assertTrue("refused after $ms ms", ms in 280..HandoffBusy.MAX_WAIT_MS)
+        }
+        assertEquals(0, limiter.queued)
     }
 
     @Test
     fun `a burst of 200 never exceeds the limit, and every caller is served or refused within the wait`() {
-        val limiter = HandoffLimiter(slots = 4, maxQueued = 16, waitMs = 200, what = "things")
+        val limiter = HandoffLimiter(slots = 4, waitMs = 200, what = "things")
         val running = AtomicInteger()
         val peak = AtomicInteger()
         val served = AtomicInteger()
@@ -128,7 +136,7 @@ class HandoffLimitsTest {
         assertEquals(200, served.get() + refused.get())
         assertTrue(served.get() >= 4)
         assertTrue(refused.get() > 0)
-        assertTrue("a refusal took ${slowest.get()} ms", slowest.get() < 2_000)
+        assertTrue("a refusal took ${slowest.get()} ms", slowest.get() < HandoffBusy.MAX_WAIT_MS)
         assertTrue(indexes.all { it in 0 until 4 })
         assertEquals(0, limiter.active)
         assertEquals(0, limiter.queued)
