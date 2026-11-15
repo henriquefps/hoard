@@ -139,7 +139,7 @@ class RevealHandoff(private val context: Context, @Suppress("unused") private va
 
         /**
          * The intents of one hand-off (pure apart from `Intent`/`Bundle`, Robolectric-tested). URI items go
-         * [MAX_URI_ITEMS] per intent, each intent with the ClipData, read grant and `CULLING` of its own URIs; the chunk
+         * [MAX_URI_ITEMS] per intent, whole shots only ([shotChunks]), each intent with the ClipData, read grant and `CULLING` of its own URIs; the chunk
          * holding [initialPath] goes first, with `INITIAL_URI`. Server items go [MAX_SERVER_ITEMS] per intent. Intent i
          * carries URI chunk i and server batch i (when there are that many), so the count is the larger of the two;
          * more than one intent: every one has `BATCH_INDEX` (0 = the first, with `INITIAL_ITEM` / `INITIAL_URI`) and
@@ -157,7 +157,7 @@ class RevealHandoff(private val context: Context, @Suppress("unused") private va
             val batches = server?.let { serverBatches(it.items) }.orEmpty()
             if (files.isEmpty() && batches.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No photos to edit")
             val cleanTitle = title?.trim()?.take(MAX_TITLE)?.trim()?.takeIf { it.isNotEmpty() }
-            val chunks = files.chunked(MAX_URI_ITEMS).toMutableList()
+            val chunks = shotChunks(files).toMutableList()
             val initialChunk = initialPath?.let { p -> chunks.indexOfFirst { c -> c.any { it.path == p } } } ?: -1
             if (initialChunk > 0) chunks.add(0, chunks.removeAt(initialChunk))
             val version = cullingVersionFor(versionCode)
@@ -194,6 +194,37 @@ class RevealHandoff(private val context: Context, @Suppress("unused") private va
                 intent.putExtra(EXTRA_BATCH_COUNT, intents.size)
             }
             return intents
+        }
+
+        /** Shot identity, as culling and ImageFormats pair them: the folder plus the case-insensitive stem. */
+        private fun shotKey(path: String): String =
+            path.substringBeforeLast('/', "") + "/" + ImageFormats.stem(path).lowercase()
+
+        /**
+         * Chunks of at most [MAX_URI_ITEMS] items that never split a shot (Reveal pairs RAW + JPEG only within one
+         * intent). Whole shots fill a chunk in order of first appearance; a shot that would cross the limit starts the
+         * next chunk; a shot larger than the limit goes alone in a chunk of its own.
+         */
+        internal fun shotChunks(files: List<Outgoing>): List<List<Outgoing>> {
+            val shots = LinkedHashMap<String, MutableList<Outgoing>>()
+            files.forEach { shots.getOrPut(shotKey(it.path)) { mutableListOf() }.add(it) }
+            val chunks = mutableListOf<MutableList<Outgoing>>()
+            var current = mutableListOf<Outgoing>()
+            for (shot in shots.values) {
+                if (shot.size >= MAX_URI_ITEMS) {
+                    if (current.isNotEmpty()) chunks.add(current)
+                    chunks.add(shot)
+                    current = mutableListOf()
+                } else {
+                    if (current.size + shot.size > MAX_URI_ITEMS) {
+                        chunks.add(current)
+                        current = mutableListOf()
+                    }
+                    current.addAll(shot)
+                }
+            }
+            if (current.isNotEmpty()) chunks.add(current)
+            return chunks
         }
 
         private fun cullingBundle(value: Culling, version: Int) = Bundle().apply {
