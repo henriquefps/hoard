@@ -58,7 +58,12 @@ class GalleryRepository(
         appVersion = appVersion,
     )
     val sync: SyncEngine by lazy { SyncEngine(db, KeystoreKeyVault(context), device) }
-    val previews: PreviewCache by lazy { PreviewCache(File(context.cacheDir, "gallery-previews"), DEFAULT_CACHE_BYTES) { sync.api() } }
+    val previews: PreviewCache by lazy {
+        PreviewCache(File(context.cacheDir, "gallery-previews"), DEFAULT_CACHE_BYTES) { sync.api() }.also { cache ->
+            // 2.2.2: every original thumb the grid or the filmstrip gets is kept offline too (unless the setting is off).
+            cache.onOriginalThumb = { itemId, file -> if (offlineThumbsOn()) offlineThumbs.keep(itemId, file) }
+        }
+    }
     val deviceIndex: DeviceIndexer by lazy { DeviceIndexer(context, db.device(), scope) }
     /** Originals of server items the owner opened, kept within a budget (Settings › Photo server). */
     val originals: dev.hfps.hoard.server.preview.OriginalCache by lazy {

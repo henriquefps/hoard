@@ -3,10 +3,15 @@ package dev.hfps.hoard.server.preview
 import dev.hfps.hoard.image.source.RandomAccessSource
 import dev.hfps.hoard.server.api.PreviewResult
 import dev.hfps.hoard.server.api.ServerApi
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /** Which preview of an item (ADR 0015): the grid's thumb (WebP, ≤ 512 px) or the viewer's screen (JPEG, ≤ 2560 px). */
@@ -22,6 +27,38 @@ enum class PreviewSize(val wire: String, val format: String, val ext: String) {
  * edit or item is fetched again.
  */
 class PreviewCache(private val dir: File, @Volatile var maxBytes: Long, private val api: suspend () -> ServerApi?) {
+    /**
+     * Run in the background with every complete original thumb this cache hands out (downloaded now or already
+     * cached; never an edit's, never a partial file): Hoard 2.2.2 keeps them in the offline thumbnails. It never
+     * delays the thumb: [get] returns the file at once. A failure here never fails anything.
+     */
+    @Volatile var onOriginalThumb: (suspend (itemId: String, file: File) -> Unit)? = null
+
+    /** Most keeps queued or running; more are dropped (the thumb is kept the next time it is seen). */
+    @Volatile var maxPendingKeeps = 64
+    private val keepScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(2))
+    private val keeping = ConcurrentHashMap.newKeySet<String>()
+
+    /** Keeps queued or running now. */
+    fun pendingKeeps(): Int = keeping.size
+
+    private fun keepInBackground(itemId: String, file: File) {
+        val hook = onOriginalThumb ?: return
+        // One job per item, and a bounded queue: a fast fling over a big library must not queue thousands.
+        if (keeping.size >= maxPendingKeeps || !keeping.add(itemId)) return
+        keepScope.launch {
+            try {
+                hook(itemId, file)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // The offline copy is a convenience.
+            } finally {
+                keeping.remove(itemId)
+            }
+        }
+    }
+
     val locks = KeyedLocks()
     private val used = AtomicLong(-1)
 
@@ -34,6 +71,12 @@ class PreviewCache(private val dir: File, @Volatile var maxBytes: Long, private 
 
     /** The preview file, downloaded when needed; null when the server has none (or is not reachable). */
     suspend fun get(itemId: String, size: PreviewSize, edit: String? = null, version: String = "0", waitPending: Int = 6): File? {
+        val file = fetch(itemId, size, edit, version, waitPending)
+        if (file != null && size == PreviewSize.Thumb && edit == null) keepInBackground(itemId, file)
+        return file
+    }
+
+    private suspend fun fetch(itemId: String, size: PreviewSize, edit: String?, version: String, waitPending: Int): File? {
         cached(itemId, size, edit, version)?.let { return it }
         val target = file(itemId, size, edit, version)
         // One download per preview at a time (a refcounted lock); [ServerApi.downloadPreview] writes a unique temporary

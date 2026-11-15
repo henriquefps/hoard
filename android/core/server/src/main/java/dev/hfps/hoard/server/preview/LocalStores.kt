@@ -150,6 +150,9 @@ class OfflineThumbs(val dir: File) {
 
     fun clear() = dir.deleteRecursively()
 
+    /** Stores [source] unless the item has its thumbnail already (no decode then); true when one is kept after the call. */
+    fun keep(itemId: String, source: File): Boolean = has(itemId) || store(itemId, source)
+
     /** Stores [source] (a decoded server thumb file) scaled down; false when it is not an image. */
     fun store(itemId: String, source: File): Boolean {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }.also { BitmapFactory.decodeFile(source.absolutePath, it) }
@@ -163,10 +166,15 @@ class OfflineThumbs(val dir: File) {
         val part = partFileFor(target)
         @Suppress("DEPRECATION")
         val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
-        part.outputStream().use { scaled.compress(format, QUALITY, it) }
-        if (scaled !== decoded) scaled.recycle()
-        decoded.recycle()
-        return part.renameTo(target)
+        val ok = try {
+            part.outputStream().use { scaled.compress(format, QUALITY, it) }
+        } finally {
+            if (scaled !== decoded) scaled.recycle()
+            decoded.recycle()
+        }
+        if (ok && part.renameTo(target)) return true
+        part.delete()
+        return false
     }
 
     companion object {

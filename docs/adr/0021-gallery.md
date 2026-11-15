@@ -227,6 +227,18 @@ Owner feedback on 2.2.1 with ~19,000 server items.
   phone in portrait at 3–5 columns has 270–360 px cells, so for every shot the grid showed from an offline thumbnail
   the preview cache had no thumb: offline, the filmstrip and the viewer found nothing. Same item, two keys in two
   stores; not an eviction, not a size cap. The fix reads both. Limits that remain, see "Measurements 2.2.2".
+- **Every downloaded thumb is also kept offline.** `PreviewCache.get` calls a hook (`onOriginalThumb`, wired in
+  `GalleryRepository`) with each complete original thumb it hands out, for a grid cell over 384 px, the filmstrip or
+  the culling backend alike: `OfflineThumbs.keep` scales it to 256 px and writes it atomically (temporary file, then
+  rename) under the same key and format as `OfflineThumbsWorker`, skipping an item that has one already (no decode).
+  No second request: the file is the one just downloaded (or already cached, which also fills a gap). It runs on
+  a background scope of the cache (`SupervisorJob`, IO limited to 2 threads) so the thumb is returned before the store
+  is written, one job per item at once, at most 64 queued or running (more are dropped and kept the next time the thumb
+  is seen, so a fast fling over a big library queues nothing unbounded), only when "Keep thumbnails of the whole library" is on, never for an edit's thumb or a screen
+  preview, never for a partial or non-image file (the store refuses it and leaves nothing), and a failure there never
+  fails the preview. The store has no cap, so these count in Settings › Photo server like the job's. Browsing the
+  library over a metered network therefore leaves what it showed available offline; there is still no metered-network
+  prefetch of the whole library (not part of 2.2.2).
 
 ## Consequences
 

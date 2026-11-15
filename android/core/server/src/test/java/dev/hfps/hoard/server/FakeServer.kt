@@ -39,6 +39,8 @@ class FakeServer : AutoCloseable {
     val pushes = ArrayList<CullingPush>()
     val originals = HashMap<String, ByteArray>()
     val previewAsks = ConcurrentHashMap<String, Int>()
+    /** The body of a ready preview, by request URI (default: text naming the URI; tests that decode set an image). */
+    @Volatile var previewBody: (String) -> ByteArray = { "preview of $it".toByteArray() }
     var deviceId = "dev-hoard"
     var candidates = """[{"physicalDeviceId":"phys-reveal","name":"Pixel 8","match":"model","devices":[{"id":"phys-reveal","app":"reveal","model":"Pixel 8"}]}]"""
     var pageCalls = 0
@@ -302,7 +304,7 @@ class FakeServer : AutoCloseable {
                     ex.responseHeaders.add("Retry-After", "1")
                     send(ex, 202, """{"status":"pending","retryAfter":1}""")
                 } else {
-                    sendBytes(ex, 200, "preview of ${ex.requestURI}".toByteArray(), mapOf("X-Hoard-Preview-Version" to "k1", "X-Hoard-Preview" to "ready"))
+                    sendBytes(ex, 200, previewBody(ex.requestURI.toString()), mapOf("X-Hoard-Preview-Version" to "k1", "X-Hoard-Preview" to "ready"))
                 }
             }
             else -> send(ex, 404, """{"error":{"code":"not_found","message":"$path"}}""")
