@@ -359,12 +359,31 @@ fun parseMarkdown(source: String): List<MdBlock> {
     return blocks
 }
 
-/** One run of inline text with its style. */
-data class InlineSpan(val text: String, val bold: Boolean = false, val italic: Boolean = false, val code: Boolean = false, val link: String? = null, val strike: Boolean = false)
+/**
+ * One run of inline text with its style. An image (`![alt](src)`, or a linked one `[![alt](src)](href)`) has its
+ * [image] source and its alt as [text]; the preview draws it (MarkdownImages), [stripInline] keeps the alt.
+ */
+data class InlineSpan(
+    val text: String,
+    val bold: Boolean = false,
+    val italic: Boolean = false,
+    val code: Boolean = false,
+    val link: String? = null,
+    val strike: Boolean = false,
+    val image: String? = null,
+)
 
-private val INLINE = Regex("""(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(~~[^~]+~~)|(!?\[[^\]]*]\([^)\s]*(?:\s+"[^"]*")?\))|(<https?://[^>]+>)""")
+private const val TITLE = """(?:\s+"[^"]*")?"""
+private val INLINE = Regex(
+    """(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\s][^*]*\*|_[^_\s][^_]*_)|(~~[^~]+~~)|""" +
+        """(\[!\[[^\]]*]\([^)\s]*$TITLE\)]\([^)\s]*$TITLE\))|(!?\[[^\]]*]\([^)\s]*$TITLE\))|(<https?://[^>]+>)""",
+)
 
-/** Inline Markdown (code, bold, italic, strike, links, autolinks) as spans; images become their alt text. */
+/** `![alt](src "title")` → (alt, src). */
+private fun imageParts(v: String): Pair<String, String> =
+    v.substringAfter("![").substringBefore("](") to v.substringAfter("](").removeSuffix(")").substringBefore(' ')
+
+/** Inline Markdown (code, bold, italic, strike, links, autolinks, images) as spans. */
 fun inlineSpans(text: String): List<InlineSpan> {
     val out = ArrayList<InlineSpan>()
     var last = 0
@@ -373,14 +392,23 @@ fun inlineSpans(text: String): List<InlineSpan> {
         val v = m.value
         out += when {
             m.groups[1] != null -> InlineSpan(v.trim('`'), code = true)
+            m.groups[5] != null -> {
+                // [![alt](src)](href): an image that is a link (badges).
+                val inner = v.substring(1, v.lastIndexOf("]("))
+                val (alt, src) = imageParts(inner)
+                InlineSpan(alt, image = src, link = v.substringAfterLast("](").removeSuffix(")").substringBefore(' '))
+            }
             m.groups[2] != null -> InlineSpan(v.substring(2, v.length - 2), bold = true)
             m.groups[3] != null -> InlineSpan(v.substring(1, v.length - 1), italic = true)
             m.groups[4] != null -> InlineSpan(v.substring(2, v.length - 2), strike = true)
-            m.groups[6] != null -> InlineSpan(v.trim('<', '>'), link = v.trim('<', '>'))
+            m.groups[7] != null -> InlineSpan(v.trim('<', '>'), link = v.trim('<', '>'))
             else -> {
-                val label = v.substringAfter('[').substringBeforeLast("](")
-                val href = v.substringAfterLast("](").removeSuffix(")").substringBefore(' ')
-                if (v.startsWith("!")) InlineSpan(label, italic = true) else InlineSpan(label, link = href)
+                if (v.startsWith("!")) {
+                    val (alt, src) = imageParts(v)
+                    InlineSpan(alt, image = src)
+                } else {
+                    InlineSpan(v.substringAfter('[').substringBeforeLast("]("), link = v.substringAfterLast("](").removeSuffix(")").substringBefore(' '))
+                }
             }
         }
         last = m.range.last + 1
@@ -394,6 +422,8 @@ fun stripInline(text: String): String = inlineSpans(text).joinToString("") { it.
 /** Where a link inside a Markdown file points (links.ts `resolveLink`). */
 sealed interface LinkTarget {
     data class External(val url: String) : LinkTarget
+    /** A `data:image/…` URL (shown for images only). */
+    data class Data(val url: String) : LinkTarget
     data class Anchor(val id: String) : LinkTarget
     data class Share(val path: String, val isFolder: Boolean) : LinkTarget
     data object Blocked : LinkTarget
@@ -403,6 +433,7 @@ fun resolveLink(filePath: String, href: String): LinkTarget {
     val raw = href.trim()
     if (raw.isEmpty()) return LinkTarget.Blocked
     if (Regex("^(https?:|mailto:)", RegexOption.IGNORE_CASE).containsMatchIn(raw)) return LinkTarget.External(raw)
+    if (Regex("^data:image/", RegexOption.IGNORE_CASE).containsMatchIn(raw)) return LinkTarget.Data(raw)
     if (Regex("^[a-z][a-z0-9+.-]*:", RegexOption.IGNORE_CASE).containsMatchIn(raw) || raw.startsWith("//")) return LinkTarget.Blocked
     if (raw.startsWith("#")) return LinkTarget.Anchor(java.net.URLDecoder.decode(raw.substring(1), "UTF-8"))
     val pathPart = raw.substringBefore('#').substringBefore('?')
@@ -413,7 +444,7 @@ fun resolveLink(filePath: String, href: String): LinkTarget {
         when (name) {
             "", "." -> Unit
             ".." -> if (segments.isEmpty()) return LinkTarget.Blocked else segments.removeAt(segments.lastIndex)
-            else -> segments += name
+            else -> if ('\\' in name) return LinkTarget.Blocked else segments += name
         }
     }
     return LinkTarget.Share(segments.joinToString("/"), isFolder)
@@ -421,7 +452,7 @@ fun resolveLink(filePath: String, href: String): LinkTarget {
 
 // --- Syntax highlighting --------------------------------------------------------------------------------------------
 
-enum class TokenKind { Keyword, String, Comment, Number, Plain }
+enum class TokenKind { Keyword, String, Comment, Number, Annotation, Plain }
 
 data class Token(val start: Int, val end: Int, val kind: TokenKind)
 

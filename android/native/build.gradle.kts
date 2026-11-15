@@ -2,6 +2,12 @@
 // Until it reaches parity with the Capacitor :app it is installed NEXT to it: application id dev.hfps.hoard + ".next"
 // in every build type. The swap PR drops the suffix in release so the owner's install upgrades in place.
 //
+// `nextRelease` (phase 2d) is the side-by-side test build for the owner's phone: "Hoard Next", its own icon (the
+// glyph with a dot, src/nextRelease/res), release-signed with the same keystore as Hoard 1 (skv group "hoard"), so
+// Hoard 1.11's import bridge (signature permission) lets it read Hoard 1's data. `bun run android:next` builds
+// hoard-next-<version>.apk (task :native:hoardNextApk). Emulator only: `-Phoard.next.debugSigned=true` signs it
+// with the debug key instead, to sit next to a debug Hoard 1.
+//
 // Emulator only: `-Phoard.native.sameId=true` builds a debug APK with the Capacitor app's id (dev.hfps.hoard), same
 // debug signing, a higher versionCode: `adb install -r` upgrades the Capacitor debug app in place, exactly what the
 // swap does, so the first-launch import runs on that app's real database (docs/testing/native-2a.md). Never install
@@ -16,6 +22,7 @@ plugins {
 }
 
 val sameId = providers.gradleProperty("hoard.native.sameId").orNull == "true"
+val nextDebugSigned = providers.gradleProperty("hoard.next.debugSigned").orNull == "true"
 if (sameId && gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }) {
     throw GradleException("hoard.native.sameId is for debug builds on an emulator only")
 }
@@ -32,8 +39,8 @@ android {
         minSdk = rootProject.extra["minSdkVersion"] as Int
         targetSdk = rootProject.extra["targetSdkVersion"] as Int
         // Above every Capacitor release (1.x is 19 at 1.10.1), so the swap and the same-id test install over it.
-        versionCode = 100
-        versionName = "2.0.0-dev"
+        versionCode = 101
+        versionName = "2.0.0-beta.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -63,6 +70,17 @@ android {
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        create("nextRelease") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".next"
+            signingConfig = when {
+                releaseSigning -> signingConfigs.getByName("release")
+                nextDebugSigned -> signingConfigs.getByName("debug")
+                else -> null
+            }
+            // :core:* libraries publish debug and release only.
+            matchingFallbacks += listOf("release")
+        }
     }
     compileOptions {
         // java.time (ISO dates of rows and listings) on minSdk 24.
@@ -89,6 +107,8 @@ android {
     }
     // The importer test on a device reads the same Capacitor fixtures as :core:data's JVM tests.
     sourceSets["androidTest"].assets.srcDir("../core/data/fixtures")
+    // The import bridge's JVM test serves the same fixtures as Hoard 1's snapshot.
+    sourceSets["test"].resources.srcDir("../core/data/fixtures")
     testOptions.unitTests.isIncludeAndroidResources = true
     testOptions.unitTests.all {
         it.testLogging { events("passed", "skipped", "failed") }
@@ -96,6 +116,24 @@ android {
 }
 
 kotlin { jvmToolchain(21) }
+
+if (gradle.startParameter.taskNames.any { it.contains("nextRelease", ignoreCase = true) || it.contains("hoardNextApk") }) {
+    val keystore = System.getenv("HOARD_KEYSTORE")
+    if ((keystore == null || !file(keystore).exists()) && !nextDebugSigned) {
+        logger.warn("Hoard Next: HOARD_KEYSTORE / HOARD_KEYSTORE_PASSWORD / HOARD_KEY_ALIAS not set: the APK will be UNSIGNED. Use `bun run android:next` (skv run hoard).")
+    }
+}
+
+/** `bun run android:next`: the signed side-by-side build as hoard-next-<version>.apk (unsigned: -unsigned.apk). */
+tasks.register<Copy>("hoardNextApk") {
+    dependsOn("assembleNextRelease")
+    val version = android.defaultConfig.versionName
+    from(layout.buildDirectory.dir("outputs/apk/nextRelease"))
+    include("*.apk")
+    into(layout.buildDirectory.dir("outputs/hoard-next"))
+    rename { name -> if (name.contains("unsigned")) "hoard-next-$version-unsigned.apk" else "hoard-next-$version.apk" }
+    doLast { logger.lifecycle("Hoard Next: ${destinationDir.listFiles()?.joinToString { it.path }}") }
+}
 
 apply(from = "../app/mlkit-packaging.gradle")
 
@@ -116,6 +154,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.kotlinx.serialization.json)
+    // Syntax highlighting of the text viewer (phase 2d): per-language grammars, maintained, Apache-2.0.
+    implementation(libs.highlights)
     implementation("androidx.core:core-ktx:${rootProject.extra["androidxCoreVersion"]}")
     // WebViewerActivity (:core:smb) is an AppCompatActivity: its theme comes from here.
     implementation("androidx.appcompat:appcompat:${rootProject.extra["androidxAppCompatVersion"]}")

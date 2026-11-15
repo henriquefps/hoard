@@ -68,6 +68,11 @@ class AppContainer(context: Context) {
     val settings: SettingsStore get() = settingsStore
     val appSettings: AppSettings by lazy { AppSettings(settingsStore) }
     val importer: CapacitorImporter by lazy { CapacitorImporter(appContext, database) }
+
+    /** Hoard 1's import bridge, on the side-by-side build only (any id but Hoard 1's own, ADR 0019). */
+    val importBridge: dev.hfps.hoard.app.importer.ImportBridge? by lazy {
+        if (dev.hfps.hoard.app.importer.ImportBridge.applies(appContext)) dev.hfps.hoard.app.importer.ImportBridge(appContext, database, settingsStore, gateway) else null
+    }
     val volumes: VolumesSource by lazy { VolumesSource(appContext) }
     val volumeRegistry: VolumeRegistry by lazy { VolumeRegistry(appContext) }
 

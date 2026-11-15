@@ -87,4 +87,47 @@
     <string name="licence_libraw_terms">LGPL 2.1 or CDDL 1.0</string>
     <string name="licence_mlkit_terms">ML Kit terms of service</string>
     <string name="language_system">System language</string>
+
+    <!-- Phase 2d: the import bridge of the side-by-side build (Hoard Next next to Hoard 1). -->
+    <string name="import_bridge_permission">Read Hoard data for Hoard Next</string>
+    <string name="import_offer_title">Bring your data from Hoard</string>
+    <string name="import_offer_text">Hoard %1$s is on this phone. Hoard Next can copy its machines, favorites, transfers and culling decisions. Hoard keeps working as it is: nothing in it changes.</string>
+    <string name="import_offer_brings">What comes over</string>
+    <string name="import_offer_passwords_note">Passwords cannot come over: each app keeps them in its own keystore. Hoard Next asks for each machine\'s password once, right after the import.</string>
+    <string name="import_offer_import">Import from Hoard</string>
+    <string name="import_offer_fresh">Start without importing</string>
+    <string name="import_offer_update_title">Update Hoard to bring your data</string>
+    <string name="import_offer_update_text">Hoard %1$s is on this phone. Hoard 1.11.0 or later hands its data to Hoard Next. Update it, then check again.</string>
+    <string name="import_offer_check_again">Check again</string>
+    <string name="import_offer_refused_title">Hoard did not share its data</string>
+    <string name="import_offer_refused_text">The Hoard on this phone is not signed with the same key as Hoard Next (a test build next to a release, for example), so it keeps its data to itself. Install both from the same source, or start without importing.</string>
+    <string name="import_done_text_bridge">Everything Hoard saved came over, except the passwords: each app keeps them in its own keystore.</string>
+    <plurals name="import_done_passwords">
+        <item quantity="one">%1$d machine needs its password. Hoard Next asks for it next.</item>
+        <item quantity="other">%1$d machines need their password. Hoard Next asks for them next.</item>
+    </plurals>
+    <plurals name="import_count_analyses">
+        <item quantity="one">%1$d analysed photo</item>
+        <item quantity="other">%1$d analysed photos</item>
+    </plurals>
+    <string name="passwords_title">Passwords</string>
+    <string name="passwords_intro">Hoard keeps each machine\'s password in a keystore that only Hoard can open, so they could not come over. Type each one once: Hoard Next keeps it in its own keystore, never in its database.</string>
+    <string name="passwords_signs_in_as">Signs in as %1$s</string>
+    <string name="passwords_field">Password for %1$s</string>
+    <string name="passwords_show">Show password</string>
+    <string name="passwords_hide">Hide password</string>
+    <string name="passwords_save">Save and connect</string>
+    <string name="passwords_later">Later</string>
+    <string name="passwords_done">Done</string>
+    <string name="passwords_connected">Saved. Connected to %1$s.</string>
+    <string name="passwords_saved_offline">Saved. %1$s is not reachable right now: Hoard Next connects when it is.</string>
+    <string name="passwords_wrong">%1$s refused this password. Check it and try again.</string>
+    <string name="passwords_all_set">Every machine has its password.</string>
+    <plurals name="passwords_notice">
+        <item quantity="one">%1$d machine needs its password</item>
+        <item quantity="other">%1$d machines need their password</item>
+    </plurals>
+    <string name="passwords_notice_action">Enter</string>
+    <string name="text_image_failed">Image could not be shown: %1$s</string>
+    <string name="cull_compare_focus_hint">Not analysed yet: the focus score (sharpest area) compares the two.</string>
 </resources>

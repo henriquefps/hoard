@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -110,6 +111,19 @@ private sealed interface TextState {
 /** How the file is shown: rendered (Markdown, Mermaid), as a table (CSV / TSV) or as its source. */
 private enum class TextMode { Preview, Table, Source }
 
+/** While editing a renderable file (TextViewerPage's EditLayout): the editor, editor + preview side by side, the preview. */
+enum class EditLayout { Editor, Split, Preview }
+
+/** Side by side needs a wide window (Hoard 1: not on phones); 840dp is Material's expanded width. */
+fun splitFits(widthDp: Int): Boolean = widthDp >= 840
+
+/** The layout shown: Split falls back to the editor where it does not fit. */
+fun editLayoutShown(choice: EditLayout?, wide: Boolean): EditLayout = when (choice) {
+    null -> if (wide) EditLayout.Split else EditLayout.Editor
+    EditLayout.Split -> if (wide) EditLayout.Split else EditLayout.Editor
+    else -> choice
+}
+
 /** A save that did not go through: changed elsewhere, or gone. */
 private enum class SaveProblem { Conflict, Deleted }
 
@@ -193,7 +207,26 @@ fun TextViewerScreen(locationId: String, share: String?, path: String, startEdit
     var mode by remember { mutableStateOf<TextMode?>(null) }
     var pretty by remember { mutableStateOf(false) }
     var sizeMenu by remember { mutableStateOf(false) }
+    var layoutChoice by remember { mutableStateOf<EditLayout?>(null) }
     val list = rememberLazyListState()
+    val previewList = rememberLazyListState()
+    val wide = splitFits(androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp)
+    // The preview beside the editor follows the draft a moment after typing stops (Hoard 1: 200 ms).
+    var liveText by remember { mutableStateOf("") }
+    LaunchedEffect(draft.text, editing) {
+        if (!editing) return@LaunchedEffect
+        if (liveText.isNotEmpty()) kotlinx.coroutines.delay(200)
+        liveText = draft.text
+    }
+    val markdownHost = remember(location?.id, path) {
+        val loc = location
+        MarkdownHost(
+            onLink = {},
+            loadImage = { src ->
+                if (loc == null) null else MarkdownImages(path, loc.cacheKey) { p -> container.files.thumbnail(loc, p, MARKDOWN_IMAGE_SIZE).file }.load(src)
+            },
+        )
+    }
 
     LaunchedEffect(location?.id, reload, firstPart) {
         val loc = location ?: return@LaunchedEffect
@@ -297,6 +330,32 @@ fun TextViewerScreen(locationId: String, share: String?, path: String, startEdit
 
     BackHandler(enabled = dirty) { leaving = true }
 
+    /** The rendered view of [text]: Markdown (links, images of this location), Mermaid, or a CSV / TSV table. */
+    val onLink: (String) -> Unit = { href ->
+        when (val target = resolveLink(path, href)) {
+            is LinkTarget.External -> runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target.url))) }
+            is LinkTarget.Share -> if (!target.isFolder) onOpenFile(target.path)
+            is LinkTarget.Anchor -> {
+                val blocks = parseMarkdown(if (editing) liveText else sourceText)
+                val at = blocks.indexOfFirst { it is dev.hfps.hoard.app.files.MdBlock.Heading && it.id == target.id }
+                if (at >= 0) scope.launch { (if (editing) previewList else list).animateScrollToItem(at) }
+            }
+            else -> Unit
+        }
+    }
+    val currentOnLink = androidx.compose.runtime.rememberUpdatedState(onLink)
+    val host = remember(markdownHost) { MarkdownHost({ currentOnLink.value(it) }, markdownHost.loadImage) }
+    val Rendered: @Composable (String, androidx.compose.foundation.lazy.LazyListState) -> Unit = { text, state ->
+        when (format) {
+            TextFormat.Mermaid -> MermaidView(text, dark, Modifier.fillMaxSize())
+            TextFormat.Csv, TextFormat.Tsv -> {
+                val rows = remember(text) { parseDelimited(text, if (format == TextFormat.Tsv) '\t' else ',', RenderLimits.CSV_ROWS + 1) }
+                CsvTable(rows.take(RenderLimits.CSV_ROWS), rows.size > RenderLimits.CSV_ROWS, prefs.fontSize)
+            }
+            else -> MarkdownView(remember(text) { parseMarkdown(text) }, prefs.fontSize, dark, host, state)
+        }
+    }
+
     HfpsScaffold(topBar = {
         HfpsTopBar(name, onBack = { if (dirty) leaving = true else onBack() }, titleIsFileName = true) {
             val writable = read != null && read.access != SmbAccess.READ && !read.truncated
@@ -383,6 +442,14 @@ fun TextViewerScreen(locationId: String, share: String?, path: String, startEdit
                         modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 6.dp),
                     )
                 }
+                if (editing && rendered != null) {
+                    val layout = editLayoutShown(layoutChoice, wide)
+                    Row(Modifier.padding(horizontal = 12.dp).testTag("edit-layouts"), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        HfpsChip(stringResource(R.string.t_text_layouts_editor), layout == EditLayout.Editor, { layoutChoice = EditLayout.Editor })
+                        if (wide) HfpsChip(stringResource(R.string.t_text_layouts_split), layout == EditLayout.Split, { layoutChoice = EditLayout.Split })
+                        HfpsChip(stringResource(if (rendered == TextMode.Table) R.string.t_text_layouts_table else R.string.t_text_layouts_preview), layout == EditLayout.Preview, { layoutChoice = EditLayout.Preview })
+                    }
+                }
                 if (!editing && (rendered != null || format == TextFormat.Json)) {
                     Row(Modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (rendered != null) {
@@ -429,30 +496,31 @@ fun TextViewerScreen(locationId: String, share: String?, path: String, startEdit
                 HorizontalDivider(color = HfpsTheme.colors.hairline, modifier = Modifier.padding(top = 6.dp))
                 when {
                     editing -> {
-                        val focus = remember { androidx.compose.ui.focus.FocusRequester() }
-                        LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
-                        BasicTextField(
-                            value = draft,
-                            onValueChange = { draft = it },
-                            textStyle = HfpsTheme.typography.mono.copy(color = HfpsTheme.colors.cardForeground, fontSize = prefs.fontSize.sp),
-                            cursorBrush = SolidColor(HfpsTheme.colors.primary),
-                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).let { if (wrap) it else it.horizontalScroll(rememberScrollState()) }
-                                .padding(16.dp).focusRequester(focus).testTag("text-editor"),
-                        )
+                        val layout = if (rendered != null) editLayoutShown(layoutChoice, wide) else EditLayout.Editor
+                        val editor: @Composable (Modifier) -> Unit = { m ->
+                            val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                            LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+                            BasicTextField(
+                                value = draft,
+                                onValueChange = { draft = it },
+                                textStyle = HfpsTheme.typography.mono.copy(color = HfpsTheme.colors.cardForeground, fontSize = prefs.fontSize.sp),
+                                cursorBrush = SolidColor(HfpsTheme.colors.primary),
+                                modifier = m.verticalScroll(rememberScrollState()).let { if (wrap) it else it.horizontalScroll(rememberScrollState()) }
+                                    .padding(16.dp).focusRequester(focus).testTag("text-editor"),
+                            )
+                        }
+                        when (layout) {
+                            EditLayout.Editor -> editor(Modifier.fillMaxSize())
+                            EditLayout.Preview -> Rendered(liveText, previewList)
+                            EditLayout.Split -> Row(Modifier.fillMaxSize().testTag("text-split")) {
+                                editor(Modifier.weight(1f).fillMaxHeight())
+                                androidx.compose.material3.VerticalDivider(color = HfpsTheme.colors.hairline)
+                                Box(Modifier.weight(1f).fillMaxHeight()) { Rendered(liveText, previewList) }
+                            }
+                        }
                     }
                     r.text.isEmpty() -> Text(stringResource(R.string.t_text_empty_file), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(16.dp))
-                    shown == TextMode.Preview && format == TextFormat.Mermaid -> MermaidView(sourceText, dark, Modifier.fillMaxSize())
-                    shown == TextMode.Preview -> MarkdownView(remember(sourceText) { parseMarkdown(sourceText) }, prefs.fontSize, dark, onLink = { href ->
-                        when (val target = resolveLink(path, href)) {
-                            is LinkTarget.External -> runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(target.url))) }
-                            is LinkTarget.Share -> if (!target.isFolder) onOpenFile(target.path)
-                            else -> Unit
-                        }
-                    }, state = list)
-                    shown == TextMode.Table -> {
-                        val rows = remember(sourceText) { parseDelimited(sourceText, if (format == TextFormat.Tsv) '\t' else ',', RenderLimits.CSV_ROWS + 1) }
-                        CsvTable(rows.take(RenderLimits.CSV_ROWS), rows.size > RenderLimits.CSV_ROWS, prefs.fontSize)
-                    }
+                    shown == TextMode.Preview || shown == TextMode.Table -> Rendered(sourceText, list)
                     else -> CodeLines(viewText, extensionOf(name), highlights(name), wrap, prefs.fontSize, query.takeIf { finding }, matchCase, currentLine, list)
                 }
             }

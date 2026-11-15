@@ -63,6 +63,11 @@ interface CullBackend {
     suspend fun analyze(shotIds: List<String>, urgent: Boolean): AnalyzeResult
     suspend fun thumbnail(shotId: String, maxSize: Int): File
     suspend fun screen(shotId: String, longSide: Int, fast: Boolean, background: Boolean = false): ScreenFile
+    /**
+     * The ADR 0006 focus score (variance of the Laplacian per tile, best tile) of a shot not analysed yet, on its
+     * 1600 px screen image (`cullSharpness`). Compare runs it while the analysis queue has not reached the pair.
+     */
+    suspend fun focusScore(shotId: String): Double? = null
     suspend fun zoomInfo(shotId: String): ZoomInfo
     suspend fun tile(shotId: String, tile: Tile): ImageFileResult
     fun prefetch(shotIds: List<String>, current: Int, longSide: Int)
@@ -203,6 +208,13 @@ class NativeCullBackend(
 
     override suspend fun zoomInfo(shotId: String): ZoomInfo = call { f -> await(f, service.core.zoomInfo(service.request(f, shotId))) }
 
+    override suspend fun focusScore(shotId: String): Double? = call { f ->
+        val request = service.request(f, shotId)
+        val step = withContext(Dispatchers.IO) { service.core.screenPlan(request, SHARPNESS_SIDE).firstOrNull() } ?: return@call null
+        val decoded = await(f, service.core.screen(request, SHARPNESS_SIDE, priority = FOCUS_PRIORITY, step = step))
+        withContext(Dispatchers.Default) { service.core.sharpness(decoded.bitmap).best }
+    }
+
     override suspend fun tile(shotId: String, tile: Tile): ImageFileResult = call { f ->
         await(f, service.core.tileFile(service.request(f, shotId), tile.x, tile.y, tile.width, tile.height, tile.sample))
     }
@@ -252,6 +264,9 @@ class NativeCullBackend(
         private const val ANALYZE_URGENT_PRIORITY = 30
         /** Priority of a neighbour's screen image: right after the prefetch window's fast images. */
         private const val BACKGROUND_PRIORITY = 2
+        /** The focus score's image size and priority, as Hoard 1's `cullSharpness`. */
+        private const val SHARPNESS_SIDE = 1600
+        private const val FOCUS_PRIORITY = 20
     }
 }
 

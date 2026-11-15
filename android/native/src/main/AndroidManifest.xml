@@ -9,6 +9,16 @@
       share targets.
     -->
 
+    <!--
+      Import bridge (ADR 0019 "Side-by-side test build"): Hoard 1.11+ serves a read-only snapshot of its data to an
+      app signed with the same key. Declared here too (same signature), so Hoard Next can be installed first.
+    -->
+    <permission
+        android:name="dev.hfps.hoard.permission.IMPORT_BRIDGE"
+        android:label="@string/import_bridge_permission"
+        android:protectionLevel="signature" />
+    <uses-permission android:name="dev.hfps.hoard.permission.IMPORT_BRIDGE" />
+
     <!-- SMB over TCP, probes. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Network changes (route rechecks) and WorkManager's network constraint. -->
@@ -37,6 +47,9 @@
 
     <!-- Open with / tap to open, Edit in Reveal, the web viewer's "open in browser" (package visibility). -->
     <queries>
+        <!-- Hoard 1 and its import bridge (first launch of Hoard Next). -->
+        <package android:name="dev.hfps.hoard" />
+        <provider android:authorities="dev.hfps.hoard.importbridge" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="*/*" />

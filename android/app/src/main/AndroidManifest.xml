@@ -2,6 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+      Import bridge (ADR 0019 "Side-by-side test build"): only an app signed with Hoard's own key (Hoard Next) may
+      read the snapshot of Hoard's data. Hoard Next declares the same permission, so the install order does not matter.
+    -->
+    <permission
+        android:name="dev.hfps.hoard.permission.IMPORT_BRIDGE"
+        android:label="@string/import_bridge_permission"
+        android:protectionLevel="signature" />
+
     <application
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
@@ -60,6 +69,17 @@
             android:authorities="${applicationId}.stream"
             android:exported="false"
             android:grantUriPermissions="true" />
+
+        <!--
+          Import bridge: a read-only snapshot of Hoard's database for Hoard Next (same signing key). Exported only
+          behind the signature permission; the provider also checks the calling package and its certificate.
+        -->
+        <provider
+            android:name=".bridge.ImportBridgeProvider"
+            android:authorities="dev.hfps.hoard.importbridge"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            android:permission="dev.hfps.hoard.permission.IMPORT_BRIDGE" />
 
         <!-- Keeps the process un-frozen while another app streams from Hoard or a page is served. -->
         <service

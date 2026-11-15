@@ -393,6 +393,9 @@ class CullViewModel(
     /** Deletes one file of the folder ("Delete rejects"). */
     suspend fun deleteFile(path: String) = backend.delete(path)
 
+    /** Compare's ADR 0006 focus score for a shot the analysis has not reached ([CullBackend.focusScore]). */
+    suspend fun focusScore(shotId: String): Double? = backend.focusScore(shotId)
+
     /** Shots that no longer exist (deleted rejects): dropped from the list and from the database. */
     suspend fun removeShots(shotIds: List<String>) {
         if (shotIds.isEmpty()) return

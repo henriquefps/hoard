@@ -86,6 +86,8 @@ class FilesActions(
     /** A drive Hoard cannot read by path: pick a folder on it (SAF). */
     val grantVolume: (VolumeItem) -> Unit = {},
     val storageSettings: () -> Unit = {},
+    /** After an import from Hoard 1: the machines whose password is still missing (ADR 0019 phase 2d). */
+    val passwords: () -> Unit = {},
 )
 
 /**
@@ -93,7 +95,13 @@ class FilesActions(
  * the SMB machines with the route each one uses right now.
  */
 @Composable
-fun FilesScreen(state: FilesUiState, onOpenSettings: () -> Unit, modifier: Modifier = Modifier, actions: FilesActions = FilesActions()) {
+fun FilesScreen(
+    state: FilesUiState,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier,
+    actions: FilesActions = FilesActions(),
+    passwordsNeeded: Int = 0,
+) {
     HfpsScaffold(
         modifier = modifier,
         header = rememberCollapsingHeaderState(),
@@ -111,6 +119,9 @@ fun FilesScreen(state: FilesUiState, onOpenSettings: () -> Unit, modifier: Modif
                 modifier = Modifier.widthIn(max = 840.dp).fillMaxSize().testTag("files-list"),
                 contentPadding = PaddingValues(vertical = 8.dp),
             ) {
+                if (passwordsNeeded > 0) {
+                    item(key = "passwords") { PasswordsCard(passwordsNeeded, actions.passwords) }
+                }
                 section(R.string.files_on_this_phone)
                 if (!state.storageGranted) {
                     item(key = "access") { AccessCard(actions.storageAccess) }
@@ -209,6 +220,26 @@ private fun AccessCard(onAllow: () -> Unit) {
         Text(stringResource(R.string.t_locations_access_card_title), style = HfpsTheme.typography.body.copy(fontWeight = FontWeight.Medium), color = HfpsTheme.colors.cardForeground)
         Text(stringResource(R.string.t_locations_access_card_body), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
         PrimaryButton(stringResource(R.string.t_locations_access_card_action), onAllow, icon = PhosphorRegular.LockSimple)
+    }
+}
+
+/** "2 machines need their password · Enter" after an import from Hoard 1. */
+@Composable
+private fun PasswordsCard(count: Int, onEnter: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp))
+            .background(HfpsTheme.colors.warning.copy(alpha = 0.1f)).padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 8.dp).testTag("passwords-notice"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        androidx.compose.material3.Icon(PhosphorRegular.LockSimple, null, Modifier.size(20.dp), tint = HfpsTheme.colors.warning)
+        Text(
+            androidx.compose.ui.res.pluralStringResource(R.plurals.passwords_notice, count, count),
+            style = HfpsTheme.typography.body.copy(fontWeight = FontWeight.Medium),
+            color = HfpsTheme.colors.cardForeground,
+            modifier = Modifier.weight(1f),
+        )
+        SecondaryButton(stringResource(R.string.passwords_notice_action), onEnter)
     }
 }
 
