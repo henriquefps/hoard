@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.2
+
+- **Fix: one app holding photos open could make every other open fail** ([ADR 0010](docs/adr/0010-edit-in-reveal.md), "Idle reclaim"). Since 2.0.1 Hoard reads at most 6 network photos for other apps at once, and a large photo (every RAW) kept its place until the app reading it closed it. An app that forgot to close them took all 6 places, and every later photo got the "busy" answer until Hoard was restarted. Now a photo nobody has read for 12 s gives its place back; if the app reads it again, it gets a place again (waiting up to 1.5 s, as an open does). A photo left untouched for 10 minutes is closed on Hoard's side, so the share does not keep files open for it. The "busy" contract with Reveal is unchanged. In a test where one app opened 20 RAW photos and never closed them, another app then opened all 60 of its photos within 9 s; with 2.0.1 it got none ([test report](docs/testing/handoff-burst.md)).
+- Screenshot tests show the same dates on any day: "today" and "yesterday" no longer depend on when the tests run.
+
 ## 2.0.1
 
 - **Fix: Reveal opening many photos at once could freeze the phone** ([ADR 0010](docs/adr/0010-edit-in-reveal.md), "Bursts of opens"). When Reveal started, it reopened every photo Hoard had handed it at the same time. Each photo from a network share went through Android's storage service, and hundreds of them at once could stall that service until Android restarted itself. Hoard could also crash, which closed Reveal too. Now Hoard serves at most 6 of those photos at a time; an open that finds them all busy waits up to 1.5 s, then gets a "busy" answer (`FileNotFoundException` starting with `busy:`, the contract with Reveal, which retries). Sidecars and smaller photos (up to 8 MB) are kept in a private copy, so reopening them skips Android's storage service entirely. A machine that cannot be reached makes the remaining photos of the burst fail straight away instead of each one waiting to connect. In a test with 200 opens at once on an emulator, Hoard no longer crashes and the storage service stays responsive ([test report](docs/testing/handoff-burst.md)).

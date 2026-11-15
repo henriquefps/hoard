@@ -54,7 +54,8 @@ import java.util.concurrent.atomic.AtomicLong
  * streaming service (and so the process, un-frozen) up while Reveal reads, then lets it stop.
  *
  * Bursts (ADR 0010 "Bursts of opens"): a client may open hundreds of links at once. At most [MAX_READS] hand-off
- * reads run at once ([reads]: an open doing network work, or a proxy descriptor until it is closed); the others wait
+ * reads run at once ([reads]: an open doing network work, or a proxy descriptor being read, given back after
+ * [HandoffProxy.IDLE_RELEASE_MS] without a read and taken again by the next one); the others wait
  * at most [BUSY_WAIT_MS], then fail with `busy:` ([HandoffBusy], the frozen contract). Small files are served from a
  * private copy ([HandoffCache]: a plain descriptor, no appfuse), proxy descriptors are read with a timeout
  * ([HandoffProxy]), an unreachable machine fails the rest of the burst at once ([ConnectBackoff]), the connection
@@ -70,7 +71,8 @@ object HandoffServer {
 
     /**
      * The busy contract's limit (ADR 0010, docs/integration contract 11): concurrent hand-off reads, i.e. opens doing
-     * network work (stat, a small copy, opening a descriptor) plus proxy descriptors not closed yet.
+     * network work (stat, a small copy, opening a descriptor) plus proxy descriptors not closed or parked yet
+     * (ADR 0010 "Idle reclaim").
      */
     const val MAX_READS = 6
 
@@ -178,7 +180,8 @@ object HandoffServer {
                 slot.close() // idempotent: a proxy open that took the slot already gave it back
                 throw e
             }
-            // A plain descriptor is read without Hoard: its slot goes back now. A proxy descriptor keeps it until closed.
+            // A plain descriptor is read without Hoard: its slot goes back now. A proxy descriptor keeps it while it is
+            // read (until closed, or parked after HandoffProxy.IDLE_RELEASE_MS without a read).
             if (opened.outcome == OpenOutcome.CACHED) slot.close()
             if (debug) Log.d(TAG, "open ${item.name}: ${opened.outcome} after ${(System.nanoTime() - t0) / 1_000_000} ms")
             outcome = opened.outcome
@@ -195,7 +198,7 @@ object HandoffServer {
 
     private class Opened(val outcome: OpenOutcome, val descriptor: ParcelFileDescriptor)
 
-    /** Opens [item] holding [slot]; a proxy descriptor takes the slot over (given back when it is closed). */
+    /** Opens [item] holding [slot]; a proxy descriptor takes the slot over (given back when closed or idle). */
     @RequiresApi(Build.VERSION_CODES.O)
     private fun openGated(item: HandoffItem, access: HandoffAccess, slot: HandoffLimiter.Slot): Opened {
         val machine = store.machine(item.machineId)
@@ -303,7 +306,18 @@ object HandoffServer {
         val buffer = SidecarBuffer(initial, append = access == HandoffAccess.APPEND)
         val entry = lease(item, machine)
         val writer = Sources.acquire(machine, item.share.orEmpty(), credentials)
-        return HandoffProxy.openWrite(context(), slot, entry, SidecarCallback(item, buffer, writer, entry, slot)) { writer.close() }
+        val callback = arrayOfNulls<SidecarCallback>(1)
+        // Runs once: when Reveal closes the descriptor, or when Hoard retires it after RETIRE_MS idle (pending bytes
+        // are written first, as a close would).
+        val cleanup = {
+            try {
+                callback[0]?.flush()
+            } finally {
+                writer.close()
+            }
+            Unit
+        }
+        return HandoffProxy.openWrite(context(), slot, entry, cleanup) { hold -> SidecarCallback(item, buffer, writer, entry, hold).also { callback[0] = it } }
     }
 
     private fun readAll(source: StreamSource, path: String, size: Long): ByteArray {
@@ -351,38 +365,45 @@ object HandoffServer {
         private val buffer: SidecarBuffer,
         private val source: Sources.Handle,
         private val entry: StreamEntry,
-        private val slot: HandoffLimiter.Slot,
+        private val hold: HandoffHold,
     ) : ProxyFileDescriptorCallback() {
-        override fun onGetSize(): Long = buffer.size.toLong()
+        override fun onGetSize(): Long {
+            hold.touch()
+            return buffer.size.toLong()
+        }
 
+        // Reads and writes stay in memory but take a slot like any read (a parked sidecar takes one again), so the
+        // descriptor's state is never touched by a retire while a callback runs.
         override fun onRead(offset: Long, size: Int, data: ByteArray): Int {
             entry.touch()
-            return buffer.read(offset, size, data)
+            return guarded("onRead") { buffer.read(offset, size, data) }
         }
 
         override fun onWrite(offset: Long, size: Int, data: ByteArray): Int {
             entry.touch()
-            if (!buffer.write(offset, size, data)) throw ErrnoException("onWrite", OsConstants.EFBIG)
+            val ok = guarded("onWrite") { buffer.write(offset, size, data) }
+            if (!ok) throw ErrnoException("onWrite", OsConstants.EFBIG)
             return size
         }
 
         override fun onFsync() {
-            if (!flush()) throw ErrnoException("onFsync", OsConstants.EIO)
+            if (!guarded("onFsync") { flush() }) throw ErrnoException("onFsync", OsConstants.EIO)
         }
 
         override fun onRelease() {
-            try {
-                flush()
-            } finally {
-                source.close()
-                entry.openFds.decrementAndGet()
-                entry.touch()
-                HandoffProxy.released(slot)
-            }
+            HandoffProxy.released(hold) // flushes (the cleanup) unless Hoard retired it already
+        }
+
+        private fun <T> guarded(call: String, block: () -> T): T = try {
+            hold.use(block)
+        } catch (e: java.io.IOException) {
+            Log.w(TAG, "${item.name}: $call failed: ${e.message}")
+            throw ErrnoException(call, OsConstants.EIO)
         }
 
         /** True when nothing is pending afterwards. */
-        private fun flush(): Boolean {
+        @Synchronized
+        fun flush(): Boolean {
             if (!buffer.dirty) return true
             val bytes = buffer.commitBytes()
             if (bytes == null) {
