@@ -6,11 +6,16 @@ import kotlin.math.abs
 
 /** What the server's index says about one file of an open SMB folder (ADR 0022 "Resolution"). */
 sealed interface FileMatch {
-    /** The file is a member of [itemId] (matched by path, size and mtime; or a rename, [renamed]). */
-    data class Mapped(val itemId: String, val fingerprint: String?, val role: String?, val renamed: Boolean = false) : FileMatch
+    /** The file is a member of [itemId] (matched by its path, size and mtime: trusted like a fingerprint). */
+    data class Mapped(val itemId: String, val fingerprint: String?, val role: String?) : FileMatch
 
-    /** The path is indexed but the size or mtime differ (changed since the server's walk): look it up to know. */
-    data class Changed(val itemId: String, val fingerprint: String?) : FileMatch
+    /**
+     * A guess, never trusted alone: the path is indexed but the size or mtime differ (changed since the server's walk),
+     * or ([renamed]) the path is not indexed but a vanished indexed file of the same directory and extension has its
+     * size and mtime (uncompressed RAWs share sizes, a burst shares seconds: a new frame can look like a deleted one).
+     * Looked up by its own fingerprint to know (a hand-off); never a badge, never culling.
+     */
+    data class Changed(val itemId: String, val fingerprint: String?, val renamed: Boolean = false) : FileMatch
 
     /** Not in the index (new, not walked yet, or not a member of a live item). */
     data object Unknown : FileMatch
@@ -39,9 +44,10 @@ object FolderMatch {
 
     /**
      * Matches the files of an open SMB folder ([files], paths in the share) against the index under [mapping]: by
-     * path (exact, else ignoring case), then size + mtime. A file whose path is not indexed is a **rename** when
-     * exactly one indexed file of the same directory and extension, whose own path is gone from the share, has its
-     * size and mtime. Item ids follow [replacedBy] (a JPEG-only item replaced when its RAW appeared, ADR 0014).
+     * path (exact, else ignoring case), then size + mtime. A file whose path is not indexed is a **rename candidate**
+     * ([FileMatch.Changed] with `renamed`, to be looked up by fingerprint, never [FileMatch.Mapped]) when exactly one
+     * indexed file of the same directory and extension, whose own path is gone from the share, has its size and mtime.
+     * Item ids follow [replacedBy] (a JPEG-only item replaced when its RAW appeared, ADR 0014).
      */
     fun match(
         mapping: PathMapping,
@@ -85,7 +91,7 @@ object FolderMatch {
             val one = candidates.singleOrNull()
             if (one != null) {
                 claimed += one.path
-                out[f.path] = FileMatch.Mapped(CullingMapping.follow(one.itemId, replacedBy), one.fingerprint, one.role, renamed = true)
+                out[f.path] = FileMatch.Changed(CullingMapping.follow(one.itemId, replacedBy), one.fingerprint, renamed = true)
             } else {
                 out[f.path] = FileMatch.Unknown
             }

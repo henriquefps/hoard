@@ -16,8 +16,11 @@ import dev.hfps.hoard.server.sync.GallerySyncWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 
 /**
  * The dual write of ADR 0022, pure and JVM-tested (`MappedCullingTest`): a decision on a shot of a mapped SMB folder
@@ -35,10 +38,33 @@ object MappedCulling {
             ServerDecision(shot, item, CullValues(rating.coerceIn(0, 5), flag?.takeIf { it == "pick" || it == "reject" }), decidedAt[shot] ?: now)
         }
 
+    /**
+     * The server's side of every item of [ids] in a few queries ([CHUNK] ids each: records and pending changes loaded
+     * with `IN (...)`, never one query per item): item id → values and time, for the items with something to show.
+     */
+    suspend fun serverSides(ids: Collection<String>, records: suspend (List<String>) -> List<CullingEntity>, pending: suspend (List<String>) -> List<PendingCullingEntity>): Map<String, Pair<CullValues, Long>> {
+        if (ids.isEmpty()) return emptyMap()
+        val distinct = ids.distinct()
+        val byId = HashMap<String, CullingEntity>()
+        val queued = HashSet<String>()
+        for (chunk in distinct.chunked(CHUNK)) {
+            records(chunk).forEach { byId[it.itemId] = it }
+            pending(chunk).forEach { queued += it.itemId }
+        }
+        val out = HashMap<String, Pair<CullValues, Long>>()
+        for (id in distinct) serverSide(byId[id], queued = id in queued)?.let { out[id] = it }
+        return out
+    }
+
+    /** `IN (...)` chunk size (below SQLite's 999 bound variables of older Android versions). */
+    const val CHUNK = 500
+
     /** The server's side of an item: its values and when the newest of rating / flag was written; null = nothing to show. */
-    fun serverSide(record: CullingEntity?, pending: List<PendingCullingEntity>): Pair<CullValues, Long>? {
+    fun serverSide(record: CullingEntity?, pending: List<PendingCullingEntity>): Pair<CullValues, Long>? = serverSide(record, pending.isNotEmpty())
+
+    fun serverSide(record: CullingEntity?, queued: Boolean): Pair<CullValues, Long>? {
         // A change of ours still on its way: the folder row already has it.
-        if (record == null || pending.isNotEmpty()) return null
+        if (record == null || queued) return null
         val at = maxOf(record.ratingAt ?: 0L, record.flagAt ?: 0L)
         if (at <= 0L) return null
         return CullingRules.serverValues(record).copy(label = "") to at
@@ -105,13 +131,9 @@ class MappedCullStore(
         return found
     }
 
-    private suspend fun serverSides(items: Map<String, String>): Map<String, Pair<CullValues, Long>> {
-        if (items.isEmpty()) return emptyMap()
-        val records = items.values.distinct().chunked(500).flatMap { gallery.db.culling().getAll(it) }.associateBy { it.itemId }
-        return items.values.distinct().mapNotNull { id ->
-            MappedCulling.serverSide(records[id], gallery.db.culling().pendingFor(id))?.let { id to it }
-        }.toMap()
-    }
+    /** The server's side of the mapped items: a few chunked queries, whatever the folder's size. */
+    private suspend fun serverSides(items: Map<String, String>): Map<String, Pair<CullValues, Long>> =
+        MappedCulling.serverSides(items.values, { gallery.db.culling().getAll(it) }, { gallery.db.culling().pendingForItems(it) })
 
     private fun template() = CullDecisionEntity(key.locationId, key.share, key.path, "", null, 0, isoOf(now()))
 
@@ -123,8 +145,14 @@ class MappedCullStore(
             handedOver = true
             runCatching { handOver(rows, items) }.onFailure { Log.w(TAG, "hand-over of ${key.path} failed", it) }
         }
-        return MappedCulling.merge(rows, items, serverSides(items), template())
+        val sides = serverSides(items)
+        lastSides = items to sides
+        return MappedCulling.merge(rows, items, sides, template())
     }
+
+    /** The server sides last shown (with the items they were read for): a change that leaves them as they are is skipped. */
+    @Volatile
+    private var lastSides: Pair<Map<String, String>, Map<String, Pair<CullValues, Long>>>? = null
 
     private var handedOver = false
 
@@ -173,8 +201,12 @@ class MappedCullStore(
         for ((shot, flag, rating) in decisions) saved[shot] = CullValues(rating, flag)
         val changes = MappedCulling.serverDecisions(decisions, itemsNow(), decidedAt, now())
         if (changes.isEmpty()) return
+        // Records and queues of every changed item in a few queries, not two per decision.
+        val ids = changes.map { it.itemId }.distinct()
+        val records = ids.chunked(MappedCulling.CHUNK).flatMap { gallery.db.culling().getAll(it) }.associateBy { it.itemId }
+        val queued = ids.chunked(MappedCulling.CHUNK).flatMap { gallery.db.culling().pendingForItems(it) }.groupBy { it.itemId }
         for (c in changes) {
-            val before = CullingRules.effective(gallery.db.culling().get(c.itemId), gallery.db.culling().pendingFor(c.itemId))
+            val before = CullingRules.effective(records[c.itemId], queued[c.itemId].orEmpty())
             // The label is not culling's (Hoard has none): it stays as the server has it.
             gallery.sync.decide(c.itemId, before, before.copy(rating = c.values.rating, flag = c.values.flag), c.at)
         }
@@ -201,18 +233,31 @@ class MappedCullStore(
     override suspend fun analyses(): List<CullAnalysisEntity> = delegate.analyses()
     override suspend fun putAnalyses(rows: List<CullAnalysisEntity>) = delegate.putAnalyses(rows)
 
-    /** A sync that brings another device's decision on a mapped shot shows it while the folder is open. */
+    /**
+     * A sync that brings another device's decision on a mapped shot shows it while the folder is open. Driven by a
+     * change signal of the culling tables (no rows read), coalesced; each signal re-reads only the mapped items' server
+     * sides (a few chunked queries), and the folder's rows are merged again only when those sides changed (our own
+     * decisions change the rows the view model already has).
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     override val external: Flow<Map<String, Decision>>
-        get() = combine(gallery.db.culling().observeAll(), gallery.db.culling().observePending(), mapped) { _, _, items -> items }
-            .map { items ->
-                if (items.isEmpty()) return@map null
-                decisions().associate { it.shotId to Decision(Flag.of(it.flag), it.rating) }.filterValues { !it.unmarked }
+        get() = combine(gallery.db.cullingChanges(), mapped) { _, items -> items }
+            .debounce(EXTERNAL_DEBOUNCE_MS)
+            .conflate()
+            .mapNotNull { items ->
+                if (items.isEmpty()) return@mapNotNull null
+                val sides = serverSides(items)
+                if (lastSides == (items to sides)) return@mapNotNull null
+                lastSides = items to sides
+                MappedCulling.merge(delegate.decisions(), items, sides, template())
+                    .associate { it.shotId to Decision(Flag.of(it.flag), it.rating) }.filterValues { !it.unmarked }
             }
             .distinctUntilChanged()
-            .let { flow -> kotlinx.coroutines.flow.flow { flow.collect { if (it != null) emit(it) } } }
 
     companion object {
         const val TAG = "HoardCull"
         const val ITEMS_TTL_MS = 60_000L
+        /** A burst of changes (a sync page, a run of decisions) is one re-read. */
+        const val EXTERNAL_DEBOUNCE_MS = 300L
     }
 }

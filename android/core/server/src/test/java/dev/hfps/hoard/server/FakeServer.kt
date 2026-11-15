@@ -56,6 +56,8 @@ class FakeServer : AutoCloseable {
     /** Fail this many `PATCH /v1/device` calls with a 503. */
     var deviceFailures = 0
     /** `GET /v1/server` features (0.10.0 adds `items-by-path`). */
+    /** The server id it answers with (another fake server: another id). */
+    var serverId = "fake-server"
     var features = listOf("items", "previews", "culling", "device-identity", "edits")
     /** NAS folders the server knows (by-path answers 404 for another id). */
     val nasFolders = HashSet<String>()
@@ -177,11 +179,11 @@ class FakeServer : AutoCloseable {
         if (path == "/v1/pair") {
             val token = ServerJson.parseToJsonElement(body).jsonObject["token"]!!.jsonPrimitive.content
             if (token != "good") return send(ex, 401, """{"error":{"code":"invalid_pairing_token","message":"no"}}""")
-            return send(ex, 201, """{"deviceId":"$deviceId","apiKey":"$key","serverId":"fake-server","serverName":"Fake","physicalDeviceId":"$deviceId","candidates":$candidates}""")
+            return send(ex, 201, """{"deviceId":"$deviceId","apiKey":"$key","serverId":"$serverId","serverName":"Fake","physicalDeviceId":"$deviceId","candidates":$candidates}""")
         }
         if (ex.requestHeaders.getFirst("Authorization") != "Bearer $key") return send(ex, 401, """{"error":{"code":"unauthorized","message":"no"}}""")
         when {
-            path == "/v1/server" -> send(ex, 200, """{"serverId":"fake-server","serverName":"Fake","version":"0.9.0","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500}}""")
+            path == "/v1/server" -> send(ex, 200, """{"serverId":"$serverId","serverName":"Fake","version":"0.9.0","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500}}""")
             path == "/v1/device" && ex.requestMethod == "PATCH" && deviceFailures > 0 -> {
                 deviceFailures--
                 send(ex, 503, """{"error":{"code":"unavailable","message":"busy"}}""")

@@ -95,6 +95,8 @@ class NativeCullBackend(
     private val volumes: VolumeRegistry,
     private val location: BrowseLocation,
     private val path: String,
+    /** A file of the folder was deleted (ADR 0022: its cached server resolution is dropped). */
+    private val onDeleted: (String) -> Unit = {},
 ) : CullBackend {
     @Volatile private var folder: CullFolder? = null
     private val opening = Mutex()
@@ -244,6 +246,7 @@ class NativeCullBackend(
                 }
             }
         }
+        onDeleted(path)
     }
 
     override fun flush() = service.sidecars.flushAll()

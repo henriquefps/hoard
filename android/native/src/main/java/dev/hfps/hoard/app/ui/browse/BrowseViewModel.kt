@@ -306,7 +306,12 @@ class BrowseViewModel(
     }
 
     suspend fun rename(entry: SmbEntry, newName: String): ErrorCode? = write { loc ->
-        files.run(loc) { fs, _ -> fs.rename(entry.path, newName) }
+        try {
+            files.run(loc) { fs, _ -> fs.rename(entry.path, newName) }
+        } finally {
+            // ADR 0022: a file of this folder changed name; its cached server resolution is not trusted any more.
+            container.serverLinks.invalidate(loc, path)
+        }
         load(quiet = true)
     }
 
@@ -316,6 +321,7 @@ class BrowseViewModel(
         for (entry in entries) {
             if (write { loc -> files.run(loc) { fs, cancel -> fs.delete(entry.path, entry.isDirectory, cancel) } } != null) failed++
         }
+        location.value?.let { container.serverLinks.invalidate(it, path) }
         clearSelection()
         load(quiet = true)
         return failed

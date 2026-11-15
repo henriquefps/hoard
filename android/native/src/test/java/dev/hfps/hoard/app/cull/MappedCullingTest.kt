@@ -53,4 +53,25 @@ class MappedCullingTest {
         assertThat(MappedCulling.serverSide(record("i", 3, "pick", 100), emptyList())).isEqualTo(CullValues(3, "pick") to 100L)
         assertThat(MappedCulling.serverSide(null, emptyList())).isNull()
     }
+
+    @Test
+    fun aBigFolderReadsTheServerSidesInAFewQueries() = kotlinx.coroutines.runBlocking {
+        // 3,000 mapped shots: records and pending changes are read with IN (...) in chunks, never once per item.
+        val ids = (1..3000).map { "item-$it" }
+        var recordQueries = 0
+        var pendingQueries = 0
+        val sides = MappedCulling.serverSides(
+            ids + ids.take(10), // a RAW and its JPEG share an item: asked once
+            records = { chunk -> recordQueries++; chunk.filter { it.endsWith("7") }.map { record(it, 4, "pick", 100) } },
+            pending = { chunk -> pendingQueries++; chunk.filter { it == "item-17" }.map { PendingCullingEntity(it, "rating", "5", 5, 200) } },
+        )
+        assertThat(recordQueries).isEqualTo(3000 / MappedCulling.CHUNK)
+        assertThat(pendingQueries).isEqualTo(3000 / MappedCulling.CHUNK)
+        assertThat(sides).containsKey("item-7")
+        assertThat(sides.getValue("item-7")).isEqualTo(CullValues(4, "pick") to 100L)
+        // Our own change of item-17 is on its way: the folder row shows it, not the server's older value.
+        assertThat(sides).doesNotContainKey("item-17")
+        assertThat(sides).doesNotContainKey("item-1")
+        assertThat(sides).hasSize(299)
+    }
 }

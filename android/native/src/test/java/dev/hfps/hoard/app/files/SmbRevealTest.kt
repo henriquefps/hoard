@@ -52,6 +52,42 @@ class SmbRevealTest {
     }
 
     @Test
+    fun aShotWhoseRawIsNotMatchedIsLookedUpByTheRawNotSentAsItsJpeg() {
+        // The JPEG was walked (a JPEG-only item); the RAW was copied in since, or changed: the JPEG's item is not the shot.
+        val m: (String) -> FileMatch = { path ->
+            when (path) {
+                p("DSC5.ARW") -> FileMatch.Unknown
+                p("DSC5.JPG") -> FileMatch.Mapped("jpeg-only-5", "v1:j5", "rendered")
+                p("DSC6.ARW") -> FileMatch.Changed("pair-6", "v1:r6")
+                p("DSC6.JPG") -> FileMatch.Mapped("pair-6", "v1:j6", "rendered")
+                else -> FileMatch.Unknown
+            }
+        }
+        val shot = listOf(p("DSC5.ARW"), p("DSC5.JPG"), p("DSC6.ARW"), p("DSC6.JPG"))
+        val first = SmbReveal.plan(shot, m, acceptsReferences = true, paired = true, lookupsAllowed = true)
+        assertThat(first.server).isEmpty()
+        // Looked up by the RAW's own fingerprint.
+        assertThat(first.lookups.map { it.main }).containsExactly(p("DSC5.ARW"), p("DSC6.ARW")).inOrder()
+        // DSC5's RAW is not on the server: the whole shot goes as URIs (RAW and JPEG), never the JPEG's item alone.
+        val looked = mapOf(first.lookups[0].key to null, first.lookups[1].key to ("pair-6" to "v1:r6"))
+        val second = SmbReveal.plan(shot, m, acceptsReferences = true, paired = true, lookupsAllowed = false, looked = looked)
+        assertThat(second.server.map { it.itemId }).containsExactly("pair-6")
+        assertThat(second.uris).containsExactly(p("DSC5.ARW"), p("DSC5.JPG")).inOrder()
+        // No lookups allowed (or over the budget): URIs for both files, as before.
+        val none = SmbReveal.plan(shot, m, acceptsReferences = true, paired = true, lookupsAllowed = false)
+        assertThat(none.server).isEmpty()
+        assertThat(none.uris).isEqualTo(shot)
+    }
+
+    @Test
+    fun aRenameGuessIsLookedUpNotSent() {
+        val m: (String) -> FileMatch = { FileMatch.Changed("deleted-frame", "v1:old", renamed = true) }
+        val plan = SmbReveal.plan(listOf(p("DSC7.ARW")), m, acceptsReferences = true, paired = true, lookupsAllowed = true)
+        assertThat(plan.server).isEmpty()
+        assertThat(plan.lookups.map { it.main }).containsExactly(p("DSC7.ARW"))
+    }
+
+    @Test
     fun lookupsAreCapped() {
         val many = (1..50).map { p("NEW$it.JPG") }
         val plan = SmbReveal.plan(many, { FileMatch.Unknown }, acceptsReferences = true, paired = true, lookupsAllowed = true)

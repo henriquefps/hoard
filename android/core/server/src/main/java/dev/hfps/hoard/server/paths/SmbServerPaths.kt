@@ -28,7 +28,9 @@ fun interface FingerprintReader {
 
 /**
  * An open folder resolved against the server: the mapping that covers it, what each file is ([matches], by path in
- * the share), the full items the query returned ([items], by id; files found by path only are not in it).
+ * the share), the full items the query returned ([items], by id; files found by path only are not in it). [index] and
+ * [replacedBy] are what the server answered, kept so that a cached resolution is matched again against the share's
+ * current listing (sizes and mtimes) every time it is used.
  */
 data class FolderResolution(
     val folder: SmbFolderRef,
@@ -36,6 +38,8 @@ data class FolderResolution(
     val matches: Map<String, FileMatch>,
     val items: Map<String, Item>,
     val resolvedAt: Long,
+    val index: List<IndexedFile> = emptyList(),
+    val replacedBy: Map<String, String> = emptyMap(),
 ) {
     fun itemOf(path: String): String? = (matches[path] as? FileMatch.Mapped)?.itemId
 
@@ -59,6 +63,13 @@ class SmbServerPaths(
     private val cache = ConcurrentHashMap<String, FolderResolution>()
     private val learning = Mutex()
 
+    /**
+     * The paired server's id as last read (null: not paired or not read yet). A cached resolution is used only for this
+     * server; when it changes (unpair, pairing another server) every cached resolution is dropped.
+     */
+    @Volatile
+    private var serverId: String? = null
+
     /** Files fingerprinted so far (each is a 2 MiB read of the share): for logs and tests. */
     val reads = AtomicInteger()
 
@@ -67,11 +78,39 @@ class SmbServerPaths(
 
     suspend fun mappings(): List<PathMapping> = db.mappings().all().map(::mappingOf)
 
-    /** The cached resolution of a folder, if still fresh (no I/O). */
-    fun cached(folder: SmbFolderRef): FolderResolution? = cache[folder.key]?.takeIf { now() - it.resolvedAt <= ttlMs }
+    /**
+     * The cached resolution of a folder, if still fresh and of the paired server (no I/O). Its matches are those of the
+     * listing it was resolved (or last revalidated) with: a hint for the UI only. Anything sent to Reveal goes through
+     * [resolve] with the current listing, which matches the cache again against it.
+     */
+    fun cached(folder: SmbFolderRef): FolderResolution? {
+        val current = serverId ?: return null
+        return cache[folder.key]?.takeIf { now() - it.resolvedAt <= ttlMs && it.mapping.serverId == current }
+    }
+
+    /**
+     * The paired server is now [id] (null: unpaired). Another server than before drops every cached resolution: its
+     * item ids belong to the old server (the stored mappings go with the pairing, `SyncEngine.clearAll`).
+     */
+    fun onServer(id: String?) {
+        val before = serverId
+        serverId = id
+        if (before != id) cache.clear()
+    }
+
+    /**
+     * Hoard changed files under [path] of [share] on [machineId] (a transfer, a rename, a delete): the cached
+     * resolutions of that folder and of every folder under it are dropped.
+     */
+    fun invalidate(machineId: String, share: String, path: String) {
+        val prefix = SharePaths.normalize(path)
+        cache.entries.removeIf { (_, r) ->
+            r.folder.machineId == machineId && r.folder.share.equals(share, ignoreCase = true) && SharePaths.rest(r.folder.path, prefix) != null
+        }
+    }
 
     /** Whether the paired server can map paths (paired, and `items-by-path` in its features at the last sync). */
-    suspend fun available(): Boolean = db.account().get()?.has(Features.ITEMS_BY_PATH) == true
+    suspend fun available(): Boolean = db.account().get().also { onServer(it?.serverId) }?.has(Features.ITEMS_BY_PATH) == true
 
     /**
      * Resolves an open folder: its mapping (learned now if needed and allowed), then its files against the server.
@@ -79,10 +118,12 @@ class SmbServerPaths(
      * folder is not mapped (not paired, an older server, not on the server) or the server cannot be reached.
      */
     suspend fun resolve(folder: SmbFolderRef, listed: List<MappingDiscovery.SmbFile>, reader: FingerprintReader, refresh: Boolean = false): FolderResolution? {
-        if (!refresh) cached(folder)?.let { return it }
+        val account = db.account().get()
+        onServer(account?.serverId)
+        account ?: return null
         val files = listed.filter { MappingDiscovery.indexed(it.name) }
+        if (!refresh) cached(folder)?.let { return revalidate(it, folder, files) }
         if (files.isEmpty()) return null
-        val account = db.account().get() ?: return null
         if (!account.has(Features.ITEMS_BY_PATH)) return null
         val api = api() ?: return null
         val mapping = mappingFor(folder, files, reader, account.serverId, api) ?: return null
@@ -94,6 +135,21 @@ class SmbServerPaths(
             val again = mappingFor(folder, files, reader, account.serverId, api) ?: return null
             runCatching { resolveWith(folder, files, again, api) }.getOrNull()
         }
+    }
+
+    /**
+     * A cached resolution used again: still of the paired server ([cached]) and of the same SMB server, and matched
+     * again against the folder's **current** listing [files], so a file overwritten, replaced, renamed or deleted on
+     * the share since (by Hoard or another client) is never taken for the item it was: the server's answer is reused,
+     * the share's sizes and mtimes are not.
+     */
+    private fun revalidate(cached: FolderResolution, folder: SmbFolderRef, files: List<MappingDiscovery.SmbFile>): FolderResolution? {
+        if (!MappingDiscovery.valid(cached.mapping, serverId, folder.smbGuid)) {
+            cache.remove(folder.key)
+            return null
+        }
+        val matches = FolderMatch.match(cached.mapping, files, cached.index, cached.replacedBy)
+        return cached.copy(folder = folder, matches = matches).also { cache[folder.key] = it }
     }
 
     /**
@@ -174,7 +230,7 @@ class SmbServerPaths(
             }
             val replaced = db.culling().replaced().associate { it.itemId to it.replacedBy }
             val matches = FolderMatch.match(mapping, files, index, replaced)
-            FolderResolution(folder, mapping, matches, items, now()).also { cache[folder.key] = it }
+            FolderResolution(folder, mapping, matches, items, now(), index, replaced).also { if (mapping.serverId == serverId) cache[folder.key] = it }
         }
 
     /**
@@ -182,7 +238,9 @@ class SmbServerPaths(
      * it, or null. When it is found outside the folder's mapping, the mapping is forgotten (learned again next time).
      */
     suspend fun lookupOne(folder: SmbFolderRef, path: String, reader: FingerprintReader): Item? = withContext(Dispatchers.IO) {
-        val account = db.account().get() ?: return@withContext null
+        val account = db.account().get()
+        onServer(account?.serverId)
+        account ?: return@withContext null
         val api = api() ?: return@withContext null
         val fp = runCatching { reader.fingerprint(path) }.getOrNull()?.also { reads.incrementAndGet() } ?: return@withContext null
         val answer = runCatching { api.lookup(listOf(fp)) }.getOrNull() ?: return@withContext null

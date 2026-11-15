@@ -41,10 +41,12 @@ object SmbReveal {
 
     /**
      * The plan. Not [paired] or Reveal before 0.9.0 ([acceptsReferences] false): every path as a URI, as before.
-     * Otherwise a shot with a file the index matched goes by reference (the RAW's item first); a shot looked up
-     * ([looked]: shot key → item id, or null when the server does not hold it) goes by what the lookup said; a shot
-     * with a file the index knows but whose size or mtime changed, or one it does not know, is looked up when
-     * [lookupsAllowed] (a mapped folder, or a single shot) and fewer than [MAX_LOOKUPS] are planned; else URIs.
+     * Otherwise a shot goes by reference only when its **main file** (the first: the RAW of a RAW + JPEG shot) is
+     * mapped by the index, as that file's item: a matched JPEG never carries a new or changed RAW (Reveal would get the
+     * JPEG's item and the RAW would be neither referenced nor sent). A shot looked up ([looked]: shot key → item id,
+     * or null when the server does not hold it) goes by what the lookup of its main file said. Any other shot (its main
+     * file changed since the walk, a rename guess, or not indexed) is looked up when [lookupsAllowed] (a mapped folder,
+     * or a single shot) and fewer than [MAX_LOOKUPS] are planned; else all its files go as URIs.
      */
     fun plan(
         ordered: List<String>,
@@ -59,14 +61,9 @@ object SmbReveal {
         val uris = ArrayList<String>()
         val lookups = ArrayList<Shot>()
         for (shot in shots(ordered)) {
-            val matches = shot.paths.map { it to match(it) }
-            val mapped = matches.filter { it.second is FileMatch.Mapped }
-            val best = mapped.firstOrNull { (it.second as FileMatch.Mapped).role == "raw" } ?: mapped.firstOrNull()
+            val main = match(shot.main)
             when {
-                best != null -> {
-                    val m = best.second as FileMatch.Mapped
-                    server += ServerShot(shot, m.itemId, best.first, m.fingerprint)
-                }
+                main is FileMatch.Mapped -> server += ServerShot(shot, main.itemId, shot.main, main.fingerprint)
                 shot.key in looked -> {
                     val hit = looked[shot.key]
                     if (hit != null) server += ServerShot(shot, hit.first, shot.main, hit.second) else uris += shot.paths

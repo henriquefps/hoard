@@ -71,17 +71,29 @@ For an open folder covered by a mapping (`FolderMatch`, JVM-tested):
   call), which is also the call for scattered selections.
 - **Per file**, by path (exact, else ignoring case) then **size and mtime** (mtime within 2 s: SMB gives 100 ns, the
   server keeps ms, a FAT disk under Samba keeps 2 s):
-  - same size and mtime → **mapped** to the item (its id followed through `replacedBy` of the cached culling records:
-    a JPEG-only item replaced when its RAW appeared);
+  - the same path, size and mtime → **mapped** to the item (its id followed through `replacedBy` of the cached culling
+    records: a JPEG-only item replaced when its RAW appeared). Only this is trusted like a fingerprint;
   - the path is indexed but the size or mtime differ → **changed** (the file changed since the server's walk);
-  - not indexed → a **rename** on the share since the walk when exactly one indexed file of the same directory and
-    extension, whose own path is gone from the share, has its size and mtime; else **unknown** (new, not walked yet).
-- Changed and unknown files are looked up by their own fingerprint **only when it matters**: at a hand-off (below).
-  Badges and culling use mapped files only.
-- Cached per folder for **5 minutes**; pull to refresh in Files asks again at once.
+  - not indexed, but exactly one indexed file of the same directory and extension, whose own path is gone from the
+    share, has its size and mtime → a **rename candidate**. It is a guess, never trusted: uncompressed RAWs of one
+    camera share their size and a burst shares its second, so a new frame can look exactly like a deleted one. It is
+    handled as changed;
+  - else **unknown** (new, not walked yet).
+- Changed, rename-candidate and unknown files are looked up by their own fingerprint **only when it matters**: at a
+  hand-off (below). Badges and culling use mapped files only.
+- **Cache.** The server's answer for a folder (its index) is kept for **5 minutes**; pull to refresh in Files asks
+  again at once. The cache never stands in for the share: every use of a cached folder (opening it again, culling,
+  Edit in Reveal, which lists the folder first) matches the cached index **again against the current listing**, so a
+  file overwritten, replaced, renamed or deleted on the share since (by Hoard or another client) is never taken for
+  the item it was. Cached folders belong to the paired server: a cached answer is used only while the same server id
+  is paired, and unpairing or pairing another server drops them all (with the Files badges). Hoard's own file
+  operations drop the cached answers of the folders they touch and of the folders under them: a transfer when it ends
+  (its destination, and its sources' folders), a rename or a delete in Files, a delete in culling. The only use of a
+  cache entry without a fresh listing is the UI hint that skips the "read through Hoard" confirmation (below); what is
+  sent is always decided on a fresh listing.
 
-A shot (folder + lower-case stem, as culling groups files) is mapped when one of its files is; a RAW's item comes
-before its JPEG's.
+A shot (folder + lower-case stem, as culling groups files) is mapped when one of its files is (badges, culling); a
+RAW's item comes before its JPEG's. Edit in Reveal is stricter (below).
 
 ### Files and culling
 
@@ -121,6 +133,10 @@ write by `"nas"` at `t` (ADR 0016 "The NAS sidecars").
   elsewhere inside that window could be ordered differently. The re-dating closes it, and uses one clock (the SMB
   server's) for both writes.
 
+An open culling session follows the server through a change signal of the culling tables (no rows read): each burst
+of changes re-reads only the folder's mapped items, with `IN (...)` queries of 500 ids (records and queued changes), and
+merges the folder's rows again only when those values changed.
+
 `DualWriteTest` runs both orders and a newer decision from Reveal against the fake server's per-field rule and NAS
 import.
 
@@ -128,20 +144,28 @@ import.
 
 From Files and folder culling on an SMB share (`FileActions.editInReveal`, plan in `SmbReveal`, JVM-tested):
 
-- With Reveal ≥ 0.9.0 (`versionCode >= 90000`) and a paired server, each **shot** with a mapped file goes as a
-  **server item** (ADR 0010 "Server items": `SERVER_REF_VERSION`, `SERVER_ID`, `SERVER_ITEMS` with `itemId`, the main
+- **The rule.** Never URIs for a photo Hoard **knows** the server holds (mapped, or looked up); a photo Hoard cannot
+  cheaply place goes as URIs. "Cheaply" is bounded: at most `MAX_LOOKUPS` = 20 fingerprint lookups (2 MiB each) per
+  hand-off, and no lookup at all for a selection of several shots in a folder that is not mapped. These limits are
+  accepted: such a photo goes as URIs, as before 2.2.0.
+- With Reveal ≥ 0.9.0 (`versionCode >= 90000`) and a paired server, each **shot whose main file is mapped** (the first
+  in Reveal's order: the RAW of a RAW + JPEG shot) goes as that file's **server item** (ADR 0010 "Server items": `SERVER_REF_VERSION`, `SERVER_ID`, `SERVER_ITEMS` with `itemId`, the main
   file's `fingerprint`, every member's `fingerprints`, `name`; at most 500 per intent, more as several intents with
   the same title; `INITIAL_ITEM` when the shot opened first is one). The item's details come from the folder query,
   the Gallery's mirror, or the lookup.
-- A shot with no mapped file but with a changed or unknown one is **looked up** by its main file's fingerprint (2 MiB)
-  when the folder is mapped (or the hand-off is one shot), at most 20 shots per hand-off. Found → a server item (even
-  when the mapping was wrong: the server holds the photo; the mapping is then forgotten); not found → URIs.
+- A shot whose main file is not mapped (changed, a rename candidate, or unknown) is **looked up** by its main file's
+  fingerprint (2 MiB) when the folder is mapped (or the hand-off is one shot), at most 20 shots per hand-off. This
+  holds even when another file of the shot is mapped: a JPEG matched next to a RAW copied in since is a JPEG-only
+  item, and sending it would give Reveal the JPEG and neither reference nor send the RAW. Found → a server item (even
+  when the mapping was wrong: the server holds the photo; the mapping is then forgotten); not found, or over the
+  budget → every file of the shot as URIs.
 - Everything else goes as URIs, exactly as before (ClipData, grants, sidecars, `CULLING` for those only). One intent
   may carry both.
 - The pending culling of the items is pushed first (best effort, 3 s), as in the Gallery.
-- When every photo of an SMB hand-off goes as a server item, the "photos are read through Hoard" confirmation is not
-  shown.
-- **Never URIs for a mapped shot** when Reveal takes references. An older Reveal gets every file as a URI, as before.
+- When every photo of an SMB hand-off is mapped in the folder's cached resolution, the "photos are read through
+  Hoard" confirmation is not shown (a hint only: Reveal's versionCode is read off the main thread when the screen
+  starts and on resume, never during composition).
+- An older Reveal gets every file as a URI, as before.
 
 ### Settings
 
@@ -154,6 +178,15 @@ folder/prefix", with **Forget**.
 server id, folder id and name, server prefix, SMB server GUID, learned / verified times) and `smb_mapping_misses`
 (machine, share, folder, server id, checked at). `hoard.db` is unchanged (it stays Hoard 1's schema table for table,
 ADR 0019): mappings belong to the paired server, as everything in `gallery.db`.
+
+## Known limits (not fixed)
+
+- **No Unicode normalisation of names.** Paths are compared as given, ignoring case only. A name stored in NFC on one
+  side and NFD on the other (a macOS client writing to the share) does not match: the file is unknown and goes as
+  URIs, or is looked up at a hand-off. Fail-safe: never a wrong item, at worst a URI.
+- **`verifiedAt` is never refreshed.** A mapping records when it was learned and verified; nothing re-verifies it
+  later. It is invalidated by the events above (another server, another SMB GUID, a gone folder id, a lookup that
+  disagrees, Forget), not by age.
 
 ## Alternatives considered
 

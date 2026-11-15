@@ -161,7 +161,10 @@ class CullViewModelFactory(
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        val b = backend?.invoke() ?: NativeCullBackend(container.cullService(), container.routes, container.gateway, container.volumeRegistry, location, key.path)
+        val b = backend?.invoke() ?: NativeCullBackend(
+            container.cullService(), container.routes, container.gateway, container.volumeRegistry, location, key.path,
+            onDeleted = { if (location.isSmb) container.serverLinks.invalidate(location, key.path) },
+        )
         val dao = container.database.cull()
         if (location.isSmb && backend == null) {
             // ADR 0022: on a mapped SMB folder, decisions also go to the server's culling of the same items.

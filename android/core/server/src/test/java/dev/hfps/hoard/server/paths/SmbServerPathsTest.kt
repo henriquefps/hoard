@@ -145,6 +145,71 @@ class SmbServerPathsTest {
     }
 
     @Test
+    fun aCachedFolderIsMatchedAgainstTheCurrentListing() = runBlocking<Unit> {
+        for (n in 1..3) server.putItem(shot(n))
+        val first = paths.resolve(folder, listing(1..3), reader)!!
+        assertThat(first.itemOf("Imagens/2024/Trip/DSC00002.JPG")).isEqualTo("item-2")
+        // DSC00002 overwritten on the share a minute later (another client, or Hoard's own replace): new size and mtime.
+        clock += 60_000
+        val now = listing(1..3).map { if (it.name == "DSC00002.JPG") it.copy(size = 9_999, modifiedAt = clock) else it }
+        val again = paths.resolve(folder, now, reader)!!
+        // Inside the TTL the server is not asked again, but the overwritten file is no longer its old item.
+        assertThat(server.folderQueries).isEqualTo(1)
+        assertThat(again.itemOf("Imagens/2024/Trip/DSC00002.JPG")).isNull()
+        assertThat(again.match("Imagens/2024/Trip/DSC00002.JPG")).isInstanceOf(FileMatch.Changed::class.java)
+        assertThat(again.itemOf("Imagens/2024/Trip/DSC00001.JPG")).isEqualTo("item-1")
+        // A file deleted since: not in the matches; a new one: unknown.
+        val other = paths.resolve(folder, listing(1..1) + listing(7..7), reader)!!
+        assertThat(other.matches.keys).containsExactly("Imagens/2024/Trip/DSC00001.JPG", "Imagens/2024/Trip/DSC00007.JPG")
+        assertThat(other.match("Imagens/2024/Trip/DSC00007.JPG")).isEqualTo(FileMatch.Unknown)
+        // The UI's cached hint follows the last revalidation.
+        assertThat(paths.cached(folder)!!.matches.keys).containsExactly("Imagens/2024/Trip/DSC00001.JPG", "Imagens/2024/Trip/DSC00007.JPG")
+    }
+
+    @Test
+    fun hoardsOwnFileOperationsDropTheFolderAndItsSubFolders() = runBlocking<Unit> {
+        for (n in 1..3) server.putItem(shot(n))
+        for (n in 10..12) server.putItem(shot(n, dir = "2024/Trip/Day2"))
+        val day2 = folder.copy(path = "Imagens/2024/Trip/Day2")
+        paths.resolve(folder, listing(1..3), reader)
+        paths.resolve(day2, listing(10..12, "Imagens/2024/Trip/Day2"), reader)
+        val elsewhere = folder.copy(path = "Imagens/2024/Other")
+        for (n in 20..22) server.putItem(shot(n, dir = "2024/Other"))
+        paths.resolve(elsewhere, listing(20..22, "Imagens/2024/Other"), reader)
+        assertThat(server.folderQueries).isEqualTo(3)
+        // A transfer into (or a rename / delete in) Trip: Trip and Day2 are asked again, Other is not.
+        paths.invalidate("m1", "photos", "Imagens/2024/Trip")
+        assertThat(paths.cached(folder)).isNull()
+        assertThat(paths.cached(day2)).isNull()
+        assertThat(paths.cached(elsewhere)).isNotNull()
+        paths.resolve(folder, listing(1..3), reader)
+        assertThat(server.folderQueries).isEqualTo(4)
+    }
+
+    @Test
+    fun anotherPairedServerNeverGetsTheOldServersCachedItems() = runBlocking<Unit> {
+        for (n in 1..3) server.putItem(shot(n))
+        paths.resolve(folder, listing(1..3), reader)
+        assertThat(paths.cached(folder)!!.mapping.serverId).isEqualTo("fake-server")
+        // Unpair, then pair another server (inside the 5 minutes) that holds the same files under other item ids.
+        engine.unpair()
+        val other = FakeServer().apply { serverId = "other-server"; features = features + "items-by-path"; nasFolders += folderId }
+        try {
+            for (n in 1..3) other.putItem(shot(n).copy(id = "other-$n"))
+            engine.pair(PairingCode(other.url, "good", "other-server"))
+            val r = paths.resolve(folder, listing(1..3), reader)!!
+            assertThat(r.mapping.serverId).isEqualTo("other-server")
+            assertThat(r.itemOf("Imagens/2024/Trip/DSC00002.JPG")).isEqualTo("other-2")
+            assertThat(other.folderQueries).isEqualTo(1)
+        } finally {
+            other.close()
+        }
+        // Unpaired (the app's account observer tells it): no cached hint survives.
+        paths.onServer(null)
+        assertThat(paths.cached(folder)).isNull()
+    }
+
+    @Test
     fun aGoneNasFolderIsForgottenAndLearnedAgain() = runBlocking<Unit> {
         for (n in 1..3) server.putItem(shot(n))
         paths.resolve(folder, listing(1..3), reader)

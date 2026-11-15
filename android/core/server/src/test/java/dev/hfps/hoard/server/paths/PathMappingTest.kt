@@ -122,20 +122,35 @@ class PathMappingTest {
     }
 
     @Test
-    fun aRenameOnTheShareIsMatchedBySizeAndMtimeWhenUnambiguous() {
+    fun aRenameOnTheShareIsOnlyACandidateToLookUp() {
         val m = mapping("", "")
         val a = file("v1:a", "IMG_1.JPG", 300, nas("trip/IMG_1.JPG", 5000))
         val b = file("v1:b", "IMG_2.JPG", 400, nas("trip/IMG_2.JPG", 6000))
         val index = FolderMatch.indexOf(listOf(item("ia", a), item("ib", b)), folder)
         // IMG_1 renamed to Beach.JPG since the walk; IMG_2 still there.
         val out = FolderMatch.match(m, listOf(smb("trip/Beach.JPG", 300, 5000), smb("trip/IMG_2.JPG", 400, 6000)), index)
-        assertThat(out["trip/Beach.JPG"]).isEqualTo(FileMatch.Mapped("ia", "v1:a", "rendered", renamed = true))
+        // A guess (same extension, size and mtime): looked up by fingerprint at a hand-off, never trusted as mapped.
+        assertThat(out["trip/Beach.JPG"]).isEqualTo(FileMatch.Changed("ia", "v1:a", renamed = true))
         // An indexed file still present on the share is never taken by a rename.
         val kept = FolderMatch.match(m, listOf(smb("trip/Copy.JPG", 400, 6000), smb("trip/IMG_2.JPG", 400, 6000)), index)
         assertThat(kept["trip/Copy.JPG"]).isEqualTo(FileMatch.Unknown)
         // Two orphans with the same size and mtime: ambiguous, not matched.
         val twins = FolderMatch.indexOf(listOf(item("ia", a), item("ic", file("v1:c", "IMG_3.JPG", 300, nas("trip/IMG_3.JPG", 5000)))), folder)
         assertThat(FolderMatch.match(m, listOf(smb("trip/Beach.JPG", 300, 5000)), twins).values.single()).isEqualTo(FileMatch.Unknown)
+    }
+
+    @Test
+    fun aNewBurstFrameNextToADeletedOneIsNotMappedToIt() {
+        val m = mapping("", "")
+        // Uncompressed RAWs: every frame has the same size; a burst shares the second.
+        val gone = file("v1:gone", "DSC00010.ARW", 24_000_000, nas("burst/DSC00010.ARW", 7000), role = "raw")
+        val kept = file("v1:kept", "DSC00011.ARW", 24_000_000, nas("burst/DSC00011.ARW", 7000), role = "raw")
+        val index = FolderMatch.indexOf(listOf(item("i-gone", gone), item("i-kept", kept)), folder)
+        // DSC00010 deleted on the share since the walk, a new DSC00012 taken in the same second.
+        val out = FolderMatch.match(m, listOf(smb("burst/DSC00011.ARW", 24_000_000, 7000), smb("burst/DSC00012.ARW", 24_000_000, 7500)), index)
+        assertThat(out["burst/DSC00011.ARW"]).isInstanceOf(FileMatch.Mapped::class.java)
+        assertThat(out["burst/DSC00012.ARW"]).isNotInstanceOf(FileMatch.Mapped::class.java)
+        assertThat(out.values.filterIsInstance<FileMatch.Mapped>().map { it.itemId }).containsExactly("i-kept")
     }
 
     @Test

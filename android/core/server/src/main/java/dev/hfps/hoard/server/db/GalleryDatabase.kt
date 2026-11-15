@@ -39,6 +39,12 @@ abstract class GalleryDatabase : RoomDatabase() {
     abstract fun device(): DeviceDao
     abstract fun mappings(): MappingDao
 
+    /**
+     * Emits whenever the culling records or the queue change (no rows read): a screen that needs only a few items
+     * re-reads those, instead of observing the whole tables.
+     */
+    fun cullingChanges(): kotlinx.coroutines.flow.Flow<Set<String>> = invalidationTracker.createFlow("culling", "culling_pending")
+
     companion object {
         const val FILE_NAME = "gallery.db"
 
@@ -235,6 +241,10 @@ interface CullingDao {
 
     @Query("SELECT * FROM culling_pending WHERE item_id = :itemId")
     suspend fun pendingFor(itemId: String): List<PendingCullingEntity>
+
+    /** The queued changes of several items in one query (callers chunk [ids] by 500). */
+    @Query("SELECT * FROM culling_pending WHERE item_id IN (:ids)")
+    suspend fun pendingForItems(ids: List<String>): List<PendingCullingEntity>
 
     @Query("SELECT COUNT(*) FROM culling_pending")
     fun observePendingCount(): Flow<Int>
