@@ -85,4 +85,5 @@
     <string name="licences_title">Licenças</string>
     <string name="licence_libraw_terms">LGPL 2.1 ou CDDL 1.0</string>
     <string name="licence_mlkit_terms">Termos de serviço do ML Kit</string>
+    <string name="language_system">Idioma do sistema</string>
 </resources>

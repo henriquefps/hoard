@@ -46,6 +46,9 @@ fun SettingsScreen(
     files: (@Composable () -> Unit)? = null,
     /** Culling's settings (assist sensitivities, burst gap, sidecars). */
     culling: (@Composable () -> Unit)? = null,
+    /** The in-app language (null = the system's), and its setter; the section shows when [onLanguage] is given. */
+    language: String? = null,
+    onLanguage: ((String?) -> Unit)? = null,
 ) {
     HfpsScaffold(
         modifier = modifier,
@@ -78,6 +81,15 @@ fun SettingsScreen(
                     }
                 }
                 HfpsRowDivider(Modifier.padding(top = 8.dp))
+                if (onLanguage != null) {
+                    Section(R.string.t_settings_language)
+                    Column(Modifier.selectableGroup().padding(horizontal = 16.dp).testTag("settings-language")) {
+                        HfpsChoiceRow(stringResource(R.string.language_system), language == null, { onLanguage(null) })
+                        HfpsChoiceRow(stringResource(R.string.t_language_en), language == "en", { onLanguage("en") })
+                        HfpsChoiceRow(stringResource(R.string.t_language_pt_br), language == "pt-BR", { onLanguage("pt-BR") })
+                    }
+                    HfpsRowDivider(Modifier.padding(top = 8.dp))
+                }
                 files?.invoke()
                 if (culling != null) {
                     Section(R.string.t_settings_culling)

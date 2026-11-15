@@ -154,6 +154,11 @@ class AppContainer(context: Context) {
         }
         transfers.start()
         mirrorMachines()
+        // Hoard 1's language (mirrored into `language` by its last release) becomes Hoard 2's, once (ADR 0019).
+        scope.launch {
+            val imported = runCatching { settingsStore.getString("language") }.getOrNull()
+            dev.hfps.hoard.app.data.AppLanguage.applyImported(appContext, imported)
+        }
         network = NetworkMonitor(appContext) { scope.launch { routes.recheckAll() } }.also { it.start() }
     }
 

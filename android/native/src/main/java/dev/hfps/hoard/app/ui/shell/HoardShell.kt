@@ -69,6 +69,7 @@ import dev.hfps.hoard.app.transfers.PasteProblem
 import dev.hfps.hoard.app.transfers.TREE_LOCATION_ID
 import dev.hfps.hoard.app.transfers.pasteProblem
 import dev.hfps.hoard.app.ui.browse.BrowseNav
+import dev.hfps.hoard.app.ui.browse.findActivity
 import dev.hfps.hoard.app.ui.browse.BrowseScreen
 import dev.hfps.hoard.app.ui.browse.BrowseViewModel
 import dev.hfps.hoard.app.ui.common.ConfirmDialog
@@ -139,6 +140,7 @@ fun HoardShell(container: AppContainer) {
     val driveName = stringResource(R.string.t_locations_drive)
     val openSave by ShellRequests.openSave.collectAsState()
     val clipboardShown = container.clipboard.content.collectAsState().value != null
+    val scope = rememberCoroutineScope()
     LaunchedEffect(openSave) {
         if (openSave) {
             ShellRequests.openSave.value = false
@@ -249,6 +251,11 @@ fun HoardShell(container: AppContainer) {
                                     onOpenLicences = { navController.navigate(LicencesRoute) },
                                     files = { FilesSettingsSection() },
                                     culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
+                                    language = remember { dev.hfps.hoard.app.data.AppLanguage.current(context) },
+                                    onLanguage = { tag ->
+                                        scope.launch { container.settingsStore.putString("language", tag ?: "") }
+                                        dev.hfps.hoard.app.data.AppLanguage.set(context.findActivityOrSelf(), tag)
+                                    },
                                 )
                             }
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
@@ -269,6 +276,8 @@ fun HoardShell(container: AppContainer) {
     }
     @Suppress("UNUSED_EXPRESSION") context
 }
+
+private fun android.content.Context.findActivityOrSelf(): android.content.Context = findActivity() ?: this
 
 /** A breadcrumb or "up": back to that folder when it is on the back stack, a new entry otherwise. */
 private fun navigateToFolder(nav: NavHostController, locationId: String, share: String?, path: String) {
