@@ -204,6 +204,14 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.10.1 (sidecar import skips first-write defaults)
+
+0.10.1 changes one thing in how the server imports the culling values of NAS sidecars (ADR 0016): a sidecar value that is the
+default (rating `0`, flag `none`, no label) for a field the item's culling record has never held is no longer written. Hoard
+and Lightroom write such sidecars for undecided shots (`xmp:Rating="0"`, `digiKam:PickLabel="0"`), which used to cost two
+revisions per shot with no visible change. A default that arrives after a real value is still imported as a clear, and
+`POST /v1/culling` from devices is unchanged. No API change, no migration, no step to take; revisions already written stay.
+
 ## Upgrading to 0.10.0 (items by path, device liveness)
 
 0.10.0 adds two things for Hoard's hand-off of photos to Reveal, both additive on `/v1` and with no database migration:

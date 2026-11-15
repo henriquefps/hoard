@@ -296,6 +296,73 @@ func TestSidecarImportRule(t *testing.T) {
 	}
 }
 
+// TestSidecarImportSkipsFirstWriteDefaults: hoard-server 0.10.1, ADR 0016 "When a sidecar is imported" step 2.
+func TestSidecarImportSkipsFirstWriteDefaults(t *testing.T) {
+	i := func(v int) *int { return &v }
+	str := func(v string) *string { return &v }
+	type step struct {
+		v        SidecarValues
+		wantN    int
+		wantVals map[string]string // field -> value after the step ("" = absent)
+	}
+	for _, c := range []struct {
+		name  string
+		steps []step
+	}{
+		{"all defaults, first import", []step{{SidecarValues{Rating: i(0), Flag: str("none"), Label: str("")}, 0, map[string]string{}}}},
+		{"defaults, label absent", []step{{SidecarValues{Rating: i(0), Flag: str("none")}, 0, map[string]string{}}}},
+		{"mixed: only non-default written", []step{{SidecarValues{Rating: i(0), Flag: str("pick"), Label: str("")}, 1,
+			map[string]string{CullFlag: `"pick"`}}}},
+		{"default after a real value is a clear", []step{
+			{SidecarValues{Rating: i(3), Flag: str("pick")}, 2, map[string]string{CullRating: "3", CullFlag: `"pick"`}},
+			{SidecarValues{Rating: i(0), Flag: str("none")}, 2, map[string]string{CullRating: "0", CullFlag: `"none"`}},
+		}},
+		{"label cleared present to absent", []step{
+			{SidecarValues{Label: str("Red")}, 1, map[string]string{CullLabel: `"Red"`}},
+			{SidecarValues{}, 1, map[string]string{CullLabel: `""`}},
+		}},
+		{"default for one field, real clear for another", []step{
+			{SidecarValues{Rating: i(2)}, 1, map[string]string{CullRating: "2"}},
+			{SidecarValues{Rating: i(0), Flag: str("none")}, 1, map[string]string{CullRating: "0"}},
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := openTest(t)
+			ctx := context.Background()
+			if _, err := s.db.ExecContext(ctx, "INSERT INTO nas_folders (id, path, name, created_at) VALUES ('f', '/mnt/nas', 'nas', 0)"); err != nil {
+				t.Fatal(err)
+			}
+			item := ItemID(fpShot)
+			for k, st := range c.steps {
+				head, _ := s.Counter(ctx, "items")
+				n, err := s.ImportSidecars(ctx, "f", []SidecarRead{{RelPath: "a/D.xmp", Size: int64(10 + k), MTime: int64(100+k) * 1e6, ItemID: item, Values: st.v}})
+				if err != nil || n != st.wantN {
+					t.Fatalf("step %d: n=%d %v", k, n, err)
+				}
+				h, _ := s.Counter(ctx, "items")
+				if int(h-head) != st.wantN {
+					t.Fatalf("step %d: %d revisions, want %d", k, h-head, st.wantN)
+				}
+				rec, err := s.Culling(ctx, item)
+				if len(st.wantVals) == 0 && k == 0 {
+					if !errors.Is(err, ErrNotFound) {
+						t.Fatalf("a culling record exists: %+v %v", rec, err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, f := range []string{CullRating, CullFlag, CullLabel} {
+					if got := string(rec.Fields[f].Value); got != st.wantVals[f] {
+						t.Fatalf("step %d: %s = %q, want %q", k, f, got, st.wantVals[f])
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestBridgeFromPhotoRecords(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()

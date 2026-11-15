@@ -3,6 +3,7 @@ package nas
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -99,6 +100,33 @@ func TestSidecarsImportedOnWalk(t *testing.T) {
 	// Nothing was written to the folder.
 	if b, _ := os.ReadFile(filepath.Join(e.nas, "2024/DSC3.xmp")); string(b) != "not xml" {
 		t.Fatal("a sidecar was written")
+	}
+}
+
+// A library of Hoard / Lightroom sidecars for undecided shots writes nothing (hoard-server 0.10.1, ADR 0016).
+func TestDefaultSidecarsWriteNoCulling(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for n := 1; n <= 5; n++ {
+		name := fmt.Sprintf("2024/DSC%d", n)
+		e.write(name+".JPG", mediatest.JPEG(shotAt(uint64(n), fmt.Sprintf("2024:05:01 10:00:0%d", n)), ""))
+		e.write(name+".xmp", sidecar(`xmp:Rating="0" digiKam:PickLabel="0"`))
+	}
+	head, _ := e.st.Counter(ctx, "items")
+	st := e.walk()
+	if st.Culling != 0 {
+		t.Fatalf("culling fields written %d", st.Culling)
+	}
+	for name, it := range e.live() {
+		if _, err := e.st.Culling(ctx, it.ID); err == nil {
+			t.Fatalf("%s got a culling record", name)
+		}
+	}
+	// The walk's own item revisions are the only ones: a second walk adds none and reading the sidecars again adds none.
+	head2, _ := e.st.Counter(ctx, "items")
+	e.walk()
+	if head3, _ := e.st.Counter(ctx, "items"); head3 != head2 || head2 < head {
+		t.Fatalf("revisions moved %d %d %d", head, head2, head3)
 	}
 }
 

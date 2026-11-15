@@ -369,7 +369,7 @@ Revisions come from the **items counter**.
 | `GET /v1/culling/{itemId}` | One record; `404 not_found` when no field was ever written. |
 
 Written by the server too: changed NAS sidecars (as `"nas"`, dated by the file's mtime; the server never writes a
-sidecar; a label present in a sidecar the last time and absent now imports as `""`) and the culling fields a pushed
+sidecar; since 0.10.1 a default value (rating 0, flag none, no label) for a field the record never held is not written; a label present in a sidecar the last time and absent now imports as `""`) and the culling fields a pushed
 `photo` record changes (its device and `modifiedAt`; once at the upgrade for every live photo record), **unless the
 device is culling-aware**: it declared `"culling"` in `PATCH /v1/device` `features` or called `POST /v1/culling`. A
 record write that turns to `REJECT` and drops the rating to 0 together keeps the stars (released Reveal reads
