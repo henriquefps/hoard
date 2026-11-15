@@ -100,7 +100,7 @@ server:
 | 0.8.99-rc1 (W3/C, untagged, versionCode 89900) | 2.0.2 | 0.9.0 | **Installed** on the owner's phone and tablet (2026-11-15, night). Cold start with the real library: no appfuse mounts, no watchdog block. Server-held hand-offs adopted as Server photos. No server references yet (versionCode < 90000). |
 | 0.9.0 (W3/C, W3/D, W3/H) | 2.0.2 (`busy:` 2.0.1 + idle reclaim) | 0.9.0 | **Planned pair.** They ship together and fix the start-up burst. Reveal understands server references from this version on. |
 | ≥ 0.9.0 | 2.1.0 (Gallery: server client, culling sync, server-reference sender for Gallery items, edited thumbnails) | ≥ 0.9.0 | Merged (main 7ff51df, not released). The server client reaches a plain-HTTP LAN/Tailscale server through a loopback relay (ADR 0021). SMB files still go as URIs. |
-| ≥ 0.9.0 | 2.2.0 (SMB path mapping: server references from Files and culling on the share) | 0.10.0 (`POST /v1/items/by-path`; `devices[].revoked`, `lastSeenAt`) | Planned. Reveal does not need 0.10.0. |
+| ≥ 0.9.0 | 2.2.0 (SMB path mapping: server references from Files and culling on the share; ADR 0022) | 0.10.1 (0.10.0 + empty sidecar imports skipped) | Merged (main 182c96f), not released. Needs server 0.10.1 deployed. Emulator E2E with Reveal W3/H before release. Reveal does not need 0.10.x. |
 
 ## Testing a release pair
 
