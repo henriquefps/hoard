@@ -33,6 +33,7 @@ val LICENCES = listOf(
     Licence(R.string.licence_mlkit, R.string.licence_mlkit_terms),
     Licence(R.string.licence_inter, R.string.licence_ofl),
     Licence(R.string.licence_phosphor, R.string.licence_mit),
+    Licence(R.string.licence_mermaid, R.string.licence_mit),
 )
 
 @Composable

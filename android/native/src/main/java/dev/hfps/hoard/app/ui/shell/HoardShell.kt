@@ -239,7 +239,11 @@ fun HoardShell(container: AppContainer) {
                             }
                             composable<TextViewerRoute> { entry ->
                                 val route = entry.toRoute<TextViewerRoute>()
-                                TextViewerScreen(route.locationId, route.share, route.path, route.edit, onBack = { navController.popBackStack() })
+                                TextViewerScreen(route.locationId, route.share, route.path, route.edit, onBack = { navController.popBackStack() }, onOpenFile = { target ->
+                                    navController.navigate(TextViewerRoute(route.locationId, route.share, target)) {
+                                        popUpTo<TextViewerRoute> { inclusive = true }
+                                    }
+                                })
                             }
                             composable<SettingsRoute> {
                                 val state by settings.state.collectAsStateWithLifecycle()
