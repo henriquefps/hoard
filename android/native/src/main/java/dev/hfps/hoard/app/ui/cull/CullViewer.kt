@@ -218,7 +218,8 @@ fun CullViewer(
 
     val pager = rememberPagerState(initialPage = index) { order.size }
     LaunchedEffect(burstMode?.burst, order.size) { if (pager.currentPage != index && index < order.size) pager.scrollToPage(index) }
-    LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.collect { if (it != rawIndex && it < order.size) setIndex(it) } }
+    // A swipe settles the pager on a page: that is the shot on screen now (read live, never a value captured here).
+    LaunchedEffect(pager) { snapshotFlow { pager.settledPage }.collect { if (it < pager.pageCount) setIndex(it) } }
 
     fun goTo(next: Int, animate: Boolean = true) {
         if (next < 0 || next >= order.size || next == index) return
@@ -467,7 +468,8 @@ fun CullViewer(
                         }
                     }
                 }
-                AnimatedVisibility(chrome, enter = fadeIn(), exit = fadeOut()) {
+                // On phones the details panel takes the bottom half: its own decision bar replaces this one.
+                AnimatedVisibility(chrome && !(details && !wide), enter = fadeIn(), exit = fadeOut()) {
                     Column(Modifier.fillMaxWidth().background(ViewerColors.scrim).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))) {
                         if (burstMode != null) {
                             BurstActions(status, onKeep = { keepFrame() }, onCompare = ::toggleCompare, suggestionCount = burstSuggestions.size, onAcceptSuggestion = { acceptSuggestion(burstSuggestions.map { it.shotId }) })
@@ -811,7 +813,7 @@ fun ShotDetails(
                 }
                 DetailRow(stringResource(R.string.t_cull_details_exposure_label), exposure)
                 Histogram(e.histogram)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.Start)) {
                     Text(stringResource(R.string.t_cull_assist_shadows, percent(e.shadows, loc)), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
                     Text(stringResource(R.string.t_cull_details_highlights, percent(e.highlights, loc), percent(e.blownArea, loc)), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
                 }
