@@ -8,6 +8,7 @@ import dev.hfps.hoard.data.CullDao
 import dev.hfps.hoard.data.CullDecisionEntity
 import dev.hfps.hoard.data.legacy.isoOf
 import dev.hfps.hoard.server.db.CullingEntity
+import dev.hfps.hoard.server.db.DevicePushedEntity
 import dev.hfps.hoard.server.db.PendingCullingEntity
 import dev.hfps.hoard.server.sync.CullValues
 import dev.hfps.hoard.server.sync.CullingRules
@@ -84,7 +85,25 @@ class MappedCullStore(
     /** Shot ids the server holds: the "on the server" mark of the grid. */
     override val serverShots: Flow<Set<String>> = mapped.map { it.keys }
 
-    private suspend fun itemsNow(): Map<String, String> = runCatching { items() }.getOrDefault(emptyMap()).also { mapped.value = it }
+    private var itemsAt = Long.MIN_VALUE / 2
+
+    /**
+     * The folder's mapped shots, asked again at most once a minute (an unmapped folder must not be listed again for
+     * every decision or sync; the resolution itself is cached for 5 minutes, ADR 0022).
+     */
+    private suspend fun itemsNow(): Map<String, String> {
+        if (now() - itemsAt < ITEMS_TTL_MS) return mapped.value
+        val found = try {
+            items()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            emptyMap()
+        }
+        itemsAt = now()
+        mapped.value = found
+        return found
+    }
 
     private suspend fun serverSides(items: Map<String, String>): Map<String, Pair<CullValues, Long>> {
         if (items.isEmpty()) return emptyMap()
@@ -100,7 +119,49 @@ class MappedCullStore(
         val rows = delegate.decisions()
         val items = itemsNow()
         if (items.isEmpty()) return rows
+        if (!handedOver) {
+            handedOver = true
+            runCatching { handOver(rows, items) }.onFailure { Log.w(TAG, "hand-over of ${key.path} failed", it) }
+        }
         return MappedCulling.merge(rows, items, serverSides(items), template())
+    }
+
+    private var handedOver = false
+
+    /** `device_pushed` key of a shot of this folder (the Gallery's phone shots use `<location>/<dir>/<stem>`). */
+    private fun pushedKey(shot: String) = "smb:${key.locationId}/${key.share.lowercase()}/${key.path}/$shot"
+
+    /**
+     * Decisions made in this folder before it was mapped (Hoard 1's culling of the share, a sidecar import) are handed
+     * to the server once, with their own times and `baseRev` 0, like the Gallery's phone shots (ADR 0021 `Handover`):
+     * the server keeps whichever is newer. A shot whose server value is already newer is only marked.
+     */
+    private suspend fun handOver(rows: List<CullDecisionEntity>, items: Map<String, String>) {
+        val account = gallery.db.account().get() ?: return
+        if (!account.has("culling")) return
+        val pushed = gallery.db.device().pushed().associateBy { it.shotKey }
+        val sidecars = delegate.sidecars().associateBy { it.shotId }
+        val byShot = rows.associateBy { it.shotId }
+        val at = now()
+        val done = ArrayList<DevicePushedEntity>()
+        var queued = 0
+        for ((shot, item) in items) {
+            val k = pushedKey(shot)
+            val step = dev.hfps.hoard.app.gallery.Handover.step(item, byShot[shot], sidecars[shot], pushed[k], at) ?: continue
+            step.promotion?.let { p ->
+                val record = gallery.db.culling().get(item)
+                if (maxOf(record?.ratingAt ?: 0L, record?.flagAt ?: 0L) < p.at) {
+                    gallery.sync.promote(item, p.values, p.at, clears = p.clears)
+                    queued++
+                }
+            }
+            done += DevicePushedEntity(k, item, step.pushedAt)
+        }
+        if (done.isNotEmpty()) gallery.db.device().putPushed(done)
+        if (queued > 0) {
+            Log.i(TAG, "handed $queued earlier decisions of ${key.path} to the server")
+            GallerySyncWorker.soon(context)
+        }
     }
 
     override suspend fun session() = delegate.session()
@@ -110,13 +171,15 @@ class MappedCullStore(
     override suspend fun saveDecisions(decisions: List<Triple<String, String?, Int>>, decidedAt: Map<String, Long>) {
         delegate.saveDecisions(decisions, decidedAt)
         for ((shot, flag, rating) in decisions) saved[shot] = CullValues(rating, flag)
-        val changes = MappedCulling.serverDecisions(decisions, mapped.value.ifEmpty { itemsNow() }, decidedAt, now())
+        val changes = MappedCulling.serverDecisions(decisions, itemsNow(), decidedAt, now())
         if (changes.isEmpty()) return
         for (c in changes) {
             val before = CullingRules.effective(gallery.db.culling().get(c.itemId), gallery.db.culling().pendingFor(c.itemId))
             // The label is not culling's (Hoard has none): it stays as the server has it.
             gallery.sync.decide(c.itemId, before, before.copy(rating = c.values.rating, flag = c.values.flag), c.at)
         }
+        // Queued here already: the row's write is not an earlier decision to hand over.
+        gallery.db.device().putPushed(changes.map { DevicePushedEntity(pushedKey(it.shotId), it.itemId, now() + 1000) })
         Log.i(TAG, "queued ${changes.size} decisions of ${key.path} for the server")
         GallerySyncWorker.soon(context)
     }
@@ -150,5 +213,6 @@ class MappedCullStore(
 
     companion object {
         const val TAG = "HoardCull"
+        const val ITEMS_TTL_MS = 60_000L
     }
 }
