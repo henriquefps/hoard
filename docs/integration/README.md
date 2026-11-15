@@ -67,6 +67,17 @@ Clients retry with bounded exponential backoff (250 ms doubling up to 4 s, givin
 their own concurrent opens at or below the limit, and never mark a busy file as unreadable. Hoard 2.0.1's
 constants: 6 concurrent reads (`HandoffServer.MAX_READS`), a 1.5 s wait (`BUSY_WAIT_MS`); ADR 0010 "Bursts of opens".
 
+**Descriptors.** Files up to 8 MiB are served as plain descriptors from Hoard's cache, and their slot is freed at
+once. Bigger files, which means every RAW, are appfuse proxy descriptors. Each one **holds a slot until the client
+closes it**: in 2.0.1 there is no idle reclaim (planned).
+
+So clients:
+
+- close every hand-off descriptor as soon as the read is done;
+- never keep long-lived descriptors in caches, decoders or the editor (copy to a local file or memory instead);
+- never hold more than 6 at once, and cap their own concurrent opens at 4;
+- treat a proxy read that fails with `EIO` after 10 s (a slow share) as transient, not as unreadable.
+
 ## Shared fixtures
 
 The Hoard repository owns them. Reveal keeps pinned copies and a test that checks them, the same way it pins the
