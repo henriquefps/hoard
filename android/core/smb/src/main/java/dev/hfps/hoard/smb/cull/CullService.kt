@@ -104,7 +104,7 @@ class CullService(
         val files = entries.filter { !it.isDirectory }.map { entry ->
             CullFileRef(entry.name, entry.path, entry.size, entry.modifiedAt, IsoTime.parse(entry.modifiedAt) ?: 0L)
         }
-        val listed = entries.filter { !it.isDirectory }.map { ListedName(it.name, IsoTime.parse(it.modifiedAt)) }
+        val listed = entries.filter { !it.isDirectory }.map { ListedName(it.name, IsoTime.parse(it.modifiedAt), it.size) }
         val folder = CullFolder(UUID.randomUUID().toString(), path, sourceIdOf(location), CullModel.shots(files), location, listed)
         folders[folder.id] = folder
         // A few folders at most are culled at once; keep the newest ones.

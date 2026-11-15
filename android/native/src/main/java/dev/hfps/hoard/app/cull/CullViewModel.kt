@@ -10,6 +10,8 @@ import dev.hfps.hoard.data.CullDao
 import dev.hfps.hoard.data.CullSessionEntity
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.SmbAccess
+import dev.hfps.hoard.smb.cull.SidecarScan
+import dev.hfps.hoard.smb.cull.SidecarStamp
 import dev.hfps.hoard.xmp.XmpFields
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -194,6 +196,8 @@ class CullViewModel(
     /** Database writes, one after another (as the JS `serial`). */
     private val writes = Mutex()
     private var sidecarStates = HashMap<String, SidecarState>()
+    /** What Hoard last read from each shot's sidecar (ADR 0011 "First read of a sidecar"). */
+    private var sidecarSeen = HashMap<String, SidecarSeen>()
     private val touched = HashSet<String>()
     private val writing = HashMap<String, Int>()
     private var openJob: Job? = null
@@ -256,6 +260,7 @@ class CullViewModel(
                     val r = sidecarRows[s.id]
                     s.id to sidecarStateOf(r?.decidedAt, r?.sidecarMtime, r?.synced == 1, decidedAt[s.id])
                 })
+                sidecarSeen = HashMap(store.sidecarReads())
                 touched.clear()
                 writing.clear()
                 core.update { it.copy(sidecarsRefused = false) }
@@ -296,39 +301,56 @@ class CullViewModel(
     private suspend fun readSidecars(ids: List<String>, refresh: Boolean) {
         val atOpen = !refresh
         ids.chunked(SIDECAR_BATCH).forEachIndexed { i, batch ->
-            val after = batch.associateWith { importAfter(sidecarStates[it] ?: SidecarState.NONE) }
-            val found = backend.readSidecars(after, refresh && i == 0)
-            applyImports(found, atOpen)
+            val seen = batch.associateWith { sidecarSeen[it]?.stamp }
+            val scan = backend.readSidecars(seen, refresh && i == 0)
+            applyImports(scan, atOpen)
         }
     }
 
-    private fun applyImports(found: List<dev.hfps.hoard.smb.cull.SidecarFound>, atOpen: Boolean): Int {
+    /**
+     * Applies one scan (ADR 0011 "First read of a sidecar", [importFromSidecar]): a first read fills only Hoard's
+     * default fields, a later read applies the fields changed since the last read when the sidecar is newer than
+     * Hoard's decision; every read is recorded. Sidecars gone from a complete listing are forgotten (the next one is a
+     * first read again).
+     */
+    private fun applyImports(scan: SidecarScan, atOpen: Boolean): Int {
         val next = LinkedHashMap(core.value.decisions)
         val changed = ArrayList<Triple<String, String?, Int>>()
         // ADR 0016 "Client rules" 4: an imported decision is dated by the sidecar's mtime, not the time of the import.
         val decidedAt = HashMap<String, Long>()
         val rows = ArrayList<CullDao.SidecarUpdate>()
-        for (item in found) {
+        val reads = LinkedHashMap<String, SidecarSeen>()
+        for (item in scan.found) {
             val read = item.read ?: continue
             val mtime = item.modifiedMillis ?: continue
             if (item.shotId in writing || (atOpen && item.shotId in touched)) continue
+            val values = valuesOf(read)
+            val last = sidecarSeen[item.shotId]?.takeIf { it.stamp.name.equals(item.name, ignoreCase = true) }?.fields
+            val state = sidecarStates[item.shotId] ?: SidecarState.NONE
+            val newer = importAfter(state)?.let { mtime > it } ?: true
             val current = next.of(item.shotId)
-            val imported = importedDecision(current, read.fields, read.hasValues) ?: continue
-            val state = sidecarStates[item.shotId]
-            sidecarStates[item.shotId] = SidecarState(state?.decidedAt, mtime, true)
-            rows += CullDao.SidecarUpdate(item.shotId, sidecarMtime = mtime, setSidecarMtime = true, synced = true)
-            if (!importChanges(current, imported)) continue
+            val imported = importFromSidecar(current, values, last, newer)
+            val seen = SidecarSeen(SidecarStamp(item.name, item.size, mtime), values)
+            sidecarSeen[item.shotId] = seen
+            reads[item.shotId] = seen
+            val synced = values.holds(imported)
+            sidecarStates[item.shotId] = SidecarState(state.decidedAt, mtime, synced)
+            rows += CullDao.SidecarUpdate(item.shotId, sidecarMtime = mtime, setSidecarMtime = true, synced = synced)
+            if (imported == current) continue
             if (imported.unmarked) next.remove(item.shotId) else next[item.shotId] = imported
             changed += Triple(item.shotId, imported.flag?.wire, imported.rating)
-            decidedAt[item.shotId] = mtime
+            // A decision that keeps some of Hoard's own values is not older than Hoard's decision.
+            decidedAt[item.shotId] = if (synced) mtime else maxOf(mtime, state.decidedAt ?: mtime)
         }
+        val forget = if (scan.complete) scan.absent.filter { sidecarSeen.remove(it) != null } else emptyList()
         if (changed.isNotEmpty()) core.update { it.copy(decisions = next) }
-        if (changed.isNotEmpty() || rows.isNotEmpty()) {
+        if (changed.isNotEmpty() || rows.isNotEmpty() || forget.isNotEmpty()) {
             viewModelScope.launch {
                 runCatching {
                     serial {
                         store.saveDecisions(changed, decidedAt)
                         store.saveSidecars(rows)
+                        store.saveSidecarReads(reads, forget)
                     }
                 }.onFailure { if (it !is CancellationException) events.trySend(CullEvent.SaveFailed) }
             }

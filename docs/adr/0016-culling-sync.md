@@ -272,7 +272,8 @@ last time):
    they apply as before (newest by mtime; ADR 0016 LWW on the server). Rationale: with no automatic writes, a sidecar
    created by another tool starts from that tool's defaults, not from the user's decision. Its creation is not an edit
    of our fields, but a later change to it is. In hoard-server, the walk deletes the `culling_sidecars` rows whose
-   sidecar file is gone, only after a walk that read every folder (a partial walk deletes nothing).
+   sidecar file is gone, only after a walk that read every folder (a partial walk deletes nothing). Hoard applies
+   the same rule to its own sidecar imports from 2.2.1 ([ADR 0011](0011-culling-sidecars.md), "Amendment 2.2.1").
    **An empty folder is an unmounted one.** When the host mount is gone, the bind-mounted directory is empty but readable,
    and a walk would then mark every file removed and drop every sidecar record. So a walk that sees **no media file
    while the index holds live files of that folder** fails with state `unavailable`, before anything is written: no file

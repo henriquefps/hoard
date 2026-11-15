@@ -10,8 +10,11 @@ import dev.hfps.hoard.image.ScreenSource
 import dev.hfps.hoard.image.ZoomInfo
 import dev.hfps.hoard.image.ZoomSource
 import dev.hfps.hoard.smb.SmbAccess
+import dev.hfps.hoard.smb.cull.ListedName
 import dev.hfps.hoard.smb.cull.SidecarFound
 import dev.hfps.hoard.smb.cull.SidecarResult
+import dev.hfps.hoard.smb.cull.SidecarScan
+import dev.hfps.hoard.smb.cull.SidecarStamp
 import dev.hfps.hoard.xmp.XmpFields
 import dev.hfps.hoard.xmp.XmpRead
 import java.io.File
@@ -66,10 +69,23 @@ class FakeCullBackend(
         ShotMetadata(captureTime = "2026-10-03T14:00:%02d".format(n % 60), captureMillis = time(n), make = "Sony", model = "ILCE-6000", exposure = "1/250", fNumber = 5.6, iso = 200, focalLength = 35.0, focalLength35 = 52, width = 6000, height = 4000)
     }
 
-    override suspend fun readSidecars(after: Map<String, Long?>, refresh: Boolean): List<SidecarFound> = after.mapNotNull { (id, threshold) ->
-        val (fields, mtime) = sidecars[id] ?: return@mapNotNull null
-        if (threshold != null && mtime <= threshold) return@mapNotNull null
-        SidecarFound(id, id.uppercase() + ".xmp", mtime, XmpRead(fields, true))
+    /** Whether the folder lists nothing at all (an unmounted volume): scans are then not complete. */
+    var listsNothing = false
+
+    /** Whether listing the folder fails (a dropped session). */
+    var failScans = false
+
+    override suspend fun readSidecars(seen: Map<String, SidecarStamp?>, refresh: Boolean): SidecarScan {
+        if (failScans) throw java.io.IOException("listing failed")
+        if (listsNothing) return SidecarScan(emptyList(), seen.keys.toList(), complete = false)
+        val absent = ArrayList<String>()
+        val found = seen.mapNotNull { (id, stamp) ->
+            val (fields, mtime) = sidecars[id] ?: return@mapNotNull null.also { absent += id }
+            val name = id.uppercase() + ".xmp"
+            if (stamp != null && stamp.matches(ListedName(name, mtime, SIZE))) return@mapNotNull null
+            SidecarFound(id, name, mtime, XmpRead(fields, true), size = SIZE)
+        }
+        return SidecarScan(found, absent, complete = true)
     }
 
     override suspend fun writeSidecars(items: List<Pair<String, XmpFields>>, hidden: Boolean): SidecarWrites {
@@ -125,6 +141,9 @@ class FakeCullBackend(
     }
 
     companion object {
+        /** Every fake sidecar's size. */
+        const val SIZE = 512L
+
         fun cleanAnalysis(subject: Double = 200.0, blur: Double = 0.35, mean: Double = 0.45, faces: List<Face> = emptyList()) = Analysis(
             version = ANALYSIS_VERSION,
             source = "rawPreview",

@@ -235,6 +235,26 @@ data class CullSidecarEntity(
 )
 
 /**
+ * Native only (Room v3, Hoard 2.2.1): what Hoard last read from a shot's XMP sidecar (ADR 0011 "First read of a
+ * sidecar"): the file's [name] in the shot's folder, its [size] and mtime as listed, and the culling values as Hoard read
+ * them ([flag] `none` / `pick` / `reject`, [label] null when empty). No row = the next read of that sidecar is a first
+ * read. Hoard's own "Export XMP" records what it wrote here, so it is never read back as a first read.
+ */
+@Entity(tableName = "cull_sidecar_reads", primaryKeys = ["location_id", "share", "path", "shot_id"])
+data class CullSidecarReadEntity(
+    @ColumnInfo(name = "location_id") val locationId: String,
+    @ColumnInfo(defaultValue = "''") val share: String,
+    @ColumnInfo(defaultValue = "''") val path: String,
+    @ColumnInfo(name = "shot_id") val shotId: String,
+    val name: String,
+    val size: Long?,
+    @ColumnInfo(name = "modified_ms") val modifiedMillis: Long?,
+    val rating: Int,
+    val flag: String,
+    val label: String?,
+)
+
+/**
  * Native only: the outcome of importing a Capacitor database (one row per [source]). Written in the same transaction
  * as the imported rows, so it exists exactly when the import committed.
  */

@@ -172,6 +172,22 @@ class RevealRoutesTest {
         assertThat(XmpExporter.shotsToExport(listOf("s/notes.txt"), decisions)).isEmpty()
     }
 
+    @Test fun exportRecordsEachWrittenSidecarAsReadWithItsValues() {
+        val key = dev.hfps.hoard.app.cull.CullKey("m1", "photos", "s")
+        val written = mapOf(
+            "DSC1" to dev.hfps.hoard.xmp.XmpExport.Written("DSC1.xmp", 9_000L, 700L),
+            "DSC2" to dev.hfps.hoard.xmp.XmpExport.Written(".DSC2.xmp", 9_100L, null),
+        )
+        val fields = mapOf("DSC1" to XmpFields(4, XmpFlag.PICK, "Red"), "DSC2" to XmpFields(3, XmpFlag.REJECT))
+        val rows = XmpExporter.exportedReads(key, written, fields)
+        assertThat(rows.map { listOf(it.shotId, it.name, it.size, it.modifiedMillis, it.rating, it.flag, it.label) }).containsExactly(
+            listOf("dsc1", "DSC1.xmp", 700L, 9_000L, 4, "pick", null),
+            // A reject's stars are not in the file: recorded as the reader will see it.
+            listOf("dsc2", ".DSC2.xmp", null, 9_100L, 0, "reject", null),
+        ).inOrder()
+        assertThat(rows.all { it.locationId == "m1" && it.share == "photos" && it.path == "s" }).isTrue()
+    }
+
     @Test fun theUpgradeTurnsAutomaticXmpOffAndKeepsItOff() = runBlocking {
         val db = HoardDatabase.open(ApplicationProvider.getApplicationContext(), name = null)
         try {

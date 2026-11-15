@@ -46,7 +46,7 @@ class XmpExportTest {
         val result = XmpExport.export(fs, "", listOf(XmpExport.Shot("a", listOf("a.ARW"), XmpFields(3, XmpFlag.NONE))), hidden = true, date = date)
         assertEquals(1, result.written)
         assertEquals(XmpFields(3, XmpFlag.NONE), XmpReader.read(fs.bytes(".a.xmp")!!).fields)
-        assertEquals(".a.xmp", result.names["a"]?.first)
+        assertEquals(".a.xmp", result.names["a"]?.name)
     }
 
     @Test

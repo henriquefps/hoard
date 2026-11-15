@@ -22,11 +22,36 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-/** A file of a culling folder as listed: its name and mtime (ms). */
-data class ListedName(val name: String, val modifiedMillis: Long?)
+/** A file of a culling folder as listed: its name, mtime (ms) and size, when known. */
+data class ListedName(val name: String, val modifiedMillis: Long?, val size: Long? = null)
 
 /** One shot's sidecar as read for culling (ADR 0011 "Reading"). [read] is null when it is not well-formed XMP. */
-data class SidecarFound(val shotId: String, val name: String, val modifiedMillis: Long?, val read: XmpRead?, val error: String? = null)
+data class SidecarFound(
+    val shotId: String,
+    val name: String,
+    val modifiedMillis: Long?,
+    val read: XmpRead?,
+    val error: String? = null,
+    val size: Long? = null,
+)
+
+/** A sidecar file as Hoard last read it: its name in the shot's folder, its size and mtime (ADR 0011 "First read"). */
+data class SidecarStamp(val name: String, val size: Long?, val modifiedMillis: Long?) {
+    /** Whether the listed [entry] is still that file, unchanged (a size is compared only when both are known). */
+    fun matches(entry: ListedName): Boolean = entry.name.equals(name, ignoreCase = true) &&
+        entry.modifiedMillis == modifiedMillis && (entry.size == null || size == null || entry.size == size)
+}
+
+/**
+ * One scan of a folder's sidecars: those read ([found]), the shots asked about that have no sidecar in the listing
+ * ([absent]), and whether that listing may be trusted to say a sidecar is gone ([complete]: a listing that found no
+ * file at all is an unmounted volume or an emptied mount, not a folder whose sidecars were all deleted).
+ */
+data class SidecarScan(val found: List<SidecarFound>, val absent: List<String>, val complete: Boolean) {
+    companion object {
+        val EMPTY = SidecarScan(emptyList(), emptyList(), false)
+    }
+}
 
 /** The outcome of one shot's write, reported to the UI. */
 data class SidecarResult(
@@ -49,28 +74,34 @@ object CullSidecars {
     fun fileNames(shot: CullShotRef): List<String> = listOfNotNull(shot.raw?.name, shot.rendered?.name) + shot.others.map { it.name }
 
     /**
-     * The sidecars of [shots] among the folder's [listed] files whose mtime is later than [after] (shot id → ms;
-     * absent or null = read whatever exists), read through [fs]. Shots without a sidecar, or with one that is not
-     * newer, are left out. One listing (the caller's), then one small read per sidecar returned.
+     * The sidecars of [shots] among the folder's [listed] files that Hoard has not read as they are now ([seen]: shot
+     * id → the file last read; absent = never read, so read whatever exists), read through [fs]. A sidecar whose
+     * name, size and mtime match its stamp is left out (unchanged since the last read). One listing (the caller's),
+     * then one small read per sidecar returned.
      */
-    fun read(fs: TransferFs, folder: String, shots: List<CullShotRef>, listed: List<ListedName>, after: Map<String, Long?>): List<SidecarFound> {
+    fun scan(fs: TransferFs, folder: String, shots: List<CullShotRef>, listed: List<ListedName>, seen: Map<String, SidecarStamp?>): SidecarScan {
         val byLower = HashMap<String, ListedName>()
         for (entry in listed) if (SidecarNames.isSidecar(entry.name)) byLower.putIfAbsent(entry.name.lowercase(Locale.ROOT), entry)
-        return shots.mapNotNull { shot ->
-            val name = SidecarNames.find(shot.stem, fileNames(shot)) { byLower[it]?.name } ?: return@mapNotNull null
+        val absent = ArrayList<String>()
+        val found = shots.mapNotNull { shot ->
+            val name = SidecarNames.find(shot.stem, fileNames(shot)) { byLower[it]?.name }
+            if (name == null) {
+                absent += shot.id
+                return@mapNotNull null
+            }
             val entry = byLower.getValue(name.lowercase(Locale.ROOT))
-            val threshold = after[shot.id]
-            if (threshold != null && (entry.modifiedMillis ?: Long.MIN_VALUE) <= threshold) return@mapNotNull null
+            if (seen[shot.id]?.matches(entry) == true) return@mapNotNull null
             try {
-                SidecarFound(shot.id, name, entry.modifiedMillis, Sidecars.read(fs, TransferPaths.join(folder, name)))
+                SidecarFound(shot.id, name, entry.modifiedMillis, Sidecars.read(fs, TransferPaths.join(folder, name)), size = entry.size)
             } catch (e: XmpException) {
-                SidecarFound(shot.id, name, entry.modifiedMillis, null, "malformed")
+                SidecarFound(shot.id, name, entry.modifiedMillis, null, "malformed", entry.size)
             } catch (e: InterruptedException) {
                 throw e
             } catch (@Suppress("TooGenericExceptionCaught") e: Exception) {
-                SidecarFound(shot.id, name, entry.modifiedMillis, null, fs.mapError(e).code.name)
+                SidecarFound(shot.id, name, entry.modifiedMillis, null, fs.mapError(e).code.name, entry.size)
             }
         }
+        return SidecarScan(found, absent, complete = listed.isNotEmpty())
     }
 
     /**

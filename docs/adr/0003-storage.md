@@ -82,6 +82,16 @@ phase 2c they are also mirrored into `settings` (`themeMode`, `palette`, `langua
   `source_key` is the location's cache key (`<machine id>/<share>`, `device`, `vol-<uuid>`).
 - `settings.cullSaveXmp` set to `false` (ADR 0011 amendment "export on demand").
 
+### Room version 3 (Hoard 2.2.1)
+
+`HoardMigrations.MIGRATION_2_3` (schema `core/data/schemas/…/3.json`, `MigrationTest`):
+
+- **`cull_sidecar_reads`** (`location_id`, `share`, `path`, `shot_id` primary key; `name`, `size`, `modified_ms`,
+  `rating`, `flag`, `label`): what Hoard last read from each shot's XMP sidecar, for the first-read rule of
+  [ADR 0011](0011-culling-sidecars.md) (amendment "2.2.1"). Created empty. "Export XMP" writes rows for the sidecars it
+  writes; a sidecar gone from a complete listing loses its row; `deleteMachine` and "Delete rejects" clear them too.
+  `cull_sidecars` is unchanged (still Hoard 1's schema v7).
+
 ## Consequences
 
 - No secret ever reaches a backup. The app opts out of Android backup and device-to-device

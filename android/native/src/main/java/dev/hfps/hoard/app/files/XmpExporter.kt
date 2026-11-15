@@ -3,7 +3,12 @@ package dev.hfps.hoard.app.files
 import android.content.Context
 import android.net.Uri
 import dev.hfps.hoard.app.transfers.TransferPlace
+import dev.hfps.hoard.app.cull.CullKey
+import dev.hfps.hoard.app.cull.SidecarSeen
+import dev.hfps.hoard.app.cull.toEntity
 import dev.hfps.hoard.data.CullDao
+import dev.hfps.hoard.data.CullSidecarReadEntity
+import dev.hfps.hoard.smb.cull.SidecarStamp
 import dev.hfps.hoard.data.CullDecisionEntity
 import dev.hfps.hoard.image.format.ImageFormats
 import dev.hfps.hoard.smb.share.RevealHandoff
@@ -50,11 +55,20 @@ class XmpExporter(
                 }
             } else {
                 val result = XmpExport.export(fs, folderPath, shots, hidden, isCancelled = { !check.isActive })
-                // The folder's culling knows these sidecars hold its decisions: opening it does not import them back.
+                // The folder's culling knows these sidecars hold its decisions, and records them as read (ADR 0011 "First
+                // read of a sidecar"): opening it neither imports them back nor takes them for another tool's sidecar.
+                val key = CullKey(place.locationId, place.share.orEmpty(), folderPath)
                 val rows = result.names.map { (stem, written) ->
-                    CullDao.SidecarUpdate(stem.lowercase(), sidecarMtime = written.second, setSidecarMtime = written.second != null, synced = true)
+                    CullDao.SidecarUpdate(stem.lowercase(), sidecarMtime = written.modifiedMillis, setSidecarMtime = written.modifiedMillis != null, synced = true)
                 }
-                if (rows.isNotEmpty()) runCatching { dao.saveSidecars(place.locationId, place.share.orEmpty(), folderPath, rows) }
+                val fields = shots.associate { it.stem to it.fields }
+                val reads = exportedReads(key, result.names, fields)
+                if (rows.isNotEmpty()) {
+                    runCatching {
+                        dao.saveSidecars(key.locationId, key.share, key.path, rows)
+                        dao.saveSidecarReads(key.locationId, key.share, key.path, reads, emptyList())
+                    }
+                }
                 coroutineContext.ensureActive()
                 result
             }
@@ -62,6 +76,18 @@ class XmpExporter(
     }
 
     companion object {
+        /**
+         * The `cull_sidecar_reads` rows of an export (pure, JVM-tested): each sidecar written, with its size and mtime
+         * after the write and the values written (the label is not Hoard's: the sidecar keeps whatever it had).
+         */
+        fun exportedReads(key: CullKey, written: Map<String, XmpExport.Written>, fields: Map<String, XmpFields>): List<CullSidecarReadEntity> =
+            written.mapNotNull { (stem, w) ->
+                val values = fields[stem] ?: return@mapNotNull null
+                // As the reader will see it: a reject's stars are not in the file.
+                val read = values.copy(rating = if (values.flag == XmpFlag.REJECT) 0 else values.rating, label = null)
+                SidecarSeen(SidecarStamp(w.name, w.size, w.modifiedMillis), read).toEntity(key, stem.lowercase())
+            }
+
         /**
          * The shots of [paths] that have a decision in [decisions] (by the lower-case stem, the culling shot id), with
          * their fields (pure, JVM-tested): photos only, the files of a shot together, undecided shots left out.

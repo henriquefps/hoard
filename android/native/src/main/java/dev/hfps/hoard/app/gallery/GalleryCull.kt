@@ -38,7 +38,8 @@ import dev.hfps.hoard.smb.Cancellation
 import dev.hfps.hoard.smb.ErrorCode
 import dev.hfps.hoard.smb.cull.CullFolder
 import dev.hfps.hoard.smb.cull.CullService
-import dev.hfps.hoard.smb.cull.SidecarFound
+import dev.hfps.hoard.smb.cull.SidecarScan
+import dev.hfps.hoard.smb.cull.SidecarStamp
 import dev.hfps.hoard.smb.location.Location
 import dev.hfps.hoard.smb.location.VolumeRegistry
 import dev.hfps.hoard.smb.smbFail
@@ -139,7 +140,7 @@ class GalleryCullBackend(
         ShotMetadata(captureTime = row.captureLocal, captureMillis = e.time, make = row.make, model = row.model, lens = row.lens, width = row.width, height = row.height)
     }
 
-    override suspend fun readSidecars(after: Map<String, Long?>, refresh: Boolean): List<SidecarFound> = emptyList()
+    override suspend fun readSidecars(seen: Map<String, SidecarStamp?>, refresh: Boolean): SidecarScan = SidecarScan.EMPTY
 
     /** Sidecars of phone files, in their folders (ADR 0011 rules); server-only shots have none Hoard can write. */
     override suspend fun writeSidecars(items: List<Pair<String, XmpFields>>, hidden: Boolean): SidecarWrites = withContext(Dispatchers.IO) {

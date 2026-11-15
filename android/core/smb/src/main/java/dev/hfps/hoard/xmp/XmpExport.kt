@@ -16,6 +16,9 @@ object XmpExport {
     /** One shot to export: its stem, its files' names (to find a `<file name>.xmp`), and the fields to write. */
     data class Shot(val stem: String, val fileNames: List<String>, val fields: XmpFields)
 
+    /** A sidecar written: its name in the folder, and its mtime and size after the write, when known. */
+    data class Written(val name: String, val modifiedMillis: Long?, val size: Long?)
+
     data class Result(
         val written: Int = 0,
         /** Existing sidecars that are not well-formed XMP: left byte for byte. */
@@ -23,8 +26,8 @@ object XmpExport {
         val failed: Int = 0,
         /** The folder refused a write (`ACCESS_DENIED`): nothing more was tried there; ask for another folder. */
         val readOnly: Boolean = false,
-        /** Names written, in order (for the folder's culling state). */
-        val names: Map<String, Pair<String, Long?>> = emptyMap(),
+        /** Sidecars written by stem, in order (for the folder's culling state). */
+        val names: Map<String, Written> = emptyMap(),
     ) {
         operator fun plus(other: Result) = Result(
             written + other.written, malformed + other.malformed, failed + other.failed, readOnly || other.readOnly, names + other.names,
@@ -46,7 +49,7 @@ object XmpExport {
         var written = 0
         var malformed = 0
         var failed = 0
-        val out = LinkedHashMap<String, Pair<String, Long?>>()
+        val out = LinkedHashMap<String, Written>()
         for (shot in shots) {
             if (isCancelled()) break
             val existing = SidecarNames.find(shot.stem, shot.fileNames) { names[it] }
@@ -54,7 +57,7 @@ object XmpExport {
                 is SidecarWrite.Written -> {
                     written++
                     names[result.name.lowercase(Locale.ROOT)] = result.name
-                    out[shot.stem] = result.name to result.modifiedMillis
+                    out[shot.stem] = Written(result.name, result.modifiedMillis, result.size)
                 }
                 is SidecarWrite.Malformed -> malformed++
                 is SidecarWrite.Failed -> {

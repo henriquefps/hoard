@@ -3,6 +3,7 @@ package dev.hfps.hoard.app.cull
 import com.google.common.truth.Truth.assertThat
 import dev.hfps.hoard.xmp.XmpFields
 import dev.hfps.hoard.xmp.XmpFlag
+import dev.hfps.hoard.xmp.XmpRead
 import org.junit.Test
 import java.time.Instant
 
@@ -51,13 +52,38 @@ class CullXmpTest {
     }
 
     @Test
-    fun `imports what the sidecar says, keeps a reject's stars, ignores develop-only sidecars`() {
-        val current = Decision(Flag.Reject, 3)
-        assertThat(importedDecision(current, XmpFields(0, XmpFlag.REJECT), true)).isEqualTo(current)
-        assertThat(importedDecision(current, XmpFields(5, XmpFlag.PICK), true)).isEqualTo(Decision(Flag.Pick, 5))
-        assertThat(importedDecision(current, XmpFields(2, XmpFlag.NONE, "Red"), true)).isEqualTo(Decision(null, 2))
-        assertThat(importedDecision(current, XmpFields(0, XmpFlag.NONE), false)).isNull()
-        assertThat(importChanges(current, current)).isFalse()
+    fun `a first read keeps Hoard's values and fills only its default fields`() {
+        // Lightroom's Rating=1 on a 4-star shot: Hoard keeps its 4, whatever the sidecar's mtime.
+        assertThat(importFromSidecar(Decision(null, 4), XmpFields(1), last = null, newer = true)).isEqualTo(Decision(null, 4))
+        // A pick without stars gets the sidecar's stars; a rated shot gets the sidecar's flag.
+        assertThat(importFromSidecar(Decision(Flag.Pick, 0), XmpFields(3), null, newer = false)).isEqualTo(Decision(Flag.Pick, 3))
+        assertThat(importFromSidecar(Decision(null, 2), XmpFields(5, XmpFlag.REJECT), null, newer = false)).isEqualTo(Decision(Flag.Reject, 2))
+        // All defaults in Hoard: the sidecar comes in whole.
+        assertThat(importFromSidecar(Decision.UNMARKED, XmpFields(4, XmpFlag.PICK), null, newer = false)).isEqualTo(Decision(Flag.Pick, 4))
+        // A sidecar of defaults (develop settings only) fills nothing.
+        assertThat(importFromSidecar(Decision(Flag.Reject, 3), XmpFields(), null, newer = true)).isEqualTo(Decision(Flag.Reject, 3))
+        assertThat(valuesOf(XmpRead(XmpFields(2, XmpFlag.PICK), hasValues = false))).isEqualTo(XmpFields())
+    }
+
+    @Test
+    fun `a later read applies only the fields changed since the last read, when newer than Hoard's decision`() {
+        val last = XmpFields(3, XmpFlag.PICK)
+        // Rating changed in Lightroom, flag unchanged: only the stars apply (Hoard's reject stays).
+        assertThat(importFromSidecar(Decision(Flag.Reject, 5), XmpFields(1, XmpFlag.PICK), last, newer = true)).isEqualTo(Decision(Flag.Reject, 1))
+        // Not newer than Hoard's decision: nothing applies.
+        assertThat(importFromSidecar(Decision(Flag.Reject, 5), XmpFields(1, XmpFlag.PICK), last, newer = false)).isEqualTo(Decision(Flag.Reject, 5))
+        // Nothing changed but the label: Hoard's newer edits stay.
+        assertThat(importFromSidecar(Decision(null, 5), XmpFields(3, XmpFlag.PICK, "Red"), last, newer = true)).isEqualTo(Decision(null, 5))
+        // A reject keeps Hoard's stars; un-rejecting brings the sidecar's.
+        assertThat(importFromSidecar(Decision(Flag.Pick, 4), XmpFields(0, XmpFlag.REJECT), last, newer = true)).isEqualTo(Decision(Flag.Reject, 4))
+        assertThat(importFromSidecar(Decision(Flag.Reject, 4), XmpFields(2, XmpFlag.NONE), XmpFields(0, XmpFlag.REJECT), newer = true)).isEqualTo(Decision(null, 2))
+    }
+
+    @Test
+    fun `a sidecar holds a decision when its flag and stars are Hoard's, a reject's stars aside`() {
+        assertThat(XmpFields(3, XmpFlag.PICK).holds(Decision(Flag.Pick, 3))).isTrue()
+        assertThat(XmpFields(0, XmpFlag.REJECT).holds(Decision(Flag.Reject, 4))).isTrue()
+        assertThat(XmpFields(1).holds(Decision(null, 4))).isFalse()
     }
 
     @Test

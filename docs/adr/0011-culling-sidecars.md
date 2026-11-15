@@ -3,7 +3,9 @@
 - **Date**: 2026-11-11
 - **Status**: Accepted (1.9.0). Amended 2026-11-15 (2.2.0, owner's decision): **export on demand**: Hoard writes no
   sidecar automatically any more (section "Amendment 2.2.0: export on demand"). "Writing", "Writability" (for the
-  culling writer), "Settings" and "UI" below describe 1.9.0–2.1.x; reading and importing are unchanged.
+  culling writer), "Settings" and "UI" below describe 1.9.0–2.1.x; reading and importing are unchanged. Amended
+  2026-11-15 (2.2.1): **first read of a sidecar** (section "Amendment 2.2.1"): a sidecar never read before only fills
+  Hoard's default fields; later reads apply only the fields changed since the last read.
 
 ## Context
 
@@ -193,6 +195,50 @@ darktable, digiKam), written when the user asks, and are **not** a sync channel 
   `RevealRoutesTest` (decided shots only, every file of a shot; the upgrade forces the setting off),
   `CullViewModelTest` (decisions never write a sidecar, even with the old setting on), `TransferRunnerTest` (a copy
   without sidecars writes no XMP), `MigrationTest`.
+
+### Amendment 2.2.1: first read of a sidecar
+
+Owner's decision of 2026-11-15, the same rule as hoard-server 0.10.1 ([ADR 0016](0016-culling-sync.md), step 2b) and
+Reveal:
+
+> **First read of a sidecar (2026-11-15).** A sidecar the reader has never read before (no record of it at that path, or its record was dropped because the file disappeared) only fills fields the reader holds no value for. A field holds a value when a non-default value was set on it by anyone: a rating other than 0, a flag other than none, a non-empty label (the defaults carry no information, as in hoard-server 0.10.1). Fields with a value are kept, whatever the sidecar's mtime. The reader records what it read (path, size, mtime, values). On later reads of the same sidecar (size or mtime changed), only the fields whose value differs from the last read are candidates, and they apply as before (newest by mtime; [ADR 0016](0016-culling-sync.md) LWW on the server). Rationale: with no automatic writes, a sidecar created by another tool starts from that tool's defaults, not from the user's decision. Its creation is not an edit of our fields, but a later change to it is.
+
+In Hoard (it has no colour label, so only stars and the flag apply; a reject keeps Hoard's stars, as before):
+
+- **The record.** `cull_sidecar_reads` (Room v3, [ADR 0003](0003-storage.md)), one row per shot of a folder: the
+  sidecar's name in the folder, its size and mtime as listed, and the values read (`rating`, `flag`, `label`; a
+  sidecar without culling values is recorded with the defaults). A separate table, not new columns of
+  `cull_sidecars`: that table stays exactly Hoard 1's (the importer and `SchemaParityTest` compare it with schema v7),
+  and forgetting a sidecar is deleting its row. No row, or a row for another file name (the shot's sidecar changed
+  from `DSC1.xmp` to `DSC1.ARW.xmp`), means the next read is a first read. The migration starts the table empty, so
+  after the upgrade every sidecar's next read is a first read.
+- **What is read.** When a folder opens for culling and when Hoard comes back to the front, `CullSidecars.scan` reads
+  each shot's sidecar unless its name, size and mtime match the record (the size is compared when both are known);
+  the precedence threshold no longer filters reading, only applying.
+- **First read** (`importFromSidecar` in `cull/CullXmp.kt`, pure and JVM-tested): Hoard's stars other than 0 and its
+  pick or reject are kept; only default fields take the sidecar's values. A shot Hoard never decided takes the sidecar
+  whole, as before.
+- **Later reads**: only the stars and/or flag that differ from the record are candidates, and they apply when the
+  sidecar's mtime is later than `importAfter` (the precedence rule above, now per field). Every read updates the record,
+  applied or not.
+- **Dates and `synced`.** An applied value is dated by the sidecar's mtime ([ADR 0016](0016-culling-sync.md) "Client
+  rules" 4); a decision that also keeps some of Hoard's values is dated no earlier than Hoard's decision. `synced` is
+  set only when the sidecar holds the resulting decision (so mapped folders re-date only those, [ADR
+  0022](0022-smb-folders-on-the-server.md)).
+- **Export XMP** records each sidecar it writes in place as read (name, size and mtime after the write, the values
+  written): Hoard's own export is never a first read and is not imported back.
+- **A sidecar that disappeared** is forgotten (its `cull_sidecar_reads` row deleted) when a scan's listing is complete
+  and the shot has no sidecar in it; a listing that fails forgets nothing, and so does one that finds no file at all
+  (an unmounted volume or emptied mount; the same idea as hoard-server's empty-mount guard). A sidecar created again
+  later is a first read.
+- **Mapped folders** ([ADR 0022](0022-smb-folders-on-the-server.md)): culling goes to the server through
+  [ADR 0016](0016-culling-sync.md); the local sidecar import of the folder follows the same rule, through the same view
+  model.
+- Tests: `CullXmpTest` (first read keeps values and fills defaults, all-default shots import all, later reads apply
+  only changed fields when newer), `CullViewModelTest` (Lightroom's `Rating=1` on a 4-star shot keeps 4, a later
+  change comes in, unchanged fields never undo Hoard's newer edits, Hoard's export is not imported back, a vanished
+  sidecar is forgotten and a recreated one is a first read, an empty or failed listing forgets nothing),
+  `CullSidecarsTest` (scan), `RevealRoutesTest` (export record), `MigrationTest` (2 → 3 keeps the culling rows).
 
 ## Alternatives considered
 

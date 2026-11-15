@@ -1,8 +1,10 @@
 package dev.hfps.hoard.app.cull
 
 import dev.hfps.hoard.app.files.photoStem
+import dev.hfps.hoard.smb.cull.SidecarStamp
 import dev.hfps.hoard.xmp.XmpFields
 import dev.hfps.hoard.xmp.XmpFlag
+import dev.hfps.hoard.xmp.XmpRead
 import java.time.Instant
 
 /*
@@ -69,15 +71,52 @@ fun importAfter(state: SidecarState): Long? {
     return maxOf(state.decidedAt, state.sidecarMtime ?: Long.MIN_VALUE)
 }
 
-/** The decision a newer sidecar brings, or null when it holds no culling value. A reject keeps Hoard's stars. */
-fun importedDecision(current: Decision, fields: XmpFields, hasValues: Boolean): Decision? {
-    if (!hasValues) return null
-    val flag = when (fields.flag) {
-        XmpFlag.PICK -> Flag.Pick
-        XmpFlag.REJECT -> Flag.Reject
-        XmpFlag.NONE -> null
-    }
-    return Decision(flag, if (flag == Flag.Reject) current.rating else fields.rating.coerceIn(0, 5))
+/**
+ * What Hoard last read from a shot's sidecar (the `cull_sidecar_reads` row; ADR 0011 "First read of a sidecar"):
+ * which file, its size and mtime, and the culling values read (defaults when it held none).
+ */
+data class SidecarSeen(val stamp: SidecarStamp, val fields: XmpFields)
+
+/** The culling values a read brings: a sidecar without culling values (develop settings only) holds the defaults. */
+fun valuesOf(read: XmpRead): XmpFields = if (read.hasValues) read.fields else XmpFields()
+
+/** A sidecar's stars as a value: a reject holds none (`Rating=-1`; its stars stay in Hoard only). */
+private fun starsOf(fields: XmpFields): Int? = if (fields.flag == XmpFlag.REJECT) null else fields.rating.coerceIn(0, 5)
+
+private fun flagOf(flag: XmpFlag): Flag? = when (flag) {
+    XmpFlag.PICK -> Flag.Pick
+    XmpFlag.REJECT -> Flag.Reject
+    XmpFlag.NONE -> null
 }
 
-fun importChanges(current: Decision, next: Decision) = current != next
+/**
+ * The decision after reading a sidecar's [read] values (ADR 0011, "First read of a sidecar"; the same rule as
+ * hoard-server 0.10.1 and Reveal). Hoard has no colour label, so only stars and the flag apply.
+ *
+ * - **First read** ([last] null: Hoard never read this sidecar, or forgot it when it disappeared): a field Hoard holds
+ *   a value for (stars other than 0, a pick or a reject) is kept whatever the sidecar's mtime; only default fields are
+ *   filled from the sidecar.
+ * - **Later reads** (the file changed since [last]): only the fields whose value differs from [last] are candidates,
+ *   and they apply when the sidecar is [newer] than Hoard's decision ([importAfter]).
+ *
+ * A reject keeps Hoard's stars (the file cannot hold them).
+ */
+fun importFromSidecar(current: Decision, read: XmpFields, last: XmpFields?, newer: Boolean): Decision {
+    var flag = current.flag
+    var rating = current.rating
+    val stars = starsOf(read)
+    if (last == null) {
+        if (flag == null) flag = flagOf(read.flag)
+        if (rating == 0 && stars != null) rating = stars
+    } else if (newer) {
+        if (read.flag != last.flag) flag = flagOf(read.flag)
+        if (stars != null && stars != starsOf(last)) rating = stars
+    }
+    return Decision(flag, rating)
+}
+
+/** Whether the sidecar's [this] values are Hoard's [d] (a reject's stars aside): the sidecar then holds Hoard's decision. */
+fun XmpFields.holds(d: Decision): Boolean {
+    val fields = d.toXmp()
+    return flag == fields.flag && (flag == XmpFlag.REJECT || rating == fields.rating)
+}

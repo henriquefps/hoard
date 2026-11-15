@@ -9,8 +9,8 @@ import java.io.ByteArrayOutputStream
 
 /** What happened to one sidecar write (ADR 0011). */
 sealed class SidecarWrite {
-    /** Written as [name] (in the shot's folder); [modifiedMillis] is its mtime after the write, when known. */
-    data class Written(val name: String, val modifiedMillis: Long?) : SidecarWrite()
+    /** Written as [name] (in the shot's folder); [modifiedMillis] and [size] are the file's after the write, when known. */
+    data class Written(val name: String, val modifiedMillis: Long?, val size: Long? = null) : SidecarWrite()
 
     /** The existing sidecar [name] is not well-formed XMP: left byte for byte as it was. */
     data class Malformed(val name: String, val message: String) : SidecarWrite()
@@ -81,7 +81,8 @@ object Sidecars {
                 runCatching { writer.close() }
             }
             if (!fs.rename(part, path, true)) throw HoardSmbException(ErrorCode.UNKNOWN, "Could not name $name")
-            SidecarWrite.Written(name, runCatching { fs.stat(path)?.modifiedMillis }.getOrNull())
+            val stat = runCatching { fs.stat(path) }.getOrNull()
+            SidecarWrite.Written(name, stat?.modifiedMillis, stat?.size)
         } catch (e: InterruptedException) {
             throw e
         } catch (e: java.util.concurrent.CancellationException) {
