@@ -152,6 +152,11 @@ descriptors). The provider is now bounded whatever a client does:
   its own looper, started once and reused: a slow read on one descriptor never delays another descriptor's size or
   read. Reads run on a shared executor, and a callback waits at most 10 s (`TimedReader`) before answering `EIO`.
   `RemoteReader`'s read-ahead serves sequential reads from memory.
+  **Client obligation (part of the contract):** a proxy descriptor (every file over 8 MiB, so every RAW) holds one
+  of the 6 slots until the **client** closes it; 2.0.1 has no idle reclaim. A client must close a hand-off descriptor
+  as soon as its read is done and never hold more than 6 at once: a client that keeps 6 RAW descriptors open (or leaks
+  one per photo) makes every later open fail with `busy:` until it closes them or Hoard's process ends. An idle
+  reclaim (a descriptor with no read for a while gives its slot back) is planned as a follow-up.
 - **Connections**: one SMB connection per machine + share for every open, lease and write, kept for 60 s after the
   last use (`Sources.LINGER_MS`), so cached opens, which take no lease, do not reconnect each time. An unreachable
   machine, a refused login or a GUID mismatch makes the next opens of that share fail at once for 10 s
