@@ -3,6 +3,18 @@ package dev.hfps.hoard.app.ui.cull
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
+import dev.hfps.hoard.designsystem.icons.PhosphorRegular
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
@@ -84,8 +96,12 @@ class ZoomState {
 sealed interface ScreenState {
     data object Loading : ScreenState
     data class Ready(val image: ScreenImage) : ScreenState
-    data object Failed : ScreenState
+    /** [offline]: nothing of the shot is on the phone and the server cannot be reached (a placeholder, not an error). */
+    data class Failed(val offline: Boolean = false) : ScreenState
 }
+
+/** A low-resolution stand-in on screen (2.2.2): its upgrade to the screen image is on the way, or failed (offline). */
+enum class Upgrade { None, Loading, Failed }
 
 /**
  * One culling photo (ZoomableImage.tsx): the screen image fitted, pinch or double tap to zoom (double tap: 100 %),
@@ -108,6 +124,7 @@ fun ZoomableShot(
     var screen by remember(shot) { mutableStateOf<ScreenState>(images.cachedScreen(shot)?.let { ScreenState.Ready(it) } ?: ScreenState.Loading) }
     var info by remember(shot) { mutableStateOf(images.cachedZoom(shot)) }
     var zoomLoading by remember(shot) { mutableStateOf(false) }
+    var upgrade by remember(shot) { mutableStateOf(Upgrade.None) }
     val tiles = remember(shot) { mutableStateMapOf<String, Pair<dev.hfps.hoard.app.cull.Tile, ImageBitmap>>() }
 
     // Fast, then final (the shot on screen in the foreground, its neighbours in the background).
@@ -120,12 +137,21 @@ fun ZoomableShot(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    ScreenState.Failed
+                    ScreenState.Failed(offline = isOffline(e))
                 }
             }
             val now = screen
             if (now is ScreenState.Ready && !now.image.final) {
-                runCatching { images.screen(shot, fast = false, background = !active) }.onSuccess { screen = ScreenState.Ready(it) }
+                if (now.image.lowRes) upgrade = Upgrade.Loading
+                runCatching { images.screen(shot, fast = false, background = !active) }
+                    .onSuccess {
+                        screen = ScreenState.Ready(it)
+                        upgrade = Upgrade.None
+                    }
+                    .onFailure { e ->
+                        if (e is CancellationException) throw e
+                        if (now.image.lowRes) upgrade = Upgrade.Failed
+                    }
             }
         }
     }
@@ -284,7 +310,11 @@ fun ZoomableShot(
 
         when {
             screen is ScreenState.Loading -> CircularProgressIndicator(Modifier.align(Alignment.Center).size(32.dp), color = ViewerColors.foreground, strokeWidth = 2.dp)
+            screen is ScreenState.Failed && (screen as ScreenState.Failed).offline -> OfflinePlaceholder(Modifier.align(Alignment.Center))
             screen is ScreenState.Failed -> Text(stringResource(R.string.t_cull_viewer_image_failed), Modifier.align(Alignment.Center), color = ViewerColors.foreground, style = HfpsTheme.typography.body)
+            ready?.image?.lowRes == true && upgrade == Upgrade.Loading && active ->
+                CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp).testTag("viewer-upgrading"), color = ViewerColors.foreground, strokeWidth = 2.dp)
+            ready?.image?.lowRes == true && upgrade == Upgrade.Failed && active -> OfflineHint(Modifier.align(Alignment.TopCenter).padding(top = 72.dp))
             active && zoomLoading -> Text(
                 stringResource(if (shot.raw != null && shot.rendered == null) R.string.t_cull_viewer_rendering_raw else R.string.t_cull_viewer_loading_full),
                 Modifier.align(Alignment.BottomCenter),
@@ -317,3 +347,34 @@ private suspend fun animate(zoom: ZoomState, scale: Float, cx: Float, cy: Float)
 
 /** The tile edge in image pixels at a sample (for tests and logs). */
 fun tileSpan(sample: Int) = TILE_SIZE * sample
+
+/** Whether a failure means "no network" (airplane mode, the server unreachable) rather than a broken photo. */
+fun isOffline(e: Throwable): Boolean = when (dev.hfps.hoard.app.route.errorCodeOf(e)) {
+    dev.hfps.hoard.smb.ErrorCode.UNREACHABLE, dev.hfps.hoard.smb.ErrorCode.TIMEOUT -> true
+    else -> e is java.io.IOException && e !is dev.hfps.hoard.server.api.ServerException
+}
+
+/** A subtle line over a thumbnail shown offline in place of the screen image. */
+@Composable
+fun OfflineHint(modifier: Modifier = Modifier) {
+    Row(
+        modifier.clip(RoundedCornerShape(16.dp)).background(ViewerColors.scrim).padding(horizontal = 12.dp, vertical = 6.dp).testTag("viewer-offline-hint"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(PhosphorRegular.CloudSlash, null, Modifier.size(14.dp), tint = ViewerColors.foreground)
+        Spacer(Modifier.width(6.dp))
+        Text(stringResource(R.string.gallery_viewer_offline_low_res), color = ViewerColors.foreground, style = HfpsTheme.typography.ui)
+    }
+}
+
+/** Nothing of this shot on the phone and no server: what it is, not an error. */
+@Composable
+fun OfflinePlaceholder(modifier: Modifier = Modifier) {
+    Column(modifier.padding(32.dp).testTag("viewer-offline-placeholder"), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(PhosphorRegular.CloudSlash, null, Modifier.size(40.dp), tint = ViewerColors.foreground)
+        Spacer(Modifier.height(12.dp))
+        Text(stringResource(R.string.gallery_viewer_offline_title), color = ViewerColors.foreground, style = HfpsTheme.typography.uiMedium, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(4.dp))
+        Text(stringResource(R.string.gallery_viewer_offline_text), color = ViewerColors.foreground.copy(alpha = 0.7f), style = HfpsTheme.typography.ui, textAlign = TextAlign.Center)
+    }
+}

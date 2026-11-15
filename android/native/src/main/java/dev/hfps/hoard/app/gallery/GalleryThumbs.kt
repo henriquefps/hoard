@@ -78,7 +78,11 @@ class GalleryThumbs(
             val kept = offline?.file(entry.itemId!!)
             if (kept != null) withContext(Dispatchers.IO) { if (kept.isFile) decodeSampled(kept, px) else null }?.let { return it }
         }
-        val file = serverThumbFile(entry) ?: return null
+        // The server's thumb; offline (or for an edit the phone has not fetched) the offline thumbnail still beats an
+        // empty cell, whatever the cell's size.
+        val file = runCatching { serverThumbFile(entry) }.onFailure { if (it is CancellationException) throw it }.getOrNull()
+            ?: offline?.file(entry.itemId!!)?.takeIf { it.isFile }
+            ?: return null
         return withContext(Dispatchers.IO) { decodeSampled(file, px) }
     }
 

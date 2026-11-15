@@ -551,23 +551,19 @@ fun TabbedLayout(selected: Tab?, onSelect: (Tab) -> Unit, content: @Composable (
     )
     BoxWithConstraints(Modifier.fillMaxSize().background(HfpsTheme.colors.background)) {
         val rail = usesRail(maxWidth, maxHeight)
-        when {
-            selected == null -> content()
-            rail -> Row(Modifier.fillMaxSize()) {
-                HfpsNavigationRail(destinations, selected.ordinal, { onSelect(Tab.entries[it]) }, Modifier.fillMaxHeight())
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Start)),
-                ) { content() }
-            }
-            else -> Column(Modifier.fillMaxSize()) {
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
-                ) { content() }
-                HfpsNavigationBar(destinations, selected.ordinal, { onSelect(Tab.entries[it]) })
+        // One place in the composition for [content], whatever the navigation shows: hiding the bar (the Gallery's
+        // viewer) or switching bar and rail must not recreate the screens (2.2.1 lost the Gallery's scroll position
+        // when the viewer hid the bar, as the whole NavHost was composed anew).
+        Row(Modifier.fillMaxSize()) {
+            if (selected != null && rail) HfpsNavigationRail(destinations, selected.ordinal, { onSelect(Tab.entries[it]) }, Modifier.fillMaxHeight())
+            Column(Modifier.weight(1f)) {
+                val insets = when {
+                    selected == null -> Modifier
+                    rail -> Modifier.consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Start))
+                    else -> Modifier.consumeWindowInsets(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                }
+                Column(Modifier.weight(1f).then(insets)) { content() }
+                if (selected != null && !rail) HfpsNavigationBar(destinations, selected.ordinal, { onSelect(Tab.entries[it]) })
             }
         }
     }

@@ -3,7 +3,11 @@ package dev.hfps.hoard.app.ui.gallery
 import android.content.Context
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.hfps.hoard.app.AppContainer
@@ -32,7 +36,7 @@ import kotlinx.coroutines.launch
 data class GalleryOpen(val id: Int, val entries: List<GalleryEntry>, val startKey: String)
 
 /** The Gallery tab's state (ADR 0021): filters, density, the layout derived off the main thread, the server's state. */
-class GalleryViewModel(private val repo: GalleryRepository, context: Context) : ViewModel() {
+class GalleryViewModel(private val repo: GalleryRepository, context: Context, private val saved: SavedStateHandle = SavedStateHandle()) : ViewModel() {
     private val appContext = context.applicationContext
     val filter = MutableStateFlow(GalleryFilter())
     val columns = MutableStateFlow(DEFAULT_COLUMNS)
@@ -58,6 +62,23 @@ class GalleryViewModel(private val repo: GalleryRepository, context: Context) : 
     val backends = HashMap<Int, GalleryCullBackend>()
     private var nextOpen = 1
 
+    /**
+     * The grid's scroll state, here and not in the screen (2.2.2): it outlives the viewer, the tab bar hiding and the
+     * tabs; [anchor] (saved state) brings the same shot back after a reload or a new process.
+     */
+    val grid = LazyGridState()
+
+    /** The first visible shot (by key) and its row's offset; saved across process death. */
+    var anchor: GridAnchor?
+        get() = saved.get<String>(KEY_ANCHOR)?.let { GridAnchor(it, saved.get<Int>(KEY_OFFSET) ?: 0) }
+        set(value) {
+            saved[KEY_ANCHOR] = value?.key
+            saved[KEY_OFFSET] = value?.offset ?: 0
+        }
+
+    /** The shot the viewer closed on, to bring into view (once) back in the grid. */
+    val lastViewed = MutableStateFlow<String?>(null)
+
     fun setColumns(n: Int) = columns.update { n.coerceIn(MIN_COLUMNS, MAX_COLUMNS) }
 
     fun setFilter(f: GalleryFilter) = filter.update { f }
@@ -75,8 +96,9 @@ class GalleryViewModel(private val repo: GalleryRepository, context: Context) : 
         open.value = GalleryOpen(nextOpen++, entries, key)
     }
 
-    fun closeViewer() {
+    fun closeViewer(last: String? = null) {
         open.value?.let { backends.remove(it.id)?.close() }
+        lastViewed.value = last ?: open.value?.startKey
         open.value = null
     }
 
@@ -92,12 +114,15 @@ class GalleryViewModel(private val repo: GalleryRepository, context: Context) : 
         const val MAX_COLUMNS = 9
         /** From this density on, headers are per month (a year fits in a few screens). */
         const val MONTH_COLUMNS = 7
+        private const val KEY_ANCHOR = "gallery.anchor"
+        private const val KEY_OFFSET = "gallery.anchorOffset"
     }
 }
 
 class GalleryViewModelFactory(private val container: AppContainer) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T = GalleryViewModel(container.gallery, container.appContext) as T
+    override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
+        GalleryViewModel(container.gallery, container.appContext, extras.createSavedStateHandle()) as T
 }
 
 /** Shell state the Gallery drives: its viewer hides the tab bar. */

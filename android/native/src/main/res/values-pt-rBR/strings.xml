@@ -145,6 +145,9 @@
     <string name="gallery_viewer_edited">Editada</string>
     <string name="gallery_viewer_original">Original</string>
     <string name="gallery_viewer_play">Reproduzir</string>
+    <string name="gallery_viewer_offline_low_res">Offline · baixa resolução</string>
+    <string name="gallery_viewer_offline_title">Indisponível offline</string>
+    <string name="gallery_viewer_offline_text">Esta foto ainda não tem uma cópia no celular. Ela aparece quando o servidor estiver acessível.</string>
     <string name="gallery_viewer_info_folder">Pasta</string>
     <string name="gallery_video_failed">Não foi possível reproduzir este vídeo.</string>
     <string name="gallery_reveal_update">Esta foto está só no seu servidor de fotos: atualize o Reveal para 0.9 ou mais novo para editá-la de lá.</string>
