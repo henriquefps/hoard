@@ -23,15 +23,15 @@ recorded here in the same cycle.
 
 | # | Contract | Owner | Source of record | Current version |
 | --- | --- | --- | --- | --- |
-| 1 | Server protocol `/v1` (frozen for Reveal; additions only). Clients check capabilities through `GET /v1/server` `features` (`culling`, `device-identity`, `edits`; 0.10.0 adds `items-by-path`). | Hoard | ADR 0013, `server/api/openapi.yaml`, `server/testdata/v1-routes.txt` (only grows); compatibility rules ADR 0012 | hoard-server 0.9.0 |
+| 1 | Server protocol `/v1` (frozen for Reveal; additions only). Clients check capabilities through `GET /v1/server` `features` (`culling`, `device-identity`, `edits`; 0.10.0 adds `items-by-path`). Reveal is a live client of Reveal-only parts too: records (photo, version, preset, setting), `/v1/blobs` smart previews (`.rvsp`), `GET`/`DELETE /v1/originals/{fingerprint}` by range, the NAS feed and lookups. | Hoard (server); client side Reveal ADR 0018 (Reveal ADR 0017 is history) | ADR 0013, `server/api/openapi.yaml`, `server/testdata/v1-routes.txt` (only grows); compatibility rules ADR 0012 | hoard-server 0.9.0 |
 | 2 | Pairing: `revealsync://pair?v=1&…` QR, `POST /v1/pair`, `rvk1_` device keys | Hoard | ADR 0012, 0013 | unchanged since reveal-sync |
 | 3 | Items, folders, previews | Hoard | ADR 0014, 0015 | 0.9.0 |
 | 4 | Culling records: per-field last writer wins on `(modifiedAt, deviceId)` (on equal times, the greater `deviceId` compared byte-wise/ordinally, as Go orders strings; never a locale collator), `baseRev`, 10 min future clip, `features: ["culling"]` ends the photo-record bridge | Hoard | ADR 0016; Reveal ADR 0027 (client) | 0.9.0 / Reveal 0.8.0 |
 | 5 | Device identity: one physical device groups the apps of a phone; app ids `hoard`, `hoard-debug`, `reveal`, `reveal-debug`, `reveal-bench`; `/v1/device`, `/v1/device/claim` | Hoard | ADR 0017; Reveal ADR 0027 | 0.9.0 / Reveal 0.8.0 |
-| 6 | Edited previews: `PUT`/`DELETE /v1/items/{itemId}/edits/{versionId}`, `?edit=primary`; digest `r<pipeline>.<render>:<sha256>` is opaque to Hoard | Hoard (server), Reveal (digest) | ADR 0020; Reveal ADR 0027 | 0.9.0 / Reveal 0.8.0 |
+| 6 | Edited previews: `PUT`/`DELETE /v1/items/{itemId}/edits/{versionId}` (`versionId` = Reveal's version uuid, not a server id), `?edit=primary`; digest `r<pipeline>.<render>:<sha256>` is opaque to Hoard (Reveal bumps `EditPreviews.RENDER_VERSION` when a render changes) | Hoard (server), Reveal (digest) | ADR 0020; Reveal ADR 0027 | 0.9.0 / Reveal 0.8.0 |
 | 7 | v1 fingerprint: SHA-256 of size (8 B big-endian) + first 1 MiB + last 1 MiB | Hoard (generator and vectors) | `server/testdata/fingerprint-vectors.txt`; Reveal ADR 0006 | v1 |
-| 8 | Intent hand-off, URI items: `dev.hfps.reveal.action.DEVELOP`, ClipData, `TITLE`, `INITIAL_URI`, sent to one package (release, else debug), READ + PERSISTABLE grants, sidecars READ + WRITE + PERSISTABLE. The `CULLING` bundle is keyed by `uri.toString()` exactly as placed in the ClipData. | Reveal (intent), Hoard (sender) | Reveal ADR 0011; Hoard ADR 0010 | `CULLING_VERSION` 1 |
-| 9 | `CULLING` extra (URI items only): per item `rating`, `flag`, `label`; **version 2** adds `*ModifiedAt` (ms) and `*Device` (server deviceId, only when the sender is paired), applied with contract 4's rule | Reveal | Reveal ADR 0011 "Culling" + amendment W3/H | 1 shipped, 2 agreed |
+| 8 | Intent hand-off, URI items: `dev.hfps.reveal.action.DEVELOP`, ClipData, `TITLE`, `INITIAL_URI`, sent to one package (release, else debug), READ + PERSISTABLE grants, sidecars READ + WRITE + PERSISTABLE. The `CULLING` bundle is keyed by `uri.toString()` exactly as placed in the ClipData. | Reveal (intent), Hoard (sender) | Reveal ADR 0011; Hoard ADR 0010 | Reveal 0.5.x+, Hoard 1.10.0+ (persistable grants) |
+| 9 | `CULLING` extra (URI items only): per item `rating`, `flag`, `label`, optional `*ModifiedAt` (ms; accepted since Reveal 0.8.0 under version 1); **version 2** adds `*Device` (server deviceId, only when the sender is paired) and makes contract 4's per-field rule on `(modifiedAt, deviceId)` the way values are applied | Reveal | Reveal ADR 0011 "Culling" + amendment W3/H | 1 shipped, 2 agreed |
 | 10 | **Server references** (amendment W3/H): `SERVER_REF_VERSION`, `SERVER_ID`, `SERVER_ITEMS` (`itemId` required, `fingerprint` / `fingerprints` / `name` optional, **no culling**), `INITIAL_ITEM`; at most 500 items per intent | Reveal (intent), Hoard (sender) | Reveal ADR 0011 amendment W3/H; Hoard ADR 0010 amendment | agreed 2026-11-15, ships in Reveal 0.9.0 |
 | 11 | Hoard's hand-off URIs are stable and every one carries PERSISTABLE: FileProvider paths and SAF documents keep their URIs; SMB links `content://dev.hfps.hoard.stream/h/<id>/…` are served after a cold start, and only these are pruned, after about 180 days without use. `busy:` contract (below). | Hoard | Hoard ADR 0010 | Hoard 2.0.0; `busy:` in 2.0.1 |
 | 12 | XMP culling: `xmp:Rating` 0..5 / −1 reject, `digiKam:PickLabel` 3/1/0, `xmp:Label`. Naming: one `<stem>.xmp` per shot next to the RAW (else next to the JPEG). Readers accept `<stem>.xmp`, `<file name>.xmp` and the hidden `.<stem>.xmp` / `.<file name>.xmp`, and `<stem>.xmp` wins. Hoard writes the hidden form only when its setting is on (off by default). A malformed sidecar is never overwritten. Each app writes only the fields the user changed. Hoard's import: a sidecar wins over Hoard's database when its mtime is later than Hoard's last write or decision. The server imports NAS sidecars read only (`nas`) and never writes them. | Shared: Hoard for the culling mapping, Reveal for its `reveal:` / `crs:` blocks | Hoard ADR 0011, 0016; Reveal ADR 0006, 0026, 0027 | — |
@@ -90,8 +90,9 @@ server:
 ## Testing a release pair
 
 Before each pair of releases, run the end-to-end script twice: first on the emulator on cachyos-fps (both debug
-apps and a test server on a temporary directory), then on the owner's phone with the owner. The script is planned;
-it will cover:
+apps and a test server on a temporary directory), then on the owner's phone with the owner. The script is planned. It
+will reuse Reveal's instrumented tests as building blocks (`HandoffFlowTest`, `CullingFlowTest`, `EditedPreviewFlowTest`,
+the coming `HandoffServerRefTest`) and cover:
 
 - a hand-off with URIs, culling and sidecars;
 - a hand-off with server references;
