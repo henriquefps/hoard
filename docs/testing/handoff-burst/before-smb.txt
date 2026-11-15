@@ -1,0 +1,8 @@
+label: before  scenario: smb  date: 2026-11-15T01:17:24-03:00
+client: no summary
+system_server pid: 669 -> 669  vold pid: 237 -> 237
+dumpsys mount: 192 samples, mean 63 ms, max 351 ms, failed 0
+watchdog lines: 194
+appfuse / vold lines: 1
+hoard threads after: 0
+hoard log lines (HoardHandoff): 200

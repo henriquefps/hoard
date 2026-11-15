@@ -14,6 +14,7 @@ class HandoffStoreTest {
     @get:Rule val temp = TemporaryFolder()
 
     private var now = 1_000_000L
+    private val file get() = temp.root.resolve("links.json")
     private fun store() = HandoffStore(temp.root.resolve("links.json"), clock = { now })
 
     private fun HandoffStore.photo(path: String, share: String = "photos", machine: String = "m1", size: Long = 10) =
@@ -87,9 +88,27 @@ class HandoffStoreTest {
         val item = s.photo("a.jpg")
         now += 1_000
         s.touch(item.id)
+        s.flush()
         assertEquals(item.lastUsedAt, store().get(item.id)!!.lastUsedAt)
         now += HandoffStore.TOUCH_EVERY_MS
         s.touch(item.id)
+        s.flush()
+        assertEquals(now, store().get(item.id)!!.lastUsedAt)
+    }
+
+    @Test
+    fun `touches and size changes stay in memory until flushed`() {
+        val s = store()
+        val item = s.photo("a.jpg")
+        val bytes = file.readText()
+        now += HandoffStore.TOUCH_EVERY_MS
+        s.touch(item.id)
+        s.updateFile(item.id, 99, 1234)
+        assertEquals(bytes, file.readText()) // a burst of opens writes nothing per open
+        assertEquals(now, s.get(item.id)!!.lastUsedAt)
+        assertEquals(99, s.get(item.id)!!.size)
+        s.flush()
+        assertEquals(99, store().get(item.id)!!.size)
         assertEquals(now, store().get(item.id)!!.lastUsedAt)
     }
 

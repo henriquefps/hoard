@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+- **Fix: Reveal opening many photos at once could freeze the phone** ([ADR 0010](docs/adr/0010-edit-in-reveal.md), "Bursts of opens"). When Reveal started, it reopened every photo Hoard had handed it at the same time. Each photo from a network share went through Android's storage service, and hundreds of them at once could stall that service until Android restarted itself. Hoard could also crash, which closed Reveal too. Now Hoard serves at most 6 of those photos at a time; an open that finds them all busy waits up to 1.5 s, then gets a "busy" answer (`FileNotFoundException` starting with `busy:`, the contract with Reveal, which retries). Sidecars and smaller photos (up to 8 MB) are kept in a private copy, so reopening them skips Android's storage service entirely. A machine that cannot be reached makes the remaining photos of the burst fail straight away instead of each one waiting to connect. In a test with 200 opens at once on an emulator, Hoard no longer crashes and the storage service stays responsive ([test report](docs/testing/handoff-burst.md)).
+- Photos on the phone were already cheap to reopen and are unchanged.
+- The log has one line per burst of opens instead of one per photo.
+
 ## 2.0.0
 
 **Hoard 2: the native app replaces Hoard 1** ([ADR 0019](docs/adr/0019-native-app.md)). Hoard is now a Kotlin + Jetpack Compose app, rebuilt screen by screen at parity with 1.11 (Files, culling, assisted culling, sidecars, transfers, viewers, Edit in Reveal, settings), with a built-in image viewer and a Gallery tab on the way. It installs **over** Hoard 1 (same app, same signing key):

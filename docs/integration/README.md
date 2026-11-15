@@ -64,8 +64,8 @@ case only: the provider is already serving its maximum number of concurrent hand
 short bounded wait (< 2 s) did not free a slot. No other failure uses this prefix.
 
 Clients retry with bounded exponential backoff (250 ms doubling up to 4 s, giving up after about 30 s). They keep
-their own concurrent opens at or below the limit, and never mark a busy file as unreadable. The final constant is in
-Hoard 2.0.1's PR.
+their own concurrent opens at or below the limit, and never mark a busy file as unreadable. Hoard 2.0.1's
+constants: 6 concurrent reads (`HandoffServer.MAX_READS`), a 1.5 s wait (`BUSY_WAIT_MS`); ADR 0010 "Bursts of opens".
 
 ## Shared fixtures
 
