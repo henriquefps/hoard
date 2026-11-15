@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "b4aff9a5be8c64361bc6a67d28f6596c",
+    "identityHash": "2bf66d84d9709aa82b9a0cc97ebd6d8b",
     "entities": [
       {
         "tableName": "machines",
@@ -910,8 +910,14 @@
       },
       {
         "tableName": "reveal_copies",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`source_key` TEXT NOT NULL, `source_path` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified_ms` INTEGER, `uri` TEXT NOT NULL, `copied_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`source_key`, `source_path`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`uri` TEXT NOT NULL, `source_key` TEXT NOT NULL, `source_path` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified_ms` INTEGER, `copied_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`uri`))",
         "fields": [
+          {
+            "fieldPath": "uri",
+            "columnName": "uri",
+            "affinity": "TEXT",
+            "notNull": true
+          },
           {
             "fieldPath": "sourceKey",
             "columnName": "source_key",
@@ -936,12 +942,6 @@
             "affinity": "INTEGER"
           },
           {
-            "fieldPath": "uri",
-            "columnName": "uri",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
             "fieldPath": "copiedAt",
             "columnName": "copied_at",
             "affinity": "TEXT",
@@ -952,15 +952,26 @@
         "primaryKey": {
           "autoGenerate": false,
           "columnNames": [
-            "source_key",
-            "source_path"
+            "uri"
           ]
-        }
+        },
+        "indices": [
+          {
+            "name": "index_reveal_copies_source",
+            "unique": false,
+            "columnNames": [
+              "source_key",
+              "source_path"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_reveal_copies_source` ON `${TABLE_NAME}` (`source_key`, `source_path`)"
+          }
+        ]
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b4aff9a5be8c64361bc6a67d28f6596c')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2bf66d84d9709aa82b9a0cc97ebd6d8b')"
     ]
   }
 }

@@ -39,6 +39,8 @@ import dev.hfps.hoard.app.ui.common.errorTitle
 import dev.hfps.hoard.app.ui.transfers.NotificationsPermission
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.smb.ErrorCode
+import dev.hfps.hoard.smb.share.RevealHandoff
+import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -67,6 +69,8 @@ fun rememberReveal(actions: FileActions): RevealController {
     // The copy before a hand-off (ADR 0010 "2.2.0: local copies"): its progress, and the job to cancel.
     var copying by remember { mutableStateOf<LiveTransfer?>(null) }
     var sending by remember { mutableStateOf<Job?>(null) }
+    // A hand-off prepared while Hoard was in the background with notifications off: offered when Hoard returns.
+    var ready by remember { mutableStateOf<RevealHandoff.Prepared?>(null) }
     // Installing or removing Reveal shows or hides the action when Hoard comes back.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         available = actions.revealAvailable()
@@ -81,7 +85,21 @@ fun rememberReveal(actions: FileActions): RevealController {
         if (sending?.isActive == true) return
         sending = scope.launch {
             try {
-                actions.editInReveal(activity, request.location, request.folderPath, request.paths, request.title, request.initialPath) { copying = it }
+                actions.editInReveal(
+                    activity, request.location, request.folderPath, request.paths, request.title, request.initialPath,
+                    onCopyProgress = { copying = it },
+                    deliver = { prepared ->
+                        withContext(Dispatchers.Main) {
+                            copying = null
+                            // A long copy may end after the user left Hoard: Android 10+ blocks starting Reveal then.
+                            val visible = (activity as? LifecycleOwner)?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.STARTED) != false
+                            when {
+                                visible -> container.reveal.start(activity, prepared)
+                                !RevealReady.post(context, prepared, request.title) -> ready = prepared
+                            }
+                        }
+                    },
+                )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -119,6 +137,24 @@ fun rememberReveal(actions: FileActions): RevealController {
             )
         }
         copying?.let { progress -> RevealCopyDialog(progress) { sending?.cancel() } }
+        ready?.let { prepared ->
+            ConfirmDialog(
+                title = stringResource(R.string.reveal_ready_title),
+                body = stringResource(R.string.reveal_ready_dialog_body),
+                confirmLabel = stringResource(R.string.reveal_ready_open),
+                onDismiss = { ready = null },
+                onConfirm = {
+                    val activity = context.findActivity()
+                    if (activity != null) {
+                        try {
+                            container.reveal.start(activity, prepared)
+                        } catch (e: Throwable) {
+                            toaster.show(res.getString(R.string.t_reveal_failed) + "\n" + res.getString(errorTitle(errorCodeOf(e))))
+                        }
+                    }
+                },
+            )
+        }
     }
     return RevealController(available, edit, dialogs)
 }

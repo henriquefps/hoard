@@ -53,13 +53,14 @@ object RevealRoutes {
      * [paths]: the photos not sent by reference, in hand-off order. [onPhone]: MediaStore's URI of each photo of the
      * phone's own storage (empty for other locations). [stats]: each source's size and mtime now (null when it could
      * not be read: it is copied, and the copy fails with the source's error). [copies]: the copies recorded for these
-     * paths; [exists] says whether MediaStore still has a copy of that size.
+     * paths (several per path when the source changed between copies, newest first); [exists] says whether MediaStore
+     * still has that copy, of that size, in Hoard's copy folders ([isCopy]).
      */
     fun plan(
         paths: List<String>,
         onPhone: Map<String, String>,
         stats: Map<String, FileStat?>,
-        copies: Map<String, RevealCopyEntity>,
+        copies: Map<String, List<RevealCopyEntity>>,
         exists: (uri: String, size: Long) -> Boolean,
     ): Plan {
         val uris = LinkedHashMap<String, String>()
@@ -67,11 +68,51 @@ object RevealRoutes {
         for (path in paths) {
             onPhone[path]?.let { uris[path] = it; continue }
             val stat = stats[path]
-            val row = copies[path]
-            if (stat != null && row != null && reusable(row, stat) && exists(row.uri, row.size)) uris[path] = row.uri else copy += path
+            val row = stat?.let { s -> copies[path].orEmpty().firstOrNull { reusable(it, s) && exists(it.uri, it.size) } }
+            if (row != null) uris[path] = row.uri else copy += path
         }
         return Plan(uris, copy)
     }
+
+    /** Hoard's copy folders (exact case, as MediaStore stores `RELATIVE_PATH`): `Pictures/Hoard/…`, `Download/Hoard/…`. */
+    val COPY_FOLDERS = listOf("Pictures/Hoard/", "Download/Hoard/")
+
+    /** What MediaStore has now at a recorded copy's URI. */
+    data class Current(val relativePath: String, val size: Long)
+
+    /**
+     * Whether the row MediaStore has at a recorded URI is still that copy: in one of Hoard's copy folders (exact case;
+     * a copy moved out, or an id MediaStore reused for another file after a rebuild, is not) with the recorded size.
+     */
+    fun isCopy(row: RevealCopyEntity, current: Current?): Boolean =
+        current != null && current.size == row.size && COPY_FOLDERS.any { current.relativePath.startsWith(it) }
+
+    /** "Delete copies": the recorded copies still in place ([delete]), and the records that no longer stand for one ([forget]). */
+    data class Deletion(val delete: List<RevealCopyEntity>, val forget: List<RevealCopyEntity>)
+
+    /**
+     * Which recorded copies "Delete copies" deletes (pure, JVM-tested): only rows of `reveal_copies` (never a file Hoard
+     * owns but did not record: it may be one the user copied there with Hoard's file manager), and only while [current]
+     * says they are still copies ([isCopy]). Superseded copies of a changed source are rows too, so they are counted
+     * and deleted. Records whose file is gone or moved are forgotten, the file left alone.
+     */
+    fun deletion(recorded: List<RevealCopyEntity>, current: (String) -> Current?): Deletion {
+        val (delete, forget) = recorded.partition { isCopy(it, current(it.uri)) }
+        return Deletion(delete, forget)
+    }
+
+    /**
+     * The `reveal_copies` rows for a copy job's completed items (pure, JVM-tested): [asked] maps the engine's normalized
+     * source paths back to the hand-off's; [find] is the published row's URI by destination folder and name. Saved
+     * whatever the job's outcome, so a job that fails or is cancelled midway leaves its published copies recorded and
+     * a retry reuses them instead of making `name (1).ext` duplicates.
+     */
+    fun records(items: List<TransferItem>, asked: Map<String, String>, sourceKey: String, now: String, find: (folder: String, name: String) -> String?): List<RevealCopyEntity> =
+        copied(items).mapNotNull { item ->
+            val path = asked[item.sourcePath] ?: return@mapNotNull null
+            val uri = find(TransferPaths.parent(item.destPath), TransferPaths.name(item.destPath)) ?: return@mapNotNull null
+            RevealCopyEntity(uri = uri, sourceKey = sourceKey, sourcePath = path, size = item.size, modifiedMillis = item.modifiedMillis, copiedAt = now)
+        }
 
     /** A copy stands for its source while the source has the size and mtime it had when copied. */
     fun reusable(row: RevealCopyEntity, stat: FileStat): Boolean =
@@ -152,9 +193,11 @@ class RevealCopies(
         val toCheck = paths.filter { it !in onPhone }
         val stats = if (toCheck.isEmpty()) emptyMap() else statSources(location, toCheck)
         val key = location.cacheKey
-        val rows = withContext(Dispatchers.IO) { toCheck.chunked(500).flatMap { dao.find(key, it) } }.associateBy { it.sourcePath }
+        val rows = withContext(Dispatchers.IO) { toCheck.chunked(500).flatMap { dao.find(key, it) } }.groupBy { it.sourcePath }
         val plan = withContext(Dispatchers.IO) {
-            RevealRoutes.plan(paths, onPhone, stats, rows) { uri, size -> MediaStoreCopies.get(context.contentResolver, Uri.parse(uri))?.size == size }
+            RevealRoutes.plan(paths, onPhone, stats, rows) { uri, size ->
+                RevealRoutes.isCopy(RevealCopyEntity(uri = uri, sourceKey = key, sourcePath = "", size = size, modifiedMillis = null, copiedAt = ""), current(uri))
+            }
         }
         Log.i(TAG, "Reveal copies: ${plan.uris.size} by URI (${plan.uris.size - onPhone.size} reused copies), ${plan.copy.size} to copy")
         if (plan.copy.isEmpty()) return plan.uris
@@ -178,67 +221,72 @@ class RevealCopies(
                 conflict = "rename",
             ),
         )
+        // The engine normalizes source paths; give them back as they were asked for.
+        val asked = paths.associateBy { SmbPaths.normalize(it) }
         val end = try {
             service.live.map { it[id] }.onEach { onProgress(it) }.first { it != null && it.isTerminal }!!
         } catch (e: CancellationException) {
-            withContext(NonCancellable) { runCatching { service.cancel(id) } }
+            withContext(NonCancellable) {
+                runCatching { service.cancel(id) }
+                // What was published before the cancel stays recorded (and reusable).
+                runCatching { record(location, asked, service.job(id)) }
+            }
             throw e
         }
-        val job = service.job(id)
-        val items = job?.let { synchronized(it) { it.items.toList() } }.orEmpty()
+        val items = service.job(id)?.let { synchronized(it) { it.items.toList() } }.orEmpty()
+        // Recorded before any failure is reported: a retry reuses what this job published (no `name (1).ext` copies).
+        val out = record(location, asked, service.job(id))
         RevealRoutes.failure(end.state, items, paths.size)?.let { throw it }
-        // The engine normalizes source paths; give them back as they were asked for.
-        val asked = paths.associateBy { SmbPaths.normalize(it) }
-        return withContext(Dispatchers.IO) {
-            val out = LinkedHashMap<String, String>()
-            val rows = ArrayList<RevealCopyEntity>()
-            for (item in RevealRoutes.copied(items)) {
-                val path = asked[item.sourcePath] ?: continue
-                val row = MediaStoreCopies.find(context.contentResolver, TransferPaths.parent(item.destPath), TransferPaths.name(item.destPath)) ?: continue
-                out[path] = row.uri.toString()
-                rows += RevealCopyEntity(location.cacheKey, path, item.size, item.modifiedMillis, row.uri.toString(), IsoTime.now())
-            }
-            dao.save(rows)
-            if (out.size < paths.size) smbFail(ErrorCode.UNKNOWN, "${paths.size - out.size} copies were not found in MediaStore")
-            out
-        }
+        if (out.size < paths.size) smbFail(ErrorCode.UNKNOWN, "${paths.size - out.size} copies were not found in MediaStore")
+        return out
     }
 
-    /** What the copies take now (rows MediaStore still has). */
+    /** Saves the copies [job] published (its completed items) in `reveal_copies`; source path → URI. */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private suspend fun record(location: BrowseLocation, asked: Map<String, String>, job: dev.hfps.hoard.smb.transfer.TransferJob?): Map<String, String> = withContext(Dispatchers.IO) {
+        val items = job?.let { synchronized(it) { it.items.toList() } }.orEmpty()
+        val rows = RevealRoutes.records(items, asked, location.cacheKey, IsoTime.now()) { folder, name ->
+            MediaStoreCopies.find(context.contentResolver, folder, name)?.uri?.toString()
+        }
+        if (rows.isNotEmpty()) dao.save(rows)
+        rows.associate { it.sourcePath to it.uri }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun current(uri: String): RevealRoutes.Current? =
+        MediaStoreCopies.get(context.contentResolver, Uri.parse(uri))?.let { RevealRoutes.Current(it.relativePath, it.size) }
+
+    /** What the copies take now: the recorded copies MediaStore still has in Hoard's copy folders. */
     suspend fun usage(): Usage = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val rows = all()
+            val rows = RevealRoutes.deletion(dao.all(), ::current).delete
             Usage(rows.size, rows.sumOf { it.size })
         } else {
             Usage(0, 0)
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.Q)
-    private suspend fun all(): List<MediaStoreCopies.Row> {
-        val recorded = dao.all().mapNotNull { MediaStoreCopies.get(context.contentResolver, Uri.parse(it.uri)) }
-        val owned = runCatching { MediaStoreCopies.owned(context) }.getOrDefault(emptyList())
-        return (recorded + owned).distinctBy { it.uri.toString() }
-    }
-
-    /** Deletes every copy (recorded ones and any other row Hoard owns under `Pictures/Hoard/`, `Download/Hoard/`). */
+    /**
+     * Deletes the recorded copies still in Hoard's copy folders (superseded ones included) and forgets records whose
+     * file is gone or moved. Never a file Hoard did not record ([RevealRoutes.deletion]).
+     */
     suspend fun deleteAll(): Usage = withContext(Dispatchers.IO) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) deleteAllQ() else Usage(0, 0)
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
     private suspend fun deleteAllQ(): Usage {
-        val rows = all()
-        var count = 0
+        val plan = RevealRoutes.deletion(dao.all(), ::current)
+        val gone = ArrayList<String>()
         var bytes = 0L
-        for (row in rows) {
-            if (MediaStoreCopies.delete(context.contentResolver, row.uri)) {
-                count++
+        for (row in plan.delete) {
+            if (MediaStoreCopies.delete(context.contentResolver, Uri.parse(row.uri))) {
+                gone += row.uri
                 bytes += row.size
             }
         }
-        dao.clear()
-        return Usage(count, bytes)
+        (gone + plan.forget.map { it.uri }).chunked(500).forEach { dao.deleteUris(it) }
+        return Usage(gone.size, bytes)
     }
 
     companion object {

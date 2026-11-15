@@ -71,12 +71,31 @@ class RevealHandoff(private val context: Context, @Suppress("unused") private va
     /** Reveal takes server references (Reveal ADR 0011 amendment W3/H: 0.9.0, versionCode 90000, and later). */
     fun acceptsServerReferences(): Boolean = targetVersionCode() >= MIN_SERVER_REF_VERSION_CODE
 
+    /** A hand-off ready to start: the Reveal package and its intents, in order (one, or a batch). */
+    class Prepared(val target: String, val intents: List<Intent>)
+
     /**
-     * One hand-off of URI items ([files]: photos the server does not have, unchanged contract: ClipData, grants,
-     * `CULLING`) and server items ([server]: references to items of the paired hoard-server, no URI, no grant, no
-     * culling keys). Server items go [MAX_SERVER_ITEMS] per intent; a larger batch is several intents with the same
-     * title (the URI items and the initial item ride on the first).
+     * One hand-off of URI items ([files]: `content://media/…` URIs, ClipData, a read grant, `CULLING`) and server items
+     * ([server]: references to items of the paired hoard-server, no URI, no grant, no culling keys), built by
+     * [buildIntents]. Reads the package manager (the target and its versionCode): call it off the main thread.
      */
+    fun prepare(files: List<Outgoing>, title: String?, initialPath: String?, culling: Map<String, Culling>, server: ServerItems?): Prepared {
+        val target = target() ?: smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        return Prepared(target, buildIntents(target, targetVersionCode(), files, title, initialPath, culling, server))
+    }
+
+    /** Starts a [prepared] hand-off from [activity] (Hoard in the foreground). `NO_APP` when Reveal is gone meanwhile. */
+    fun start(activity: Activity, prepared: Prepared) {
+        val first = prepared.intents.first()
+        if (first.resolveActivity(context.packageManager) == null) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        try {
+            if (prepared.intents.size == 1) activity.startActivity(first) else activity.startActivities(prepared.intents.toTypedArray())
+        } catch (e: ActivityNotFoundException) {
+            smbFail(ErrorCode.NO_APP, "Reveal is not installed")
+        }
+    }
+
+    /** [prepare] then [start] (tests and callers already off the main thread for the first part). */
     fun launchMixed(
         activity: Activity,
         files: List<Outgoing>,
@@ -84,75 +103,10 @@ class RevealHandoff(private val context: Context, @Suppress("unused") private va
         initialPath: String?,
         culling: Map<String, Culling>,
         server: ServerItems?,
-    ) {
-        val target = target() ?: smbFail(ErrorCode.NO_APP, "Reveal is not installed")
-        val batches = server?.let { serverBatches(it.items) }.orEmpty()
-        if (files.isEmpty() && batches.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No photos to edit")
-        val cleanTitle = title?.trim()?.take(MAX_TITLE)?.trim()?.takeIf { it.isNotEmpty() }
-        val intents = ArrayList<Intent>()
-        val first = Intent(ACTION).setType("image/*").setPackage(target)
-        cleanTitle?.let { first.putExtra(EXTRA_TITLE, it) }
-        if (files.isNotEmpty()) {
-            val plan = plan(files.map { it.path to it.uri }, cleanTitle, initialPath)
-            first.addFlags(plan.flags)
-            plan.initial?.let { first.putExtra(EXTRA_INITIAL_URI, it) }
-            val values = cullingValues(files.map { it.path to it.uri.toString() }, culling)
-            if (values.isNotEmpty()) {
-                // Version 2 (the `*Device` keys) only to a Reveal that reads it (0.9.0+); older ones get version 1.
-                val version = cullingVersionFor(targetVersionCode())
-                first.putExtra(EXTRA_CULLING_VERSION, version)
-                first.putExtra(EXTRA_CULLING, Bundle().apply { values.forEach { (uri, value) -> putBundle(uri, cullingBundle(value, version)) } })
-            }
-            // The ClipData carries the read grants: exactly these URIs, nothing else (no folder, no tree).
-            val clip = ClipData(ClipDescription(plan.title ?: "Reveal", arrayOf("image/*", "application/octet-stream")), ClipData.Item(plan.items[0]))
-            plan.items.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
-            first.clipData = clip
-        }
-        if (server != null && batches.isNotEmpty()) {
-            batches.forEachIndexed { i, batch ->
-                val intent = if (i == 0) first else Intent(ACTION).setType("image/*").setPackage(target).also { next -> cleanTitle?.let { next.putExtra(EXTRA_TITLE, it) } }
-                intent.putExtra(EXTRA_SERVER_REF_VERSION, SERVER_REF_VERSION)
-                intent.putExtra(EXTRA_SERVER_ID, server.serverId)
-                intent.putParcelableArrayListExtra(EXTRA_SERVER_ITEMS, ArrayList(batch.map(::serverItemBundle)))
-                if (i == 0) server.initialItemId?.takeIf { id -> server.items.any { it.itemId == id } }?.let { intent.putExtra(EXTRA_INITIAL_ITEM, it) }
-                if (i > 0) intents += intent
-            }
-        }
-        intents.add(0, first)
-        // More than one intent: each says where it stands in the batch (Reveal ADR 0011 W3/H "Batches over 500").
-        if (intents.size > 1) intents.forEachIndexed { i, intent ->
-            intent.putExtra(EXTRA_BATCH_INDEX, i)
-            intent.putExtra(EXTRA_BATCH_COUNT, intents.size)
-        }
-        if (first.resolveActivity(context.packageManager) == null) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
-        try {
-            if (intents.size == 1) activity.startActivity(first) else activity.startActivities(intents.toTypedArray())
-        } catch (e: ActivityNotFoundException) {
-            smbFail(ErrorCode.NO_APP, "Reveal is not installed")
-        }
-    }
+    ) = start(activity, prepare(files, title, initialPath, culling, server))
 
     /** Items of the paired hoard-server sent by reference (Reveal ADR 0011 amendment W3/H). */
     data class ServerItems(val serverId: String, val items: List<ServerItem>, val initialItemId: String? = null)
-
-    private fun cullingBundle(value: Culling, version: Int) = Bundle().apply {
-        cullingFields(value, version).forEach { (k, v) ->
-            when (v) {
-                is Int -> putInt(k, v)
-                is Long -> putLong(k, v)
-                else -> putString(k, v.toString())
-            }
-        }
-    }
-
-    private fun serverItemBundle(item: ServerItem) = Bundle().apply {
-        serverItemFields(item).forEach { (k, v) ->
-            when (v) {
-                is Array<*> -> putStringArray(k, v.map { it.toString() }.toTypedArray())
-                else -> putString(k, v.toString())
-            }
-        }
-    }
 
     /**
      * A shot's decision as Reveal's `CULLING` extra carries it: stars 0..5 and `pick` / `reject` / `none`; since
@@ -180,6 +134,87 @@ class RevealHandoff(private val context: Context, @Suppress("unused") private va
     data class Plan<T>(val items: List<T>, val title: String?, val initial: T?, val flags: Int)
 
     companion object {
+        /** URI items per intent: with their `CULLING` bundles, 200 stay far under the ~1 MB Binder buffer. */
+        const val MAX_URI_ITEMS = 200
+
+        /**
+         * The intents of one hand-off (pure apart from `Intent`/`Bundle`, Robolectric-tested). URI items go
+         * [MAX_URI_ITEMS] per intent, each intent with the ClipData, read grant and `CULLING` of its own URIs; the chunk
+         * holding [initialPath] goes first, with `INITIAL_URI`. Server items go [MAX_SERVER_ITEMS] per intent. Intent i
+         * carries URI chunk i and server batch i (when there are that many), so the count is the larger of the two;
+         * more than one intent: every one has `BATCH_INDEX` (0 = the first, with `INITIAL_ITEM` / `INITIAL_URI`) and
+         * `BATCH_COUNT`. [versionCode] is the target Reveal's (the `CULLING` version).
+         */
+        fun buildIntents(
+            target: String,
+            versionCode: Long,
+            files: List<Outgoing>,
+            title: String?,
+            initialPath: String?,
+            culling: Map<String, Culling>,
+            server: ServerItems?,
+        ): List<Intent> {
+            val batches = server?.let { serverBatches(it.items) }.orEmpty()
+            if (files.isEmpty() && batches.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No photos to edit")
+            val cleanTitle = title?.trim()?.take(MAX_TITLE)?.trim()?.takeIf { it.isNotEmpty() }
+            val chunks = files.chunked(MAX_URI_ITEMS).toMutableList()
+            val initialChunk = initialPath?.let { p -> chunks.indexOfFirst { c -> c.any { it.path == p } } } ?: -1
+            if (initialChunk > 0) chunks.add(0, chunks.removeAt(initialChunk))
+            val version = cullingVersionFor(versionCode)
+            val count = maxOf(chunks.size, batches.size)
+            val intents = (0 until count).map { i ->
+                val intent = Intent(ACTION).setType("image/*").setPackage(target)
+                cleanTitle?.let { intent.putExtra(EXTRA_TITLE, it) }
+                chunks.getOrNull(i)?.let { chunk ->
+                    val plan = plan(chunk.map { it.path to it.uri }, cleanTitle, initialPath.takeIf { i == 0 })
+                    intent.addFlags(plan.flags)
+                    plan.initial?.let { intent.putExtra(EXTRA_INITIAL_URI, it) }
+                    val values = cullingValues(chunk.map { it.path to it.uri.toString() }, culling)
+                    if (values.isNotEmpty()) {
+                        // Version 2 (the `*Device` keys) only to a Reveal that reads it (0.9.0+); older ones get version 1.
+                        intent.putExtra(EXTRA_CULLING_VERSION, version)
+                        intent.putExtra(EXTRA_CULLING, Bundle().apply { values.forEach { (uri, value) -> putBundle(uri, cullingBundle(value, version)) } })
+                    }
+                    // The ClipData carries the read grants: exactly these URIs, nothing else (no folder, no tree).
+                    val clip = ClipData(ClipDescription(plan.title ?: "Reveal", arrayOf("image/*", "application/octet-stream")), ClipData.Item(plan.items[0]))
+                    plan.items.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
+                    intent.clipData = clip
+                }
+                batches.getOrNull(i)?.let { batch ->
+                    intent.putExtra(EXTRA_SERVER_REF_VERSION, SERVER_REF_VERSION)
+                    intent.putExtra(EXTRA_SERVER_ID, server!!.serverId)
+                    intent.putParcelableArrayListExtra(EXTRA_SERVER_ITEMS, ArrayList(batch.map(::serverItemBundle)))
+                    if (i == 0) server.initialItemId?.takeIf { id -> server.items.any { it.itemId == id } }?.let { intent.putExtra(EXTRA_INITIAL_ITEM, it) }
+                }
+                intent
+            }
+            // More than one intent: each says where it stands in the batch (Reveal ADR 0011 W3/H "Batches over 500").
+            if (intents.size > 1) intents.forEachIndexed { i, intent ->
+                intent.putExtra(EXTRA_BATCH_INDEX, i)
+                intent.putExtra(EXTRA_BATCH_COUNT, intents.size)
+            }
+            return intents
+        }
+
+        private fun cullingBundle(value: Culling, version: Int) = Bundle().apply {
+            cullingFields(value, version).forEach { (k, v) ->
+                when (v) {
+                    is Int -> putInt(k, v)
+                    is Long -> putLong(k, v)
+                    else -> putString(k, v.toString())
+                }
+            }
+        }
+
+            private fun serverItemBundle(item: ServerItem) = Bundle().apply {
+            serverItemFields(item).forEach { (k, v) ->
+                when (v) {
+                    is Array<*> -> putStringArray(k, v.map { it.toString() }.toTypedArray())
+                    else -> putString(k, v.toString())
+                }
+            }
+        }
+
         const val ACTION = "dev.hfps.reveal.action.DEVELOP"
         const val EXTRA_TITLE = "dev.hfps.reveal.extra.TITLE"
         const val EXTRA_INITIAL_URI = "dev.hfps.reveal.extra.INITIAL_URI"

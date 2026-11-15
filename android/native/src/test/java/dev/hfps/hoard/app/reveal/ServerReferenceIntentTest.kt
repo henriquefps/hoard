@@ -158,6 +158,50 @@ class ServerReferenceIntentTest {
     }
 
     @Test
+    fun aThousandUriItemsGoAsFiveIntentsMixedWithServerItems() {
+        // 1,000 copied photos (CULLING v2 on each) and 600 server items: URI chunks of 200, server batches of 500.
+        val files = (1..1000).map { RevealHandoff.Outgoing("s/DSC%05d.ARW".format(it), Uri.parse("content://media/external_primary/images/media/$it")) }
+        val culling = files.associate { it.path to RevealHandoff.Culling(4, "pick", ratingModifiedAt = 1, flagModifiedAt = 2, ratingDevice = "dev-0123456789", flagDevice = "dev-0123456789") }
+        val initial = files[450].path
+        val intents = RevealHandoff.buildIntents(
+            "dev.hfps.reveal", 90000, files, "Year", initial, culling,
+            RevealHandoff.ServerItems("srv-1", (1..600).map { item(it) }, initialItemId = null),
+        )
+        assertThat(intents).hasSize(5)
+        assertThat(intents.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_INDEX, -1) }).containsExactly(0, 1, 2, 3, 4).inOrder()
+        assertThat(intents.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_COUNT, -1) }.toSet()).containsExactly(5)
+        assertThat(intents.map { it.getStringExtra(RevealHandoff.EXTRA_TITLE) }.toSet()).containsExactly("Year")
+        val clips = intents.map { i -> (0 until i.clipData!!.itemCount).map { i.clipData!!.getItemAt(it).uri } }
+        assertThat(clips.map { it.size }).containsExactly(200, 200, 200, 200, 200)
+        // Every photo exactly once; the chunk with the initial photo goes first, the others keep their order.
+        assertThat(clips.flatten().toSet()).hasSize(1000)
+        assertThat(clips[0]).contains(files[450].uri)
+        @Suppress("DEPRECATION")
+        assertThat(intents[0].getParcelableExtra<Uri>(RevealHandoff.EXTRA_INITIAL_URI)).isEqualTo(files[450].uri)
+        assertThat(intents.drop(1).none { it.hasExtra(RevealHandoff.EXTRA_INITIAL_URI) }).isTrue()
+        assertThat(clips[1].first()).isEqualTo(files[0].uri)
+        for ((i, intent) in intents.withIndex()) {
+            // Each intent: read grant only, its own CULLING keyed by exactly its ClipData URIs.
+            assertThat(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION).isNotEqualTo(0)
+            assertThat(intent.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).isEqualTo(0)
+            assertThat(intent.getIntExtra(RevealHandoff.EXTRA_CULLING_VERSION, 0)).isEqualTo(2)
+            assertThat(intent.getBundleExtra(RevealHandoff.EXTRA_CULLING)!!.keySet()).isEqualTo(clips[i].map { it.toString() }.toSet())
+            val parcel = android.os.Parcel.obtain()
+            intent.writeToParcel(parcel, 0)
+            assertThat(parcel.dataSize()).isLessThan(400_000)
+            parcel.recycle()
+        }
+        @Suppress("DEPRECATION")
+        val server = intents.map { it.getParcelableArrayListExtra<Bundle>(RevealHandoff.EXTRA_SERVER_ITEMS)?.size ?: 0 }
+        assertThat(server).containsExactly(500, 100, 0, 0, 0).inOrder()
+        // A notification sends the same intents, the first opening a new task.
+        val pending = dev.hfps.hoard.app.ui.reveal.RevealReady.pendingIntents(RevealHandoff.Prepared("dev.hfps.reveal", intents))
+        assertThat(pending).hasLength(5)
+        assertThat(pending[0].flags and Intent.FLAG_ACTIVITY_NEW_TASK).isNotEqualTo(0)
+        assertThat(pending[0].clipData!!.itemCount).isEqualTo(200)
+    }
+
+    @Test
     fun anOlderRevealDoesNotTakeReferences() {
         installReveal(70100)
         assertThat(handoff().acceptsServerReferences()).isFalse()

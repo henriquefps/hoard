@@ -266,4 +266,10 @@
     <string name="xmp_export_read_only_body">Hoard cannot write sidecars next to these photos. Choose another folder for the .xmp files.</string>
     <string name="xmp_export_choose_folder">Choose folder</string>
     <string name="cull_xmp_export_hidden_hint">\"Export XMP\" names new sidecars with a dot so they stay out of sight. Reveal and digiKam read them; Lightroom does not. Hoard no longer writes sidecars on its own.</string>
+    <string name="reveal_ready_channel">Ready for Reveal</string>
+    <string name="reveal_ready_title">Ready to open in Reveal</string>
+    <string name="reveal_ready_body">The photos were copied. Tap to open them in Reveal.</string>
+    <string name="reveal_ready_body_titled">%1$s: the photos were copied. Tap to open them in Reveal.</string>
+    <string name="reveal_ready_dialog_body">The photos were copied while Hoard was in the background. Open them in Reveal now?</string>
+    <string name="reveal_ready_open">Open in Reveal</string>
 </resources>

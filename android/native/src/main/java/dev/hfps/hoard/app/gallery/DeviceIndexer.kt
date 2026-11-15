@@ -40,6 +40,12 @@ object DeviceFolders {
         "WhatsApp/Media/WhatsApp Video/",
     )
 
+    /**
+     * Hoard's own copies for Reveal (ADR 0010 amendment "2.2.0: local copies"), never shown as phone photos, even under
+     * a default or added folder.
+     */
+    val EXCLUDED = listOf("Pictures/Hoard/", "Download/Hoard/")
+
     /** Where a phone path lives in Hoard's locations (ADR 0005): `device` + path, or `vol-<uuid>` + path. */
     fun locate(path: String, primaryRoot: String): Pair<String, String>? {
         val root = primaryRoot.trimEnd('/') + "/"
@@ -53,6 +59,7 @@ object DeviceFolders {
     /** Whether a file (its path inside its location) is shown: under a default folder or one the owner added. */
     fun included(relative: String, absolute: String, added: List<String>): Boolean {
         if (relative.split('/').any { it.startsWith(".") }) return false
+        if (EXCLUDED.any { relative.startsWith(it) }) return false
         if (DEFAULTS.any { relative.startsWith(it, ignoreCase = true) }) return true
         return added.any { absolute.startsWith(it.trimEnd('/') + "/") }
     }

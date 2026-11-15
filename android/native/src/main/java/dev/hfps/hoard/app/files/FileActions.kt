@@ -113,6 +113,8 @@ class FileActions(private val container: AppContainer) {
         title: String?,
         initialPath: String?,
         onCopyProgress: (dev.hfps.hoard.app.transfers.LiveTransfer?) -> Unit = {},
+        /** Starts the prepared hand-off; the screen passes one that waits for Hoard to be in the foreground. */
+        deliver: suspend (RevealHandoff.Prepared) -> Unit = { prepared -> withContext(Dispatchers.Main) { container.reveal.start(activity, prepared) } },
     ): Int {
         if (!revealAvailable()) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
         // ADR 0022: on an SMB share, the shots the paired server holds go to Reveal ≥ 0.9.0 as server items.
@@ -147,7 +149,8 @@ class FileActions(private val container: AppContainer) {
         }
         Log.i(TAG, "Edit in Reveal: ${outgoing.size} photos by URI, culling ${culling.size}, server items ${items?.items?.size ?: 0}")
         val initialUri = initialPath?.takeIf { it in uriPaths }
-        withContext(Dispatchers.Main) { container.reveal.launchMixed(activity, outgoing, title, initialUri, culling, items) }
+        val prepared = withContext(Dispatchers.IO) { container.reveal.prepare(outgoing, title, initialUri, culling, items) }
+        deliver(prepared)
         return outgoing.size + (items?.items?.size ?: 0)
     }
 

@@ -12,13 +12,16 @@ object HoardMigrations {
     val MIGRATION_1_2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(CREATE_REVEAL_COPIES)
+            db.execSQL(INDEX_REVEAL_COPIES)
             db.execSQL("UPDATE settings SET value = 'false' WHERE `key` = 'cullSaveXmp'")
         }
     }
 
-    const val CREATE_REVEAL_COPIES = "CREATE TABLE IF NOT EXISTS `reveal_copies` (`source_key` TEXT NOT NULL, " +
-        "`source_path` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified_ms` INTEGER, `uri` TEXT NOT NULL, " +
-        "`copied_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`source_key`, `source_path`))"
+    const val CREATE_REVEAL_COPIES = "CREATE TABLE IF NOT EXISTS `reveal_copies` (`uri` TEXT NOT NULL, `source_key` TEXT NOT NULL, " +
+        "`source_path` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified_ms` INTEGER, " +
+        "`copied_at` TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), PRIMARY KEY(`uri`))"
+
+    const val INDEX_REVEAL_COPIES = "CREATE INDEX IF NOT EXISTS `index_reveal_copies_source` ON `reveal_copies` (`source_key`, `source_path`)"
 
     val ALL: Array<Migration> = arrayOf(MIGRATION_1_2)
 }

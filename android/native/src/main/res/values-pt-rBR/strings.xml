@@ -270,4 +270,10 @@
     <string name="xmp_export_read_only_body">O Hoard não pode gravar arquivos XMP ao lado destas fotos. Escolha outra pasta para os arquivos .xmp.</string>
     <string name="xmp_export_choose_folder">Escolher pasta</string>
     <string name="cull_xmp_export_hidden_hint">\"Exportar XMP\" nomeia os novos arquivos com um ponto para ficarem ocultos. O Reveal e o digiKam os leem; o Lightroom não. O Hoard não grava mais arquivos XMP sozinho.</string>
+    <string name="reveal_ready_channel">Pronto para o Reveal</string>
+    <string name="reveal_ready_title">Pronto para abrir no Reveal</string>
+    <string name="reveal_ready_body">As fotos foram copiadas. Toque para abri-las no Reveal.</string>
+    <string name="reveal_ready_body_titled">%1$s: as fotos foram copiadas. Toque para abri-las no Reveal.</string>
+    <string name="reveal_ready_dialog_body">As fotos foram copiadas enquanto o Hoard estava em segundo plano. Abrir no Reveal agora?</string>
+    <string name="reveal_ready_open">Abrir no Reveal</string>
 </resources>

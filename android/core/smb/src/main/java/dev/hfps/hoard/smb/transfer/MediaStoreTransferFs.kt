@@ -235,9 +235,9 @@ class MediaStoreTransferFs(context: Context) : TransferFs {
 }
 
 /**
- * Hoard's copies for Reveal in MediaStore (ADR 0010): find one by folder and name, check one still exists, how much
- * space they take, and delete them ("Delete copies" in Settings). Rows of other apps are never touched: a query of
- * Hoard's own rows is filtered by `OWNER_PACKAGE_NAME` where Android reports it.
+ * Hoard's copies for Reveal in MediaStore (ADR 0010): find one by folder and name, read what MediaStore has at a
+ * recorded URI, and delete one ("Delete copies" in Settings deletes only rows `reveal_copies` recorded, see
+ * `RevealRoutes.deletion` in `:native`).
  */
 @RequiresApi(Build.VERSION_CODES.Q)
 object MediaStoreCopies {
@@ -299,15 +299,6 @@ object MediaStoreCopies {
     }.getOrNull()
 
     fun nameOf(resolver: ContentResolver, uri: Uri): String? = get(resolver, uri)?.name
-
-    /** Every row under `Pictures/Hoard/` and `Download/Hoard/` that Hoard owns. */
-    fun owned(context: Context): List<Row> = MediaStoreTarget.Collection.entries.flatMap { c ->
-        query(
-            context.contentResolver, c,
-            "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?",
-            arrayOf(MediaStoreTarget.relativePath(c, "") + "%", context.packageName),
-        )
-    }
 
     /** Deletes [uri]; true when a row went. */
     fun delete(resolver: ContentResolver, uri: Uri): Boolean = runCatching { resolver.delete(uri, null, null) > 0 }.getOrDefault(false)

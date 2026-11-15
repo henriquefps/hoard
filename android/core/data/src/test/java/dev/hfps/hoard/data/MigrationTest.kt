@@ -52,8 +52,11 @@ class MigrationTest {
             // Room validates every table against the version 2 schema when it opens the database.
             // 2.2.0: the automatic XMP setting is forced off on upgrade (ADR 0011 amendment).
             assertThat(db.settings().get("cullSaveXmp")).isEqualTo("false")
-            db.revealCopies().save(listOf(RevealCopyEntity("m/share", "a/DSC1.ARW", 10, 5, "content://media/external_primary/images/media/1", "2026-11-15T00:00:00Z")))
+            db.revealCopies().save(listOf(RevealCopyEntity(uri = "content://media/external_primary/images/media/1", sourceKey = "m/share", sourcePath = "a/DSC1.ARW", size = 10, modifiedMillis = 5, copiedAt = "2026-11-15T00:00:00Z")))
             assertThat(db.revealCopies().find("m/share", listOf("a/DSC1.ARW")).single().size).isEqualTo(10)
+            // A changed source copied again keeps its older copy as another row.
+            db.revealCopies().save(listOf(RevealCopyEntity(uri = "content://media/external_primary/images/media/2", sourceKey = "m/share", sourcePath = "a/DSC1.ARW", size = 11, modifiedMillis = 6, copiedAt = "2026-11-16T00:00:00Z")))
+            assertThat(db.revealCopies().find("m/share", listOf("a/DSC1.ARW")).map { it.size }).containsExactly(11L, 10L).inOrder()
             assertThat(db.openHelper.readableDatabase.version).isEqualTo(2)
         } finally {
             db.close()

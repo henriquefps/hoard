@@ -452,7 +452,8 @@ interface LegacyImportDao {
 
 @Dao
 interface RevealCopyDao {
-    @Query("SELECT * FROM reveal_copies WHERE source_key = :sourceKey AND source_path IN (:paths)")
+    /** Every copy of these sources, newest first (a changed source keeps its older copies as rows). */
+    @Query("SELECT * FROM reveal_copies WHERE source_key = :sourceKey AND source_path IN (:paths) ORDER BY copied_at DESC")
     suspend fun find(sourceKey: String, paths: List<String>): List<RevealCopyEntity>
 
     @Upsert
@@ -463,7 +464,4 @@ interface RevealCopyDao {
 
     @Query("DELETE FROM reveal_copies WHERE uri IN (:uris)")
     suspend fun deleteUris(uris: List<String>)
-
-    @Query("DELETE FROM reveal_copies")
-    suspend fun clear()
 }
