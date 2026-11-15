@@ -230,7 +230,6 @@
     <string name="t_cull_copy_subfolder_name">Nome da pasta</string>
     <string name="t_cull_copy_title">Copiar escolhidas</string>
     <string name="t_cull_copy_use_folder">Usar esta pasta</string>
-    <string name="t_cull_copy_xmp_note">Cada foto copiada leva um arquivo XMP com as estrelas e a marca de escolhida (Configurações › Seleção de fotos).</string>
     <string name="t_cull_delete_deleting">Apagando…</string>
     <string name="t_cull_delete_permanent">Isto é permanente: não há lixeira para restaurá-las.</string>
     <string name="t_cull_delete_read_only">Apagar descartadas (pasta somente leitura)</string>
@@ -313,9 +312,6 @@
     <string name="t_cull_viewer_title">Vendo %1$s</string>  <!-- args: 1=name -->
     <string name="t_cull_xmp_hidden">Gravar o XMP como arquivo oculto (.nome.xmp)</string>
     <string name="t_cull_xmp_hidden_hint">Os novos arquivos começam com um ponto e ficam escondidos. O Reveal e o digiKam leem esses arquivos; o Lightroom não.</string>
-    <string name="t_cull_xmp_read_only">As notas desta pasta ficam salvas só no Hoard</string>
-    <string name="t_cull_xmp_save">Salvar as notas junto às fotos (XMP)</string>
-    <string name="t_cull_xmp_save_hint">Estrelas, escolhidas e rejeitadas vão para um arquivo .xmp ao lado de cada foto nas pastas em que o Hoard pode gravar, e junto das cópias de \"Copiar escolhidas\". O Lightroom, o darktable, o digiKam e o Reveal leem esses arquivos; notas dadas neles aparecem aqui quando a pasta abre.</string>
     <string name="t_download_choose_folder">Escolher pasta…</string>
     <string name="t_download_conflict">Se o arquivo já existir</string>
     <string name="t_download_destination">Salvar em</string>
@@ -537,9 +533,7 @@
     <string name="t_page_close_search">Fechar busca</string>
     <string name="t_reveal_about">Fotos abrem no Reveal, o editor de RAW, a partir do navegador de arquivos e da seleção (\"Editar no Reveal\").</string>
     <string name="t_reveal_confirm_action">Abrir no Reveal</string>
-    <string name="t_reveal_confirm_dont_explain">Não explicar isso de novo</string>
     <string name="t_reveal_confirm_many">O Reveal vai listar os %1$s arquivos em um único lote.</string>  <!-- args: 1=n -->
-    <string name="t_reveal_confirm_stream">Fotos de um compartilhamento de rede são lidas através do Hoard: o Reveal consegue reabri-las depois, mesmo após reiniciar o celular e com o Hoard fechado, enquanto esta máquina estiver acessível na rede.</string>
     <string name="t_reveal_edit">Editar no Reveal</string>
     <string name="t_reveal_failed">Não foi possível abrir o Reveal</string>
     <string name="t_reveal_links_confirm_body">O Reveal não vai mais abrir as fotos e os sidecars que o Hoard enviou (fotos de unidades abertas pelo acesso a pastas do Android não são afetadas). As edições salvas no Reveal continuam lá; envie as fotos de novo para reabri-las.</string>
@@ -587,7 +581,7 @@
     <string name="t_settings_appearance">Aparência</string>
     <string name="t_settings_browsing">Navegação</string>
     <string name="t_settings_culling">Seleção de fotos</string>
-    <string name="t_settings_culling_hint">Assistência na seleção (o que conta como desfocada ou olhos fechados, como as sequências são agrupadas) e as notas salvas em XMP junto às fotos.</string>
+    <string name="t_settings_culling_hint">Assistência na seleção (o que conta como desfocada ou olhos fechados, como as sequências são agrupadas) e como \"Exportar XMP\" nomeia os arquivos.</string>
     <string name="t_settings_default">padrão</string>
     <string name="t_settings_default_conflict">Se o arquivo já existir</string>
     <string name="t_settings_default_sort">Ordem padrão</string>
@@ -946,11 +940,6 @@
         <item quantity="one">%1$s estrela</item>
         <item quantity="many">%1$s estrelas</item>
         <item quantity="other">%1$s estrelas</item>
-    </plurals>
-    <plurals name="t_cull_xmp_not_written">  <!-- args: 1=count -->
-        <item quantity="one">A nota de %1$s foto não foi salva ao lado dela: fica só no Hoard</item>
-        <item quantity="many">As notas de %1$s fotos não foram salvas ao lado delas: ficam só no Hoard</item>
-        <item quantity="other">As notas de %1$s fotos não foram salvas ao lado delas: ficam só no Hoard</item>
     </plurals>
     <plurals name="t_download_folders_skipped">  <!-- args: 1=count -->
         <item quantity="one">%1$s pasta fica de fora (ainda não dá para baixar pastas).</item>

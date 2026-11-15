@@ -1,0 +1,6 @@
+plugins { id 'com.android.application' }
+android {
+    namespace 'dev.hfps.probe.writer'
+    compileSdk 36
+    defaultConfig { applicationId 'dev.hfps.probe.writer'; minSdk 29; targetSdk 36; versionCode 1; versionName '1' }
+}

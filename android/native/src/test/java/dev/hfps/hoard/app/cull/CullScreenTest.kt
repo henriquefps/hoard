@@ -159,10 +159,10 @@ class CullScreenTest {
     }
 
     @Test
-    fun `a read-only folder shows the note`() {
-        show(FakeCullBackend(tmp.newFolder(), access = SmbAccess.READ))
-        compose.onNodeWithTag("cull-read-only").assertIsDisplayed()
-        compose.onNodeWithText("Ratings are saved only in Hoard for this folder").assertIsDisplayed()
+    fun `finishing offers Export XMP of the decided shots`() {
+        show(FakeCullBackend(tmp.newFolder())) { it.decide(listOf("dsc00001")) { d, _ -> d.withFlag(Flag.Pick) } }
+        compose.onNodeWithTag("cull-finish").performClick()
+        compose.onNodeWithText("Export XMP of decided shots").assertIsDisplayed()
     }
 
     // --- Goldens ---------------------------------------------------------------------------------------------------

@@ -1,7 +1,9 @@
 # ADR 0011: Culling ratings as XMP sidecars
 
 - **Date**: 2026-11-11
-- **Status**: Accepted (1.9.0)
+- **Status**: Accepted (1.9.0). Amended 2026-11-15 (2.2.0, owner's decision): **export on demand**: Hoard writes no
+  sidecar automatically any more (section "Amendment 2.2.0: export on demand"). "Writing", "Writability" (for the
+  culling writer), "Settings" and "UI" below describe 1.9.0–2.1.x; reading and importing are unchanged.
 
 ## Context
 
@@ -161,6 +163,36 @@ The hand-off stays read-only (ADR 0010): no `.xmp` item and no write grant are s
 in Reveal's database. A possible follow-up: send the existing sidecar of a writable folder as an item with
 `FLAG_GRANT_WRITE_URI_PERMISSION` (Reveal ADR 0011 "What Reveal writes back"), which Hoard would read back on resume
 like any other editor's change.
+
+### Amendment 2.2.0: export on demand
+
+Owner's decision of 2026-11-15 (`docs/integration/README.md`, "XMP sidecars"): sidecars are for other tools (Lightroom,
+darktable, digiKam), written when the user asks, and are **not** a sync channel between Hoard, Reveal and the server
+(culling syncs through hoard-server, ADR 0016).
+
+- **Nothing is written automatically.** A decision in culling (folder or Gallery) saves the folder's rows only
+  (`CullViewModel.persist`); "Copy picks" starts its transfer without `sidecars`; the hand-off to Reveal sends no
+  sidecar item (ADR 0010 amendment "2.2.0"); the dual write on mapped SMB folders keeps only its server half (ADR 0022).
+- **The setting is gone.** "Save ratings next to photos (XMP)" is no longer offered. `cullSaveXmp` is forced to
+  `false` for everyone: the Room migration 1 → 2 for an upgraded database, and `AppSettings.forceNoAutomaticXmp` at
+  every start (it also covers settings Hoard 1's importer brings in later). "Write XMP as hidden file" stays: it names
+  the sidecars "Export XMP" creates.
+- **"Export XMP"** (explicit): Files (a selection: every file of each selected photo's shot; a folder's menu: every
+  photo in it) and the culling screen's finish menu ("Export XMP of decided shots"). For each shot with a decision
+  in Hoard (the folder's `cull_decisions`; undecided shots are skipped) the shared writer (`XmpExport` over
+  `Sidecars.write`, the module of "One native module") merges the culling fields into the shot's sidecar found by the
+  naming rules, or creates `<stem>.xmp` / `.<stem>.xmp`; **a malformed sidecar is never overwritten**, other fields
+  of an existing sidecar are kept. Written next to the photos when the location takes it; when it refuses
+  (`ACCESS_DENIED`: a read-only share, drive or folder), Hoard asks for a folder (SAF, `OpenDocumentTree`) and writes
+  them there. The rule "never write into a folder not opened for culling" does not apply: the user asked for this
+  folder. In place, the written mtime is recorded in `cull_sidecars` (synced), so opening the folder does not import
+  Hoard's own export back. A toast says how many were written, malformed (left as they were) or failed.
+- **Reading is unchanged**: opening a folder for culling and resuming still import newer sidecars (precedence rule
+  above), so changes made in Lightroom and friends still show in Hoard.
+- Tests: `XmpExportTest` (merge by naming rules, hidden names, malformed untouched, a read-only folder stops),
+  `RevealRoutesTest` (decided shots only, every file of a shot; the upgrade forces the setting off),
+  `CullViewModelTest` (decisions never write a sidecar, even with the old setting on), `TransferRunnerTest` (a copy
+  without sidecars writes no XMP), `MigrationTest`.
 
 ## Alternatives considered
 

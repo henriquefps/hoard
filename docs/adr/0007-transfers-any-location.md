@@ -213,6 +213,19 @@ is not saved.
 - **Conflict dialog:** one question per job ("“DSC00012.ARW” already exists", Keep both / Replace /
   Skip, "Do the same for the other N files" checked), "Later" leaves the job waiting.
 
+### MediaStore destination (2.2.0)
+
+`Endpoint.MediaStore` (`kind: "mediastore"`, place id `mediastore`, destination only, copies only) is where "Edit in
+Reveal" copies photos neither the phone nor the server holds (ADR 0010 amendment "2.2.0: local copies"):
+`MediaStoreTransferFs`, paths `<batch folder>/<name>`, `Pictures/Hoard/<folder>/` in `MediaStore.Images` or, for a
+format Images refuses (CR3), `Download/Hoard/<folder>/` in `MediaStore.Downloads` (`MediaStoreTarget.forFormat`). The
+engine is unchanged: its partial file is a row inserted with `IS_PENDING = 1` under the final name, its rename
+publishes the row, and rows not published when the job ends are deleted when the endpoint closes (cancel, failure,
+stop). No modified times (MediaStore sets its own), free space from the primary volume. Android 10+.
+
+The `sidecars` option of a job (ADR 0011 "Copy picks") stays in the engine and its saved JSON, but since 2.2.0 no
+caller sets it: "Copy picks" copies without sidecars ("Export XMP" writes them on demand, ADR 0011 amendment).
+
 ### Storage (schema v4, ADR 0003)
 
 `transfers` is rebuilt: `op`, `source_location_id` / `source_machine_id` / `source_share` /

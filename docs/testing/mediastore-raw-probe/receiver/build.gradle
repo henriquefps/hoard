@@ -1,0 +1,8 @@
+plugins { id 'com.android.application' }
+// A stand-in for Reveal's debug build (Hoard sends hand-offs only to dev.hfps.reveal or dev.hfps.reveal.debug):
+// logs what a DEVELOP intent carries and what its grants allow. Never install it next to a real Reveal debug build.
+android {
+    namespace 'dev.hfps.probe.receiver'
+    compileSdk 36
+    defaultConfig { applicationId 'dev.hfps.reveal.debug'; minSdk 29; targetSdk 36; versionCode 90000; versionName '0.9.0-probe' }
+}

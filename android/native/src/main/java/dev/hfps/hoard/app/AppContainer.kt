@@ -8,6 +8,7 @@ import dev.hfps.hoard.app.route.RouteEngine
 import dev.hfps.hoard.app.smb.SmbGateway
 import dev.hfps.hoard.app.transfers.Clipboard
 import dev.hfps.hoard.app.transfers.INCOMING_LOCATION_ID
+import dev.hfps.hoard.app.transfers.MEDIASTORE_LOCATION_ID
 import dev.hfps.hoard.app.transfers.LocationId
 import dev.hfps.hoard.app.transfers.NativeTransfers
 import dev.hfps.hoard.app.transfers.TREE_LOCATION_ID
@@ -77,6 +78,31 @@ class AppContainer(context: Context) {
     val streamer: Streamer by lazy { Streamer(appContext, gateway.credentials) }
     val shareOut: ShareOut by lazy { ShareOut(appContext, opener) }
     val reveal: RevealHandoff by lazy { RevealHandoff(appContext, opener, gateway.credentials) }
+
+    /** Photos copied into MediaStore for Reveal (ADR 0010, amendment "2.2.0: local copies"). */
+    val revealCopies: dev.hfps.hoard.app.files.RevealCopies by lazy {
+        dev.hfps.hoard.app.files.RevealCopies(appContext, database.revealCopies(), { transfers }, ::statSources)
+    }
+
+    /** "Export XMP" (ADR 0011 amendment "2.2.0: export on demand"). */
+    val xmpExporter: dev.hfps.hoard.app.files.XmpExporter by lazy {
+        dev.hfps.hoard.app.files.XmpExporter(appContext, database.cull(), ::endpointOf)
+    }
+
+    /** The size and mtime of [paths] in [location], listing each folder once (null: not found or unreadable). */
+    private suspend fun statSources(location: dev.hfps.hoard.app.files.BrowseLocation, paths: List<String>): Map<String, dev.hfps.hoard.smb.transfer.FileStat?> {
+        val endpoint = endpointOf(location.place)
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            dev.hfps.hoard.smb.transfer.TransferManager.get(appContext).endpoints.open(endpoint).use { fs ->
+                val out = HashMap<String, dev.hfps.hoard.smb.transfer.FileStat?>()
+                for ((folder, inFolder) in paths.groupBy { dev.hfps.hoard.smb.transfer.TransferPaths.parent(it.trim('/')) }) {
+                    val listed = runCatching { fs.list(folder) }.getOrNull()?.associateBy { it.name }
+                    for (p in inFolder) out[p] = listed?.get(dev.hfps.hoard.smb.transfer.TransferPaths.name(p)) ?: runCatching { fs.stat(p) }.getOrNull()
+                }
+                out
+            }
+        }
+    }
     val destinations: SafDestinations by lazy { SafDestinations(appContext) }
     val clipboard = Clipboard()
 
@@ -126,6 +152,7 @@ class AppContainer(context: Context) {
     suspend fun endpointOf(place: TransferPlace): Endpoint = when (place.locationId) {
         TREE_LOCATION_ID -> Endpoint.Tree(place.treeUri ?: smbFail(ErrorCode.UNKNOWN, "No folder"))
         INCOMING_LOCATION_ID -> Endpoint.Incoming(place.shareId ?: smbFail(ErrorCode.UNKNOWN, "No shared files"))
+        MEDIASTORE_LOCATION_ID -> Endpoint.MediaStore
         else -> when (val parsed = LocationId.parse(place.locationId)) {
             LocationId.Device -> Endpoint.Device
             is LocationId.Volume -> Endpoint.Volume(parsed.uuid)
@@ -160,6 +187,8 @@ class AppContainer(context: Context) {
         scope.launch(Dispatchers.IO) {
             runCatching { HandoffServer.prune(appContext) }
             runCatching { TransferManager.get(appContext).reconcile() }
+            // 2.2.0: no automatic XMP (ADR 0011 amendment), also for settings Hoard 1's import just brought in.
+            runCatching { appSettings.forceNoAutomaticXmp() }
         }
         transfers.start()
         mirrorMachines()

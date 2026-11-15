@@ -42,7 +42,6 @@ import dev.hfps.hoard.app.cull.CopyPicksOptions
 import dev.hfps.hoard.app.cull.CullView
 import dev.hfps.hoard.app.cull.CullViewModel
 import dev.hfps.hoard.app.cull.Sensitivity
-import dev.hfps.hoard.app.cull.copySidecars
 import dev.hfps.hoard.app.cull.copyTargetPath
 import dev.hfps.hoard.app.cull.files
 import dev.hfps.hoard.app.cull.planCopy
@@ -107,8 +106,8 @@ fun AssistSettingsFields(container: AppContainer) {
             }
             Text(stringResource(R.string.t_cull_assist_burst_gap_hint), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
         }
-        SwitchField(stringResource(R.string.t_cull_xmp_save), stringResource(R.string.t_cull_xmp_save_hint), settings.saveXmp, "cull-save-xmp") { scope.launch { s.setCullSaveXmp(it) } }
-        SwitchField(stringResource(R.string.t_cull_xmp_hidden), stringResource(R.string.t_cull_xmp_hidden_hint), settings.xmpHidden, "cull-xmp-hidden", enabled = settings.saveXmp) { scope.launch { s.setCullXmpHidden(it) } }
+        // 2.2.0: sidecars are written only by "Export XMP" (ADR 0011 amendment); this names the ones it creates.
+        SwitchField(stringResource(R.string.t_cull_xmp_hidden), stringResource(R.string.cull_xmp_export_hidden_hint), settings.xmpHidden, "cull-xmp-hidden") { scope.launch { s.setCullXmpHidden(it) } }
     }
 }
 
@@ -240,12 +239,11 @@ fun CopyPicksDialog(container: AppContainer, vm: CullViewModel, view: CullView, 
                     }
                     path = if (dest.path.isEmpty()) sub else "${dest.path}/$sub"
                 }
-                val settings = container.appSettings.cull.first()
-                val sidecars = copySidecars(plan, view.core.shots, view.core.decisions, settings.saveXmp)
+                // 2.2.0: no automatic sidecars with the copies ("Export XMP" writes them on demand, ADR 0011).
                 val entries = plan.items.map { PickedEntry(it.file.path, it.file.name, false, it.file.size) }
                 val label = if (sub != null) "${dest.label} › $sub" else dest.label
                 val sourcePlace = TransferPlace(vm.key.locationId, vm.key.share.ifEmpty { null })
-                if (start("copy", sourcePlace, entries, FolderPlace(dest.place, path), label, policy, sidecars, settings.saveXmp && settings.xmpHidden)) onDismiss()
+                if (start("copy", sourcePlace, entries, FolderPlace(dest.place, path), label, policy)) onDismiss()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -355,8 +353,6 @@ fun CopyPicksDialog(container: AppContainer, vm: CullViewModel, view: CullView, 
                     )
                 }
             }
-            val xmp by container.appSettings.cull.collectAsState(initial = CullSettings())
-            if (xmp.saveXmp) Text(stringResource(R.string.t_cull_copy_xmp_note), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
             Spacer(Modifier.height(2.dp))
         }
     }

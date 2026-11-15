@@ -50,9 +50,8 @@ object GalleryReveal {
         if (items.isEmpty()) smbFail(ErrorCode.NOT_FOUND, "Not on the server")
         val ids = items.map { it.itemId }.toSet()
         if (repo.db.culling().pending(10_000).any { it.itemId in ids }) withTimeoutOrNull(FLUSH_TIMEOUT_MS) { repo.syncNow() }
-        withContext(Dispatchers.Main) {
-            reveal.launchMixed(activity, emptyList(), title, null, emptyMap(), RevealHandoff.ServerItems(account.serverId, items, initial?.itemId))
-        }
+        val prepared = withContext(Dispatchers.IO) { reveal.prepare(emptyList(), title, null, emptyMap(), RevealHandoff.ServerItems(account.serverId, items, initial?.itemId)) }
+        withContext(Dispatchers.Main) { reveal.start(activity, prepared) }
     }
 
     const val FLUSH_TIMEOUT_MS = 3000L

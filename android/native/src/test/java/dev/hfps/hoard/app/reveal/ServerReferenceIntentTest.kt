@@ -102,24 +102,103 @@ class ServerReferenceIntentTest {
     }
 
     @Test
-    fun oneIntentMayMixUriItemsAndServerItems() {
+    fun oneIntentMayMixMediaStoreUrisAndServerItems() {
         installReveal(90000)
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        val uri = Uri.parse("content://dev.hfps.hoard.fileprovider/root/DCIM/PXL_1.jpg")
+        // 2.2.0: a phone photo by its own MediaStore URI, an SMB photo by the URI of its copy in Pictures/Hoard.
+        val uri = Uri.parse("content://media/external_primary/images/media/41")
+        val copy = Uri.parse("content://media/external_primary/images/media/97")
         handoff().launchMixed(
-            activity, listOf(RevealHandoff.Outgoing("DCIM/PXL_1.jpg", uri)), "Mixed", "DCIM/PXL_1.jpg",
+            activity, listOf(RevealHandoff.Outgoing("DCIM/PXL_1.jpg", uri), RevealHandoff.Outgoing("shoot/DSC1.ARW", copy)), "Mixed", "DCIM/PXL_1.jpg",
             mapOf("DCIM/PXL_1.jpg" to RevealHandoff.Culling(3, "pick", ratingModifiedAt = 10, flagModifiedAt = 11, ratingDevice = "dev", flagDevice = "dev")),
             RevealHandoff.ServerItems("srv-1", listOf(item(1))),
         )
         val intent = shadowOf(activity).nextStartedActivity
-        assertThat(intent.clipData!!.itemCount).isEqualTo(1)
-        assertThat(intent.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).isNotEqualTo(0)
+        assertThat(intent.clipData!!.itemCount).isEqualTo(2)
+        assertThat((0 until 2).map { intent.clipData!!.getItemAt(it).uri }).containsExactly(uri, copy).inOrder()
+        // A plain read grant on exactly those URIs: never persistable, never write.
+        assertThat(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION).isNotEqualTo(0)
+        assertThat(intent.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).isEqualTo(0)
+        assertThat(intent.flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION).isEqualTo(0)
+        @Suppress("DEPRECATION")
+        assertThat(intent.getParcelableExtra<Uri>(RevealHandoff.EXTRA_INITIAL_URI)).isEqualTo(uri)
         assertThat(intent.getIntExtra(RevealHandoff.EXTRA_CULLING_VERSION, 0)).isEqualTo(2)
         val culling = intent.getBundleExtra(RevealHandoff.EXTRA_CULLING)!!.getBundle(uri.toString())!!
         assertThat(culling.getLong("flagModifiedAt")).isEqualTo(11)
         assertThat(culling.getString("ratingDevice")).isEqualTo("dev")
         @Suppress("DEPRECATION")
         assertThat(intent.getParcelableArrayListExtra<Bundle>(RevealHandoff.EXTRA_SERVER_ITEMS)!!.single().getString("itemId")).isEqualTo("item-1")
+    }
+
+    @Test
+    fun anOlderRevealGetsCullingVersion1AndNoServerItemsFromTheCaller() {
+        installReveal(80000)
+        val reveal = handoff()
+        assertThat(reveal.acceptsServerReferences()).isFalse()
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val uri = Uri.parse("content://media/external_primary/images/media/7")
+        reveal.launchMixed(activity, listOf(RevealHandoff.Outgoing("a/DSC1.ARW", uri)), null, null, mapOf("a/DSC1.ARW" to RevealHandoff.Culling(2, "reject", ratingDevice = "dev")), null)
+        val intent = shadowOf(activity).nextStartedActivity
+        assertThat(intent.getIntExtra(RevealHandoff.EXTRA_CULLING_VERSION, 0)).isEqualTo(1)
+        assertThat(intent.getBundleExtra(RevealHandoff.EXTRA_CULLING)!!.getBundle(uri.toString())!!.containsKey("ratingDevice")).isFalse()
+        assertThat(intent.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).isEqualTo(0)
+    }
+
+    @Test
+    fun aBatchOfUrisAndManyServerItemsCarriesTheUrisOnTheFirstIntent() {
+        installReveal(90000)
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val uri = Uri.parse("content://media/external_primary/downloads/3")
+        handoff().launchMixed(activity, listOf(RevealHandoff.Outgoing("a/IMG_1.CR3", uri)), "Mix", null, emptyMap(), RevealHandoff.ServerItems("srv-1", (1..600).map { item(it) }))
+        val started = generateSequence { shadowOf(activity).nextStartedActivity }.toList().sortedBy { it.getIntExtra(RevealHandoff.EXTRA_BATCH_INDEX, -1) }
+        assertThat(started).hasSize(2)
+        assertThat(started[0].clipData!!.getItemAt(0).uri).isEqualTo(uri)
+        assertThat(started[1].clipData).isNull()
+        assertThat(started.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_COUNT, -1) }).containsExactly(2, 2)
+    }
+
+    @Test
+    fun aThousandUriItemsGoAsFiveIntentsMixedWithServerItems() {
+        // 1,000 copied photos (CULLING v2 on each) and 600 server items: URI chunks of 200, server batches of 500.
+        val files = (1..1000).map { RevealHandoff.Outgoing("s/DSC%05d.ARW".format(it), Uri.parse("content://media/external_primary/images/media/$it")) }
+        val culling = files.associate { it.path to RevealHandoff.Culling(4, "pick", ratingModifiedAt = 1, flagModifiedAt = 2, ratingDevice = "dev-0123456789", flagDevice = "dev-0123456789") }
+        val initial = files[450].path
+        val intents = RevealHandoff.buildIntents(
+            "dev.hfps.reveal", 90000, files, "Year", initial, culling,
+            RevealHandoff.ServerItems("srv-1", (1..600).map { item(it) }, initialItemId = null),
+        )
+        assertThat(intents).hasSize(5)
+        assertThat(intents.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_INDEX, -1) }).containsExactly(0, 1, 2, 3, 4).inOrder()
+        assertThat(intents.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_COUNT, -1) }.toSet()).containsExactly(5)
+        assertThat(intents.map { it.getStringExtra(RevealHandoff.EXTRA_TITLE) }.toSet()).containsExactly("Year")
+        val clips = intents.map { i -> (0 until i.clipData!!.itemCount).map { i.clipData!!.getItemAt(it).uri } }
+        assertThat(clips.map { it.size }).containsExactly(200, 200, 200, 200, 200)
+        // Every photo exactly once; the chunk with the initial photo goes first, the others keep their order.
+        assertThat(clips.flatten().toSet()).hasSize(1000)
+        assertThat(clips[0]).contains(files[450].uri)
+        @Suppress("DEPRECATION")
+        assertThat(intents[0].getParcelableExtra<Uri>(RevealHandoff.EXTRA_INITIAL_URI)).isEqualTo(files[450].uri)
+        assertThat(intents.drop(1).none { it.hasExtra(RevealHandoff.EXTRA_INITIAL_URI) }).isTrue()
+        assertThat(clips[1].first()).isEqualTo(files[0].uri)
+        for ((i, intent) in intents.withIndex()) {
+            // Each intent: read grant only, its own CULLING keyed by exactly its ClipData URIs.
+            assertThat(intent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION).isNotEqualTo(0)
+            assertThat(intent.flags and Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).isEqualTo(0)
+            assertThat(intent.getIntExtra(RevealHandoff.EXTRA_CULLING_VERSION, 0)).isEqualTo(2)
+            assertThat(intent.getBundleExtra(RevealHandoff.EXTRA_CULLING)!!.keySet()).isEqualTo(clips[i].map { it.toString() }.toSet())
+            val parcel = android.os.Parcel.obtain()
+            intent.writeToParcel(parcel, 0)
+            assertThat(parcel.dataSize()).isLessThan(400_000)
+            parcel.recycle()
+        }
+        @Suppress("DEPRECATION")
+        val server = intents.map { it.getParcelableArrayListExtra<Bundle>(RevealHandoff.EXTRA_SERVER_ITEMS)?.size ?: 0 }
+        assertThat(server).containsExactly(500, 100, 0, 0, 0).inOrder()
+        // A notification sends the same intents, the first opening a new task.
+        val pending = dev.hfps.hoard.app.ui.reveal.RevealReady.pendingIntents(RevealHandoff.Prepared("dev.hfps.reveal", intents))
+        assertThat(pending).hasLength(5)
+        assertThat(pending[0].flags and Intent.FLAG_ACTIVITY_NEW_TASK).isNotEqualTo(0)
+        assertThat(pending[0].clipData!!.itemCount).isEqualTo(200)
     }
 
     @Test

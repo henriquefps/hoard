@@ -91,6 +91,8 @@ import dev.hfps.hoard.app.ui.common.errorTitle
 import dev.hfps.hoard.app.ui.common.formatNumber
 import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.app.ui.reveal.rememberReveal
+import dev.hfps.hoard.app.ui.files.XmpExportRequest
+import dev.hfps.hoard.app.ui.files.rememberXmpExport
 import dev.hfps.hoard.designsystem.components.GhostButton
 import dev.hfps.hoard.designsystem.components.HfpsIconButton
 import dev.hfps.hoard.designsystem.components.HfpsScaffold
@@ -205,6 +207,7 @@ fun CullFolderScreen(
     val scope = rememberCoroutineScope()
     val actions = remember { FileActions(container) }
     val reveal = rememberReveal(actions)
+    val xmpExport = rememberXmpExport()
     val density = LocalDensity.current
     val configuration = LocalConfiguration.current
     val longSide = remember(configuration) {
@@ -222,7 +225,6 @@ fun CullFolderScreen(
         vm.messages.collect { event ->
             when (event) {
                 CullEvent.SaveFailed -> toaster.show(res.getString(R.string.t_cull_save_failed))
-                is CullEvent.SidecarsNotWritten -> toaster.show(res.getQuantityString(R.plurals.t_cull_xmp_not_written, event.count, event.count.toString()), long = true)
             }
         }
     }
@@ -232,6 +234,16 @@ fun CullFolderScreen(
         scope.launch {
             vm.settle()
             reveal.edit(location, vm.key.path, revealOrder(shots.flatMap { s -> s.files.map { it.path } }), title, initial?.let { (it.raw ?: it.rendered)?.path })
+        }
+    }
+
+    /** "Export XMP" of the folder's decided shots (ADR 0011 amendment "2.2.0"): the decisions saved first. */
+    fun exportXmp() {
+        scope.launch {
+            vm.settle()
+            val paths = view.core.shots.filter { view.core.decisions[it.id] != null }.flatMap { s -> s.files.map { it.path } }
+            if (paths.isEmpty()) return@launch
+            xmpExport.export(XmpExportRequest(location.place, vm.key.path, paths))
         }
     }
 
@@ -274,7 +286,7 @@ fun CullFolderScreen(
                         onClick = { vm.setSuggesting(!view.controls.suggesting) },
                         modifier = Modifier.testTag("cull-suggest"),
                     )
-                    FinishMenu(view, reveal.available, onCopy = { dialog = CullDialog.Copy }, onDelete = { dialog = CullDialog.Delete }, onReveal = { shots -> editInReveal(shots, null) })
+                    FinishMenu(view, reveal.available, onCopy = { dialog = CullDialog.Copy }, onDelete = { dialog = CullDialog.Delete }, onReveal = { shots -> editInReveal(shots, null) }, onExportXmp = ::exportXmp)
                     CullMenu(view, vm, onSettings = { dialog = CullDialog.Settings })
                 }
             }
@@ -351,6 +363,7 @@ fun CullFolderScreen(
         null -> Unit
     }
     reveal.Dialogs()
+    xmpExport.Dialogs()
 }
 
 /** Accepts suggestions as one undo step, with "Undo" on the toast. */
@@ -370,7 +383,7 @@ private fun GridSkeleton() {
 // --- Header -------------------------------------------------------------------------------------------------------
 
 @Composable
-private fun FinishMenu(view: CullView, revealAvailable: Boolean, onCopy: () -> Unit, onDelete: () -> Unit, onReveal: (List<Shot>) -> Unit) {
+private fun FinishMenu(view: CullView, revealAvailable: Boolean, onCopy: () -> Unit, onDelete: () -> Unit, onReveal: (List<Shot>) -> Unit, onExportXmp: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         HfpsIconButton(PhosphorRegular.FlagCheckered, stringResource(R.string.t_cull_finish), { open = true }, Modifier.testTag("cull-finish"))
@@ -382,6 +395,7 @@ private fun FinishMenu(view: CullView, revealAvailable: Boolean, onCopy: () -> U
                 MenuItem(pluralStringResource(R.plurals.t_reveal_edit_picks, picks.size, picks.size.toString()), PhosphorRegular.SlidersHorizontal, { open = false; onReveal(picks) }, enabled = picks.isNotEmpty())
                 MenuItem(pluralStringResource(R.plurals.t_reveal_edit_shown, view.visible.size, view.visible.size.toString()), PhosphorRegular.SlidersHorizontal, { open = false; onReveal(view.visible) }, enabled = view.visible.isNotEmpty())
             }
+            MenuItem(stringResource(R.string.xmp_export_decided), PhosphorRegular.FileText, { open = false; onExportXmp() }, enabled = p.decided > 0)
             MenuItem(
                 if (view.readOnly) stringResource(R.string.t_cull_delete_read_only) else pluralStringResource(R.plurals.t_cull_delete_menu, p.rejected, p.rejected.toString()),
                 PhosphorRegular.Trash,
@@ -477,12 +491,6 @@ private fun Toolbar(view: CullView, vm: CullViewModel, onSettings: () -> Unit) {
             color = HfpsTheme.colors.mutedForeground,
             modifier = Modifier.testTag("cull-progress"),
         )
-        if (view.sidecarsReadOnly) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("cull-read-only")) {
-                Icon(PhosphorRegular.LockSimple, null, Modifier.size(14.dp), tint = HfpsTheme.colors.mutedForeground)
-                Text(stringResource(R.string.t_cull_xmp_read_only), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-        }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Select(flagLabel(view, view.controls.filter.flag), FlagFilter.entries.map { it to flagLabel(view, it) }, testTag = "cull-filter-flag") { vm.setFilter(view.controls.filter.copy(flag = it)) }
             Select(starsLabel(view.controls.filter.minStars), (0..5).map { it to starsLabel(it) }) { vm.setFilter(view.controls.filter.copy(minStars = it)) }

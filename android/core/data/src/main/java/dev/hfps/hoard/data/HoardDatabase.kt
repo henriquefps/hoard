@@ -32,8 +32,9 @@ import kotlinx.coroutines.flow.Flow
         CullAnalysisEntity::class,
         CullSidecarEntity::class,
         LegacyImportEntity::class,
+        RevealCopyEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class HoardDatabase : RoomDatabase() {
@@ -44,6 +45,7 @@ abstract class HoardDatabase : RoomDatabase() {
     abstract fun cull(): CullDao
     abstract fun settings(): SettingsDao
     abstract fun legacyImports(): LegacyImportDao
+    abstract fun revealCopies(): RevealCopyDao
 
     companion object {
         /**
@@ -58,7 +60,7 @@ abstract class HoardDatabase : RoomDatabase() {
             } else {
                 Room.databaseBuilder(context.applicationContext, HoardDatabase::class.java, name)
             }
-            return builder.build()
+            return builder.addMigrations(*HoardMigrations.ALL).build()
         }
     }
 }
@@ -446,4 +448,20 @@ interface LegacyImportDao {
 
     @Query("SELECT * FROM legacy_imports WHERE source = :source")
     fun observe(source: String): Flow<LegacyImportEntity?>
+}
+
+@Dao
+interface RevealCopyDao {
+    /** Every copy of these sources, newest first (a changed source keeps its older copies as rows). */
+    @Query("SELECT * FROM reveal_copies WHERE source_key = :sourceKey AND source_path IN (:paths) ORDER BY copied_at DESC")
+    suspend fun find(sourceKey: String, paths: List<String>): List<RevealCopyEntity>
+
+    @Upsert
+    suspend fun save(rows: List<RevealCopyEntity>)
+
+    @Query("SELECT * FROM reveal_copies")
+    suspend fun all(): List<RevealCopyEntity>
+
+    @Query("DELETE FROM reveal_copies WHERE uri IN (:uris)")
+    suspend fun deleteUris(uris: List<String>)
 }

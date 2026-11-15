@@ -114,6 +114,10 @@ class GalleryModelTest {
         assertThat(DeviceFolders.included("DCIM/.thumbnails/a.jpg", "/x", emptyList())).isFalse()
         assertThat(DeviceFolders.included("Download/Shoot/a.jpg", "/storage/emulated/0/Download/Shoot/a.jpg", emptyList())).isFalse()
         assertThat(DeviceFolders.included("Download/Shoot/a.jpg", "/storage/emulated/0/Download/Shoot/a.jpg", listOf("/storage/emulated/0/Download/Shoot"))).isTrue()
+        // Hoard's copies for Reveal are not phone photos (ADR 0010 "2.2.0: local copies"), even in an added folder.
+        assertThat(DeviceFolders.included("Pictures/Hoard/Trip/DSC1.ARW", "/storage/emulated/0/Pictures/Hoard/Trip/DSC1.ARW", emptyList())).isFalse()
+        assertThat(DeviceFolders.included("Download/Hoard/Trip/IMG_1.CR3", "/storage/emulated/0/Download/Hoard/Trip/IMG_1.CR3", listOf("/storage/emulated/0/Download"))).isFalse()
+        assertThat(DeviceFolders.included("Pictures/Hoarding/a.jpg", "/x", emptyList())).isTrue()
     }
 
     @Test

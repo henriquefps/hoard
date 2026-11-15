@@ -118,6 +118,8 @@ import dev.hfps.hoard.app.ui.transfers.DestinationPicker
 import dev.hfps.hoard.app.ui.transfers.TransferIntent
 import dev.hfps.hoard.app.ui.transfers.rememberStartTransfer
 import dev.hfps.hoard.app.ui.reveal.rememberReveal
+import dev.hfps.hoard.app.ui.files.XmpExportRequest
+import dev.hfps.hoard.app.ui.files.rememberXmpExport
 import dev.hfps.hoard.designsystem.components.FileNameText
 import dev.hfps.hoard.designsystem.components.HfpsIconButton
 import dev.hfps.hoard.designsystem.components.HfpsRowDivider
@@ -180,6 +182,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
     val header = rememberCollapsingHeaderState()
     val startTransfer = rememberStartTransfer(nav.transfers)
     val reveal = rememberReveal(actions)
+    val xmpExport = rememberXmpExport()
 
     LaunchedEffect(location?.machine?.machine?.id) { viewModel.ensureRoute() }
     // Back from a viewer, the editor or another app: the folder may have changed meanwhile.
@@ -294,6 +297,19 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         if (entries.size > 1) viewModel.clearSelection()
     }
 
+    fun exportXmp(entries: List<SmbEntry>) {
+        val loc = location ?: return
+        val folder = entries.singleOrNull()?.takeIf { it.isDirectory }
+        if (folder != null) {
+            xmpExport.export(XmpExportRequest(loc.place, folder.path, null))
+        } else {
+            val paths = revealSelection(entries, state.listing.entries.orEmpty())
+            if (paths.isEmpty()) return
+            xmpExport.export(XmpExportRequest(loc.place, state.path, paths))
+        }
+        if (entries.size > 1) viewModel.clearSelection()
+    }
+
     fun copyPath(path: String) {
         val text = viewModel.displayPath(path)
         val manager = context.getSystemService(ClipboardManager::class.java)
@@ -313,6 +329,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         transferTo = { intent, list -> dialog = BrowseDialog.TransferTo(intent, list) },
         share = ::shareOut,
         reveal = if (reveal.available) ::editInReveal else null,
+        exportXmp = ::exportXmp,
         favorite = { e -> scope.launch { viewModel.addFavorite(e.path, e.name); toaster.show(res.getString(R.string.t_favorites_added, e.name)) } },
         copyPath = { copyPath(it.path) },
         rename = { dialog = BrowseDialog.Rename(it) },
@@ -514,6 +531,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
         }
     }
     reveal.Dialogs()
+    xmpExport.Dialogs()
 }
 
 /** "Copy path" of a share row: the share's root. */
@@ -741,6 +759,9 @@ private fun SelectionBar(
                 if (reveal != null && hasPhotos(selected)) {
                     MenuItem(stringResource(R.string.t_reveal_edit), PhosphorRegular.SlidersHorizontal, { menu = false; reveal(selected) })
                 }
+                if (hasPhotos(selected)) {
+                    MenuItem(stringResource(R.string.xmp_export), PhosphorRegular.FileText, { menu = false; actions.exportXmp(selected) })
+                }
                 HorizontalDivider(color = HfpsTheme.colors.hairline)
                 MenuItem(stringResource(R.string.t_browse_select_all), PhosphorRegular.CheckSquare, { menu = false; onSelectAll() })
                 if (readOnlyReason != null) ReadOnlyNote(readOnlyReason)
@@ -771,6 +792,8 @@ class RowActions(
     val share: (List<SmbEntry>) -> Unit,
     /** Null when Reveal is not installed. */
     val reveal: ((List<SmbEntry>) -> Unit)?,
+    /** "Export XMP" of the selected photos' shots, or of a folder (ADR 0011 amendment "2.2.0"). */
+    val exportXmp: (List<SmbEntry>) -> Unit = {},
     val favorite: (SmbEntry) -> Unit,
     val copyPath: (SmbEntry) -> Unit,
     val rename: (SmbEntry) -> Unit,
@@ -1037,6 +1060,9 @@ private fun RowMenu(entry: SmbEntry, location: BrowseLocation, readOnly: Boolean
         val reveal = actions.reveal
         if (reveal != null && hasPhotos(listOf(entry))) {
             MenuItem(stringResource(R.string.t_reveal_edit), PhosphorRegular.SlidersHorizontal, run { reveal(listOf(entry)) })
+        }
+        if (entry.isDirectory || hasPhotos(listOf(entry))) {
+            MenuItem(stringResource(R.string.xmp_export), PhosphorRegular.FileText, run { actions.exportXmp(listOf(entry)) })
         }
         HorizontalDivider(color = HfpsTheme.colors.hairline)
     }

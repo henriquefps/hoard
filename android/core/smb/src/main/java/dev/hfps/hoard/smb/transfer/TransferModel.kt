@@ -65,6 +65,12 @@ sealed class Endpoint {
     data class Incoming(val shareId: String) : Endpoint()
 
     /**
+     * MediaStore (`Pictures/Hoard/…`, `Download/Hoard/…`): the copies made for Reveal (ADR 0010 amendment "2.2.0:
+     * local copies"); destination only, paths are `<folder>/<name>` ([MediaStoreTransferFs]).
+     */
+    data object MediaStore : Endpoint()
+
+    /**
      * Identity for "same place": a move between two paths of the same key is a rename, and a copy
      * inside the same SMB share may be done by the server.
      */
@@ -75,6 +81,7 @@ sealed class Endpoint {
             is Volume -> "volume:${uuid.uppercase(Locale.ROOT)}"
             is Tree -> "tree:$uri"
             is Incoming -> "incoming:$shareId"
+            MediaStore -> "mediastore"
         }
 
     val isNetwork: Boolean get() = this is Smb
@@ -87,6 +94,7 @@ sealed class Endpoint {
         is Volume -> JSONObject().put("kind", "volume").put("uuid", uuid)
         is Tree -> JSONObject().put("kind", "tree").put("uri", uri)
         is Incoming -> JSONObject().put("kind", "incoming").put("shareId", shareId)
+        MediaStore -> JSONObject().put("kind", "mediastore")
     }
 
     companion object {
@@ -116,6 +124,7 @@ sealed class Endpoint {
                 "device" -> Device
                 "volume" -> Volume(dev.hfps.hoard.smb.location.Location.requireUuid(json.optString("uuid")))
                 "tree" -> Tree(json.optString("uri").takeIf { it.startsWith("content://") } ?: smbFail(ErrorCode.UNKNOWN, "location.uri must be a content:// tree"))
+                "mediastore" -> MediaStore
                 "incoming" -> Incoming(json.optString("shareId").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "location.shareId is required"))
                 else -> smbFail(ErrorCode.UNKNOWN, "Unknown location kind: '$kind'")
             }

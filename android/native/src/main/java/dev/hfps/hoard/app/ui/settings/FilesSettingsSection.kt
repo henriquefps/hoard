@@ -46,6 +46,8 @@ import dev.hfps.hoard.designsystem.components.HfpsRowDivider
 import dev.hfps.hoard.designsystem.icons.PhosphorRegular
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.smb.handoff.HandoffServer
+import dev.hfps.hoard.app.files.formatBytes
+import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,6 +79,9 @@ fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
     var trees by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
     var links by remember { mutableIntStateOf(-1) }
     var revoking by remember { mutableStateOf(false) }
+    // Photos copied for Reveal (ADR 0010 amendment "2.2.0: local copies"): how many and how big; null = loading.
+    var copies by remember { mutableStateOf<dev.hfps.hoard.app.files.RevealCopies.Usage?>(null) }
+    var deletingCopies by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
     LaunchedEffect(reload) {
         if (container == null) return@LaunchedEffect
@@ -84,6 +89,7 @@ fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
             trees = runCatching { container.destinations.list().map { it.uri to it.name } }.getOrDefault(emptyList())
             links = runCatching { HandoffServer.count(context) }.getOrDefault(0)
         }
+        copies = runCatching { container.revealCopies.usage() }.getOrDefault(dev.hfps.hoard.app.files.RevealCopies.Usage(0, 0))
     }
 
     Section(R.string.t_settings_browsing)
@@ -190,6 +196,21 @@ fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
     }
 
     HfpsRowDivider(Modifier.padding(top = 8.dp))
+    Section(R.string.reveal_copies_title)
+    val usage = copies
+    HfpsListRow(
+        title = when {
+            usage == null -> stringResource(R.string.reveal_copies_loading)
+            usage.count == 0 -> stringResource(R.string.reveal_copies_none)
+            else -> pluralStringResource(R.plurals.reveal_copies_count, usage.count, usage.count.toString(), formatBytes(usage.bytes))
+        },
+        subtitle = stringResource(R.string.reveal_copies_about),
+        icon = PhosphorRegular.FileImage,
+        trailing = if (usage != null && usage.count > 0) ({ GhostButton(stringResource(R.string.reveal_copies_delete), { deletingCopies = true }) }) else null,
+        modifier = Modifier.testTag("settings-reveal-copies"),
+    )
+
+    HfpsRowDivider(Modifier.padding(top = 8.dp))
     Section(R.string.t_reveal_links_title)
     HfpsListRow(
         title = if (links > 0) pluralStringResource(R.plurals.t_reveal_links_count, links, links.toString()) else stringResource(R.string.t_reveal_links_none),
@@ -198,6 +219,24 @@ fun FilesSettingsContent(settings: FilesSettings, store: AppSettings?) {
         trailing = if (links > 0) ({ GhostButton(stringResource(R.string.t_reveal_links_revoke), { revoking = true }) }) else null,
     )
     HfpsRowDivider(Modifier.padding(top = 8.dp))
+
+    if (deletingCopies) {
+        ConfirmDialog(
+            title = stringResource(R.string.reveal_copies_confirm_title),
+            body = stringResource(R.string.reveal_copies_confirm_body),
+            confirmLabel = stringResource(R.string.reveal_copies_delete),
+            destructive = true,
+            onDismiss = { deletingCopies = false },
+            onConfirm = {
+                val deleted = container?.let { c -> runCatching { c.revealCopies.deleteAll() }.getOrNull() }
+                toaster.show(
+                    if (deleted == null) res.getString(R.string.reveal_copies_failed)
+                    else res.getQuantityString(R.plurals.reveal_copies_deleted, deleted.count, deleted.count.toString(), formatBytes(deleted.bytes)),
+                )
+                reload++
+            },
+        )
+    }
 
     if (revoking) {
         ConfirmDialog(
