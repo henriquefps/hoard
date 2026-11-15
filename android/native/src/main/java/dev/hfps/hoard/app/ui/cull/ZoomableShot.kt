@@ -314,7 +314,7 @@ fun ZoomableShot(
             screen is ScreenState.Failed -> Text(stringResource(R.string.t_cull_viewer_image_failed), Modifier.align(Alignment.Center), color = ViewerColors.foreground, style = HfpsTheme.typography.body)
             ready?.image?.lowRes == true && upgrade == Upgrade.Loading && active ->
                 CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp).testTag("viewer-upgrading"), color = ViewerColors.foreground, strokeWidth = 2.dp)
-            ready?.image?.lowRes == true && upgrade == Upgrade.Failed && active -> OfflineHint(Modifier.align(Alignment.TopCenter).padding(top = 72.dp))
+            ready?.image?.lowRes == true && upgrade == Upgrade.Failed && active -> OfflineHint(Modifier.align(Alignment.TopCenter).padding(top = 112.dp))
             active && zoomLoading -> Text(
                 stringResource(if (shot.raw != null && shot.rendered == null) R.string.t_cull_viewer_rendering_raw else R.string.t_cull_viewer_loading_full),
                 Modifier.align(Alignment.BottomCenter),

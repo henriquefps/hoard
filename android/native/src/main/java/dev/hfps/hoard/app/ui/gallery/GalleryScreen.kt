@@ -573,7 +573,7 @@ fun GalleryCell(entry: GalleryEntry, thumbs: ThumbSource, px: Int, compact: Bool
  * Dragging scrubs, with the month in a bubble and the years along the track.
  */
 @Stable
-class FastScrollerState(visible: Boolean = false) {
+class FastScrollerState(visible: Boolean = false, val hideAfterMs: Long = 1500) {
     /** Shown (the grid moved lately, or the thumb is held). */
     var visible by mutableStateOf(visible)
     var dragging by mutableStateOf(false)
@@ -666,8 +666,8 @@ private fun FastScroller(layout: GalleryLayout, grid: LazyGridState, state: Fast
         snapshotFlow { grid.isScrollInProgress || state.dragging }.collectLatest { moving ->
             if (moving) {
                 state.visible = true
-            } else {
-                delay(1500)
+            } else if (state.hideAfterMs > 0) {
+                delay(state.hideAfterMs)
                 state.visible = false
             }
         }
