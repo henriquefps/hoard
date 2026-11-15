@@ -192,12 +192,18 @@ func errorClass(err error) string {
 		return "permission denied"
 	case errors.Is(err, fs.ErrNotExist):
 		return "not found"
+	case errors.Is(err, errEmptyMount):
+		return "folder is empty but the index holds files (mount missing?)"
 	case errors.Is(err, context.Canceled):
 		return "cancelled"
 	default:
 		return "io error"
 	}
 }
+
+// errEmptyMount: the walk saw no media file while the index holds live files of the folder. A mount that is gone leaves
+// an empty, readable directory, so this is treated as unavailable: nothing is removed and no sidecar record is dropped.
+var errEmptyMount = errors.New("folder shows no files but the index holds some")
 
 type seen struct {
 	rel   string
@@ -277,6 +283,14 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	known, err := ix.Store.NasFileStates(ctx, f.ID)
 	if err != nil {
 		return fail("error", err)
+	}
+	if len(files) == 0 {
+		for _, k := range known {
+			if !k.Removed {
+				ix.Log.Warn("nas: folder shows no files but the index holds some, treated as unavailable (unmounted?); nothing removed", "folder", f.ID)
+				return fail("unavailable", errEmptyMount)
+			}
+		}
 	}
 	haveMeta, err := ix.Store.MetaFingerprints(ctx, media.MetaVersion)
 	if err != nil {

@@ -217,6 +217,10 @@ its record was dropped because the file disappeared) only fills the fields that 
 label count as no value), whatever its mtime, so a sidecar another tool creates for a shot you already rated or flagged
 does not overwrite that decision. Later changes of the same sidecar apply as before (newest wins). The walk forgets the
 sidecars whose file is gone (only after a walk that read the whole folder), so a recreated sidecar is a first read again.
+A walk that sees no photo or video in a folder while the index holds some for it is now treated as an unmounted folder:
+the folder shows `unavailable`, and nothing is removed (items, files, sidecar records) until files are there again. The
+trade-off: a folder you really empty keeps its items until it holds a file again.
+
 No API change, no migration, no step to take; revisions already written stay.
 
 ## Upgrading to 0.10.0 (items by path, device liveness)

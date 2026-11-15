@@ -273,6 +273,11 @@ last time):
    created by another tool starts from that tool's defaults, not from the user's decision. Its creation is not an edit
    of our fields, but a later change to it is. In hoard-server, the walk deletes the `culling_sidecars` rows whose
    sidecar file is gone, only after a walk that read every folder (a partial walk deletes nothing).
+   **An empty folder is an unmounted one.** When the host mount is gone, the bind-mounted directory is empty but readable,
+   and a walk would then mark every file removed and drop every sidecar record. So a walk that sees **no media file
+   while the index holds live files of that folder** fails with state `unavailable`, before anything is written: no file
+   removed, no item changed, no sidecar record dropped, a warning in the log. Trade-off: a folder the user really
+   empties keeps its items (and sidecar records) until the folder shows files again.
 3. Each remaining candidate is a write by `"nas"` with **`modifiedAt` = the sidecar's mtime** (ms; clipped like any write), and
    goes through the conflict rule (step 5: no `baseRev`). A sidecar newer than the server's field wins; one older
    loses. The values read are stored either way.

@@ -233,8 +233,46 @@ func TestPartialWalkDeletesNoSidecarRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	e.write("OTHER.JPG", mediatest.JPEG(shotAt(2, "2024:05:01 10:00:01"), "")) // the folder is not empty
 	e.walk()
 	if st, _ := e.st.SidecarStates(ctx, e.folder.ID); len(st) != 1 {
 		t.Fatalf("partial walk deleted rows: %v", st)
+	}
+}
+
+// An unmounted folder is an empty, readable directory: the walk fails as unavailable and removes nothing.
+func TestEmptyMountIsUnavailableAndRemovesNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// A genuinely empty folder with nothing known stays fine.
+	e.walk()
+	e.write("DSC1.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="3"`))
+	e.walk()
+	id := e.live()["DSC1.JPG"].ID
+	for _, n := range []string{"DSC1.JPG", "DSC1.xmp"} { // the mount goes away
+		if err := os.Remove(filepath.Join(e.nas, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.ix.Folder(ctx, e.folder); err == nil {
+		t.Fatal("empty mount walked fine")
+	}
+	if e.item(id).Deleted || len(e.live()) != 1 {
+		t.Fatal("items removed")
+	}
+	if st, _ := e.st.SidecarStates(ctx, e.folder.ID); len(st) != 1 {
+		t.Fatalf("sidecar rows dropped: %v", st)
+	}
+	folders, _ := e.st.NasFolders(ctx)
+	if len(folders) != 1 || folders[0].State != "unavailable" {
+		t.Fatalf("%+v", folders)
+	}
+	// The mount shows its files again: back to normal.
+	e.write("DSC1.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="3"`))
+	e.walk()
+	if e.item(id).Deleted {
+		t.Fatal("item lost")
 	}
 }
