@@ -265,6 +265,20 @@ data class LookupResponse(
     val missing: List<String> = emptyList(),
 )
 
+// --- Items by path (ADR 0014 "Items by path", hoard-server 0.10.0; ADR 0022) ----------------------------------------
+
+@Serializable
+data class ItemsQueryPage(val items: List<Item> = emptyList(), val cursor: String? = null, val hasMore: Boolean = false)
+
+@Serializable
+data class ByPathRequest(val folder: String, val paths: List<String>)
+
+@Serializable
+data class PathFound(val path: String, val itemId: String, val role: String? = null, val size: Long = 0, val modifiedAt: Long? = null)
+
+@Serializable
+data class ByPathResponse(val found: List<PathFound> = emptyList(), val missing: List<String> = emptyList())
+
 // --- Previews (ADR 0015) --------------------------------------------------------------------------------------------
 
 @Serializable
@@ -291,6 +305,8 @@ object Features {
     const val CULLING = "culling"
     const val DEVICE_IDENTITY = "device-identity"
     const val EDITS = "edits"
+    /** `POST /v1/items/by-path` (hoard-server 0.10.0): Hoard maps SMB folders to NAS folders (ADR 0022). */
+    const val ITEMS_BY_PATH = "items-by-path"
 }
 
 /** The `include` of the items feed Hoard asks for: one cursor for items and culling (ADR 0016 rule 3). */

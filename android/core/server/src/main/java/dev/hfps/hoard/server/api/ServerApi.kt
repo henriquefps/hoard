@@ -64,6 +64,21 @@ class ServerApi(
 
     fun item(id: String): Item = get("/v1/items/${enc(id)}", Item.serializer())
 
+    /**
+     * `GET /v1/items?folder=&path=` (ADR 0014): live items with a file in NAS folder [folder] under directory [path]
+     * (sub-directories included; `""` = the whole folder), newest first, keyset-paged.
+     */
+    fun itemsInFolder(folder: String, path: String, cursor: String?, limit: Int): ItemsQueryPage {
+        val q = StringBuilder("/v1/items?folder=${enc(folder)}&limit=$limit")
+        if (path.isNotEmpty()) q.append("&path=${enc(path)}")
+        if (!cursor.isNullOrEmpty()) q.append("&cursor=${enc(cursor)}")
+        return get(q.toString(), ItemsQueryPage.serializer())
+    }
+
+    /** `POST /v1/items/by-path` (ADR 0014, hoard-server 0.10.0, feature `items-by-path`): at most 1000 paths. */
+    fun itemsByPath(folder: String, paths: List<String>): ByPathResponse =
+        send("POST", "/v1/items/by-path", ByPathRequest(folder, paths), ByPathRequest.serializer(), ByPathResponse.serializer())
+
     fun lookup(fingerprints: List<String>): LookupResponse =
         send("POST", "/v1/items/lookup", LookupRequest(fingerprints), LookupRequest.serializer(), LookupResponse.serializer())
 

@@ -91,6 +91,18 @@ object CullingRules {
         return out
     }
 
+    /**
+     * The pending rating / flag changes that hold [values] (what a sidecar now says), dated [at] (the sidecar's mtime):
+     * the server's import of that sidecar then sees the same value at the same time (ADR 0022). A change already
+     * replaced by a newer decision (another value) keeps its own time; the label is never written by Hoard's sidecars.
+     */
+    fun redated(pending: List<PendingCullingEntity>, values: CullValues, at: Long): List<PendingCullingEntity> = pending.mapNotNull { p ->
+        val field = CullField.of(p.field) ?: return@mapNotNull null
+        if (field == CullField.Label || p.modifiedAt == at) return@mapNotNull null
+        if (p.value != encode(field, values)) return@mapNotNull null
+        p.copy(modifiedAt = at)
+    }
+
     /** The changes of a push, in the order of [pending] (by item id, ADR 0016 "Wire format"). */
     fun changes(pending: List<PendingCullingEntity>): List<CullingChange> = pending.map {
         CullingChange(itemId = it.itemId, field = it.field, value = json(it.value), baseRev = it.baseRev, modifiedAt = it.modifiedAt)

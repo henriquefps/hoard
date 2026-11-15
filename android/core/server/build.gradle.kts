@@ -22,6 +22,8 @@ android {
     }
     // The fingerprint vectors the server and Reveal check (server/testdata/fingerprint-vectors.txt, ADR 0013 "Tests").
     sourceSets["test"].resources.srcDir("../../../server/testdata")
+    // Room's exported schemas for MigrationTestHelper (gallery.db 1 → 2, ADR 0022).
+    sourceSets["test"].assets.srcDir("$projectDir/schemas")
     testOptions.unitTests.isIncludeAndroidResources = true
     testOptions.unitTests.all {
         it.testLogging { events("passed", "skipped", "failed") }
@@ -52,4 +54,5 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.truth)
+    testImplementation(libs.androidx.room.testing)
 }

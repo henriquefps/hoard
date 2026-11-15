@@ -192,3 +192,37 @@ data class DevicePushedEntity(
     @ColumnInfo(name = "item_id") val itemId: String,
     @ColumnInfo(name = "pushed_at") val pushedAt: Long,
 )
+
+/**
+ * A learned SMB ↔ NAS mapping (ADR 0022): `smb_prefix` of `share` on `machine_id` is `server_prefix` of NAS folder
+ * `folder_id` of server `server_id`. Learned from two fingerprinted files; forgotten on a mismatch, another server or
+ * another SMB server GUID, or from Settings.
+ */
+@Entity(tableName = "smb_mappings", primaryKeys = ["machine_id", "share", "smb_prefix"])
+data class SmbMappingEntity(
+    @ColumnInfo(name = "machine_id") val machineId: String,
+    /** Lower-case share name (SMB share names are case-insensitive). */
+    val share: String,
+    @ColumnInfo(name = "smb_prefix") val smbPrefix: String,
+    @ColumnInfo(name = "server_id") val serverId: String,
+    @ColumnInfo(name = "folder_id") val folderId: String,
+    @ColumnInfo(name = "folder_name") val folderName: String?,
+    @ColumnInfo(name = "server_prefix") val serverPrefix: String,
+    @ColumnInfo(name = "smb_guid") val smbGuid: String?,
+    @ColumnInfo(name = "learned_at") val learnedAt: Long,
+    @ColumnInfo(name = "verified_at") val verifiedAt: Long,
+)
+
+/**
+ * A folder where learning found nothing (its photos are not on the server, or the two samples disagreed): not tried
+ * again before `checked_at` + a day, so opening it does not read two files every time (ADR 0022).
+ */
+@Entity(tableName = "smb_mapping_misses", primaryKeys = ["machine_id", "share", "path"])
+data class SmbMappingMissEntity(
+    @ColumnInfo(name = "machine_id") val machineId: String,
+    val share: String,
+    /** Lower-case folder path in the share. */
+    val path: String,
+    @ColumnInfo(name = "server_id") val serverId: String,
+    @ColumnInfo(name = "checked_at") val checkedAt: Long,
+)

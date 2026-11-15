@@ -11,7 +11,10 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
-/** `gallery.db` (ADR 0021). Room version 1; later changes are Room migrations checked against `core/server/schemas/`. */
+/**
+ * `gallery.db` (ADR 0021). Room migrations checked against `core/server/schemas/`: version 2 (Hoard 2.2.0, ADR 0022)
+ * adds `smb_mappings` and `smb_mapping_misses`.
+ */
 @Database(
     entities = [
         ServerAccountEntity::class,
@@ -23,8 +26,10 @@ import kotlinx.coroutines.flow.Flow
         DeviceMediaEntity::class,
         DeviceFolderEntity::class,
         DevicePushedEntity::class,
+        SmbMappingEntity::class,
+        SmbMappingMissEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -32,9 +37,25 @@ abstract class GalleryDatabase : RoomDatabase() {
     abstract fun items(): ItemDao
     abstract fun culling(): CullingDao
     abstract fun device(): DeviceDao
+    abstract fun mappings(): MappingDao
 
     companion object {
         const val FILE_NAME = "gallery.db"
+
+        /** 2.2.0 (ADR 0022): the SMB ↔ NAS folder mappings and the folders where learning found nothing. */
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `smb_mappings` (`machine_id` TEXT NOT NULL, `share` TEXT NOT NULL, `smb_prefix` TEXT NOT NULL, " +
+                        "`server_id` TEXT NOT NULL, `folder_id` TEXT NOT NULL, `folder_name` TEXT, `server_prefix` TEXT NOT NULL, `smb_guid` TEXT, " +
+                        "`learned_at` INTEGER NOT NULL, `verified_at` INTEGER NOT NULL, PRIMARY KEY(`machine_id`, `share`, `smb_prefix`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `smb_mapping_misses` (`machine_id` TEXT NOT NULL, `share` TEXT NOT NULL, `path` TEXT NOT NULL, " +
+                        "`server_id` TEXT NOT NULL, `checked_at` INTEGER NOT NULL, PRIMARY KEY(`machine_id`, `share`, `path`))",
+                )
+            }
+        }
 
         fun open(context: Context, name: String? = FILE_NAME): GalleryDatabase {
             val builder = if (name == null) {
@@ -42,7 +63,7 @@ abstract class GalleryDatabase : RoomDatabase() {
             } else {
                 Room.databaseBuilder(context.applicationContext, GalleryDatabase::class.java, name)
             }
-            return builder.build()
+            return builder.addMigrations(MIGRATION_1_2).build()
         }
     }
 }
@@ -193,6 +214,10 @@ interface CullingDao {
         if (fingerprints.isNotEmpty()) putFingerprints(fingerprints)
     }
 
+    /** Records replaced by another item (ADR 0014 `replacedBy`): old id → new id. */
+    @Query("SELECT item_id, replaced_by FROM culling WHERE replaced_by IS NOT NULL")
+    suspend fun replaced(): List<ReplacedRow>
+
     @Query("SELECT item_id FROM culling_fingerprints WHERE fingerprint IN (:fingerprints)")
     suspend fun recordsWith(fingerprints: List<String>): List<String>
 
@@ -307,4 +332,42 @@ interface DeviceDao {
 
     @Query("DELETE FROM device_pushed")
     suspend fun clearPushed()
+}
+
+data class ReplacedRow(@ColumnInfo(name = "item_id") val itemId: String, @ColumnInfo(name = "replaced_by") val replacedBy: String)
+
+@Dao
+interface MappingDao {
+    @Query("SELECT * FROM smb_mappings ORDER BY machine_id, share, smb_prefix")
+    suspend fun all(): List<SmbMappingEntity>
+
+    @Query("SELECT * FROM smb_mappings ORDER BY machine_id, share, smb_prefix")
+    fun observe(): Flow<List<SmbMappingEntity>>
+
+    @Query("SELECT * FROM smb_mappings WHERE machine_id = :machineId AND share = :share")
+    suspend fun forShare(machineId: String, share: String): List<SmbMappingEntity>
+
+    @Upsert
+    suspend fun put(mapping: SmbMappingEntity)
+
+    @Query("DELETE FROM smb_mappings WHERE machine_id = :machineId AND share = :share AND smb_prefix = :smbPrefix")
+    suspend fun forget(machineId: String, share: String, smbPrefix: String)
+
+    @Query("DELETE FROM smb_mappings WHERE folder_id = :folderId")
+    suspend fun forgetFolder(folderId: String)
+
+    @Query("SELECT * FROM smb_mapping_misses WHERE machine_id = :machineId AND share = :share AND path = :path")
+    suspend fun miss(machineId: String, share: String, path: String): SmbMappingMissEntity?
+
+    @Upsert
+    suspend fun putMiss(miss: SmbMappingMissEntity)
+
+    @Query("DELETE FROM smb_mapping_misses WHERE machine_id = :machineId AND share = :share")
+    suspend fun clearMisses(machineId: String, share: String)
+
+    @Query("DELETE FROM smb_mappings")
+    suspend fun clearMappings()
+
+    @Query("DELETE FROM smb_mapping_misses")
+    suspend fun clearAllMisses()
 }

@@ -55,6 +55,14 @@ class FakeServer : AutoCloseable {
     var stuckCursor = false
     /** Fail this many `PATCH /v1/device` calls with a 503. */
     var deviceFailures = 0
+    /** `GET /v1/server` features (0.10.0 adds `items-by-path`). */
+    var features = listOf("items", "previews", "culling", "device-identity", "edits")
+    /** NAS folders the server knows (by-path answers 404 for another id). */
+    val nasFolders = HashSet<String>()
+    /** `GET /v1/items?folder=` pages and `POST /v1/items/by-path` / lookup calls served. */
+    var folderQueries = 0
+    var byPathCalls = 0
+    var lookupCalls = 0
 
     init {
         Thread {
@@ -141,6 +149,27 @@ class FakeServer : AutoCloseable {
         cullingRev[itemId] = rev
     }
 
+    /**
+     * The NAS sidecar import (ADR 0016 "The NAS sidecars"): a write by `"nas"` dated by the sidecar's mtime, with no
+     * `baseRev` (step 5); the same value is a no-op apart from moving the field's time forward (step 2). Returns
+     * whether a revision was made.
+     */
+    fun nasImport(itemId: String, field: String, value: JsonPrimitive, mtime: Long): Boolean {
+        val fields = culling.getOrPut(itemId) { LinkedHashMap() }
+        val cur = fields[field]
+        if (cur != null && cur.value == value) {
+            if (mtime > cur.modifiedAt || (mtime == cur.modifiedAt && "nas" > (cur.deviceId ?: ""))) fields[field] = cur.copy(modifiedAt = mtime, deviceId = "nas")
+            return false
+        }
+        if (cur == null || mtime > cur.modifiedAt || (mtime == cur.modifiedAt && "nas" > (cur.deviceId ?: ""))) {
+            rev++
+            fields[field] = CullingField(value, rev, mtime, "nas")
+            cullingRev[itemId] = rev
+            return true
+        }
+        return false
+    }
+
     private fun handle(ex: HttpExchange) {
         val path = ex.requestURI.rawPath.let { java.net.URLDecoder.decode(it, "UTF-8") }
         val query = ex.requestURI.rawQuery.orEmpty().split('&').filter { it.contains('=') }.associate { it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), "UTF-8") }
@@ -152,7 +181,7 @@ class FakeServer : AutoCloseable {
         }
         if (ex.requestHeaders.getFirst("Authorization") != "Bearer $key") return send(ex, 401, """{"error":{"code":"unauthorized","message":"no"}}""")
         when {
-            path == "/v1/server" -> send(ex, 200, """{"serverId":"fake-server","serverName":"Fake","version":"0.9.0","api":1,"features":["items","previews","culling","device-identity","edits"],"limits":{"maxPullLimit":500}}""")
+            path == "/v1/server" -> send(ex, 200, """{"serverId":"fake-server","serverName":"Fake","version":"0.9.0","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500}}""")
             path == "/v1/device" && ex.requestMethod == "PATCH" && deviceFailures > 0 -> {
                 deviceFailures--
                 send(ex, 503, """{"error":{"code":"unavailable","message":"busy"}}""")
@@ -212,10 +241,41 @@ class FakeServer : AutoCloseable {
                 }
                 send(ex, 200, ServerJson.encodeToString(CullingPushResponse.serializer(), CullingPushResponse(results)))
             }
+            path == "/v1/items" && ex.requestMethod == "GET" -> {
+                folderQueries++
+                val folder = query["folder"]
+                val dir = query["path"].orEmpty()
+                val live = items.values.filter { !it.deleted }.filter { item ->
+                    folder == null || item.files.any { f -> f.locations.any { it.source == "nas" && it.folderId == folder && (dir.isEmpty() || it.path.orEmpty().startsWith("$dir/")) } }
+                }.sortedByDescending { it.sortTime }
+                val offset = query["cursor"]?.toIntOrNull() ?: 0
+                val limit = query["limit"]?.toInt() ?: 200
+                val page = live.drop(offset).take(limit)
+                val more = offset + limit < live.size
+                send(ex, 200, ServerJson.encodeToString(dev.hfps.hoard.server.api.ItemsQueryPage.serializer(), dev.hfps.hoard.server.api.ItemsQueryPage(page, if (more) "${offset + limit}" else null, more)))
+            }
+            path == "/v1/items/by-path" -> {
+                byPathCalls++
+                val req = ServerJson.decodeFromString(dev.hfps.hoard.server.api.ByPathRequest.serializer(), body)
+                if (req.folder !in nasFolders) return send(ex, 404, """{"error":{"code":"not_found","message":"No such NAS folder."}}""")
+                val found = ArrayList<dev.hfps.hoard.server.api.PathFound>()
+                val missing = ArrayList<String>()
+                for (p in req.paths.distinct()) {
+                    val hit = items.values.filter { !it.deleted }.firstNotNullOfOrNull { item ->
+                        item.files.firstNotNullOfOrNull { f -> f.locations.firstOrNull { it.source == "nas" && it.folderId == req.folder && it.path == p }?.let { loc -> dev.hfps.hoard.server.api.PathFound(p, item.id, f.role, f.size, loc.modifiedAt) } }
+                    }
+                    if (hit != null) found += hit else missing += p
+                }
+                send(ex, 200, ServerJson.encodeToString(dev.hfps.hoard.server.api.ByPathResponse.serializer(), dev.hfps.hoard.server.api.ByPathResponse(found, missing)))
+            }
             path == "/v1/items/lookup" -> {
+                lookupCalls++
                 val wanted = ServerJson.parseToJsonElement(body).jsonObject["fingerprints"]!!.jsonArray.map { it.jsonPrimitive.content }
                 val json = buildJsonObject {
-                    putJsonArray("items") {}
+                    putJsonArray("items") {
+                        items.values.filter { item -> !item.deleted && item.files.any { it.fingerprint in wanted } }
+                            .forEach { add(ServerJson.encodeToJsonElement(Item.serializer(), it)) }
+                    }
                     putJsonArray("matches") {
                         for (fp in wanted) items.values.filter { !it.deleted && it.files.any { f -> f.fingerprint == fp } }.forEach { item ->
                             add(buildJsonObject { put("fingerprint", fp); put("itemId", item.id); put("role", item.files.first { it.fingerprint == fp }.role) })
