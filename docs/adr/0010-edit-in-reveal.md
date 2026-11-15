@@ -341,21 +341,36 @@ Reveal each photo one of three ways, per shot:
      final name (invisible to other apps); the engine's rename publishes it (`IS_PENDING = 0`). Rows not published when
      the job ends (cancelled, failed, the worker stopped) are deleted when the endpoint closes: **Cancel removes the
      partial copies**. A name taken in the batch folder gets the engine's `name (1).ext`.
-   - **Reuse** (`reveal_copies`, Room version 2, ADR 0003): each copy is recorded with its source (location key + path)
-     and the source's size and mtime when copied. A later hand-off of the same source with the same size and mtime
-     reuses the copy while MediaStore still has it with that size (`RevealRoutes.plan`, JVM-tested); otherwise it is
-     copied again.
+   - **Reuse** (`reveal_copies`, Room version 2, ADR 0003): each copy is a row (keyed by its URI) with its source
+     (location key + path) and the source's size and mtime when copied. A later hand-off of the same source reuses a
+     copy whose size and mtime match while MediaStore still has it, with that size, in Hoard's copy folders
+     (`RevealRoutes.plan`, JVM-tested). A source that changed is copied again; its older copy stays a row.
+   - **Recorded as soon as the job ends, whatever its outcome**: the completed items of a job that fails or is
+     cancelled midway are saved before the error is reported, so a retry reuses them instead of making
+     `name (1).ext` duplicates (`RevealRoutes.records`, JVM-tested with a job failing at item 250 of 300).
    - **Progress**: the screen shows "Copying for Reveal" with files and bytes while the job runs, and Cancel (which
      cancels the job). The hand-off starts when every photo is there; a failed copy fails the hand-off with the
      job's error (Retry in Transfers, or edit again: what was copied is reused).
-   - **Space**: Settings › "Photos copied for Reveal" shows how many and how big (rows MediaStore still has: the
-     recorded ones and any other row Hoard owns under `Pictures/Hoard/` and `Download/Hoard/`), and **Delete copies**
-     after a confirmation that says Reveal falls back to its own previews for those photos. Nothing is deleted
-     automatically.
+   - **Hoard in the background when the copy ends**: Android 10+ blocks starting Reveal then, so the prepared intents
+     go into a notification, "Ready to open in Reveal", whose tap sends them (`RevealReady`, a `PendingIntent` of the
+     same intents and grants). With notifications off, the screen offers "Open in Reveal" when Hoard returns.
+   - **Space**: Settings › "Photos copied for Reveal" shows how many and how big, and **Delete copies** after a
+     confirmation that says Reveal falls back to its own previews for those photos. Only rows `reveal_copies`
+     recorded are counted or deleted, and only while MediaStore still has them, with the recorded size, under
+     `Pictures/Hoard/` or `Download/Hoard/` (exact case). A file Hoard owns there but did not record (one the user
+     copied with the file manager), a copy the user moved out, or an id MediaStore reused for another file is never
+     touched; records that no longer stand for a copy are forgotten (`RevealRoutes.deletion`, JVM-tested). Nothing is
+     deleted automatically.
+   - **Not in the Gallery**: the device index skips `Pictures/Hoard/` and `Download/Hoard/` (`DeviceFolders.EXCLUDED`),
+     so copies never show up as phone photos.
 
 **The intent** is the usual `DEVELOP` to one package: ClipData of the `content://media/…` URIs (in order),
 `TITLE`, `INITIAL_URI`, `CULLING` (version 2 to Reveal ≥ 0.9.0, keyed by those URI strings), server items mixed in as
-before, `BATCH_INDEX` / `BATCH_COUNT` when split. The intent's flags carry **`FLAG_GRANT_READ_URI_PERMISSION` only**:
+before. **URI items go at most 200 per intent** (`MAX_URI_ITEMS`), each intent with the ClipData, grant and `CULLING`
+of its own URIs, so 1,000 photos with `CULLING` v2 stay far under the ~1 MB Binder buffer; the chunk holding the
+initial photo goes first. Intent i carries URI chunk i and server batch i (500 per intent), and every intent of a
+multi-intent hand-off carries `BATCH_INDEX` / `BATCH_COUNT` (`RevealHandoff.buildIntents`, built off the main thread by
+`prepare`, started by `start`). The intent's flags carry **`FLAG_GRANT_READ_URI_PERMISSION` only**:
 no persistable grant, no write grant (`grantUriPermission` is no longer called), **no sidecar items**.
 
 **Old links.** `HandoffStore`, `HandoffServer` and `StreamProvider` stay, with `busy:`, idle reclaim and pruning, so the
