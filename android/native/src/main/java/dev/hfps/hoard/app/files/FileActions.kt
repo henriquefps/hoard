@@ -110,10 +110,13 @@ class FileActions(private val container: AppContainer) {
         val decisions = container.database.cull()
             .forFolder(location.id, if (location.isSmb) location.share.orEmpty() else "", folderPath)
             .associateBy { it.shotId }
+        // CULLING_VERSION 2: when each field was decided, and by which server device when Hoard is paired.
+        val device = runCatching { container.gallery.db.account().get()?.deviceId }.getOrNull()
         val culling = paths.mapNotNull { path ->
             val decision = decisions[photoStem(path.substringAfterLast('/')).lowercase()] ?: return@mapNotNull null
             if (decision.flag == null && decision.rating == 0) return@mapNotNull null
-            path to RevealHandoff.Culling(decision.rating, decision.flag ?: "none")
+            val at = runCatching { java.time.Instant.parse(decision.updatedAt).toEpochMilli() }.getOrNull()
+            path to RevealHandoff.Culling(decision.rating, decision.flag ?: "none", ratingModifiedAt = at, flagModifiedAt = at, ratingDevice = device, flagDevice = device)
         }.toMap()
         val sidecars = if (current.cullSaveXmp) RevealHandoff.SidecarOptions(current.cullXmpHidden) else null
         val outgoing = withContext(Dispatchers.IO) {

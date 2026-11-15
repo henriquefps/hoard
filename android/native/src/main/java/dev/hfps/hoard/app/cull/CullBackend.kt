@@ -75,6 +75,12 @@ interface CullBackend {
     /** Pending sidecar writes go out now (the app left the screen; ADR 0011 "Flush"). */
     fun flush()
     fun close()
+
+    /** Fuller metadata of one shot, read when the viewer reaches it (the Gallery reads EXIF lazily); null = none. */
+    suspend fun details(shotId: String): ShotMetadata? = null
+
+    /** Which image of a shot is shown now (the Gallery: Reveal's edit or the original, ADR 0020); part of cache keys. */
+    fun imageVariant(shotId: String): String = ""
 }
 
 /**

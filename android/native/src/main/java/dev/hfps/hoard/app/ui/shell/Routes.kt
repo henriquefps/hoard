@@ -31,3 +31,6 @@ import kotlinx.serialization.Serializable
 
 /** A folder of any location opened for culling (ADR 0008). */
 @Serializable data class CullRoute(val locationId: String, val share: String? = null, val path: String = "")
+
+/** Settings › Photo server › Pair (ADR 0021). */
+@Serializable data object PairRoute

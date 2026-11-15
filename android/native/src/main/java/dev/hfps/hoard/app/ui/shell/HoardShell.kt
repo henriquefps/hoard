@@ -177,7 +177,8 @@ fun HoardShell(container: AppContainer) {
                             popEnterTransition = { fadeIn(HfpsMotion.standard()) },
                             popExitTransition = { fadeOut(HfpsMotion.fast()) },
                         ) {
-                            composable<GalleryRoute> { GalleryScreen(onOpenSettings = { navController.navigate(SettingsRoute) }) }
+                            composable<GalleryRoute> { dev.hfps.hoard.app.ui.gallery.GalleryScreen(container, onOpenSettings = { navController.navigate(SettingsRoute) }, onPair = { navController.navigate(PairRoute) }) }
+                            composable<PairRoute> { dev.hfps.hoard.app.ui.server.PairScreen(container, onBack = { navController.popBackStack() }) }
                             composable<FilesRoute> {
                                 FilesTab(container, files, navController, ::openLocation, ::openTransfers)
                             }
@@ -265,6 +266,7 @@ fun HoardShell(container: AppContainer) {
                                     onThemeMode = settings::setThemeMode,
                                     onPalette = settings::setPalette,
                                     onOpenLicences = { navController.navigate(LicencesRoute) },
+                                    server = { dev.hfps.hoard.app.ui.server.ServerSettingsSection(container, onPair = { navController.navigate(PairRoute) }) },
                                     files = { FilesSettingsSection() },
                                     culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
                                     language = remember { dev.hfps.hoard.app.data.AppLanguage.current(context) },
@@ -517,7 +519,8 @@ fun ShellLayout(navController: NavHostController, content: @Composable (inFilesT
     val destination = entry?.destination
     val tab = when {
         destination == null -> null
-        destination.hasRoute<GalleryRoute>() -> Tab.Gallery
+        // The Gallery's viewer is full screen: no tab bar under it.
+        destination.hasRoute<GalleryRoute>() -> if (dev.hfps.hoard.app.ui.gallery.GalleryChrome.viewerOpen) null else Tab.Gallery
         destination.hasRoute<FilesRoute>() || destination.hasRoute<BrowseRoute>() -> Tab.Files
         else -> null
     }

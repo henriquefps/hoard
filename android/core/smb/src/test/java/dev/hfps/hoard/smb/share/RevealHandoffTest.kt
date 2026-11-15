@@ -191,7 +191,69 @@ class RevealHandoffTest {
         assertEquals(mapOf("u1" to RevealHandoff.Culling(5, "none")), values)
         assertEquals("dev.hfps.reveal.extra.CULLING", RevealHandoff.EXTRA_CULLING)
         assertEquals("dev.hfps.reveal.extra.CULLING_VERSION", RevealHandoff.EXTRA_CULLING_VERSION)
-        assertEquals(1, RevealHandoff.CULLING_VERSION)
+        assertEquals(2, RevealHandoff.CULLING_VERSION) // version 2: per-field times and devices (Reveal ADR 0011 amendment W3/H)
+    }
+
+    // --- Server references (Reveal ADR 0011 amendment W3/H, Hoard ADR 0010 "Server items") -------------------------
+
+    private fun ref(n: Int, pair: Boolean = false) = RevealHandoff.ServerItem(
+        itemId = "item-$n",
+        fingerprint = "v1:" + "%064x".format(n),
+        fingerprints = if (pair) listOf("v1:" + "%064x".format(n), "v1:" + "%064x".format(n + 100000)) else listOf("v1:" + "%064x".format(n)),
+        name = "DSC%05d.ARW".format(n),
+    )
+
+    @Test
+    fun serverItemsGoInIntentsOfFiveHundredInOrder() {
+        val items = (1..1201).map { ref(it) } + ref(5)
+        val batches = RevealHandoff.serverBatches(items)
+        assertEquals(listOf(500, 500, 201), batches.map { it.size })
+        assertEquals("item-1", batches[0].first().itemId)
+        assertEquals("item-501", batches[1].first().itemId)
+        assertEquals("item-1201", batches[2].last().itemId)
+    }
+
+    @Test
+    fun aServerItemCarriesItsIdFingerprintsAndNameButNoCulling() {
+        val single = RevealHandoff.serverItemFields(ref(7))
+        assertEquals(listOf("itemId", "fingerprint", "name"), single.keys.toList())
+        val pair = RevealHandoff.serverItemFields(ref(8, pair = true))
+        assertEquals(listOf("itemId", "fingerprint", "fingerprints", "name"), pair.keys.toList())
+        assertEquals(2, (pair["fingerprints"] as Array<*>).size)
+        val unknown = RevealHandoff.serverItemFields(RevealHandoff.ServerItem("i", null, emptyList(), "x".repeat(400)))
+        assertEquals(listOf("itemId", "name"), unknown.keys.toList())
+        assertEquals(255, (unknown["name"] as String).length)
+        assertThrows(IllegalArgumentException::class.java) { RevealHandoff.serverItemFields(RevealHandoff.ServerItem("", null, emptyList(), "a")) }
+        listOf("rating", "flag", "label").forEach { key -> assert(key !in pair.keys) }
+    }
+
+    @Test
+    fun fiveHundredReferencesStayFarUnderTheBinderLimit() {
+        // Every key and value of a full batch of pairs, as UTF-16 in a Parcel (2 bytes a char, plus a header each).
+        val bytes = RevealHandoff.serverBatches((1..500).map { ref(it, pair = true) }).first().sumOf { item ->
+            RevealHandoff.serverItemFields(item).entries.sumOf { (k, v) ->
+                val value = if (v is Array<*>) v.sumOf { (it as String).length * 2 + 8 } else (v as String).length * 2 + 8
+                k.length * 2 + 8 + value + 16
+            }
+        }
+        // About 320 KB for 500 pairs: a third of the 1 MB Binder buffer.
+        assert(bytes < 400_000) { "batch of 500 is $bytes bytes" }
+        assertEquals(90000L, RevealHandoff.MIN_SERVER_REF_VERSION_CODE)
+    }
+
+    @Test
+    fun cullingVersionTwoAddsPerFieldTimesAndDevices() {
+        assertEquals(2, RevealHandoff.CULLING_VERSION)
+        val v1 = RevealHandoff.cullingFields(RevealHandoff.Culling(3, "pick"))
+        assertEquals(listOf("rating", "flag"), v1.keys.toList())
+        val v2 = RevealHandoff.cullingFields(RevealHandoff.Culling(3, "pick", "Red", 10L, 11L, 12L, "dev", "dev", null))
+        assertEquals(listOf("rating", "flag", "label", "ratingModifiedAt", "flagModifiedAt", "labelModifiedAt", "ratingDevice", "flagDevice"), v2.keys.toList())
+        assertEquals(11L, v2["flagModifiedAt"])
+        // An older Reveal (before 0.9.0) gets version 1: the times, no devices.
+        assertEquals(1, RevealHandoff.cullingVersionFor(70100))
+        assertEquals(2, RevealHandoff.cullingVersionFor(90000))
+        val older = RevealHandoff.cullingFields(RevealHandoff.Culling(3, "pick", "Red", 10L, 11L, 12L, "dev", "dev", null), version = 1)
+        assertEquals(listOf("rating", "flag", "label", "ratingModifiedAt", "flagModifiedAt", "labelModifiedAt"), older.keys.toList())
     }
 
     private companion object {

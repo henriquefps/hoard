@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Cleartext HTTP is allowed only to the loopback address: the in-app web viewer loads pages from
-  Hoard's own local web server (http://127.0.0.1:<port>/<token>/…, bound to 127.0.0.1 only).
+  Hoard's own local web server (http://127.0.0.1:<port>/<token>/…, bound to 127.0.0.1 only), and a
+  plain-HTTP hoard-server on the LAN or the tailnet is reached through Hoard's relay on 127.0.0.1
+  (LanRelay, ADR 0021 "Plain HTTP"), which connects only to LAN, Tailscale and loopback addresses.
   Everything else stays HTTPS-only (SMB itself is raw TCP and not affected by this file).
 -->
 <network-security-config>

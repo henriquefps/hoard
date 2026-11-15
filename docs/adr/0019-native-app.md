@@ -5,7 +5,7 @@
   the Compose shell), phase 2b (the Files tab at parity), phase 2c (culling at parity, the Files gaps, the parity
   audit), phase 2d (the audit's "Partly" rows closed; **Hoard Next 2.0.0-beta.1**, a side-by-side release build with
   the import bridge of Hoard 1.11.0), **the swap: Hoard 2.0.0** (2026-11-15; `:native` is `dev.hfps.hoard`, Hoard 1
-  removed, below "The swap (2.0.0)"). Left: the Gallery tab (phase 3) and the move to AGP 9.
+  removed, below "The swap (2.0.0)"), **phase 3: the Gallery tab** (ADR 0021, Hoard 2.1.0). Left: the move to AGP 9.
 
 ## Context
 

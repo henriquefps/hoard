@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.1.0
+
+- **Gallery tab** ([ADR 0021](docs/adr/0021-gallery.md)): photos on the phone and on hoard-server in one grid, with culling everywhere (decisions are shared with the server and the web gallery), edited previews from Reveal, a pairing flow (QR code) and Settings › Photo server. Photos on the server open in Reveal by reference (`CULLING` version 2 for Reveal 0.9.0 and later; [ADR 0010](docs/adr/0010-edit-in-reveal.md), "Server items"); SMB files still go as links. Needs Reveal 0.9.0 or later for server references ([test report](docs/testing/gallery/README.md)).
+
 ## 2.0.2
 
 - **Fix: one app holding photos open could make every other open fail** ([ADR 0010](docs/adr/0010-edit-in-reveal.md), "Idle reclaim"). Since 2.0.1 Hoard reads at most 6 network photos for other apps at once, and a large photo (every RAW) kept its place until the app reading it closed it. An app that forgot to close them took all 6 places, and every later photo got the "busy" answer until Hoard was restarted. Now a photo nobody has read for 12 s gives its place back; if the app reads it again, it gets a place again (waiting up to 1.5 s, as an open does). A photo left untouched for 10 minutes is closed on Hoard's side, so the share does not keep files open for it. The "busy" contract with Reveal is unchanged. In a test where one app opened 20 RAW photos and never closed them, another app then opened all 60 of its photos within 9 s; with 2.0.1 it got none ([test report](docs/testing/handoff-burst.md)).

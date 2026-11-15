@@ -305,18 +305,49 @@ abstract class CullDao {
     @Upsert
     abstract suspend fun putDecision(decision: CullDecisionEntity)
 
+    /** Decisions on the phone's own storage and volumes (the Gallery's phone-only shots, ADR 0021). */
+    @Query("SELECT * FROM cull_decisions WHERE location_id = 'device' OR location_id LIKE 'vol-%'")
+    abstract fun observeLocal(): kotlinx.coroutines.flow.Flow<List<CullDecisionEntity>>
+
+    @Query("SELECT * FROM cull_decisions WHERE location_id = 'device' OR location_id LIKE 'vol-%'")
+    abstract suspend fun localDecisions(): List<CullDecisionEntity>
+
+    @Query("SELECT * FROM cull_decisions WHERE location_id = :locationId AND share = '' AND path = :path AND shot_id = :shotId")
+    abstract suspend fun decision(locationId: String, path: String, shotId: String): CullDecisionEntity?
+
+    @Query("SELECT * FROM cull_sidecars WHERE location_id = :locationId AND share = '' AND path = :path")
+    abstract suspend fun localSidecars(locationId: String, path: String): List<CullSidecarEntity>
+
+    /**
+     * Sidecar rows of the phone's own storage and volumes: `decided_at` (and `sidecar_mtime` for an imported clear)
+     * outlive an unmarked shot's deleted decision row, so they date a clear (the Gallery's hand-over, ADR 0021).
+     */
+    @Query("SELECT * FROM cull_sidecars WHERE location_id = 'device' OR location_id LIKE 'vol-%'")
+    abstract suspend fun localSidecarRows(): List<CullSidecarEntity>
+
+    @Query("SELECT * FROM cull_sidecars WHERE location_id = 'device' OR location_id LIKE 'vol-%'")
+    abstract fun observeLocalSidecarRows(): kotlinx.coroutines.flow.Flow<List<CullSidecarEntity>>
+
+    @Query("SELECT * FROM cull_analysis WHERE location_id = :locationId AND share = :share AND path IN (:paths)")
+    abstract suspend fun analysesOf(locationId: String, share: String, paths: List<String>): List<CullAnalysisEntity>
+
     @Query("DELETE FROM cull_decisions WHERE location_id = :locationId AND share = :share AND path = :path AND shot_id = :shotId")
     abstract suspend fun deleteDecision(locationId: String, share: String, path: String, shotId: String)
 
-    /** One transaction for a pick, an undo or a bulk change; an unmarked shot's row is deleted (saveCullDecisions). */
+    /**
+     * One transaction for a pick, an undo or a bulk change; an unmarked shot's row is deleted (saveCullDecisions).
+     * `updated_at` is when the decision was made: now, or [decidedAt] (Unix ms) for a shot listed there, e.g. a decision
+     * imported from a sidecar, dated by the sidecar's mtime (ADR 0016 "Client rules" 4).
+     */
     @Transaction
-    open suspend fun saveDecisions(locationId: String, share: String, path: String, decisions: List<Triple<String, String?, Int>>) {
-        val at = dev.hfps.hoard.data.legacy.isoNow()
+    open suspend fun saveDecisions(locationId: String, share: String, path: String, decisions: List<Triple<String, String?, Int>>, decidedAt: Map<String, Long> = emptyMap()) {
+        val now = dev.hfps.hoard.data.legacy.isoNow()
         for ((shotId, flag, rating) in decisions) {
             val stars = rating.coerceIn(0, 5)
             if (flag == null && stars == 0) {
                 deleteDecision(locationId, share, path, shotId)
             } else {
+                val at = decidedAt[shotId]?.let { dev.hfps.hoard.data.legacy.isoOf(it) } ?: now
                 putDecision(CullDecisionEntity(locationId, share, path, shotId, flag, stars, at))
             }
         }

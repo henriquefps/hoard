@@ -69,6 +69,14 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   `docs/testing/persistable-handoff.md`. Test with Reveal's debug APK on the emulator only
   (`./gradlew :app:assembleDebug` in a copy of the reveal repo; its `release` variant did not compile in a clean clone
   on 2026-11-12).
+- **Gallery** (ADR 0021): the server client is `:core:server` (pairing, Keystore key, `gallery.db` with the items feed,
+  culling cache and queue, previews, kept originals, offline thumbnails; `CullingRules` and `Feed` are pure and
+  JVM-tested, `SyncEngineTest` runs against a fake server); `:native` `gallery/` (device index, model, culling
+  store/backend, Reveal sender) and `ui/gallery/`, `ui/server/`. Culling in the Gallery reuses `CullViewModel` through
+  `CullStore` / `CullBackend` (`FolderCullStore` is folder culling, unchanged). Server items go to Reveal by reference
+  only (ADR 0010 "Server items"). E2E against your own hoard-server container: `docs/testing/gallery/README.md`
+  (`-Phoard.native.debugSuffix=.gallery` for another debug id, `-Phoard.native.benchRelease=true` for a debug-signed
+  R8 build to measure frames).
 - **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017; Reveal's edited previews ADR 0020): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and

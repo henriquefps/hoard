@@ -6,7 +6,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import dev.hfps.hoard.app.ui.files.FilesScreen
-import dev.hfps.hoard.app.ui.gallery.GalleryScreen
+import dev.hfps.hoard.app.ui.gallery.GalleryContent
+import dev.hfps.hoard.app.ui.gallery.GalleryUi
 import dev.hfps.hoard.app.ui.importer.ImportScreen
 import dev.hfps.hoard.app.ui.importer.ImportUiState
 import dev.hfps.hoard.app.ui.settings.SettingsScreen
@@ -60,11 +61,12 @@ class ShellScreenshotTest {
         }
     }
 
+    // Phase 3 replaced the empty Gallery: its goldens are GalleryScreenTest's (docs/testing/gallery/).
     @Test fun galleryPhoneLight() = shoot("gallery_phone_light", PHONE, dark = false) {
-        TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryScreen(onOpenSettings = {}) }
+        TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryContent(GalleryUi(dev.hfps.hoard.app.gallery.layout(emptyList(), false)), dev.hfps.hoard.app.gallery.FakeThumbs) }
     }
     @Test fun galleryLandscapeDark() = shoot("gallery_landscape_dark", LANDSCAPE, dark = true) {
-        TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryScreen(onOpenSettings = {}) }
+        TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryContent(GalleryUi(dev.hfps.hoard.app.gallery.layout(emptyList(), false)), dev.hfps.hoard.app.gallery.FakeThumbs) }
     }
 
     private val settings: @Composable () -> Unit = {

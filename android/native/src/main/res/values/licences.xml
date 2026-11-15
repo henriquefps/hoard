@@ -12,6 +12,7 @@
     <string name="licence_guava" translatable="false">Guava, javax.inject, JSpecify</string>
     <string name="licence_desugar" translatable="false">Java core library desugaring (desugar_jdk_libs)</string>
     <string name="licence_mlkit" translatable="false">ML Kit face detection, with its Google Play services and Firebase components</string>
+    <string name="licence_code_scanner" translatable="false">Google code scanner (ML Kit, through Google Play services)</string>
     <string name="licence_inter" translatable="false">Inter</string>
     <string name="licence_phosphor" translatable="false">Phosphor Icons</string>
     <string name="licence_mermaid" translatable="false">Mermaid</string>

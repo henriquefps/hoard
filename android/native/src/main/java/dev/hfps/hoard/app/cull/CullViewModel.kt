@@ -155,13 +155,30 @@ sealed interface CullEvent {
 class CullViewModel(
     val key: CullKey,
     private val backend: CullBackend,
-    private val dao: CullDao,
+    private val store: CullStore,
     settings: Flow<CullSettings>,
     private val compute: CoroutineDispatcher = Dispatchers.Default,
     private val now: () -> Long = System::currentTimeMillis,
     /** The settings store (null in tests): the viewer's ⋯ toggles write through it. */
     private val appSettings: dev.hfps.hoard.app.data.AppSettings? = null,
+    /** The Gallery (ADR 0021): newest first, like its grid; a folder keeps capture order. */
+    private val newestFirst: Boolean = false,
+    /** Analyse only this many shots around the one on screen (the Gallery: thousands of shots); null = all. */
+    private val analysisWindow: Int? = null,
 ) : ViewModel() {
+    /** A folder's culling (ADR 0008): decisions and caches in Hoard 1's tables for [key]. */
+    constructor(
+        key: CullKey,
+        backend: CullBackend,
+        dao: CullDao,
+        settings: Flow<CullSettings>,
+        compute: CoroutineDispatcher = Dispatchers.Default,
+        now: () -> Long = System::currentTimeMillis,
+        appSettings: dev.hfps.hoard.app.data.AppSettings? = null,
+    ) : this(key, backend, FolderCullStore(dao, key), settings, compute, now, appSettings)
+
+    /** Shots decided here in the last seconds (their saved value may not have come back yet). Before `init`. */
+    private val recent = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
     private val core = MutableStateFlow(CullCore())
     private val controls = MutableStateFlow(CullControls())
     private val settingsState = settings.stateIn(viewModelScope, SharingStarted.Eagerly, CullSettings())
@@ -193,7 +210,27 @@ class CullViewModel(
 
     init {
         load()
+        store.external?.let { flow -> viewModelScope.launch { flow.collect(::mergeExternal) } }
     }
+
+    /**
+     * Decisions changed elsewhere while open (the Gallery: a sync brought another device's pick). Shots with a write
+     * of ours on its way keep theirs.
+     */
+    private fun mergeExternal(external: Map<String, Decision>) {
+        val c = core.value
+        if (c.status != CullStatus.Ready) return
+        var next: LinkedHashMap<String, Decision>? = null
+        for (shot in c.shots) {
+            if (shot.id in recent) continue
+            val want = external[shot.id] ?: Decision.UNMARKED
+            if (c.decisions.of(shot.id) == want) continue
+            if (next == null) next = LinkedHashMap(c.decisions)
+            if (want.unmarked) next.remove(shot.id) else next[shot.id] = want
+        }
+        if (next != null) core.update { it.copy(decisions = next) }
+    }
+
 
     // --- Open ------------------------------------------------------------------------------------------------------
 
@@ -208,13 +245,13 @@ class CullViewModel(
         openJob = viewModelScope.launch {
             try {
                 val opened = backend.open()
-                val rows = dao.forFolder(key.locationId, key.share, key.path)
-                val session = dao.session(key.locationId, key.share, key.path)
+                val rows = store.decisions()
+                val session = store.session()
                 val decisions = rows.associate { it.shotId to Decision(Flag.of(it.flag), it.rating) }.filterValues { !it.unmarked }
                 core.update { it.copy(status = CullStatus.Ready, shots = opened.shots, access = opened.access, libRaw = opened.libRaw, decisions = decisions, session = session, errorCode = null) }
-                serial { dao.touchSession(key.locationId, key.share, key.path, shotCount = opened.shots.size) }
+                serial { store.touchSession(shotCount = opened.shots.size) }
                 // Sidecars (ADR 0011): what each shot's sidecar must be newer than, then import the newer ones.
-                val sidecarRows = dao.sidecars(key.locationId, key.share, key.path).associateBy { it.shotId }
+                val sidecarRows = store.sidecars().associateBy { it.shotId }
                 val decidedAt = rows.associate { it.shotId to it.updatedAt }
                 sidecarStates = HashMap(opened.shots.associate { s ->
                     val r = sidecarRows[s.id]
@@ -237,7 +274,7 @@ class CullViewModel(
                     }
                     core.update { it.copy(metadata = it.metadata + result) }
                 }
-                core.update { it.copy(metadataDone = true, shots = sortByCapture(it.shots, it.metadata)) }
+                core.update { it.copy(metadataDone = true, shots = sortByCapture(it.shots, it.metadata).let { s -> if (newestFirst) s.asReversed().toList() else s }) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -269,6 +306,8 @@ class CullViewModel(
     private fun applyImports(found: List<dev.hfps.hoard.smb.cull.SidecarFound>, atOpen: Boolean): Int {
         val next = LinkedHashMap(core.value.decisions)
         val changed = ArrayList<Triple<String, String?, Int>>()
+        // ADR 0016 "Client rules" 4: an imported decision is dated by the sidecar's mtime, not the time of the import.
+        val decidedAt = HashMap<String, Long>()
         val rows = ArrayList<CullDao.SidecarUpdate>()
         for (item in found) {
             val read = item.read ?: continue
@@ -282,14 +321,15 @@ class CullViewModel(
             if (!importChanges(current, imported)) continue
             if (imported.unmarked) next.remove(item.shotId) else next[item.shotId] = imported
             changed += Triple(item.shotId, imported.flag?.wire, imported.rating)
+            decidedAt[item.shotId] = mtime
         }
         if (changed.isNotEmpty()) core.update { it.copy(decisions = next) }
         if (changed.isNotEmpty() || rows.isNotEmpty()) {
             viewModelScope.launch {
                 runCatching {
                     serial {
-                        dao.saveDecisions(key.locationId, key.share, key.path, changed)
-                        dao.saveSidecars(key.locationId, key.share, key.path, rows)
+                        store.saveDecisions(changed, decidedAt)
+                        store.saveSidecars(rows)
                     }
                 }.onFailure { if (it !is CancellationException) events.trySend(CullEvent.SaveFailed) }
             }
@@ -327,14 +367,17 @@ class CullViewModel(
         val at = now()
         for (id in change.shotIds) {
             touched += id
+            recent += id
             sidecarStates[id] = SidecarState(at, sidecarStates[id]?.sidecarMtime, false)
         }
         viewModelScope.launch {
             try {
                 serial {
-                    dao.saveDecisions(key.locationId, key.share, key.path, change.shotIds.mapIndexed { i, id -> Triple(id, values[i].flag?.wire, values[i].rating) })
-                    dao.saveSidecars(key.locationId, key.share, key.path, change.shotIds.map { CullDao.SidecarUpdate(it, decidedAt = at, setDecidedAt = true, synced = false) })
+                    store.saveDecisions(change.shotIds.mapIndexed { i, id -> Triple(id, values[i].flag?.wire, values[i].rating) })
+                    store.saveSidecars(change.shotIds.map { CullDao.SidecarUpdate(it, decidedAt = at, setDecidedAt = true, synced = false) })
                 }
+                delay(RECENT_MS)
+                change.shotIds.forEach { recent -= it }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -376,7 +419,7 @@ class CullViewModel(
         }
         if (result.readOnly) core.update { it.copy(sidecarsRefused = true) }
         if (failed > 0) sidecarFailures(failed)
-        if (rows.isNotEmpty()) viewModelScope.launch { runCatching { serial { dao.saveSidecars(key.locationId, key.share, key.path, rows) } } }
+        if (rows.isNotEmpty()) viewModelScope.launch { runCatching { serial { store.saveSidecars(rows) } } }
     }
 
     private fun sidecarFailures(count: Int) {
@@ -407,8 +450,8 @@ class CullViewModel(
                 undo = c.undo.filter { change -> change.shotIds.none { it in gone } },
             )
         }
-        serial { dao.forgetShots(key.locationId, key.share, key.path, shotIds) }
-        serial { dao.touchSession(key.locationId, key.share, key.path, shotCount = core.value.shots.size) }
+        serial { store.forgetShots(shotIds) }
+        serial { store.touchSession(shotCount = core.value.shots.size) }
     }
 
     private var lastShotJob: Job? = null
@@ -417,7 +460,7 @@ class CullViewModel(
         lastShotJob?.cancel()
         lastShotJob = viewModelScope.launch {
             delay(800)
-            runCatching { serial { dao.touchSession(key.locationId, key.share, key.path, lastShotId = shotId, setLastShot = true) } }
+            runCatching { serial { store.touchSession(lastShotId = shotId, setLastShot = true) } }
             core.update { c -> c.copy(session = c.session?.copy(lastShotId = shotId)) }
         }
     }
@@ -460,7 +503,16 @@ class CullViewModel(
     fun focus(shotId: String?) {
         focus = shotId
         urgentFocus = shotId != null
+        if (shotId != null && shotId !in detailed) {
+            detailed += shotId
+            viewModelScope.launch {
+                val more = runCatching { backend.details(shotId) }.getOrNull() ?: return@launch
+                core.update { it.copy(metadata = it.metadata + (shotId to more)) }
+            }
+        }
     }
+
+    private val detailed = HashSet<String>()
 
     private fun startAnalysis() {
         analysisJob?.cancel()
@@ -468,7 +520,7 @@ class CullViewModel(
             // 1. Cached analyses of this folder.
             val cached = HashMap<String, Analysis>()
             runCatching {
-                val byPath = dao.analyses(key.locationId, key.share, key.path).associateBy { it.path }
+                val byPath = store.analyses().associateBy { it.path }
                 for (shot in core.value.shots) {
                     val file = analysedFile(shot)
                     val row = byPath[file.path] ?: continue
@@ -482,9 +534,15 @@ class CullViewModel(
             try {
                 while (true) {
                     val c = core.value
-                    val pending = c.shots.withIndex().filter { (_, s) -> s.id !in c.analyses && s.id !in c.failed }
-                    if (pending.isEmpty()) break
                     val focusIndex = focus?.let { id -> c.shots.indexOfFirst { it.id == id }.coerceAtLeast(0) } ?: 0
+                    val window = analysisWindow
+                    val pending = c.shots.withIndex().filter { (i, s) -> s.id !in c.analyses && s.id !in c.failed && (window == null || (focus != null && kotlin.math.abs(i - focusIndex) <= window)) }
+                    if (pending.isEmpty()) {
+                        if (window == null) break
+                        // The Gallery: wait for the viewer to move on.
+                        delay(400)
+                        continue
+                    }
                     fun distance(index: Int) = if (index >= focusIndex) (index - focusIndex).toDouble() else (focusIndex - index) * 1.5 + 0.5
                     val batch = pending.sortedBy { distance(it.index) }.take(ANALYSIS_BATCH).map { it.value }
                     val urgent = urgentFocus && batch.first().id == focus
@@ -506,7 +564,7 @@ class CullViewModel(
                             rows += CullAnalysisEntity(key.locationId, key.share, file.path, key.path, file.size, file.modifiedAt, a.version, AnalysisJson.write(a), dev.hfps.hoard.data.legacy.isoNow())
                         }
                         core.update { it.copy(analyses = it.analyses + measured, failed = it.failed + failedNow, facesAvailable = result.faces) }
-                        if (rows.isNotEmpty()) viewModelScope.launch { runCatching { serial { dao.putAnalyses(rows) } } }
+                        if (rows.isNotEmpty()) viewModelScope.launch { runCatching { serial { store.putAnalyses(rows) } } }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Throwable) {
@@ -543,6 +601,8 @@ class CullViewModel(
         /** Shots per analysis call: small, so the order follows the user. */
         const val ANALYSIS_BATCH = 3
         const val ANALYSIS_RETRIES = 3
+        /** How long a shot decided here ignores outside changes (its own write coming back). */
+        const val RECENT_MS = 3000L
     }
 }
 
