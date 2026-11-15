@@ -34,7 +34,9 @@ import dev.hfps.hoard.app.ui.common.errorTitle
 import dev.hfps.hoard.app.ui.transfers.NotificationsPermission
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.smb.ErrorCode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Batches above this many files ask first (Reveal lists them all in one hand-off). */
 const val REVEAL_CONFIRM_ABOVE = 200
@@ -58,8 +60,22 @@ fun rememberReveal(actions: FileActions): RevealController {
     var available by remember { mutableStateOf(actions.revealAvailable()) }
     var pending by remember { mutableStateOf<RevealRequest?>(null) }
     // Installing or removing Reveal shows or hides the action when Hoard comes back.
-    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { available = actions.revealAvailable() }
-    LaunchedEffect(Unit) { available = actions.revealAvailable() }
+    // Whether Reveal takes server references (ADR 0022): its versionCode, read off the main thread when the screen
+    // starts and when Hoard comes back (Reveal updated meanwhile), never during composition.
+    var acceptsReferences by remember { mutableStateOf(false) }
+    fun recheckReferences() {
+        scope.launch {
+            acceptsReferences = withContext(Dispatchers.IO) { runCatching { container.reveal.acceptsServerReferences() }.getOrDefault(false) }
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        available = actions.revealAvailable()
+        recheckReferences()
+    }
+    LaunchedEffect(Unit) {
+        available = actions.revealAvailable()
+        recheckReferences()
+    }
 
     fun send(request: RevealRequest) {
         val activity = context.findActivity() ?: return
@@ -80,10 +96,19 @@ fun rememberReveal(actions: FileActions): RevealController {
         }
     }
 
+    /** ADR 0022: every photo of the hand-off is a server item (Reveal reads them from the server, not through Hoard). */
+    fun allOnServer(location: BrowseLocation, folderPath: String, paths: List<String>): Boolean {
+        val links = container.serverLinks
+        val ref = links.ref(location, folderPath) ?: return false
+        val resolution = links.paths.cached(ref) ?: return false
+        if (!acceptsReferences) return false
+        return paths.all { resolution.match(it) is dev.hfps.hoard.server.paths.FileMatch.Mapped }
+    }
+
     val edit: (BrowseLocation, String, List<String>, String?, String?) -> Unit = { location, folderPath, paths, title, initial ->
         if (paths.isNotEmpty()) {
             val request = RevealRequest(location, folderPath, paths, title, initial)
-            val smb = location.isSmb && settings?.revealStreamNoteSeen != true
+            val smb = location.isSmb && settings?.revealStreamNoteSeen != true && !allOnServer(location, folderPath, paths)
             if (needsRevealConfirm(paths.size, smb)) pending = request else send(request)
         }
     }
@@ -93,7 +118,7 @@ fun rememberReveal(actions: FileActions): RevealController {
         if (request != null) {
             var dontExplain by remember { mutableStateOf(false) }
             val count = request.paths.size
-            val smb = request.location.isSmb && settings?.revealStreamNoteSeen != true
+            val smb = request.location.isSmb && settings?.revealStreamNoteSeen != true && !allOnServer(request.location, request.folderPath, request.paths)
             ConfirmDialog(
                 title = pluralStringResource(R.plurals.t_reveal_confirm_title, count, count.toString()),
                 body = listOfNotNull(

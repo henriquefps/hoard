@@ -187,6 +187,9 @@ class SyncEngine(
             db.culling().clearFingerprints()
             db.culling().clearPending()
             db.device().clearPushed()
+            // ADR 0022: mappings belong to the paired server.
+            db.mappings().clearMappings()
+            db.mappings().clearAllMisses()
             db.account().clear()
         }
     }
@@ -214,6 +217,18 @@ class SyncEngine(
                 // A first hand-over sends only what was decided; a later one (decided again) also sends what was cleared.
                 .filter { clears || (it.field == CullField.Rating.wire && values.rating > 0) || (it.field == CullField.Flag.wire && values.flag != null) }
                 .map { it.copy(baseRev = 0) }
+            if (rows.isNotEmpty()) db.culling().putPending(rows)
+        }
+    }
+
+    /**
+     * ADR 0022 "Culling: dual write": a decision on a mapped SMB shot was also written into its XMP sidecar, whose
+     * mtime is [sidecarMtime]. The changes still pending for [itemId] that carry exactly these [values] take that time,
+     * so the server's later import of the same sidecar finds the same value at the same time (a no-op, no revision).
+     */
+    suspend fun redate(itemId: String, values: CullValues, sidecarMtime: Long) {
+        db.withTransaction {
+            val rows = CullingRules.redated(db.culling().pendingFor(itemId), values, sidecarMtime)
             if (rows.isNotEmpty()) db.culling().putPending(rows)
         }
     }

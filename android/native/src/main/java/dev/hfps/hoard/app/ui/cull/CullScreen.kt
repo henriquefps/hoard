@@ -161,8 +161,21 @@ class CullViewModelFactory(
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        val b = backend?.invoke() ?: NativeCullBackend(container.cullService(), container.routes, container.gateway, container.volumeRegistry, location, key.path)
-        return CullViewModel(key, b, container.database.cull(), container.appSettings.cull, appSettings = container.appSettings) as T
+        val b = backend?.invoke() ?: NativeCullBackend(
+            container.cullService(), container.routes, container.gateway, container.volumeRegistry, location, key.path,
+            onDeleted = { if (location.isSmb) container.serverLinks.invalidate(location, key.path) },
+        )
+        val dao = container.database.cull()
+        if (location.isSmb && backend == null) {
+            // ADR 0022: on a mapped SMB folder, decisions also go to the server's culling of the same items.
+            val links = container.serverLinks
+            val store = dev.hfps.hoard.app.cull.MappedCullStore(
+                container.appContext, dev.hfps.hoard.app.cull.FolderCullStore(dao, key), dao, key, container.gallery,
+                items = { links.shotItems(links.resolveFolder(location, key.path)) },
+            )
+            return CullViewModel(key, b, store, container.appSettings.cull, appSettings = container.appSettings) as T
+        }
+        return CullViewModel(key, b, dao, container.appSettings.cull, appSettings = container.appSettings) as T
     }
 }
 
@@ -185,6 +198,7 @@ fun CullFolderScreen(
     onOpenSettings: () -> Unit,
 ) {
     val view by vm.view.collectAsStateWithLifecycle()
+    val serverShots by vm.serverShots.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val res = androidx.compose.ui.platform.LocalResources.current
     val toaster = LocalToaster.current
@@ -307,7 +321,7 @@ fun CullFolderScreen(
                         }
                     }
                     items(view.items, key = { if (it is GridItem.Stack) "stack:${it.burst}" else it.shotId }) { item ->
-                        GridCell(view, images, item, onOpen = ::openShot, onToggleBurst = vm::toggleBurst)
+                        GridCell(view, images, item, onOpen = ::openShot, onToggleBurst = vm::toggleBurst, onServer = item.shotId in serverShots)
                     }
                 }
             }
@@ -568,8 +582,9 @@ private fun SuggestionBar(view: CullView, onAcceptAll: () -> Unit, onHide: () ->
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GridCell(view: CullView, images: CullImages, item: GridItem, onOpen: (String, Boolean) -> Unit, onToggleBurst: (String) -> Unit) {
+private fun GridCell(view: CullView, images: CullImages, item: GridItem, onOpen: (String, Boolean) -> Unit, onToggleBurst: (String) -> Unit, onServer: Boolean = false) {
     val shot = view.byId[item.shotId] ?: return
+    val serverLabel = stringResource(R.string.gallery_badge_server)
     val decision = view.core.decisions.of(shot.id)
     val burst = view.bursts[shot.id]
     val suggestion = if (view.controls.suggesting) view.suggestions[shot.id] else null
@@ -615,7 +630,11 @@ private fun GridCell(view: CullView, images: CullImages, item: GridItem, onOpen:
             FlagMarks(view.flags[shot.id], burst != null && shot.id in view.bestShots)
         }
         if (suggestion != null) SuggestionMark(suggestion, Modifier.align(Alignment.BottomStart).padding(start = 4.dp, bottom = 28.dp))
-        KindBadge(shot, Modifier.align(Alignment.BottomStart).padding(4.dp))
+        Row(Modifier.align(Alignment.BottomStart).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            KindBadge(shot)
+            // ADR 0022: the paired server holds this shot (a mapped SMB folder).
+            if (onServer) Badge("", Modifier.testTag("badge-server").semantics { contentDescription = serverLabel }, icon = PhosphorRegular.Cloud)
+        }
         StarsMark(decision.rating, Modifier.align(Alignment.BottomEnd).padding(4.dp))
         when {
             stack != null && status != null -> {

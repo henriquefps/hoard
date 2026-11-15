@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.2.0
+
+- **Your share's photos are your server's photos** ([ADR 0022](docs/adr/0022-smb-folders-on-the-server.md)). When a folder of an SMB share is also one of hoard-server's NAS folders (the same files), Hoard recognises it the first time you open a folder there, by reading two of its photos (2 MB each), and from then on knows which files the server holds by their path, size and date. Needs hoard-server 0.10.0.
+  - Files and the culling grid show the **on the server** mark (the cloud of the Gallery) on those photos.
+  - **Culling** on that share also goes to the server, for the same photos as in the Gallery, on top of the sidecar files as before: Reveal and the web gallery see your picks and stars, and theirs show up in Hoard. The sidecar and the server get the same time for each decision, so the server's reading of the sidecar changes nothing.
+  - **Edit in Reveal** sends those photos as server photos (Reveal 0.9.0 or later reads them from the server), and only the rest as links through Hoard, as before; one hand-off can have both.
+  - Settings › Photo server › **Mapped folders** lists what Hoard recognised, with **Forget**.
+  - Folders the server does not have work exactly as before.
+
 ## 2.1.0
 
 - **Gallery tab** ([ADR 0021](docs/adr/0021-gallery.md)): photos on the phone and on hoard-server in one grid, with culling everywhere (decisions are shared with the server and the web gallery), edited previews from Reveal, a pairing flow (QR code) and Settings › Photo server. Photos on the server open in Reveal by reference (`CULLING` version 2 for Reveal 0.9.0 and later; [ADR 0010](docs/adr/0010-edit-in-reveal.md), "Server items"); SMB files still go as links. Needs Reveal 0.9.0 or later for server references ([test report](docs/testing/gallery/README.md)).

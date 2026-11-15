@@ -115,6 +115,9 @@ class AppContainer(context: Context) {
         dev.hfps.hoard.app.gallery.GalleryRepository(appContext, database.cull(), scope, BuildConfig.VERSION_NAME, BuildConfig.DEBUG).also { it.settings = settingsStore }
     }
 
+    /** SMB folders mapped to the server's NAS folders (ADR 0022). */
+    val serverLinks: dev.hfps.hoard.app.files.ServerLinks by lazy { dev.hfps.hoard.app.files.ServerLinks(this) }
+
     val transfers: TransferService by lazy {
         TransferService(scope, NativeTransferManager(TransferManager.get(appContext)), database.transfers(), ::endpointOf)
     }

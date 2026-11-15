@@ -381,7 +381,7 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
     ) {
         PullToRefreshBox(
             isRefreshing = state.listing.loading && (state.listing.entries != null || state.listing.shares != null),
-            onRefresh = { viewModel.load(quiet = true) },
+            onRefresh = { viewModel.load(quiet = true, refresh = true) },
             modifier = Modifier.fillMaxSize(),
         ) {
             LazyColumn(Modifier.fillMaxSize().testTag("browse-list"), state = listState) {
@@ -841,6 +841,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.folderContent(
                     actions = rowActions,
                     onToggle = { viewModel.toggle(entry) },
                     onLongPress = { viewModel.startSelection(entry) },
+                    onServer = entry.path in state.listing.onServer,
                 )
             }
             item(key = "footer", contentType = "footer") {
@@ -947,6 +948,8 @@ private fun FileRow(
     actions: RowActions,
     onToggle: () -> Unit,
     onLongPress: () -> Unit,
+    /** The paired server holds this file (ADR 0022): the Gallery's "on the server" mark. */
+    onServer: Boolean = false,
 ) {
     val context = LocalContext.current
     val res = androidx.compose.ui.platform.LocalResources.current
@@ -984,7 +987,13 @@ private fun FileRow(
                 style = HfpsTheme.typography.body.copy(fontWeight = FontWeight.Medium),
                 color = if (entry.isHidden) HfpsTheme.colors.mutedForeground else HfpsTheme.colors.cardForeground,
             )
-            Text(details, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 1)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (onServer) {
+                    val label = stringResource(R.string.gallery_badge_server)
+                    Icon(PhosphorRegular.Cloud, label, Modifier.size(14.dp).testTag("badge-server"), tint = HfpsTheme.colors.primary)
+                }
+                Text(details, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 1)
+            }
         }
         when {
             opening -> CircularProgressIndicator(Modifier.size(20.dp).padding(end = 12.dp), strokeWidth = 2.dp, color = HfpsTheme.colors.primary)

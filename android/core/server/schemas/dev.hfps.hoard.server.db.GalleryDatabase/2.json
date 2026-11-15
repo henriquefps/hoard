@@ -1,0 +1,795 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "b14e5c72ea0c50b4779c547019219880",
+    "entities": [
+      {
+        "tableName": "server_account",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `url` TEXT NOT NULL, `server_id` TEXT NOT NULL, `server_name` TEXT, `server_version` TEXT, `device_id` TEXT NOT NULL, `physical_device_id` TEXT, `app` TEXT NOT NULL, `features` TEXT NOT NULL, `cursor` TEXT, `caught_up` INTEGER NOT NULL DEFAULT 0, `paired_at` INTEGER NOT NULL, `last_sync_at` INTEGER, `last_error` TEXT, `last_error_at` INTEGER, `claim_candidates` TEXT, `culling_declared` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "url",
+            "columnName": "url",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverName",
+            "columnName": "server_name",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "serverVersion",
+            "columnName": "server_version",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deviceId",
+            "columnName": "device_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "physicalDeviceId",
+            "columnName": "physical_device_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "app",
+            "columnName": "app",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "features",
+            "columnName": "features",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cursor",
+            "columnName": "cursor",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "caughtUp",
+            "columnName": "caught_up",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "pairedAt",
+            "columnName": "paired_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSyncAt",
+            "columnName": "last_sync_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "last_error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastErrorAt",
+            "columnName": "last_error_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "claimCandidates",
+            "columnName": "claim_candidates",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "cullingDeclared",
+            "columnName": "culling_declared",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "server_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `rev` INTEGER NOT NULL, `kind` TEXT NOT NULL, `main_fingerprint` TEXT NOT NULL, `sort_time` INTEGER NOT NULL, `capture_local` TEXT, `make` TEXT, `model` TEXT, `lens` TEXT, `width` INTEGER, `height` INTEGER, `orientation` INTEGER, `duration_ms` INTEGER, `name` TEXT NOT NULL, `folder` TEXT NOT NULL, `search` TEXT NOT NULL, `has_raw` INTEGER NOT NULL, `edit_primary` TEXT, `edit_count` INTEGER NOT NULL, `edited_at` INTEGER, `json` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rev",
+            "columnName": "rev",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mainFingerprint",
+            "columnName": "main_fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortTime",
+            "columnName": "sort_time",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "captureLocal",
+            "columnName": "capture_local",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "make",
+            "columnName": "make",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lens",
+            "columnName": "lens",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "orientation",
+            "columnName": "orientation",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folder",
+            "columnName": "folder",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "search",
+            "columnName": "search",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasRaw",
+            "columnName": "has_raw",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "editPrimary",
+            "columnName": "edit_primary",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "editCount",
+            "columnName": "edit_count",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "editedAt",
+            "columnName": "edited_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "json",
+            "columnName": "json",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_server_items_sort",
+            "unique": false,
+            "columnNames": [
+              "sort_time"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_server_items_sort` ON `${TABLE_NAME}` (`sort_time`)"
+          },
+          {
+            "name": "idx_server_items_kind",
+            "unique": false,
+            "columnNames": [
+              "kind"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_server_items_kind` ON `${TABLE_NAME}` (`kind`)"
+          }
+        ]
+      },
+      {
+        "tableName": "server_item_files",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`fingerprint` TEXT NOT NULL, `item_id` TEXT NOT NULL, `role` TEXT NOT NULL, PRIMARY KEY(`fingerprint`, `item_id`))",
+        "fields": [
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "fingerprint",
+            "item_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_server_item_files_item",
+            "unique": false,
+            "columnNames": [
+              "item_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_server_item_files_item` ON `${TABLE_NAME}` (`item_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "culling",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`item_id` TEXT NOT NULL, `rev` INTEGER NOT NULL, `replaced_by` TEXT, `rating` INTEGER, `rating_rev` INTEGER, `rating_at` INTEGER, `rating_device` TEXT, `flag` TEXT, `flag_rev` INTEGER, `flag_at` INTEGER, `flag_device` TEXT, `label` TEXT, `label_rev` INTEGER, `label_at` INTEGER, `label_device` TEXT, PRIMARY KEY(`item_id`))",
+        "fields": [
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rev",
+            "columnName": "rev",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "replacedBy",
+            "columnName": "replaced_by",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "rating",
+            "columnName": "rating",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "ratingRev",
+            "columnName": "rating_rev",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "ratingAt",
+            "columnName": "rating_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "ratingDevice",
+            "columnName": "rating_device",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "flag",
+            "columnName": "flag",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "flagRev",
+            "columnName": "flag_rev",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "flagAt",
+            "columnName": "flag_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "flagDevice",
+            "columnName": "flag_device",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "labelRev",
+            "columnName": "label_rev",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "labelAt",
+            "columnName": "label_at",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "labelDevice",
+            "columnName": "label_device",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "item_id"
+          ]
+        }
+      },
+      {
+        "tableName": "culling_fingerprints",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`fingerprint` TEXT NOT NULL, `item_id` TEXT NOT NULL, PRIMARY KEY(`fingerprint`, `item_id`))",
+        "fields": [
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "fingerprint",
+            "item_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_culling_fingerprints_item",
+            "unique": false,
+            "columnNames": [
+              "item_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_culling_fingerprints_item` ON `${TABLE_NAME}` (`item_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "culling_pending",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`item_id` TEXT NOT NULL, `field` TEXT NOT NULL, `value` TEXT NOT NULL, `base_rev` INTEGER NOT NULL, `modified_at` INTEGER NOT NULL, `attempts` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`item_id`, `field`))",
+        "fields": [
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "field",
+            "columnName": "field",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "value",
+            "columnName": "value",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseRev",
+            "columnName": "base_rev",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modifiedAt",
+            "columnName": "modified_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "attempts",
+            "columnName": "attempts",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "item_id",
+            "field"
+          ]
+        }
+      },
+      {
+        "tableName": "device_media",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `path` TEXT NOT NULL, `location_id` TEXT NOT NULL, `dir` TEXT NOT NULL, `name` TEXT NOT NULL, `shot_key` TEXT NOT NULL, `mime` TEXT, `size` INTEGER NOT NULL, `modified` INTEGER NOT NULL, `taken` INTEGER NOT NULL, `duration_ms` INTEGER, `width` INTEGER, `height` INTEGER, `orientation` INTEGER, `video` INTEGER NOT NULL, `fingerprint` TEXT, `fp_size` INTEGER, `fp_modified` INTEGER, `motion` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "locationId",
+            "columnName": "location_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dir",
+            "columnName": "dir",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "shotKey",
+            "columnName": "shot_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mime",
+            "columnName": "mime",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "size",
+            "columnName": "size",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modified",
+            "columnName": "modified",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taken",
+            "columnName": "taken",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "duration_ms",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "orientation",
+            "columnName": "orientation",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "video",
+            "columnName": "video",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "fpSize",
+            "columnName": "fp_size",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "fpModified",
+            "columnName": "fp_modified",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "motion",
+            "columnName": "motion",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_device_media_shot",
+            "unique": false,
+            "columnNames": [
+              "shot_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_device_media_shot` ON `${TABLE_NAME}` (`shot_key`)"
+          },
+          {
+            "name": "idx_device_media_fingerprint",
+            "unique": false,
+            "columnNames": [
+              "fingerprint"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_device_media_fingerprint` ON `${TABLE_NAME}` (`fingerprint`)"
+          }
+        ]
+      },
+      {
+        "tableName": "device_folders",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`path` TEXT NOT NULL, `added_at` INTEGER NOT NULL, PRIMARY KEY(`path`))",
+        "fields": [
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "added_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "path"
+          ]
+        }
+      },
+      {
+        "tableName": "device_pushed",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`shot_key` TEXT NOT NULL, `item_id` TEXT NOT NULL, `pushed_at` INTEGER NOT NULL, PRIMARY KEY(`shot_key`))",
+        "fields": [
+          {
+            "fieldPath": "shotKey",
+            "columnName": "shot_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemId",
+            "columnName": "item_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pushedAt",
+            "columnName": "pushed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "shot_key"
+          ]
+        }
+      },
+      {
+        "tableName": "smb_mappings",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`machine_id` TEXT NOT NULL, `share` TEXT NOT NULL, `smb_prefix` TEXT NOT NULL, `server_id` TEXT NOT NULL, `folder_id` TEXT NOT NULL, `folder_name` TEXT, `server_prefix` TEXT NOT NULL, `smb_guid` TEXT, `learned_at` INTEGER NOT NULL, `verified_at` INTEGER NOT NULL, PRIMARY KEY(`machine_id`, `share`, `smb_prefix`))",
+        "fields": [
+          {
+            "fieldPath": "machineId",
+            "columnName": "machine_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "smbPrefix",
+            "columnName": "smb_prefix",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderId",
+            "columnName": "folder_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "folderName",
+            "columnName": "folder_name",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "serverPrefix",
+            "columnName": "server_prefix",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "smbGuid",
+            "columnName": "smb_guid",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "learnedAt",
+            "columnName": "learned_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "verifiedAt",
+            "columnName": "verified_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "machine_id",
+            "share",
+            "smb_prefix"
+          ]
+        }
+      },
+      {
+        "tableName": "smb_mapping_misses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`machine_id` TEXT NOT NULL, `share` TEXT NOT NULL, `path` TEXT NOT NULL, `server_id` TEXT NOT NULL, `checked_at` INTEGER NOT NULL, PRIMARY KEY(`machine_id`, `share`, `path`))",
+        "fields": [
+          {
+            "fieldPath": "machineId",
+            "columnName": "machine_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "share",
+            "columnName": "share",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "path",
+            "columnName": "path",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverId",
+            "columnName": "server_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "checkedAt",
+            "columnName": "checked_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "machine_id",
+            "share",
+            "path"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b14e5c72ea0c50b4779c547019219880')"
+    ]
+  }
+}

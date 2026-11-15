@@ -217,4 +217,11 @@
     <string name="server_address_save">Save</string>
     <string name="server_address_hint">Another address of the same server, e.g. https://box.tailnet.ts.net:8444 (https is preferred).</string>
     <string name="server_address_failed">Not this server, or not reachable at this address.</string>
+    <!-- SMB folders on the server (ADR 0022). -->
+    <string name="server_mapped_folders">Mapped folders</string>
+    <string name="server_mapped_folders_hint">Share folders the server also indexes: their photos go to Reveal from the server, and your picks and stars sync like the Gallery\'s.</string>
+    <string name="server_mapped_folders_none">None yet. Open a share folder the server also indexes, and Hoard recognises it by reading two of its photos.</string>
+    <string name="server_mapped_folder">%1$s › %2$s</string>
+    <string name="server_mapped_folder_server">On the server: %1$s</string>
+    <string name="server_mapped_folder_forget">Forget</string>
 </resources>

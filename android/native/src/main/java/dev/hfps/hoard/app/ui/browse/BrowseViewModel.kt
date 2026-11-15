@@ -61,6 +61,8 @@ data class Listing(
     /** The route behind a route failure (attempts per address). */
     val errorRoute: RouteState? = null,
     val loading: Boolean = true,
+    /** Paths of the files the paired server holds (ADR 0022: an SMB folder mapped to a NAS folder). */
+    val onServer: Set<String> = emptySet(),
 )
 
 data class BrowseUiState(
@@ -208,8 +210,11 @@ class BrowseViewModel(
         }
     }
 
-    /** Lists the folder (or the shares); [quiet] keeps the current list on screen while it refreshes. */
-    fun load(quiet: Boolean = false) {
+    /**
+     * Lists the folder (or the shares); [quiet] keeps the current list on screen while it refreshes. [refresh] (pull to
+     * refresh) also asks the server again which files it holds (ADR 0022), instead of its few-minute cache.
+     */
+    fun load(quiet: Boolean = false, refresh: Boolean = false) {
         val loc = location.value ?: return
         loadJob?.cancel()
         listing.update { if (quiet) it.copy(loading = true) else it.copy(loading = true, error = null) }
@@ -222,7 +227,14 @@ class BrowseViewModel(
                     listing.value = Listing(shares = shares, loading = false)
                 } else {
                     val folder = files.run(loc) { fs, cancel -> fs.list(path, cancel) }
-                    listing.value = Listing(entries = folder.entries, access = folder.access, loading = false)
+                    val kept = listing.value.onServer
+                    listing.value = Listing(entries = folder.entries, access = folder.access, loading = false, onServer = kept)
+                    if (loc.isSmb) {
+                        // Which files are server items: after the listing is on screen, never before.
+                        val resolution = container.serverLinks.resolve(loc, path, folder.entries, refresh)
+                        val mapped = resolution?.matches?.filterValues { it is dev.hfps.hoard.server.paths.FileMatch.Mapped }?.keys.orEmpty()
+                        listing.update { it.copy(onServer = mapped) }
+                    }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -294,7 +306,12 @@ class BrowseViewModel(
     }
 
     suspend fun rename(entry: SmbEntry, newName: String): ErrorCode? = write { loc ->
-        files.run(loc) { fs, _ -> fs.rename(entry.path, newName) }
+        try {
+            files.run(loc) { fs, _ -> fs.rename(entry.path, newName) }
+        } finally {
+            // ADR 0022: a file of this folder changed name; its cached server resolution is not trusted any more.
+            container.serverLinks.invalidate(loc, path)
+        }
         load(quiet = true)
     }
 
@@ -304,6 +321,7 @@ class BrowseViewModel(
         for (entry in entries) {
             if (write { loc -> files.run(loc) { fs, cancel -> fs.delete(entry.path, entry.isDirectory, cancel) } } != null) failed++
         }
+        location.value?.let { container.serverLinks.invalidate(it, path) }
         clearSelection()
         load(quiet = true)
         return failed

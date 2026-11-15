@@ -7,6 +7,8 @@
   Amended 2026-11-15 (2.0.2): "Idle reclaim" (idle proxy descriptors give their read slot back; the contract unchanged).
   Amended 2026-11-15 (2.1.0): **server items** go by reference, `CULLING` version 2 (section "Server items (2.1.0)",
   Reveal ADR 0011 amendment W3/H).
+  Amended 2026-11-15 (2.2.0): SMB files of Files and folder culling that the server holds go as server items too
+  (section "Server items (2.1.0)", last bullets; ADR 0022).
 
 ## Context
 
@@ -281,7 +283,14 @@ Reveal ADR 0011 amendment W3/H (frozen 2026-11-15; `docs/integration/README.md` 
   only on the server cannot go: the viewer says "update Reveal". Hoard never streams a server photo to Reveal (no
   provider, no grant, nothing in `HandoffStore`), and never falls back to URIs for a photo the server holds when
   Reveal takes references, whether or not that Reveal is paired (Reveal offers to pair or claim). SMB files of Files
-  and folder culling still go as URIs until 2.2.0 maps share paths to server items (`items-by-path`).
+  and folder culling go as server items since 2.2.0 (below).
+- **SMB files (2.2.0, ADR 0022).** On an SMB share Hoard maps to one of the server's NAS folders (learned from two
+  files' fingerprints, `items-by-path`), each shot whose main file (the RAW of a RAW + JPEG shot) the server's index
+  matches by path, size and mtime goes as a server item; any other shot is looked up by its main file's fingerprint
+  (at most 20 shots per hand-off) and goes as a server item when found, else as URIs. Never URIs for a photo Hoard
+  knows the server holds; a photo it cannot cheaply place goes as URIs. `FileActions.editInReveal` builds one mixed
+  hand-off (`launchMixed`): server items for those shots, URIs (ClipData, grants, sidecars, `CULLING`) for the rest;
+  the items' pending culling is pushed first. Reveal older than 0.9.0: every file as a URI, as before.
 - **The intent.** The same `dev.hfps.reveal.action.DEVELOP` to one package (release, else debug). Server items add
   `SERVER_REF_VERSION` = 1, `SERVER_ID` (the paired server's id), `SERVER_ITEMS` (an `ArrayList<Bundle>`, order kept,
   one per shot: `itemId`; `fingerprint` = the main file's `v1:`; `fingerprints` = every member's when more than one;
