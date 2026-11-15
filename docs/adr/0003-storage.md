@@ -66,7 +66,9 @@ sends the password once to native code, which encrypts it with an AES-GCM key he
 plugin method returns a password; `connect`, `startTransfer` and streams look credentials up natively by
 `machineId`. Deleting a machine also calls `deleteCredentials`.
 
-Theme, palette and language are per-device conveniences in `localStorage`, as in other hfps apps.
+Theme, palette and language are per-device conveniences in `localStorage`, as in other hfps apps. Since Hoard 2's
+phase 2c they are also mirrored into `settings` (`themeMode`, `palette`, `language`, `textViewer`, written by
+`AppearanceMirror`, never read by Hoard 1) so the native importer carries them (ADR 0019).
 
 ## Consequences
 

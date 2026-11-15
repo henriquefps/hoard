@@ -1,7 +1,7 @@
 # ADR 0019: Hoard 2, a native app built next to the Capacitor app
 
 - **Date**: 2026-11-14
-- **Status**: Accepted (phase 2a: foundations; phase 2b: the Files tab)
+- **Status**: Accepted (phase 2a: foundations; phase 2b: the Files tab; phase 2c: culling at parity, the Files gaps, the parity audit)
 
 ## Context
 
@@ -126,9 +126,12 @@ analysis (ML Kit)
   - **Pending transfers**: WorkManager's database in `no_backup`.
   - **Route state**: runtime only; route detection rebuilds it.
 - **Lost at the swap unless carried over:** theme, palette, language and the text viewer's preferences live in the
-  WebView's `localStorage`. The plan is that the last Capacitor release before the swap mirrors them into
-  `settings` (keys `themeMode`, `palette`, `language`), so the importer brings them like any other setting. Until
-  then the native app starts with the system theme and the blue palette.
+  WebView's `localStorage`. Since phase 2c Hoard 1 mirrors them into `settings` (`AppearanceMirror`: keys
+  `themeMode`, `palette`, `language`, `textViewer`; it only writes, Hoard 1 keeps reading localStorage), so the
+  importer brings them like any other setting: the theme and palette are read as they are, the text viewer reads
+  `textViewer`, and the language is applied once after the import (`AppLanguage.applyImported`). A Hoard 1 install
+  must run a release with the mirror before the swap; without it Hoard 2 starts with the system theme, the blue
+  palette and the system language.
 - **Fixtures** come from the real JS code: `scripts/legacy-db/fixtures.ts` runs `src/db/migrations.ts` and the
   `src/db/queries.ts` writers over sql.js. It writes a v7 database with rows in every table, a v1 database, the same
   v1 after the JS `migrate()` (the native upgrade must produce an identical database), and a "v99" database.
@@ -163,9 +166,36 @@ does not change.
 - **New in Hoard 2**: a built-in image viewer (pager over the folder's photos, zoom), where Hoard 1 handed images to
   another app.
 - **`java.time` on minSdk 24**: core library desugaring in `:native`.
-- **Not yet at parity** (tracked in `docs/testing/native-2b.md`): the text viewer's previews and editor extras, the
-  per-address attempts in the route error state, the compact header search, drag reorder (up / down buttons instead),
+- **Not yet at parity** after 2b (tracked in `docs/testing/native-2b.md`) and closed in 2c: the text viewer's previews
+  and editor extras, the per-address attempts in the route error state, the compact header search, drag reorder,
   machine reordering, the transfers progress ring, the in-app language setting.
+
+### Phase 2c: culling at parity, the Files gaps, the parity audit
+
+- **Culling** (ADR 0008, 0009, 0011) moves to `:native` (`cull/`, `ui/cull/`) over the unchanged native side:
+  `CullService`, `ImageCore`, `CullSidecarWriter` and `CullSidecars` in `:core:smb` / `:core:image`, one
+  `CullService` per process in the container. `NativeCullBackend` does what the plugin's `cull*` methods did (open
+  through the route engine's session, reopen once when the handle expired, jobs awaited without blocking a thread).
+- **What moved from TypeScript to Kotlin**, each with its tests ported: `model.ts` (`CullLogic.kt`), `burst.ts`
+  (`Burst.kt`), `assist.ts` (`Assist.kt`), `xmp.ts` (`CullXmp.kt`); `useCullFolder` + `useCullAssist` become
+  `CullViewModel` (decisions applied at once, saved in Room then written as sidecars, undo, imports at open and on
+  resume, analyses from the cache then natively around the shot on screen); `images.ts` becomes `CullImages`
+  (decoded bitmaps in small memory caches over the image core's disk caches; HARDWARE bitmaps for screens and tiles).
+- **The analysis cache is shared**: `cull_analysis` rows hold the contract's `CullAnalysis` JSON with
+  `CullAnalysisJson`'s rounding (`AnalysisJson`), so Hoard 1's rows are reused after the import and the other way round.
+- **Copy picks** goes through the one engine: `TransferRequest` gained `sidecars` / `hiddenSidecars`, passed to
+  `StartTransferRequest` for copies only (as `startTransfer` did).
+- **The words**: `export_strings.py` now exports every namespace, culling's included.
+- **Text viewer**: Markdown is rendered natively (a GFM subset: headings, lists, tasks, tables, quotes, code); Mermaid
+  (files and ```mermaid blocks) uses the same mermaid.js as Hoard 1 (12.3.0, MIT, vendored in
+  `native/src/main/assets/mermaid/`) in a WebView that loads nothing from the network (`securityLevel: "strict"`, a
+  CSP, network loads blocked). Highlighting is a small tokenizer (keywords, strings, comments, numbers), not
+  CodeMirror's grammars.
+- **Language**: Android 13+ keeps the choice as the per-app locale (`LocaleManager`; `generateLocaleConfig` lists the
+  languages in the system's per-app language page); before 13 a preferences file and `attachBaseContext` apply it.
+- **The parity audit** (`docs/testing/native-2c.md`) lists every Hoard 1 route and feature with its native
+  equivalent; the few "Partly" rows say what differs and why (Markdown images, a split editor, the highlighter's
+  depth, the transfers drawer, compare's focus-score fallback).
 
 ### UI stack
 
