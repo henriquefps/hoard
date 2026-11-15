@@ -49,7 +49,9 @@ even when the server holds them.
 
 `GET /v1/device` tells Hoard whether this phone's Reveal is paired with the same server. Hoard uses that only for how
 it presents things. When the answer is no or unknown, Hoard **still** sends server items, and Reveal offers to pair
-or claim. Hoard never falls back to URIs for a photo the server holds.
+or claim. Hoard never falls back to URIs for a photo it **knows** the server holds (a Gallery item, a file in a
+mapped folder, or a single photo it looked up). A photo Hoard cannot place cheaply goes as URIs: for example a
+multi-selection in an unmapped folder, or more than 20 lookups. Reveal later adopts those by fingerprint (W3/C).
 
 URIs are used only for photos the server does not hold, or when the installed Reveal is older than 0.9.0. Reveal
 never reads a server item through Hoard: no provider and no grants.
