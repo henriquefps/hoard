@@ -123,6 +123,21 @@ fun CullScreen(container: AppContainer, locationId: String, share: String?, path
         if (machines == null || volumes == null) null else FileService.resolve(locationId, share, machines!!, volumes!!, phone, drive)
     }
     val title = path.split('/').lastOrNull { it.isNotEmpty() } ?: share ?: location?.name.orEmpty()
+    // A USB drive or SD card pulled out while culling it: say so and leave (Hoard 1's useLeaveWhenUnplugged).
+    val toaster = LocalToaster.current
+    val res = androidx.compose.ui.platform.LocalResources.current
+    var seenVolume by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(location?.volume?.state, location?.kind) {
+        val loc = location ?: return@LaunchedEffect
+        if (loc.kind != dev.hfps.hoard.app.files.LocationKind.Volume) return@LaunchedEffect
+        val readable = loc.volume?.state.let { it == "mounted" || it == "mountedReadOnly" }
+        if (readable) {
+            seenVolume = loc.name
+        } else if (seenVolume != null) {
+            toaster.show(res.getString(R.string.t_locations_unplugged, seenVolume))
+            onBack()
+        }
+    }
     when {
         machines == null || volumes == null -> HfpsScaffold(topBar = { HfpsTopBar(title, onBack = onBack) }) {
             CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = HfpsTheme.colors.primary, strokeWidth = 2.dp)

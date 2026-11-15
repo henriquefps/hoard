@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -183,6 +184,7 @@ fun CullViewer(
     val focus = remember { FocusRequester() }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val flagDistance = with(density) { FLAG_DISTANCE.toPx() }
+    val exclusionBand = with(density) { 200.dp.toPx() }
 
     fun setIndex(next: Int) {
         val b = burstMode
@@ -406,7 +408,16 @@ fun CullViewer(
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     HorizontalPager(
                         pager,
-                        Modifier.fillMaxSize().testTag("cull-pager"),
+                        Modifier
+                            .fillMaxSize()
+                            // Swipes from the screen edges page instead of going back, in a band across the middle
+                            // of the photo (Android honours 200 dp per edge; Hoard 1's setGestureExclusion).
+                            .systemGestureExclusion { coordinates ->
+                                val band = exclusionBand
+                                val top = (coordinates.size.height - band) / 2
+                                androidx.compose.ui.geometry.Rect(0f, top.coerceAtLeast(0f), coordinates.size.width.toFloat(), top + band)
+                            }
+                            .testTag("cull-pager"),
                         userScrollEnabled = !zoom.zoomed,
                         beyondViewportPageCount = 1,
                         key = { order.getOrNull(it)?.id ?: it },
