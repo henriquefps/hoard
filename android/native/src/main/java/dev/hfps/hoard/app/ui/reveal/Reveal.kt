@@ -80,10 +80,19 @@ fun rememberReveal(actions: FileActions): RevealController {
         }
     }
 
+    /** ADR 0022: every photo of the hand-off is a server item (Reveal reads them from the server, not through Hoard). */
+    fun allOnServer(location: BrowseLocation, folderPath: String, paths: List<String>): Boolean {
+        val links = container.serverLinks
+        val ref = links.ref(location, folderPath) ?: return false
+        val resolution = links.paths.cached(ref) ?: return false
+        if (!runCatching { container.reveal.acceptsServerReferences() }.getOrDefault(false)) return false
+        return paths.all { resolution.match(it) is dev.hfps.hoard.server.paths.FileMatch.Mapped }
+    }
+
     val edit: (BrowseLocation, String, List<String>, String?, String?) -> Unit = { location, folderPath, paths, title, initial ->
         if (paths.isNotEmpty()) {
             val request = RevealRequest(location, folderPath, paths, title, initial)
-            val smb = location.isSmb && settings?.revealStreamNoteSeen != true
+            val smb = location.isSmb && settings?.revealStreamNoteSeen != true && !allOnServer(location, folderPath, paths)
             if (needsRevealConfirm(paths.size, smb)) pending = request else send(request)
         }
     }
@@ -93,7 +102,7 @@ fun rememberReveal(actions: FileActions): RevealController {
         if (request != null) {
             var dontExplain by remember { mutableStateOf(false) }
             val count = request.paths.size
-            val smb = request.location.isSmb && settings?.revealStreamNoteSeen != true
+            val smb = request.location.isSmb && settings?.revealStreamNoteSeen != true && !allOnServer(request.location, request.folderPath, request.paths)
             ConfirmDialog(
                 title = pluralStringResource(R.plurals.t_reveal_confirm_title, count, count.toString()),
                 body = listOfNotNull(

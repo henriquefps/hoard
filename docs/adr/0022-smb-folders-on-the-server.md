@@ -95,6 +95,10 @@ before its JPEG's.
 - **One time for both writes.** When the sidecar write comes back with its mtime and still holds the shot's latest
   decision, the shot's pending server changes that carry exactly those values are **re-dated to the sidecar's mtime**
   (`CullingRules.redated`). The server then sees the same value at the same time in both places.
+- **Decisions made before the mapping** (years of Hoard 1 culling on the share, sidecar imports) are handed to the
+  server once, the first time the folder opens in culling after it is mapped: each with its own time and `baseRev` 0,
+  as the Gallery hands over phone shots (ADR 0021 `Handover`, the same `device_pushed` bookkeeping under an `smb:` key),
+  so the server keeps whichever decision is newer. A shot whose server value is already newer is only marked.
 - **Showing the server's values**: a mapped shot whose server record is newer than its folder row (another device, the
   web gallery) shows the server's rating and flag, dated by the server's `modifiedAt` (so an older sidecar does not win
   over it at the next open, rule 4), and an open culling session follows syncs. A pulled value is never written to a
@@ -135,6 +139,8 @@ From Files and folder culling on an SMB share (`FileActions.editInReveal`, plan 
 - Everything else goes as URIs, exactly as before (ClipData, grants, sidecars, `CULLING` for those only). One intent
   may carry both.
 - The pending culling of the items is pushed first (best effort, 3 s), as in the Gallery.
+- When every photo of an SMB hand-off goes as a server item, the "photos are read through Hoard" confirmation is not
+  shown.
 - **Never URIs for a mapped shot** when Reveal takes references. An older Reveal gets every file as a URI, as before.
 
 ### Settings
