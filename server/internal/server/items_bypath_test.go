@@ -98,7 +98,7 @@ func TestItemsByPath(t *testing.T) {
 	}
 }
 
-// TestDeviceLiveness: GET /v1/device lists every device of the physical device with revoked and lastSeenAt.
+// TestDeviceLiveness: GET /v1/device lists the live devices of the physical device (never revoked ones) with lastSeenAt.
 func TestDeviceLiveness(t *testing.T) {
 	hs := newHarness(t, false)
 	reveal, revealID, _ := hs.pairApp("Pixel 8", "reveal", "Pixel 8")
@@ -111,10 +111,11 @@ func TestDeviceLiveness(t *testing.T) {
 		devs := decode(t, hs.do("GET", "/v1/device", nil, bearer(key)))["physicalDevice"].(map[string]any)["devices"].([]any)
 		for _, d := range devs {
 			m := d.(map[string]any)
-			for _, k := range []string{"revoked", "lastSeenAt"} {
-				if _, ok := m[k]; !ok {
-					t.Fatalf("%v lacks %s", m, k)
-				}
+			if _, ok := m["lastSeenAt"]; !ok {
+				t.Fatalf("%v lacks lastSeenAt", m)
+			}
+			if _, ok := m["revoked"]; ok {
+				t.Fatalf("%v has a revoked field", m)
 			}
 			out[m["id"].(string)] = m
 		}
@@ -123,7 +124,7 @@ func TestDeviceLiveness(t *testing.T) {
 	// Hoard just authenticated: listed, not revoked, seen now. Reveal only paired so far: never seen (null, not absent).
 	now := time.Now().UnixMilli()
 	e := entries(hoard)
-	if len(e) != 2 || e[hoardID]["revoked"] != false || e[hoardID]["lastSeenAt"] == nil ||
+	if len(e) != 2 || e[hoardID]["lastSeenAt"] == nil ||
 		now-int64(e[hoardID]["lastSeenAt"].(float64)) > 60_000 || e[revealID]["lastSeenAt"] != nil {
 		t.Fatalf("%v", e)
 	}
@@ -131,15 +132,20 @@ func TestDeviceLiveness(t *testing.T) {
 		t.Fatalf("%v", e)
 	}
 	// Never seen: null, not absent (authenticating always records a sighting, so this is the JSON shape).
-	if js, _ := json.Marshal(physicalEntry{}); !strings.Contains(string(js), `"revoked":false,"lastSeenAt":null`) {
+	if js, _ := json.Marshal(physicalEntry{}); !strings.Contains(string(js), `"lastSeenAt":null`) {
 		t.Fatalf("%s", js)
 	}
-	// Revoked: still listed (to the apps still paired), revoked = true; Hoard's own view of itself is unchanged.
+	// lastSeenAt moves forward when the device authenticates again (writes are rate-limited, so only check it never goes back).
+	first := int64(e[hoardID]["lastSeenAt"].(float64))
+	if again := entries(hoard); int64(again[hoardID]["lastSeenAt"].(float64)) < first {
+		t.Fatalf("lastSeenAt went back: %v", again)
+	}
+	// Revoked: no longer listed (devices is live-only, as before 0.10.0); Hoard keeps seeing itself.
 	if err := hs.st.RevokeDevice(t.Context(), revealID); err != nil {
 		t.Fatal(err)
 	}
 	e = entries(hoard)
-	if len(e) != 2 || e[revealID]["revoked"] != true || e[hoardID]["revoked"] != false {
+	if _, listed := e[revealID]; len(e) != 1 || listed || e[hoardID] == nil {
 		t.Fatalf("%v", e)
 	}
 	expect(t, hs.do("GET", "/v1/device", nil, bearer(reveal)), 401, "unauthorized")

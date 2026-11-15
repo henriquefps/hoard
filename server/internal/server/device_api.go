@@ -30,11 +30,10 @@ type deviceEntry struct {
 	Model        *string `json:"model"`
 }
 
-// physicalEntry is a device of physicalDevice.devices, which also lists the revoked ones; revoked and lastSeenAt
-// (ms, null: never) are hoard-server 0.10.0 (ADR 0017 "Liveness"). Candidates list live devices only.
+// physicalEntry is a live device of physicalDevice.devices (revoked ones are never listed, as before 0.10.0);
+// lastSeenAt (ms, null: never) is hoard-server 0.10.0 (ADR 0017 "Liveness").
 type physicalEntry struct {
 	deviceEntry
-	Revoked    bool   `json:"revoked"`
 	LastSeenAt *int64 `json:"lastSeenAt"`
 }
 
@@ -143,14 +142,12 @@ func (s *Server) deviceView(ctx context.Context, id string) (deviceView, error) 
 	if d.CullingSince != nil {
 		v.Features = append(v.Features, featureCulling)
 	}
-	if members := groups(all)[d.PhysicalID]; len(members) > 0 {
+	members := groups(all)[d.PhysicalID]
+	if len(members) > 0 {
 		v.PhysicalDevice.Name = members[0].Name
 	}
-	// Every device of the physical device, revoked ones included, oldest first (Devices lists newest first).
-	for i := len(all) - 1; i >= 0; i-- {
-		if m := all[i]; m.PhysicalID == d.PhysicalID {
-			v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, physicalEntry{entry(m), m.RevokedAt != nil, m.LastSeenAt})
-		}
+	for _, m := range members {
+		v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, physicalEntry{entry(m), m.LastSeenAt})
 	}
 	return v, nil
 }

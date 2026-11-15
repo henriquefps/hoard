@@ -1997,14 +1997,13 @@ components:
             name: { type: string }
             devices:
               type: array
-              description: "Every device of the physical device, revoked ones included (hoard-server 0.10.0, ADR 0017 \"Liveness\")"
+              description: "The live (not revoked) devices of the physical device; revoked ones are never listed. `lastSeenAt` is hoard-server 0.10.0 (ADR 0017 \"Liveness\")"
               items:
                 allOf:
                   - $ref: "#/components/schemas/DeviceEntry"
                   - type: object
-                    required: [revoked, lastSeenAt]
+                    required: [lastSeenAt]
                     properties:
-                      revoked: { type: boolean }
                       lastSeenAt: { type: [integer, "null"], format: int64, description: "Unix ms; null: never seen" }
         candidates:
           type: array

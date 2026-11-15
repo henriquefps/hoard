@@ -62,7 +62,7 @@ Constraints:
   same variant still cannot (a reinstall: revoke the old one). Android: the release sends its name, other build types
   append `BuildConfig.BUILD_TYPE` (or the flavour) — e.g. `"reveal-" + BUILD_TYPE` unless `BUILD_TYPE == "release"`.
 - A physical device with no device left (its last device moved away) is deleted. A revoked device stays in its
-  physical device (shown as revoked): revoking does not regroup.
+  physical device (but is not listed in `devices`): revoking does not regroup.
 
 ### How both apps end up with the same id: the server proposes, the user confirms
 
@@ -169,18 +169,20 @@ existing `deviceId`s, physical device ids and `rvk1_` keys stay valid, and an `a
 ## Liveness in `GET /v1/device` (hoard-server 0.10.0)
 
 Hoard needs to know whether Reveal on the same phone is really paired with this server before it hands photos to it as
-server references. Each entry of `physicalDevice.devices` gains `"revoked": bool` and `"lastSeenAt": <Unix ms | null>`
-(`null`: never seen). The list now includes the group's **revoked** devices too (it listed live devices only), so a
-client can tell "revoked" from "not there"; `candidates` still list live devices only and have no new fields, and
-`GET /v1/devices` is unchanged. The order is still oldest first, and `name` still comes from the oldest live device.
+server references. Each entry of `physicalDevice.devices` gains `"lastSeenAt": <Unix ms | null>` (`null`: never seen).
+Nothing else changes: the list still holds **live devices only** (a revoked device is never listed, as before 0.10.0,
+because released Reveal versions list `physicalDevice.devices` minus themselves as the other live apps on the phone),
+`candidates` have no new fields, `GET /v1/devices` is unchanged, the order is still oldest first and `name` still comes
+from the oldest live device. There is no `revoked` field and no list of revoked devices.
 
 ```json
 "devices": [{"id": "a0e4…", "name": "Pixel 8", "app": "reveal", "platform": "android", "manufacturer": "Google",
-             "model": "Pixel 8", "revoked": false, "lastSeenAt": 1731600000000}]
+             "model": "Pixel 8", "lastSeenAt": 1731600000000}]
 ```
 
-**Client rule:** an app on the same physical device counts as paired with this server when it is listed, not revoked,
-and seen in the last 90 days (`lastSeenAt` not null and within 90 days of now). `lastSeenAt` is updated when the device
+**Client rule:** an app on the same physical device counts as paired with this server when it is listed in
+`physicalDevice.devices` and was seen in the last 90 days (`lastSeenAt` not null and within 90 days of now). Not listed
+means revoked or never claimed into this group: the same answer for the client. `lastSeenAt` is updated when the device
 authenticates (rate-limited writes as before), so an installation that stopped syncing falls out of the rule by itself.
 
 ## Consequences

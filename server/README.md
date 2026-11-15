@@ -208,7 +208,7 @@ database, so going back to 0.4.0 means restoring that copy.
 
 0.10.0 adds two things for Hoard's hand-off of photos to Reveal, both additive on `/v1` and with no database migration:
 `POST /v1/items/by-path` (the live item of each file path in a NAS folder; `features` gains `items-by-path`, ADR 0014)
-and `revoked` / `lastSeenAt` on the devices of `GET /v1/device` (ADR 0017). No step to take.
+and `lastSeenAt` on the devices of `GET /v1/device` (the list stays live devices only) (ADR 0017). No step to take.
 
 ## Upgrading to 0.9.0 (Reveal's edited previews)
 
