@@ -69,6 +69,9 @@ class HandoffStore(
     private val newId: () -> String = StreamTokens::generate,
 ) {
     private var loaded = false
+
+    /** Last-use and size changes not written yet ([touch], [updateFile]): written with the next save or [flush]. */
+    private var dirty = false
     private val items = LinkedHashMap<String, HandoffItem>()
     private val byKey = HashMap<String, String>()
     private val folders = HashMap<String, String>()
@@ -132,7 +135,11 @@ class HandoffStore(
         return if (StreamTokens.matches(item.id, id)) item else null
     }
 
-    /** Reveal read [id] now. Written at most once per [TOUCH_EVERY_MS] (an editor reads a file many times). */
+    /**
+     * Reveal read [id] now. Kept in memory, at most once per [TOUCH_EVERY_MS] (an editor reads a file many times), and
+     * written with the next [flush] (the provider flushes once per burst of opens, not once per open: a burst of 200
+     * opens would otherwise rewrite the whole file 200 times).
+     */
     @Synchronized
     fun touch(id: String) {
         load()
@@ -140,17 +147,23 @@ class HandoffStore(
         val now = clock()
         if (now - item.lastUsedAt < TOUCH_EVERY_MS) return
         items[id] = item.copy(lastUsedAt = now)
-        save()
+        dirty = true
     }
 
-    /** The file's size / mtime as last seen (opened, or written through the provider). */
+    /** The file's size / mtime as last seen (opened, or written through the provider); written with the next [flush]. */
     @Synchronized
     fun updateFile(id: String, size: Long, modifiedMillis: Long?) {
         load()
         val item = items[id] ?: return
         if (item.size == size && item.modifiedMillis == modifiedMillis) return
         items[id] = item.copy(size = size, modifiedMillis = modifiedMillis, lastUsedAt = clock())
-        save()
+        dirty = true
+    }
+
+    /** Writes what [touch] and [updateFile] kept in memory, if anything. */
+    @Synchronized
+    fun flush() {
+        if (dirty) save()
     }
 
     @Synchronized
@@ -305,6 +318,7 @@ class HandoffStore(
     }
 
     private fun save() {
+        dirty = false
         val json = JSONObject()
             .put("version", VERSION)
             .put("items", JSONArray().apply { items.values.forEach { put(itemJson(it)) } })

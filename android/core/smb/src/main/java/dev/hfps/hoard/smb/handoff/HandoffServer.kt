@@ -6,11 +6,8 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.HandlerThread
 import android.os.ParcelFileDescriptor
 import android.os.ProxyFileDescriptorCallback
-import android.os.storage.StorageManager
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.system.ErrnoException
@@ -36,6 +33,10 @@ import dev.hfps.hoard.smb.transfer.TransferPaths
 import dev.hfps.hoard.smb.viewer.RemoteFileInfo
 import java.io.File
 import java.io.FileNotFoundException
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -49,19 +50,46 @@ import java.util.concurrent.atomic.AtomicLong
  * the bytes stay in memory and go to the share in one atomic write (`.<name>.hoardpart`, then a rename) when the
  * descriptor is synced or closed, only when they are well-formed XMP. Photos are never written.
  *
- * Every open takes a short lease in [StreamRegistry] ([LEASE_IDLE_MS] after the last read), which keeps the
+ * Every proxied open takes a short lease in [StreamRegistry] ([LEASE_IDLE_MS] after the last read), which keeps the
  * streaming service (and so the process, un-frozen) up while Reveal reads, then lets it stop.
+ *
+ * Bursts (ADR 0010 "Bursts of opens"): a client may open hundreds of links at once. Opens are gated ([MAX_OPENING]
+ * doing network work at once, a bounded queue, then `busy:`), small files are served from a private copy
+ * ([HandoffCache]: a plain descriptor, no appfuse), proxy descriptors are capped and read with a timeout
+ * ([HandoffProxy]), an unreachable machine fails the rest of the burst at once ([ConnectBackoff]), the connection
+ * is shared and kept a little after the last use ([Sources]), and the log has one line per burst ([HandoffBurst]).
  */
 object HandoffServer {
     private const val TAG = "HoardHandoff"
     private const val STORE_FILE = "reveal-handoffs.json"
+    private const val CACHE_DIR = "handoff"
 
     /** A lease (and the service) ends this long after Reveal last read through a link. */
     const val LEASE_IDLE_MS = 2 * 60_000L
 
+    /** Opens doing network work (stat, a small copy, opening a descriptor) at once; the rest wait or are refused. */
+    const val MAX_OPENING = 4
+    const val OPEN_QUEUE = 16
+    const val OPEN_WAIT_MS = 3_000L
+
+    /** After a machine could not be reached, opens of its share fail at once for this long. */
+    const val BACKOFF_MS = 10_000L
+
+    /** A burst ends after this long without opens; its summary is logged then. */
+    const val BURST_QUIET_MS = 2_000L
+
+    private val BACKOFF_CODES = setOf(ErrorCode.UNREACHABLE, ErrorCode.TIMEOUT, ErrorCode.GUID_MISMATCH, ErrorCode.AUTH_FAILED)
+
     @Volatile private var app: Context? = null
     private lateinit var store: HandoffStore
     private lateinit var credentials: CredentialStore
+    private lateinit var cache: HandoffCache
+
+    private val opening = HandoffLimiter(MAX_OPENING, OPEN_QUEUE, OPEN_WAIT_MS, "hand-off opens in progress")
+    private val backoff = ConnectBackoff(BACKOFF_MS)
+    private val burst = HandoffBurst(BURST_QUIET_MS)
+    private val summaryScheduled = AtomicBoolean()
+    private val summaries = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "hoard-handoff-log").apply { isDaemon = true } }
 
     @Synchronized
     fun init(context: Context) {
@@ -69,6 +97,7 @@ object HandoffServer {
         val appContext = context.applicationContext
         store = HandoffStore(File(appContext.noBackupFilesDir, STORE_FILE))
         credentials = CredentialStore(appContext)
+        cache = HandoffCache(File(appContext.cacheDir, CACHE_DIR))
         StreamRegistry.init(appContext)
         app = appContext
     }
@@ -112,8 +141,10 @@ object HandoffServer {
 
     /**
      * Opens a link for [mode]. Unknown link, unreachable share, missing file, refused login: [FileNotFoundException]
-     * with what went wrong (Reveal treats the photo as unreadable and falls back to its preview). A write on a photo:
-     * [SecurityException]. Runs on a binder thread (never the main thread); connecting may take a few seconds.
+     * with what went wrong (Reveal treats the photo as unreadable and falls back to its preview). Too many opens at
+     * once: [FileNotFoundException] whose message starts with `busy:` ([HandoffBusy]; Reveal retries those). A write
+     * on a photo: [SecurityException]. Runs on a binder thread (never the main thread): at most [MAX_OPENING] opens
+     * do network work at once, the others wait at most [OPEN_WAIT_MS] (ADR 0010 "Bursts of opens").
      */
     fun open(uri: Uri, mode: String, caller: String?): ParcelFileDescriptor {
         val item = item(uri) ?: throw FileNotFoundException("This photo is no longer shared with Reveal")
@@ -123,28 +154,55 @@ object HandoffServer {
             throw FileNotFoundException(e.message)
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) throw FileNotFoundException("Streaming needs Android 8")
-        Log.i(TAG, "open ${item.name} ($mode) for $caller")
+        if (Log.isLoggable(TAG, Log.DEBUG)) Log.d(TAG, "open ${item.name} ($mode) for $caller")
+        burst.begin()
+        scheduleSummary()
+        var outcome = OpenOutcome.FAILED
+        try {
+            val result = opening.acquire().use { openGated(item, access) }
+            outcome = result.second
+            return result.first
+        } catch (e: FileNotFoundException) {
+            if (HandoffBusy.isBusy(e)) outcome = OpenOutcome.REFUSED
+            throw e
+        } finally {
+            burst.end(outcome)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun openGated(item: HandoffItem, access: HandoffAccess): Pair<ParcelFileDescriptor, OpenOutcome> {
         val machine = store.machine(item.machineId)
             ?: throw FileNotFoundException("${item.name}: its machine is no longer in Hoard")
         if (machine.serverGuid == null) throw FileNotFoundException("${item.name}: the machine is not pinned yet")
         if (!credentials.has(machine.id)) throw FileNotFoundException("${item.name}: no login stored for the machine")
+        val key = Sources.keyOf(machine.id, item.share.orEmpty())
+        backoff.blocked(key)?.let { why -> throw FileNotFoundException("${item.name}: $why") }
         val source = Sources.acquire(machine, item.share.orEmpty(), credentials)
         try {
             val info = try {
                 source.stat(item.path)
             } catch (e: Throwable) {
-                throw unreadable(item, SmbErrors.map(e))
+                throw unreadable(item, SmbErrors.map(e), key)
             }
+            backoff.succeeded(key)
             source.smb.activeAddress?.let { store.setLastGood(machine.id, it) }
             if (info?.isDirectory == true) throw FileNotFoundException("${item.name} is a folder now")
             store.touch(item.id)
-            return if (access == HandoffAccess.READ) {
-                info ?: throw FileNotFoundException("${item.name} is no longer on the share")
-                store.updateFile(item.id, info.size, info.modifiedMillis)
-                StreamProvider.openProxy(context(), lease(item, machine), info.size)
-            } else {
-                openWrite(item, machine, source, info, access)
+            if (access != HandoffAccess.READ) return openWrite(item, machine, source, info, access) to OpenOutcome.WRITE
+            info ?: throw FileNotFoundException("${item.name} is no longer on the share")
+            store.updateFile(item.id, info.size, info.modifiedMillis)
+            // Small files: a private copy and a plain descriptor (no appfuse); a slow copy falls back to a proxy.
+            if (cache.fits(info.size)) {
+                val copy = cache.cached(item.id, info.size, info.modifiedMillis) ?: try {
+                    cache.fetch(item.id, info.size, info.modifiedMillis) { source.reader(item.path, info.size, AtomicLong()) }
+                } catch (e: Throwable) {
+                    throw unreadable(item, SmbErrors.map(e), null)
+                }
+                if (copy != null) return ParcelFileDescriptor.open(copy, ParcelFileDescriptor.MODE_READ_ONLY) to OpenOutcome.CACHED
             }
+            val entry = lease(item, machine)
+            return HandoffProxy.openRead(context(), entry, { entry.source.reader(item.path, info.size, entry.fetched) }, info.size) to OpenOutcome.PROXIED
         } finally {
             source.close()
         }
@@ -161,7 +219,7 @@ object HandoffServer {
 
     private fun leaseKey(id: String) = "h-$id"
 
-    private fun unreadable(item: HandoffItem, error: HoardSmbException): FileNotFoundException {
+    private fun unreadable(item: HandoffItem, error: HoardSmbException, backoffKey: String?): FileNotFoundException {
         val why = when (error.code) {
             ErrorCode.UNREACHABLE, ErrorCode.TIMEOUT -> "the machine is not reachable"
             ErrorCode.AUTH_FAILED -> "the machine refused the login"
@@ -170,8 +228,31 @@ object HandoffServer {
             ErrorCode.NOT_FOUND -> "the share or the file is gone"
             else -> error.message ?: error.code.name
         }
+        val reason = "$why (${error.code})"
+        // The machine itself failed: the next opens of the burst fail at once instead of connecting again.
+        if (backoffKey != null && error.code in BACKOFF_CODES) backoff.failed(backoffKey, reason)
         Log.w(TAG, "${item.name} not readable: ${error.code}")
-        return FileNotFoundException("${item.name}: $why (${error.code})")
+        return FileNotFoundException("${item.name}: $reason")
+    }
+
+    // --- Bursts ---------------------------------------------------------------------------------------------------
+
+    private fun scheduleSummary() {
+        if (summaryScheduled.getAndSet(true)) return
+        summaries.schedule(::summarize, BURST_QUIET_MS, TimeUnit.MILLISECONDS)
+    }
+
+    private fun summarize() {
+        val line = burst.flush()
+        if (line == null) {
+            summaries.schedule(::summarize, BURST_QUIET_MS / 2, TimeUnit.MILLISECONDS)
+            return
+        }
+        summaryScheduled.set(false)
+        if (burst.pending() > 0) scheduleSummary()
+        Log.i(TAG, "$line, ${HandoffProxy.slots.active} descriptors open")
+        // Last-use times of the burst, written once (not once per open).
+        runCatching { store.flush() }
     }
 
     // --- Sidecar writes -------------------------------------------------------------------------------------------
@@ -185,26 +266,13 @@ object HandoffServer {
             try {
                 readAll(source, item.path, info.size)
             } catch (e: Throwable) {
-                throw unreadable(item, SmbErrors.map(e))
+                throw unreadable(item, SmbErrors.map(e), null)
             }
         }
         val buffer = SidecarBuffer(initial, append = access == HandoffAccess.APPEND)
         val entry = lease(item, machine)
         val writer = Sources.acquire(machine, item.share.orEmpty(), credentials)
-        val thread = HandlerThread("hoard-handoff-xmp").apply { start() }
-        entry.openFds.incrementAndGet()
-        try {
-            return context().getSystemService(StorageManager::class.java).openProxyFileDescriptor(
-                ParcelFileDescriptor.MODE_READ_WRITE,
-                SidecarCallback(item, buffer, writer, entry, thread),
-                Handler(thread.looper),
-            )
-        } catch (e: Throwable) {
-            entry.openFds.decrementAndGet()
-            writer.close()
-            thread.quitSafely()
-            throw FileNotFoundException("Could not open ${item.name}: ${e.message}")
-        }
+        return HandoffProxy.openWrite(context(), entry, { slot -> SidecarCallback(item, buffer, writer, entry, slot) }) { writer.close() }
     }
 
     private fun readAll(source: StreamSource, path: String, size: Long): ByteArray {
@@ -242,6 +310,7 @@ object HandoffServer {
         }
         val stat = runCatching { fs.stat(item.path) }.getOrNull()
         store.updateFile(item.id, stat?.size ?: bytes.size.toLong(), stat?.modifiedMillis)
+        store.flush()
         Log.i(TAG, "${item.name} written by Reveal (${bytes.size} bytes)")
     }
 
@@ -251,7 +320,7 @@ object HandoffServer {
         private val buffer: SidecarBuffer,
         private val source: Sources.Handle,
         private val entry: StreamEntry,
-        private val thread: HandlerThread,
+        private val slot: HandoffLimiter.Slot,
     ) : ProxyFileDescriptorCallback() {
         override fun onGetSize(): Long = buffer.size.toLong()
 
@@ -277,7 +346,7 @@ object HandoffServer {
                 source.close()
                 entry.openFds.decrementAndGet()
                 entry.touch()
-                thread.quitSafely()
+                slot.close()
             }
         }
 
@@ -317,6 +386,7 @@ object HandoffServer {
         runCatching { context.revokeUriPermission(prefix, flags) }
         items.filter { it.kind == HandoffKind.LOCAL }.forEach { runCatching { context.revokeUriPermission(Uri.parse(it.uri), flags) } }
         StreamRegistry.removeLeases("h-")
+        cache.clear()
         Log.i(TAG, "Revoked ${items.size} hand-off links")
         return items.size
     }
@@ -334,13 +404,21 @@ object HandoffServer {
     // --- Connections ----------------------------------------------------------------------------------------------
 
     /**
-     * One SMB connection per machine + share for every lease and write of the links (a batch Reveal reads file after
-     * file reuses it); reference-counted, closed with the last [Handle].
+     * One SMB connection per machine + share for every open, lease and write of the links (a batch Reveal reads file
+     * after file reuses it); reference-counted, closed [LINGER_MS] after the last [Handle] (a burst of cached opens,
+     * which hold no lease, does not reconnect per open).
      */
     internal object Sources {
+        const val LINGER_MS = 60_000L
+
         private class Pooled(val source: SmbSource) {
             var refs = 0
+            var closing: ScheduledFuture<*>? = null
         }
+
+        private val closer = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "hoard-handoff-linger").apply { isDaemon = true } }
+
+        fun keyOf(machineId: String, share: String) = "$machineId|${share.lowercase()}"
 
         private val pool = HashMap<String, Pooled>()
 
@@ -359,7 +437,7 @@ object HandoffServer {
 
         @Synchronized
         fun acquire(machine: HandoffMachine, share: String, credentials: CredentialStore): Handle {
-            val key = "${machine.id}|${share.lowercase()}"
+            val key = keyOf(machine.id, share)
             val pooled = pool.getOrPut(key) {
                 Pooled(
                     SmbSource(
@@ -372,6 +450,8 @@ object HandoffServer {
                     ),
                 )
             }
+            pooled.closing?.cancel(false)
+            pooled.closing = null
             pooled.refs++
             return Handle(key, pooled.source)
         }
@@ -380,6 +460,12 @@ object HandoffServer {
         private fun release(key: String) {
             val pooled = pool[key] ?: return
             if (--pooled.refs > 0) return
+            pooled.closing = closer.schedule({ expire(key, pooled) }, LINGER_MS, TimeUnit.MILLISECONDS)
+        }
+
+        @Synchronized
+        private fun expire(key: String, pooled: Pooled) {
+            if (pooled.refs > 0 || pool[key] !== pooled) return
             pool.remove(key)
             SmbSource.closeLater(pooled.source)
         }
