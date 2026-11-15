@@ -9,6 +9,10 @@
   Reveal ADR 0011 amendment W3/H).
   Amended 2026-11-15 (2.2.0): SMB files of Files and folder culling that the server holds go as server items too
   (section "Server items (2.1.0)", last bullets; ADR 0022).
+  Amended 2026-11-15 (2.2.0, owner's decision): **local copies, no streaming for new hand-offs** (section "Local
+  copies, no streaming for new hand-offs (2.2.0)"). It replaces, for every new hand-off, what "URIs per location kind",
+  "Stable SMB links", "Write-back" and the persistable grant of "Contract" said; the provider keeps serving the links
+  already handed out ("Cold start", "Bursts of opens", "Idle reclaim", "Bounds and revoking" stay for those).
 
 ## Context
 
@@ -309,6 +313,62 @@ Reveal ADR 0011 amendment W3/H (frozen 2026-11-15; `docs/integration/README.md` 
   test receiver `dev.hfps.reveal` at versionCode 90000 reads the intents back: no ClipData or grants, extras, 1,001
   items in three intents, mixed URI + server items, CULLING v2; an older Reveal takes none). An end-to-end run with a
   real Reveal 0.9.0 waits for that build.
+
+### Local copies, no streaming for new hand-offs (2.2.0)
+
+Owner's decision of 2026-11-15 (`docs/integration/README.md`, "Intent hand-off"). Streaming a RAW from a share through
+Hoard's provider tied Reveal to Hoard and the network for as long as it kept the photo (cold starts, bursts, `busy:`,
+idle reclaim); sidecar items made a second, file-based sync channel next to the server's. A new hand-off now gives
+Reveal each photo one of three ways, per shot:
+
+1. **Server reference**, when the paired server holds it (Gallery items, mapped SMB folders, a looked-up photo):
+   exactly as "Server items (2.1.0)" says, unchanged.
+2. **Its own MediaStore URI**, when it is on the phone and MediaStore indexes it (`RevealCopies.onPhone`: the phone's
+   storage, by `RELATIVE_PATH` + `DISPLAY_NAME` in `MediaStore.Images`): `content://media/external_primary/images/media/<id>`
+   as is, no copy.
+3. **A copy in MediaStore**, for anything else (an SMB file the server does not hold, a USB drive, an SD card, a SAF
+   folder, a phone file MediaStore does not index): the shot's files (RAW + JPEG etc., never a sidecar: `order()` keeps
+   photos only) are copied **through the transfer engine** (ADR 0007, destination `Endpoint.MediaStore`, one job per
+   hand-off, visible in Transfers; no second copy path) into `Pictures/Hoard/<batch title, else yyyy-MM-dd>/`.
+   - **Collection** (`MediaStoreTarget.forFormat`, JVM-tested): `MediaStore.Images` with the MIME type Android's MIME
+     map gives the extension, which is what MediaProvider accepts (`docs/testing/mediastore-raw.md`: ARW, NEF, RAF,
+     DNG, ORF, RW2, JPEG kept their MIME type, visible to another app's query and readable). A format Images refuses
+     (no `image/*` type in the map: **CR3** on Android 16) goes to `MediaStore.Downloads` under
+     `Download/Hoard/<batch>/` as `application/octet-stream` with its real name (coordinator's decision, 2026-11-15).
+     Another app opens such a file only through the grant (it is not in its MediaStore queries), so **Reveal copies
+     those into its own storage on receipt**: it cannot re-open them later.
+   - **Writing** (`MediaStoreTransferFs`): the engine's partial file is a row inserted with `IS_PENDING = 1` under its
+     final name (invisible to other apps); the engine's rename publishes it (`IS_PENDING = 0`). Rows not published when
+     the job ends (cancelled, failed, the worker stopped) are deleted when the endpoint closes: **Cancel removes the
+     partial copies**. A name taken in the batch folder gets the engine's `name (1).ext`.
+   - **Reuse** (`reveal_copies`, Room version 2, ADR 0003): each copy is recorded with its source (location key + path)
+     and the source's size and mtime when copied. A later hand-off of the same source with the same size and mtime
+     reuses the copy while MediaStore still has it with that size (`RevealRoutes.plan`, JVM-tested); otherwise it is
+     copied again.
+   - **Progress**: the screen shows "Copying for Reveal" with files and bytes while the job runs, and Cancel (which
+     cancels the job). The hand-off starts when every photo is there; a failed copy fails the hand-off with the
+     job's error (Retry in Transfers, or edit again: what was copied is reused).
+   - **Space**: Settings › "Photos copied for Reveal" shows how many and how big (rows MediaStore still has: the
+     recorded ones and any other row Hoard owns under `Pictures/Hoard/` and `Download/Hoard/`), and **Delete copies**
+     after a confirmation that says Reveal falls back to its own previews for those photos. Nothing is deleted
+     automatically.
+
+**The intent** is the usual `DEVELOP` to one package: ClipData of the `content://media/…` URIs (in order),
+`TITLE`, `INITIAL_URI`, `CULLING` (version 2 to Reveal ≥ 0.9.0, keyed by those URI strings), server items mixed in as
+before, `BATCH_INDEX` / `BATCH_COUNT` when split. The intent's flags carry **`FLAG_GRANT_READ_URI_PERMISSION` only**:
+no persistable grant, no write grant (`grantUriPermission` is no longer called), **no sidecar items**.
+
+**Old links.** `HandoffStore`, `HandoffServer` and `StreamProvider` stay, with `busy:`, idle reclaim and pruning, so the
+`content://<app>.stream/h/…` links handed out before 2.2.0 keep working; no new hand-off makes one, and no FileProvider
+URI is recorded any more. Settings › "Reveal links" still revokes them.
+
+**Confirmation.** The SMB note ("read through Hoard") is gone; batches over 200 still ask.
+
+Android 10 or later (MediaStore's `RELATIVE_PATH` / `IS_PENDING`; Reveal needs Android 10 too). Tests:
+`MediaStoreTargetTest`, `RevealRoutesTest` (routes, reuse by path + size + mtime, mixed with server items, cancel and
+failure), `TransferRunnerTest` (a stopped job never publishes its part and closes the destination; no XMP), 
+`ServerReferenceIntentTest` (MediaStore URIs + server items in one intent, read grant only, CULLING v1 for an older
+Reveal, BATCH extras), `MigrationTest`; emulator E2E in `docs/testing/local-copy-handoff.md`.
 
 ## Alternatives considered
 

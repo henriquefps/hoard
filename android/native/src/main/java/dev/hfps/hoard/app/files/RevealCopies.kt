@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.RequiresApi
 import dev.hfps.hoard.app.transfers.FolderPlace
 import dev.hfps.hoard.app.transfers.LiveTransfer
 import dev.hfps.hoard.app.transfers.MEDIASTORE_LOCATION_ID
@@ -143,8 +144,11 @@ class RevealCopies(
      * (its partial copies are deleted). Throws `CANCELLED` when the job was cancelled, the job's error when a photo
      * could not be copied.
      */
-    suspend fun ensure(location: BrowseLocation, paths: List<String>, onPhone: Map<String, String>, title: String?, onProgress: (LiveTransfer?) -> Unit): Map<String, String> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) smbFail(ErrorCode.NO_APP, "Reveal needs Android 10")
+    suspend fun ensure(location: BrowseLocation, paths: List<String>, onPhone: Map<String, String>, title: String?, onProgress: (LiveTransfer?) -> Unit): Map<String, String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ensureQ(location, paths, onPhone, title, onProgress) else smbFail(ErrorCode.NO_APP, "Reveal needs Android 10")
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private suspend fun ensureQ(location: BrowseLocation, paths: List<String>, onPhone: Map<String, String>, title: String?, onProgress: (LiveTransfer?) -> Unit): Map<String, String> {
         val toCheck = paths.filter { it !in onPhone }
         val stats = if (toCheck.isEmpty()) emptyMap() else statSources(location, toCheck)
         val key = location.cacheKey
@@ -158,6 +162,7 @@ class RevealCopies(
         return paths.mapNotNull { p -> (plan.uris[p] ?: copied[p])?.let { p to it } }.toMap(LinkedHashMap())
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private suspend fun copy(location: BrowseLocation, paths: List<String>, stats: Map<String, FileStat?>, title: String?, onProgress: (LiveTransfer?) -> Unit): Map<String, String> {
         val folder = RevealRoutes.folder(title, LocalDate.now())
         val service = transfers()
@@ -201,13 +206,16 @@ class RevealCopies(
 
     /** What the copies take now (rows MediaStore still has). */
     suspend fun usage(): Usage = withContext(Dispatchers.IO) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return@withContext Usage(0, 0)
-        val rows = all()
-        Usage(rows.size, rows.sumOf { it.size })
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val rows = all()
+            Usage(rows.size, rows.sumOf { it.size })
+        } else {
+            Usage(0, 0)
+        }
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private suspend fun all(): List<MediaStoreCopies.Row> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
         val recorded = dao.all().mapNotNull { MediaStoreCopies.get(context.contentResolver, Uri.parse(it.uri)) }
         val owned = runCatching { MediaStoreCopies.owned(context) }.getOrDefault(emptyList())
         return (recorded + owned).distinctBy { it.uri.toString() }
@@ -215,6 +223,11 @@ class RevealCopies(
 
     /** Deletes every copy (recorded ones and any other row Hoard owns under `Pictures/Hoard/`, `Download/Hoard/`). */
     suspend fun deleteAll(): Usage = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) deleteAllQ() else Usage(0, 0)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private suspend fun deleteAllQ(): Usage {
         val rows = all()
         var count = 0
         var bytes = 0L
@@ -225,7 +238,7 @@ class RevealCopies(
             }
         }
         dao.clear()
-        Usage(count, bytes)
+        return Usage(count, bytes)
     }
 
     companion object {
