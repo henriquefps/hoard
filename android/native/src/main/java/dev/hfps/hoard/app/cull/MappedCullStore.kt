@@ -230,6 +230,8 @@ class MappedCullStore(
     }
 
     override suspend fun forgetShots(shotIds: List<String>) = delegate.forgetShots(shotIds)
+    override suspend fun sidecarReads() = delegate.sidecarReads()
+    override suspend fun saveSidecarReads(put: Map<String, SidecarSeen>, forget: List<String>) = delegate.saveSidecarReads(put, forget)
     override suspend fun analyses(): List<CullAnalysisEntity> = delegate.analyses()
     override suspend fun putAnalyses(rows: List<CullAnalysisEntity>) = delegate.putAnalyses(rows)
 

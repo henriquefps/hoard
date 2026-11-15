@@ -32,24 +32,49 @@ class CullSidecarsTest {
         """<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">""" +
             """<rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="$rating" $extra/></rdf:RDF></x:xmpmeta>"""
 
-    private fun listed(fs: MemoryFs) = fs.list("DCIM").map { ListedName(it.name, it.modifiedMillis) }
+    private fun listed(fs: MemoryFs) = fs.list("DCIM").map { ListedName(it.name, it.modifiedMillis, it.size) }
 
     @Test
-    fun `reading returns each shot's chosen sidecar newer than its threshold, malformed ones flagged`() {
+    fun `scanning reads each shot's chosen sidecar unless unchanged since the last read, malformed ones flagged`() {
         val fs = MemoryFs("phone")
         fs.file("DCIM/DSC1.ARW", ByteArray(10))
         fs.file("DCIM/DSC1.xmp", xmp(4).toByteArray(), modified = 5_000)
         fs.file("DCIM/.DSC1.xmp", xmp(1).toByteArray(), modified = 9_000)
         fs.file("DCIM/DSC2.JPG.xmp", xmp(-1).toByteArray(), modified = 5_000)
         fs.file("DCIM/DSC3.xmp", "<x:xmpmeta".toByteArray(), modified = 5_000)
-        fs.file("DCIM/DSC4.xmp", xmp(2).toByteArray(), modified = 5_000)
-        val found = CullSidecars.read(fs, "DCIM", shots, listed(fs), mapOf("dsc1" to 4_000L, "dsc2" to null, "dsc4" to 5_000L))
+        val dsc4 = xmp(2).toByteArray()
+        fs.file("DCIM/DSC4.xmp", dsc4, modified = 5_000)
+        // dsc1 was read at an older mtime (changed since: read again); dsc4 was read exactly as it is now (left out).
+        val seen = mapOf("dsc1" to SidecarStamp("DSC1.xmp", null, 4_000L), "dsc4" to SidecarStamp("dsc4.XMP", dsc4.size.toLong(), 5_000L))
+        val scan = CullSidecars.scan(fs, "DCIM", shots, listed(fs), seen)
+        val found = scan.found
         assertEquals(listOf("dsc1", "dsc2", "dsc3"), found.map { it.shotId })
         assertEquals("DSC1.xmp", found[0].name)
         assertEquals(XmpFields(4), found[0].read!!.fields)
         assertEquals(XmpFields(0, XmpFlag.REJECT), found[1].read!!.fields)
+        assertEquals(found[1].size, xmp(-1).toByteArray().size.toLong())
         assertNull(found[2].read)
         assertEquals("malformed", found[2].error)
+        assertTrue(scan.absent.isEmpty())
+        assertTrue(scan.complete)
+        // Same name and mtime but another size: changed.
+        val resized = CullSidecars.scan(fs, "DCIM", shots, listed(fs), mapOf("dsc4" to SidecarStamp("DSC4.xmp", 1L, 5_000L)))
+        assertTrue(resized.found.any { it.shotId == "dsc4" })
+    }
+
+    @Test
+    fun `a scan names the shots without a sidecar, and an empty listing is not complete`() {
+        val fs = MemoryFs("phone")
+        fs.file("DCIM/DSC1.ARW", ByteArray(10))
+        fs.file("DCIM/DSC2.JPG", ByteArray(10))
+        fs.file("DCIM/DSC2.xmp", xmp(3).toByteArray(), modified = 5_000)
+        val scan = CullSidecars.scan(fs, "DCIM", shots.take(2), listed(fs), emptyMap())
+        assertEquals(listOf("dsc2"), scan.found.map { it.shotId })
+        assertEquals(listOf("dsc1"), scan.absent)
+        assertTrue(scan.complete)
+        val empty = CullSidecars.scan(fs, "DCIM", shots.take(2), emptyList(), emptyMap())
+        assertEquals(listOf("dsc1", "dsc2"), empty.absent)
+        assertEquals(false, empty.complete)
     }
 
     @Test
@@ -60,7 +85,7 @@ class CullSidecarsTest {
         val listed = listed(fs)
         val found = CullModel.shots(listed.map { CullFileRef(it.name, "DCIM/${it.name}", 10, null, 0) })
         assertEquals(listOf("dsc1"), found.map { it.id })
-        val sidecars = CullSidecars.read(fs, "DCIM", found, listed, mapOf("dsc1" to null))
+        val sidecars = CullSidecars.scan(fs, "DCIM", found, listed, emptyMap()).found
         assertEquals(".DSC1.xmp", sidecars.single().name)
     }
 

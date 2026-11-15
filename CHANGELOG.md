@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1
+
+- **A sidecar made by another app no longer overwrites your stars** ([ADR 0011](docs/adr/0011-culling-sidecars.md), "Amendment 2.2.1"). When Lightroom, darktable or another tool creates an `.xmp` file for a photo you already rated in Hoard, the file starts from that tool's defaults (often 1 star or none), not from your decision. Hoard now remembers which sidecars it has read and what they said. The first time it sees a sidecar, it only fills what you have not set (stars when the shot has none, a pick or reject when it has neither); your own stars, picks and rejects stay, however new the file is. After that, only what changes in the file counts: rating a photo 2 stars in Lightroom still shows up in Hoard, while a file rewritten without changing the rating leaves Hoard's newer edits alone. The same rule as hoard-server 0.10.1 and Reveal.
+  - Sidecars written by **Export XMP** are recorded as read, so Hoard never takes them back as someone else's.
+  - When a sidecar is deleted, Hoard forgets it (only after listing the folder in full; a drive or share that shows up empty forgets nothing), and a new one later is read as a first read again.
+
 ## 2.2.0
 
 - **Your share's photos are your server's photos** ([ADR 0022](docs/adr/0022-smb-folders-on-the-server.md)). When a folder of an SMB share is also one of hoard-server's NAS folders (the same files), Hoard recognises it the first time you open a folder there, by reading two of its photos (2 MB each), and from then on knows which files the server holds by their path, size and date. Needs hoard-server 0.10.0.

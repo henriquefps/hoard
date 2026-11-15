@@ -22,8 +22,9 @@ import dev.hfps.hoard.smb.cull.CullFolder
 import dev.hfps.hoard.smb.cull.CullService
 import dev.hfps.hoard.smb.cull.CullSidecars
 import dev.hfps.hoard.smb.cull.ListedName
-import dev.hfps.hoard.smb.cull.SidecarFound
 import dev.hfps.hoard.smb.cull.SidecarResult
+import dev.hfps.hoard.smb.cull.SidecarScan
+import dev.hfps.hoard.smb.cull.SidecarStamp
 import dev.hfps.hoard.smb.location.Location
 import dev.hfps.hoard.smb.location.VolumeRegistry
 import dev.hfps.hoard.smb.smbFail
@@ -57,8 +58,11 @@ data class SidecarWrites(val results: List<SidecarResult>, val readOnly: Boolean
 interface CullBackend {
     suspend fun open(): OpenedFolder
     suspend fun metadata(shotIds: List<String>): Map<String, ShotMetadata?>
-    /** Sidecars newer than `after` (shot id → ms, null = any); `refresh` lists the folder again first. */
-    suspend fun readSidecars(after: Map<String, Long?>, refresh: Boolean): List<SidecarFound>
+    /**
+     * The sidecars of the shots in [seen] (shot id → the file last read, null = never read) that changed since that
+     * read, and the shots with no sidecar; `refresh` lists the folder again first (ADR 0011 "First read of a sidecar").
+     */
+    suspend fun readSidecars(seen: Map<String, SidecarStamp?>, refresh: Boolean): SidecarScan
     suspend fun writeSidecars(items: List<Pair<String, XmpFields>>, hidden: Boolean): SidecarWrites
     suspend fun analyze(shotIds: List<String>, urgent: Boolean): AnalyzeResult
     suspend fun thumbnail(shotId: String, maxSize: Int): File
@@ -165,17 +169,17 @@ class NativeCullBackend(
         }
     }
 
-    override suspend fun readSidecars(after: Map<String, Long?>, refresh: Boolean): List<SidecarFound> = call { f ->
+    override suspend fun readSidecars(seen: Map<String, SidecarStamp?>, refresh: Boolean): SidecarScan = call { f ->
         withContext(Dispatchers.IO) {
-            val shots = after.keys.mapNotNull { f.byId[it] }
+            val shots = seen.keys.mapNotNull { f.byId[it] }
             val read = {
                 service.fs(f).use { fs ->
                     val listed = if (refresh) {
-                        fs.list(f.path).filter { !it.isDirectory }.map { ListedName(it.name, it.modifiedMillis) }.also { f.listed = it }
+                        fs.list(f.path).filter { !it.isDirectory }.map { ListedName(it.name, it.modifiedMillis, it.size) }.also { f.listed = it }
                     } else {
                         f.listed
                     }
-                    CullSidecars.read(fs, f.path, shots, listed, after)
+                    CullSidecars.scan(fs, f.path, shots, listed, seen)
                 }
             }
             val loc = f.location

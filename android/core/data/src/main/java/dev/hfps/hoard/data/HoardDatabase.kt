@@ -31,10 +31,11 @@ import kotlinx.coroutines.flow.Flow
         CullDestinationEntity::class,
         CullAnalysisEntity::class,
         CullSidecarEntity::class,
+        CullSidecarReadEntity::class,
         LegacyImportEntity::class,
         RevealCopyEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class HoardDatabase : RoomDatabase() {
@@ -128,6 +129,9 @@ interface MachineDao {
     @Query("DELETE FROM cull_sidecars WHERE location_id = :id")
     suspend fun deleteCullSidecars(id: String)
 
+    @Query("DELETE FROM cull_sidecar_reads WHERE location_id = :id")
+    suspend fun deleteCullSidecarReads(id: String)
+
     @Query("DELETE FROM cull_sessions WHERE location_id = :id")
     suspend fun deleteCullSessions(id: String)
 
@@ -143,6 +147,7 @@ interface MachineDao {
         delete(id)
         deleteCullDecisions(id)
         deleteCullSidecars(id)
+        deleteCullSidecarReads(id)
         deleteCullSessions(id)
         deleteCullAnalysis(id)
         deleteCullDestinations(id)
@@ -397,12 +402,31 @@ abstract class CullDao {
     @Query("DELETE FROM cull_sidecars WHERE location_id = :locationId AND share = :share AND path = :path AND shot_id = :shotId")
     abstract suspend fun deleteSidecar(locationId: String, share: String, path: String, shotId: String)
 
+    // --- What Hoard last read from each sidecar (ADR 0011 "First read of a sidecar") ---
+
+    @Query("SELECT * FROM cull_sidecar_reads WHERE location_id = :locationId AND share = :share AND path = :path")
+    abstract suspend fun sidecarReads(locationId: String, share: String, path: String): List<CullSidecarReadEntity>
+
+    @Upsert
+    abstract suspend fun putSidecarReads(rows: List<CullSidecarReadEntity>)
+
+    @Query("DELETE FROM cull_sidecar_reads WHERE location_id = :locationId AND share = :share AND path = :path AND shot_id = :shotId")
+    abstract suspend fun deleteSidecarRead(locationId: String, share: String, path: String, shotId: String)
+
+    /** Records the sidecars read ([put]) and forgets those that disappeared ([forget], shot ids), in one transaction. */
+    @Transaction
+    open suspend fun saveSidecarReads(locationId: String, share: String, path: String, put: List<CullSidecarReadEntity>, forget: List<String>) {
+        for (id in forget) deleteSidecarRead(locationId, share, path, id)
+        if (put.isNotEmpty()) putSidecarReads(put)
+    }
+
     /** Forgets shots that no longer exist (after "Delete rejects"). */
     @Transaction
     open suspend fun forgetShots(locationId: String, share: String, path: String, shotIds: List<String>) {
         for (id in shotIds) {
             deleteDecision(locationId, share, path, id)
             deleteSidecar(locationId, share, path, id)
+            deleteSidecarRead(locationId, share, path, id)
         }
     }
 

@@ -6,6 +6,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import dev.hfps.hoard.app.data.CullSettings
 import dev.hfps.hoard.data.CullAnalysisEntity
+import dev.hfps.hoard.data.CullDao
 import dev.hfps.hoard.data.CullDecisionEntity
 import dev.hfps.hoard.data.HoardDatabase
 import dev.hfps.hoard.smb.SmbAccess
@@ -101,28 +102,134 @@ class CullViewModelTest {
     }
 
     @Test
-    fun `a sidecar newer than Hoard's decision wins at open, an older one does not`() = runBlocking {
+    fun `a first read fills only Hoard's default fields, and a sidecar changed while away is read on resume`() = runBlocking {
         val backend = FakeCullBackend(tmp.newFolder())
-        // dsc00001: decided in Hoard at t=5000 (not written); its sidecar is older → Hoard wins.
-        db.cull().saveDecisions("m1", "photos", "shoot", listOf(Triple("dsc00001", "reject", 0)))
-        db.cull().saveSidecars("m1", "photos", "shoot", listOf(dev.hfps.hoard.data.CullDao.SidecarUpdate("dsc00001", decidedAt = 5_000, setDecidedAt = true, synced = false)))
+        // dsc00001: a reject with 2 stars in Hoard (t=5000); a pick with 5 stars in its sidecar, never read: both kept.
+        db.cull().saveDecisions("m1", "photos", "shoot", listOf(Triple("dsc00001", "reject", 2)))
+        db.cull().saveSidecars("m1", "photos", "shoot", listOf(CullDao.SidecarUpdate("dsc00001", decidedAt = 5_000, setDecidedAt = true, synced = false)))
         backend.sidecars["dsc00001"] = XmpFields(5, XmpFlag.PICK) to 4_000L
-        // dsc00002: never decided in Hoard → any sidecar wins (Lightroom's rating comes in).
+        // dsc00002: all defaults in Hoard → the sidecar comes in whole (Lightroom's rating).
         backend.sidecars["dsc00002"] = XmpFields(4, XmpFlag.NONE) to 3_000L
         val vm = vm(backend)
         val decisions = vm.view.value.core.decisions
-        assertThat(decisions["dsc00001"]).isEqualTo(Decision(Flag.Reject, 0))
+        assertThat(decisions["dsc00001"]).isEqualTo(Decision(Flag.Reject, 2))
         assertThat(decisions["dsc00002"]).isEqualTo(Decision(null, 4))
         val imported = db.cull().forFolder("m1", "photos", "shoot").first { it.shotId == "dsc00002" }
         assertThat(imported.rating).isEqualTo(4)
         // ADR 0016 rule 4: the imported decision is dated by the sidecar's mtime, not by the import.
         assertThat(java.time.Instant.parse(imported.updatedAt).toEpochMilli()).isEqualTo(3_000L)
-        // A sidecar changed in Reveal while Hoard was in the background is read on resume.
+        // Both reads are recorded, with what was read.
+        val reads = db.cull().sidecarReads("m1", "photos", "shoot").associateBy { it.shotId }
+        assertThat(reads.keys).containsExactly("dsc00001", "dsc00002")
+        assertThat(reads.getValue("dsc00001").let { Triple(it.rating, it.flag, it.modifiedMillis) }).isEqualTo(Triple(5, "pick", 4_000L))
+        // A sidecar created in Reveal while Hoard was in the background is read on resume.
         backend.sidecars["dsc00003"] = XmpFields(0, XmpFlag.REJECT) to 9_000L
         vm.onResume()
         idle()
         assertThat(vm.view.value.core.decisions["dsc00003"]?.flag).isEqualTo(Flag.Reject)
         assertThat(java.time.Instant.parse(db.cull().forFolder("m1", "photos", "shoot").first { it.shotId == "dsc00003" }.updatedAt).toEpochMilli()).isEqualTo(9_000L)
+        vm.close()
+    }
+
+    @Test
+    fun `Lightroom's Rating=1 on a 4-star shot keeps 4, and a later change of the rating comes in`() = runBlocking {
+        val backend = FakeCullBackend(tmp.newFolder())
+        db.cull().saveDecisions("m1", "photos", "shoot", listOf(Triple("dsc00001", null, 4)))
+        db.cull().saveSidecars("m1", "photos", "shoot", listOf(CullDao.SidecarUpdate("dsc00001", decidedAt = 5_000, setDecidedAt = true, synced = false)))
+        // Created after Hoard's decision, with Lightroom's default of 1 star: its creation is not an edit.
+        backend.sidecars["dsc00001"] = XmpFields(1) to 8_000L
+        val vm = vm(backend)
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(null, 4))
+        // The user then picks it in Lightroom (rating unchanged): only the flag comes in.
+        backend.sidecars["dsc00001"] = XmpFields(1, XmpFlag.PICK) to 9_000L
+        vm.onResume()
+        idle()
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(Flag.Pick, 4))
+        // And rates it 2: the stars come in, dated by the sidecar.
+        backend.sidecars["dsc00001"] = XmpFields(2, XmpFlag.PICK) to 10_000L
+        vm.onResume()
+        idle()
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(Flag.Pick, 2))
+        assertThat(java.time.Instant.parse(db.cull().forFolder("m1", "photos", "shoot").single().updatedAt).toEpochMilli()).isEqualTo(10_000L)
+        vm.close()
+    }
+
+    @Test
+    fun `fields unchanged in the sidecar never undo Hoard's newer edits`() = runBlocking {
+        val backend = FakeCullBackend(tmp.newFolder())
+        backend.sidecars["dsc00001"] = XmpFields(3, XmpFlag.PICK) to 3_000L
+        val vm = vm(backend)
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(Flag.Pick, 3))
+        // Hoard's edit (now ≈ 1_000_500), then the sidecar is touched later with only its flag changed.
+        vm.decide(listOf("dsc00001")) { d, _ -> d.withRating(5) }
+        idle()
+        backend.sidecars["dsc00001"] = XmpFields(3, XmpFlag.REJECT) to 2_000_000L
+        vm.onResume()
+        idle()
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(Flag.Reject, 5))
+        // Touched again, nothing changed (another tool rewrote it): Hoard's values stay.
+        vm.decide(listOf("dsc00001")) { d, _ -> d.withFlag(Flag.Pick) }
+        idle()
+        backend.sidecars["dsc00001"] = XmpFields(3, XmpFlag.REJECT) to 3_000_000L
+        vm.onResume()
+        idle()
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(Flag.Pick, 5))
+        vm.close()
+    }
+
+    @Test
+    fun `Hoard's own export is recorded as read and never imported back`() = runBlocking {
+        val backend = FakeCullBackend(tmp.newFolder())
+        // Exported as a pick with 3 stars (mtime 5000); the user then cleared the shot in Hoard.
+        backend.sidecars["dsc00001"] = XmpFields(3, XmpFlag.PICK) to 5_000L
+        val exported = dev.hfps.hoard.app.files.XmpExporter.exportedReads(
+            key,
+            mapOf("DSC00001" to dev.hfps.hoard.xmp.XmpExport.Written("DSC00001.xmp", 5_000L, FakeCullBackend.SIZE)),
+            mapOf("DSC00001" to XmpFields(3, XmpFlag.PICK)),
+        )
+        db.cull().saveSidecarReads("m1", "photos", "shoot", exported, emptyList())
+        db.cull().saveSidecars("m1", "photos", "shoot", listOf(CullDao.SidecarUpdate("dsc00001", decidedAt = 6_000, setDecidedAt = true, synced = false)))
+        val vm = vm(backend)
+        assertThat(vm.view.value.core.decisions).doesNotContainKey("dsc00001")
+        assertThat(db.cull().forFolder("m1", "photos", "shoot")).isEmpty()
+        vm.close()
+    }
+
+    @Test
+    fun `a vanished sidecar is forgotten, and one recreated later is a first read`() = runBlocking {
+        val backend = FakeCullBackend(tmp.newFolder())
+        backend.sidecars["dsc00001"] = XmpFields(3, XmpFlag.PICK) to 3_000L
+        val vm = vm(backend)
+        assertThat(db.cull().sidecarReads("m1", "photos", "shoot").map { it.shotId }).containsExactly("dsc00001")
+        backend.sidecars.remove("dsc00001")
+        vm.onResume()
+        idle()
+        assertThat(db.cull().sidecarReads("m1", "photos", "shoot")).isEmpty()
+        // Rated 4 in Hoard; a new sidecar from another tool, with 1 star, newer: a first read keeps the 4.
+        vm.decide(listOf("dsc00001")) { d, _ -> d.withRating(4) }
+        idle()
+        backend.sidecars["dsc00001"] = XmpFields(1, XmpFlag.PICK) to 2_000_000L
+        vm.onResume()
+        idle()
+        assertThat(vm.view.value.core.decisions["dsc00001"]).isEqualTo(Decision(Flag.Pick, 4))
+        vm.close()
+    }
+
+    @Test
+    fun `an empty or failed listing forgets nothing`() = runBlocking {
+        val backend = FakeCullBackend(tmp.newFolder())
+        backend.sidecars["dsc00001"] = XmpFields(3, XmpFlag.PICK) to 3_000L
+        val vm = vm(backend)
+        backend.listsNothing = true
+        vm.onResume()
+        idle()
+        assertThat(db.cull().sidecarReads("m1", "photos", "shoot").map { it.shotId }).containsExactly("dsc00001")
+        backend.listsNothing = false
+        backend.failScans = true
+        backend.sidecars.remove("dsc00001")
+        vm.onResume()
+        idle()
+        assertThat(db.cull().sidecarReads("m1", "photos", "shoot").map { it.shotId }).containsExactly("dsc00001")
         vm.close()
     }
 
