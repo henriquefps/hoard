@@ -192,12 +192,18 @@ func errorClass(err error) string {
 		return "permission denied"
 	case errors.Is(err, fs.ErrNotExist):
 		return "not found"
+	case errors.Is(err, errEmptyMount):
+		return "folder is empty but the index holds files (mount missing?)"
 	case errors.Is(err, context.Canceled):
 		return "cancelled"
 	default:
 		return "io error"
 	}
 }
+
+// errEmptyMount: the walk saw no media file while the index holds live files of the folder. A mount that is gone leaves
+// an empty, readable directory, so this is treated as unavailable: nothing is removed and no sidecar record is dropped.
+var errEmptyMount = errors.New("folder shows no files but the index holds some")
 
 type seen struct {
 	rel   string
@@ -236,6 +242,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	stats := Stats{}
 
 	var files []seen
+	complete := true // false when a sub-folder could not be read: nothing is concluded from what is missing
 	walkErr := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -244,6 +251,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			if p == "." {
 				return err
 			}
+			complete = false
 			return fs.SkipDir // an unreadable sub-folder is skipped, never the reason to drop files
 		}
 		if p != "." && strings.HasPrefix(d.Name(), ".") {
@@ -261,6 +269,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 		}
 		info, err := d.Info()
 		if err != nil {
+			complete = false
 			return nil
 		}
 		files = append(files, seen{rel: p, size: info.Size(), mtime: info.ModTime().UnixNano(), media: mediaClass})
@@ -274,6 +283,14 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	known, err := ix.Store.NasFileStates(ctx, f.ID)
 	if err != nil {
 		return fail("error", err)
+	}
+	if len(files) == 0 {
+		for _, k := range known {
+			if !k.Removed {
+				ix.Log.Warn("nas: folder shows no files but the index holds some, treated as unavailable (unmounted?); nothing removed", "folder", f.ID)
+				return fail("unavailable", errEmptyMount)
+			}
+		}
 	}
 	haveMeta, err := ix.Store.MetaFingerprints(ctx, media.MetaVersion)
 	if err != nil {
@@ -395,7 +412,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	}
 	stats.Sources, stats.Items = ist.Sources, ist.Items
 	// Culling from the folder's sidecars (ADR 0016): read only, and only the sidecars that changed.
-	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, groups); err != nil {
+	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, groups, present, complete); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

@@ -352,7 +352,9 @@ func TestItemsFromUploads(t *testing.T) {
 	if old := e.item(jpgItem.ID); !old.Deleted || old.Replaced != pair.ID {
 		t.Fatalf("upload item %+v", old)
 	}
-	// The NAS copy goes: the upload is an item of its own again (same id as before).
+	// The NAS copy goes (the folder is not empty: an emptied folder is taken for an unmounted one): the upload is an
+	// item of its own again (same id as before).
+	e.write("OTHER.JPG", mediatest.JPEG(shotAt(77, "2024:06:01 10:00:00"), ""))
 	_ = os.Remove(filepath.Join(e.nas, "DSC00001.ARW"))
 	_ = os.Remove(filepath.Join(e.nas, "DSC00001.JPG"))
 	e.ix.All(ctx)

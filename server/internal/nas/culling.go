@@ -39,11 +39,29 @@ func sidecarOf(g items.Group) *items.Member {
 }
 
 // importSidecars reads the sidecars that are new or changed since the server last read them and imports their
-// culling values (ADR 0016 "The NAS sidecars"). It never writes to the folder. Returns the fields written.
-func (ix *Indexer) importSidecars(ctx context.Context, root *os.Root, folderID string, groups []items.Group) (int, error) {
+// culling values (a first read only fills empty fields, ADR 0016 "The NAS sidecars"). It never writes to the folder. Returns the fields written.
+func (ix *Indexer) importSidecars(ctx context.Context, root *os.Root, folderID string, groups []items.Group, present map[string]bool, complete bool) (int, error) {
 	states, err := ix.Store.SidecarStates(ctx, folderID)
 	if err != nil {
 		return 0, err
+	}
+	// A sidecar whose file is gone is forgotten, so one created again is a first read (ADR 0016). Only after a walk that
+	// saw the whole folder: a partial walk deletes nothing.
+	if complete {
+		var gone []string
+		for p := range states {
+			if !present[p] {
+				gone = append(gone, p)
+			}
+		}
+		if len(gone) > 0 {
+			if _, err := ix.Store.DropSidecars(ctx, folderID, gone); err != nil {
+				return 0, err
+			}
+			for _, p := range gone {
+				delete(states, p)
+			}
+		}
 	}
 	var reads []store.SidecarRead
 	for _, g := range groups {

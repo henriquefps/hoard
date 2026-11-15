@@ -171,3 +171,108 @@ func TestCullingFollowsTheShotWhenTheRawAppears(t *testing.T) {
 		t.Fatalf("not carried back: %+v", got)
 	}
 }
+
+// First read of a sidecar (ADR 0016): a sidecar that appears (or reappears) only fills fields that hold no value.
+func TestFirstReadOfSidecarKeepsDecisionsAndRecreatedIsFirstRead(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	t0 := time.UnixMilli(1_700_000_000_000)
+	e.write("DSC1.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.walk()
+	id := e.live()["DSC1.JPG"].ID
+	if _, err := e.st.PushCulling(ctx, "dev", []store.CullChange{
+		{ItemID: id, Field: store.CullRating, Value: json.RawMessage("4"), BaseRev: new(int64), ModifiedAt: 1000}}); err != nil {
+		t.Fatal(err)
+	}
+	// Another tool creates a sidecar, newer than the decision: the rating stays, the empty label is filled.
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="1" xmp:Label="Red"`))
+	e.touch("DSC1.xmp", t0)
+	if st := e.walk(); st.Culling != 1 {
+		t.Fatalf("first read wrote %d", st.Culling)
+	}
+	f := e.culling(id)
+	if string(f[store.CullRating].Value) != "4" || f[store.CullRating].DeviceID != "dev" || string(f[store.CullLabel].Value) != `"Red"` {
+		t.Fatalf("%+v", f)
+	}
+	// A later change of the sidecar is an edit: the rating changes, the unchanged label does not.
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="2" xmp:Label="Red"`))
+	e.touch("DSC1.xmp", t0.Add(time.Hour))
+	if st := e.walk(); st.Culling != 1 || string(e.culling(id)[store.CullRating].Value) != "2" {
+		t.Fatalf("second read: %d %+v", st.Culling, e.culling(id))
+	}
+	// Deleted: the next walk drops the record; recreated, it is a first read again (the rating 2 is kept).
+	if err := os.Remove(filepath.Join(e.nas, "DSC1.xmp")); err != nil {
+		t.Fatal(err)
+	}
+	e.walk()
+	if st, _ := e.st.SidecarStates(ctx, e.folder.ID); len(st) != 0 {
+		t.Fatalf("row not dropped: %v", st)
+	}
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="5" xmp:Label="Blue"`))
+	e.touch("DSC1.xmp", t0.Add(2*time.Hour))
+	if st := e.walk(); st.Culling != 0 {
+		t.Fatalf("recreated sidecar wrote %d", st.Culling)
+	}
+	if f := e.culling(id); string(f[store.CullRating].Value) != "2" || string(f[store.CullLabel].Value) != `"Red"` {
+		t.Fatalf("%+v", f)
+	}
+}
+
+// An unreadable sub-folder makes a partial walk: no sidecar row is deleted from what it did not show.
+func TestPartialWalkDeletesNoSidecarRows(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permissions do not apply to root")
+	}
+	e := newEnv(t)
+	ctx := context.Background()
+	e.write("sub/DSC1.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.write("sub/DSC1.xmp", sidecar(`xmp:Rating="3"`))
+	e.walk()
+	dir := filepath.Join(e.nas, "sub")
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	e.write("OTHER.JPG", mediatest.JPEG(shotAt(2, "2024:05:01 10:00:01"), "")) // the folder is not empty
+	e.walk()
+	if st, _ := e.st.SidecarStates(ctx, e.folder.ID); len(st) != 1 {
+		t.Fatalf("partial walk deleted rows: %v", st)
+	}
+}
+
+// An unmounted folder is an empty, readable directory: the walk fails as unavailable and removes nothing.
+func TestEmptyMountIsUnavailableAndRemovesNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	// A genuinely empty folder with nothing known stays fine.
+	e.walk()
+	e.write("DSC1.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="3"`))
+	e.walk()
+	id := e.live()["DSC1.JPG"].ID
+	for _, n := range []string{"DSC1.JPG", "DSC1.xmp"} { // the mount goes away
+		if err := os.Remove(filepath.Join(e.nas, n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.ix.Folder(ctx, e.folder); err == nil {
+		t.Fatal("empty mount walked fine")
+	}
+	if e.item(id).Deleted || len(e.live()) != 1 {
+		t.Fatal("items removed")
+	}
+	if st, _ := e.st.SidecarStates(ctx, e.folder.ID); len(st) != 1 {
+		t.Fatalf("sidecar rows dropped: %v", st)
+	}
+	folders, _ := e.st.NasFolders(ctx)
+	if len(folders) != 1 || folders[0].State != "unavailable" {
+		t.Fatalf("%+v", folders)
+	}
+	// The mount shows its files again: back to normal.
+	e.write("DSC1.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.write("DSC1.xmp", sidecar(`xmp:Rating="3"`))
+	e.walk()
+	if e.item(id).Deleted {
+		t.Fatal("item lost")
+	}
+}
