@@ -95,6 +95,7 @@ server:
 | Reveal | Hoard | hoard-server | Status |
 | --- | --- | --- | --- |
 | 0.8.0 | 2.0.0 | 0.9.0 | **Installed** on the owner's phone and tablet (2026-11-15). Hoard 2.0.0 has **no server client yet**: culling sync and edited previews work between Reveal, the server and the web gallery only. Hoard ↔ Reveal is the URI hand-off plus sidecars. Open issue: a burst of hand-off opens when Reveal starts can hang storage. |
+| 0.8.99-rc1 (W3/C, untagged, versionCode 89900) | 2.0.2 | 0.9.0 | **Installed** on the owner's phone and tablet (2026-11-15, night). Cold start with the real library: no appfuse mounts, no watchdog block. Server-held hand-offs adopted as Server photos. No server references yet (versionCode < 90000). |
 | 0.9.0 (W3/C, W3/D, W3/H) | 2.0.2 (`busy:` 2.0.1 + idle reclaim) | 0.9.0 | **Planned pair.** They ship together and fix the start-up burst. Reveal understands server references from this version on. |
 | ≥ 0.9.0 | 2.1.0 (Gallery: server client, culling sync, server-reference sender for Gallery items, edited thumbnails) | ≥ 0.9.0 | Merged (main 7ff51df, not released). The server client reaches a plain-HTTP LAN/Tailscale server through a loopback relay (ADR 0021). SMB files still go as URIs. |
 | ≥ 0.9.0 | 2.2.0 (SMB path mapping: server references from Files and culling on the share) | 0.10.0 (`POST /v1/items/by-path`; `devices[].revoked`, `lastSeenAt`) | Planned. Reveal does not need 0.10.0. |
