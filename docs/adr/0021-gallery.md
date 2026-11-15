@@ -232,7 +232,9 @@ Owner feedback on 2.2.1 with ~19,000 server items.
   the culling backend alike: `OfflineThumbs.keep` scales it to 256 px and writes it atomically (temporary file, then
   rename) under the same key and format as `OfflineThumbsWorker`, skipping an item that has one already (no decode).
   No second request: the file is the one just downloaded (or already cached, which also fills a gap). It runs on
-  `Dispatchers.IO`, only when "Keep thumbnails of the whole library" is on, never for an edit's thumb or a screen
+  a background scope of the cache (`SupervisorJob`, IO limited to 2 threads) so the thumb is returned before the store
+  is written, one job per item at once, at most 64 queued or running (more are dropped and kept the next time the thumb
+  is seen, so a fast fling over a big library queues nothing unbounded), only when "Keep thumbnails of the whole library" is on, never for an edit's thumb or a screen
   preview, never for a partial or non-image file (the store refuses it and leaves nothing), and a failure there never
   fails the preview. The store has no cap, so these count in Settings › Photo server like the job's. Browsing the
   library over a metered network therefore leaves what it showed available offline; there is still no metered-network
