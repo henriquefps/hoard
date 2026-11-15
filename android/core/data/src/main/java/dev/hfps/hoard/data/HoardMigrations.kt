@@ -5,10 +5,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 /** Room migrations of the native database (ADR 0003, ADR 0019), each checked against `core/data/schemas/`. */
 object HoardMigrations {
-    /** 2.2.0: `reveal_copies`, the photos copied into MediaStore for Reveal (ADR 0010). */
+    /**
+     * 2.2.0: `reveal_copies`, the photos copied into MediaStore for Reveal (ADR 0010), and the automatic XMP setting
+     * (`cullSaveXmp`) forced off: sidecars are written only by "Export XMP" (ADR 0011 amendment).
+     */
     val MIGRATION_1_2 = object : Migration(1, 2) {
         override fun migrate(db: SupportSQLiteDatabase) {
             db.execSQL(CREATE_REVEAL_COPIES)
+            db.execSQL("UPDATE settings SET value = 'false' WHERE `key` = 'cullSaveXmp'")
         }
     }
 

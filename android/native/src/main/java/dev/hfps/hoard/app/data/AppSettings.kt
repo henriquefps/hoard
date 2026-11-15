@@ -26,8 +26,8 @@ data class FilesSettings(
     val storageIntroSeen: Boolean = false,
     /** "Edit in Reveal" on SMB photos stopped explaining that they stream through Hoard (ADR 0010). */
     val revealStreamNoteSeen: Boolean = false,
-    /** Culling writes sidecars (ADR 0011); Reveal gets writable sidecars only when on. */
-    val cullSaveXmp: Boolean = true,
+    /** Hoard 2.1 and older: culling wrote sidecars (ADR 0011). Forced off in 2.2.0 ([AppSettings.forceNoAutomaticXmp]). */
+    val cullSaveXmp: Boolean = false,
     val cullXmpHidden: Boolean = false,
 )
 
@@ -38,7 +38,9 @@ data class CullSettings(
     val blur: dev.hfps.hoard.app.cull.Sensitivity = dev.hfps.hoard.app.cull.Sensitivity.Medium,
     val eyes: dev.hfps.hoard.app.cull.Sensitivity = dev.hfps.hoard.app.cull.Sensitivity.Medium,
     val burstGapMs: Long = 1000,
-    val saveXmp: Boolean = true,
+    /** Always off since 2.2.0: nothing writes sidecars automatically ("Export XMP" does, ADR 0011 amendment). */
+    val saveXmp: Boolean = false,
+    /** "Export XMP" names new sidecars `.<stem>.xmp`. */
     val xmpHidden: Boolean = false,
 ) {
     val assist: dev.hfps.hoard.app.cull.AssistSettings get() = dev.hfps.hoard.app.cull.AssistSettings(blur, eyes, burstGapMs)
@@ -66,7 +68,16 @@ class AppSettings(private val store: SettingsStore) {
         require(ms in 100..10_000)
         store.putJson(CULL_BURST_GAP, ms.toString())
     }
-    suspend fun setCullSaveXmp(value: Boolean) = store.putJson(CULL_SAVE_XMP, value.toString())
+    /**
+     * 2.2.0 (ADR 0011 amendment "export on demand"): the automatic sidecar setting is off for everyone, whatever Hoard 1
+     * or 2.1 stored (the Room migration 1 → 2 does it for an upgraded database; this, at every start, also covers
+     * settings imported from Hoard 1 afterwards). True when it had to change the stored value.
+     */
+    suspend fun forceNoAutomaticXmp(): Boolean {
+        if (store.getJson(CULL_SAVE_XMP)?.trim() == "false") return false
+        store.putJson(CULL_SAVE_XMP, "false")
+        return true
+    }
     suspend fun setCullXmpHidden(value: Boolean) = store.putJson(CULL_XMP_HIDDEN, value.toString())
 
     val files: Flow<FilesSettings> = combine(

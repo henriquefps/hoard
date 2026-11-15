@@ -223,4 +223,51 @@
     <string name="server_mapped_folder">%1$s › %2$s</string>
     <string name="server_mapped_folder_server">No servidor: %1$s</string>
     <string name="server_mapped_folder_forget">Esquecer</string>
+    <!-- 2.2.0: Editar no Reveal copia fotos para Pictures/Hoard (ADR 0010); Exportar XMP (ADR 0011) -->
+    <string name="reveal_copy_title">Copiando para o Reveal</string>
+    <string name="reveal_copy_body">Estas fotos ainda não estão neste celular nem no servidor. O Hoard as copia para Pictures/Hoard para o Reveal abri-las; da próxima vez abrem na hora.</string>
+    <string name="reveal_copy_progress">%1$s de %2$s fotos · %3$s de %4$s</string>
+    <string name="reveal_copies_title">Fotos copiadas para o Reveal</string>
+    <string name="reveal_copies_loading">Contando…</string>
+    <string name="reveal_copies_none">Nenhuma cópia neste celular.</string>
+    <plurals name="reveal_copies_count">
+        <item quantity="one">%1$s foto, %2$s</item>
+        <item quantity="many">%1$s de fotos, %2$s</item>
+        <item quantity="other">%1$s fotos, %2$s</item>
+    </plurals>
+    <string name="reveal_copies_about">Fotos de compartilhamentos, drives e cartões SD que \"Editar no Reveal\" copiou para Pictures/Hoard. Ficam até você apagá-las; editar a mesma foto de novo reaproveita a cópia.</string>
+    <string name="reveal_copies_delete">Apagar cópias</string>
+    <string name="reveal_copies_confirm_title">Apagar as cópias?</string>
+    <string name="reveal_copies_confirm_body">As cópias em Pictures/Hoard são apagadas; os originais continuam onde estão. O Reveal mantém suas edições e passa a usar as próprias prévias dessas fotos. Envie-as de novo para editar os arquivos completos.</string>
+    <string name="reveal_copies_failed">Não foi possível apagar as cópias</string>
+    <plurals name="reveal_copies_deleted">
+        <item quantity="one">%1$s cópia apagada, %2$s liberados</item>
+        <item quantity="many">%1$s de cópias apagadas, %2$s liberados</item>
+        <item quantity="other">%1$s cópias apagadas, %2$s liberados</item>
+    </plurals>
+    <string name="xmp_export">Exportar XMP</string>
+    <string name="xmp_export_decided">Exportar XMP das fotos decididas</string>
+    <string name="xmp_export_running">Exportando XMP…</string>
+    <plurals name="xmp_export_done">
+        <item quantity="one">%1$s arquivo XMP gravado</item>
+        <item quantity="many">%1$s de arquivos XMP gravados</item>
+        <item quantity="other">%1$s arquivos XMP gravados</item>
+    </plurals>
+    <plurals name="xmp_export_malformed">
+        <item quantity="one">%1$s arquivo XMP é inválido e ficou como estava</item>
+        <item quantity="many">%1$s de arquivos XMP são inválidos e ficaram como estavam</item>
+        <item quantity="other">%1$s arquivos XMP são inválidos e ficaram como estavam</item>
+    </plurals>
+    <plurals name="xmp_export_failed">
+        <item quantity="one">%1$s arquivo XMP não pôde ser gravado</item>
+        <item quantity="many">%1$s de arquivos XMP não puderam ser gravados</item>
+        <item quantity="other">%1$s arquivos XMP não puderam ser gravados</item>
+    </plurals>
+    <string name="xmp_export_nothing">Nenhuma foto decidida para exportar.</string>
+    <string name="xmp_export_folder_refused">A pasta escolhida recusou alguns arquivos XMP.</string>
+    <string name="xmp_export_failed_all">A exportação de XMP falhou</string>
+    <string name="xmp_export_read_only_title">Esta pasta é somente leitura</string>
+    <string name="xmp_export_read_only_body">O Hoard não pode gravar arquivos XMP ao lado destas fotos. Escolha outra pasta para os arquivos .xmp.</string>
+    <string name="xmp_export_choose_folder">Escolher pasta</string>
+    <string name="cull_xmp_export_hidden_hint">\"Exportar XMP\" nomeia os novos arquivos com um ponto para ficarem ocultos. O Reveal e o digiKam os leem; o Lightroom não. O Hoard não grava mais arquivos XMP sozinho.</string>
 </resources>

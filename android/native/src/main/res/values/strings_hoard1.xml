@@ -230,7 +230,6 @@
     <string name="t_cull_copy_subfolder_name">Folder name</string>
     <string name="t_cull_copy_title">Copy picks</string>
     <string name="t_cull_copy_use_folder">Use this folder</string>
-    <string name="t_cull_copy_xmp_note">Each copied shot gets an XMP sidecar with its stars and pick (Settings › Culling).</string>
     <string name="t_cull_delete_deleting">Deleting…</string>
     <string name="t_cull_delete_permanent">This is permanent: there is no trash to restore them from.</string>
     <string name="t_cull_delete_read_only">Delete rejects (read-only folder)</string>
@@ -313,9 +312,6 @@
     <string name="t_cull_viewer_title">Viewing %1$s</string>  <!-- args: 1=name -->
     <string name="t_cull_xmp_hidden">Write XMP as hidden file (.name.xmp)</string>
     <string name="t_cull_xmp_hidden_hint">New sidecars start with a dot so they stay out of sight. Reveal and digiKam read them; Lightroom does not.</string>
-    <string name="t_cull_xmp_read_only">Ratings are saved only in Hoard for this folder</string>
-    <string name="t_cull_xmp_save">Save ratings next to photos (XMP)</string>
-    <string name="t_cull_xmp_save_hint">Stars, picks and rejects go into a .xmp file next to each shot in folders Hoard can write, and with the copies of \"Copy picks\". Lightroom, darktable, digiKam and Reveal read them; ratings made there show here when the folder opens.</string>
     <string name="t_download_choose_folder">Choose folder…</string>
     <string name="t_download_conflict">If the file already exists</string>
     <string name="t_download_destination">Save to</string>
@@ -537,9 +533,7 @@
     <string name="t_page_close_search">Close search</string>
     <string name="t_reveal_about">Photos open in Reveal, the RAW editor, from the browser and culling (\"Edit in Reveal\").</string>
     <string name="t_reveal_confirm_action">Open in Reveal</string>
-    <string name="t_reveal_confirm_dont_explain">Don\'t explain this again</string>
     <string name="t_reveal_confirm_many">Reveal will list all %1$s files in one batch.</string>  <!-- args: 1=n -->
-    <string name="t_reveal_confirm_stream">Photos on a network share are read through Hoard: Reveal can reopen them later, even after the phone restarts and with Hoard closed, while this machine is reachable on the network.</string>
     <string name="t_reveal_edit">Edit in Reveal</string>
     <string name="t_reveal_failed">Could not open Reveal</string>
     <string name="t_reveal_links_confirm_body">Reveal will no longer open the photos and sidecars Hoard handed to it (photos of drives opened through Android\'s folder access are not affected). Edits saved in Reveal stay there; hand the photos over again to reopen them.</string>
@@ -917,10 +911,6 @@
     <plurals name="t_cull_stars">  <!-- args: 1=count -->
         <item quantity="one">%1$s star</item>
         <item quantity="other">%1$s stars</item>
-    </plurals>
-    <plurals name="t_cull_xmp_not_written">  <!-- args: 1=count -->
-        <item quantity="one">The rating of %1$s photo was not saved next to it: kept in Hoard only</item>
-        <item quantity="other">The ratings of %1$s photos were not saved next to them: kept in Hoard only</item>
     </plurals>
     <plurals name="t_download_folders_skipped">  <!-- args: 1=count -->
         <item quantity="one">%1$s folder is skipped (folders can\'t be downloaded yet).</item>

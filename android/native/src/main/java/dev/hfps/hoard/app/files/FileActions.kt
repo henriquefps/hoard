@@ -1,6 +1,7 @@
 package dev.hfps.hoard.app.files
 
 import android.app.Activity
+import android.net.Uri
 import android.util.Log
 import dev.hfps.hoard.app.AppContainer
 import dev.hfps.hoard.smb.ErrorCode
@@ -11,10 +12,7 @@ import dev.hfps.hoard.smb.smbFail
 import dev.hfps.hoard.smb.stream.StreamAddress
 import dev.hfps.hoard.smb.stream.StreamRequest
 import dev.hfps.hoard.smb.stream.SmbSource
-import dev.hfps.hoard.smb.transfer.Endpoint
-import dev.hfps.hoard.smb.transfer.TransferAddress
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -101,16 +99,25 @@ class FileActions(private val container: AppContainer) {
     fun revealAvailable(): Boolean = runCatching { container.reveal.isAvailable() }.getOrDefault(false)
 
     /**
-     * "Edit in Reveal" (ADR 0010): [paths] in Reveal's order, each with its culling decision (the CULLING extra,
-     * ADR 0011) and, when culling writes sidecars, a writable sidecar. Returns how many photos went.
+     * "Edit in Reveal" (ADR 0010, amendment "2.2.0: local copies"): [paths] in Reveal's order, each with its culling
+     * decision (the CULLING extra, ADR 0011). On an SMB share the shots the paired server holds go by reference (ADR
+     * 0022); the other photos go as MediaStore URIs: their own on the phone, else copies made first into
+     * `Pictures/Hoard/<title or day>/` through the transfer engine ([RevealCopies], progress to [onCopyProgress];
+     * cancelling the caller cancels the copy). No sidecars. Returns how many photos went.
      */
-    suspend fun editInReveal(activity: Activity, location: BrowseLocation, folderPath: String, paths: List<String>, title: String?, initialPath: String?): Int {
+    suspend fun editInReveal(
+        activity: Activity,
+        location: BrowseLocation,
+        folderPath: String,
+        paths: List<String>,
+        title: String?,
+        initialPath: String?,
+        onCopyProgress: (dev.hfps.hoard.app.transfers.LiveTransfer?) -> Unit = {},
+    ): Int {
         if (!revealAvailable()) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
         // ADR 0022: on an SMB share, the shots the paired server holds go to Reveal ≥ 0.9.0 as server items.
         val server = if (location.isSmb) serverShots(location, folderPath, paths, initialPath) else null
-        val uriPaths = server?.plan?.uris ?: paths
-        val settings = container.appSettings
-        val current = settings.files.first()
+        val uriPaths = (server?.plan?.uris ?: paths).let { if (it.isEmpty()) it else RevealHandoff.order(it) }
         val decisions = container.database.cull()
             .forFolder(location.id, if (location.isSmb) location.share.orEmpty() else "", folderPath)
             .associateBy { it.shotId }
@@ -122,16 +129,13 @@ class FileActions(private val container: AppContainer) {
             val at = runCatching { java.time.Instant.parse(decision.updatedAt).toEpochMilli() }.getOrNull()
             path to RevealHandoff.Culling(decision.rating, decision.flag ?: "none", ratingModifiedAt = at, flagModifiedAt = at, ratingDevice = device, flagDevice = device)
         }.toMap()
-        val sidecars = if (current.cullSaveXmp) RevealHandoff.SidecarOptions(current.cullXmpHidden) else null
-        val outgoing = if (uriPaths.isEmpty()) emptyList() else withContext(Dispatchers.IO) {
-            if (location.isSmb) {
-                val request = streamRequest(location, uriPaths.first())
-                val guid = request.expectedServerGuid ?: smbFail(ErrorCode.UNKNOWN, "The machine's server GUID is not pinned yet")
-                val endpoint = Endpoint.Smb(request.machineId, request.addresses.map { TransferAddress(it.host, it.port) }, guid, request.share)
-                container.reveal.smb(endpoint, uriPaths, sidecars, culling)
-            } else {
-                container.reveal.local(location.localRef!!, files.localFs(location), uriPaths, sidecars, culling)
-            }
+        val outgoing = if (uriPaths.isEmpty()) {
+            emptyList()
+        } else {
+            val copies = container.revealCopies
+            val onPhone = copies.onPhone(location, uriPaths)
+            val uris = copies.ensure(location, uriPaths, onPhone, title, onCopyProgress)
+            uriPaths.map { RevealHandoff.Outgoing(it, Uri.parse(uris[it] ?: smbFail(ErrorCode.UNKNOWN, "No copy of $it"))) }
         }
         val items = server?.items
         if (items != null) {
@@ -141,10 +145,10 @@ class FileActions(private val container: AppContainer) {
                 withTimeoutOrNull(dev.hfps.hoard.app.gallery.GalleryReveal.FLUSH_TIMEOUT_MS) { container.gallery.syncNow() }
             }
         }
-        Log.i(TAG, "Edit in Reveal: ${outgoing.count { !it.sidecar }} photos, ${outgoing.count { it.sidecar }} sidecars, culling ${culling.size}, server items ${items?.items?.size ?: 0}")
+        Log.i(TAG, "Edit in Reveal: ${outgoing.size} photos by URI, culling ${culling.size}, server items ${items?.items?.size ?: 0}")
         val initialUri = initialPath?.takeIf { it in uriPaths }
         withContext(Dispatchers.Main) { container.reveal.launchMixed(activity, outgoing, title, initialUri, culling, items) }
-        return outgoing.count { !it.sidecar } + (items?.items?.size ?: 0)
+        return outgoing.size + (items?.items?.size ?: 0)
     }
 
     /** The server side of an SMB hand-off: the plan, and the server items (null when every shot goes as URIs). */

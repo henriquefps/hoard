@@ -84,6 +84,11 @@ class AppContainer(context: Context) {
         dev.hfps.hoard.app.files.RevealCopies(appContext, database.revealCopies(), { transfers }, ::statSources)
     }
 
+    /** "Export XMP" (ADR 0011 amendment "2.2.0: export on demand"). */
+    val xmpExporter: dev.hfps.hoard.app.files.XmpExporter by lazy {
+        dev.hfps.hoard.app.files.XmpExporter(appContext, database.cull(), ::endpointOf)
+    }
+
     /** The size and mtime of [paths] in [location], listing each folder once (null: not found or unreadable). */
     private suspend fun statSources(location: dev.hfps.hoard.app.files.BrowseLocation, paths: List<String>): Map<String, dev.hfps.hoard.smb.transfer.FileStat?> {
         val endpoint = endpointOf(location.place)
@@ -182,6 +187,8 @@ class AppContainer(context: Context) {
         scope.launch(Dispatchers.IO) {
             runCatching { HandoffServer.prune(appContext) }
             runCatching { TransferManager.get(appContext).reconcile() }
+            // 2.2.0: no automatic XMP (ADR 0011 amendment), also for settings Hoard 1's import just brought in.
+            runCatching { appSettings.forceNoAutomaticXmp() }
         }
         transfers.start()
         mirrorMachines()

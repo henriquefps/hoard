@@ -224,4 +224,46 @@
     <string name="server_mapped_folder">%1$s › %2$s</string>
     <string name="server_mapped_folder_server">On the server: %1$s</string>
     <string name="server_mapped_folder_forget">Forget</string>
+    <!-- 2.2.0: Edit in Reveal copies photos into Pictures/Hoard (ADR 0010); Export XMP (ADR 0011) -->
+    <string name="reveal_copy_title">Copying for Reveal</string>
+    <string name="reveal_copy_body">These photos are not on this phone or the server yet. Hoard copies them to Pictures/Hoard so Reveal can open them; next time they open at once.</string>
+    <string name="reveal_copy_progress">%1$s of %2$s photos · %3$s of %4$s</string>
+    <string name="reveal_copies_title">Photos copied for Reveal</string>
+    <string name="reveal_copies_loading">Counting…</string>
+    <string name="reveal_copies_none">No copies on this phone.</string>
+    <plurals name="reveal_copies_count">
+        <item quantity="one">%1$s photo, %2$s</item>
+        <item quantity="other">%1$s photos, %2$s</item>
+    </plurals>
+    <string name="reveal_copies_about">Photos from shares, drives and SD cards that \"Edit in Reveal\" copied to Pictures/Hoard. They stay until you delete them; editing the same photo again reuses its copy.</string>
+    <string name="reveal_copies_delete">Delete copies</string>
+    <string name="reveal_copies_confirm_title">Delete the copies?</string>
+    <string name="reveal_copies_confirm_body">The copies in Pictures/Hoard are deleted; the originals stay where they are. Reveal keeps your edits and falls back to its own previews for these photos. Hand them over again to edit the full files.</string>
+    <string name="reveal_copies_failed">Could not delete the copies</string>
+    <plurals name="reveal_copies_deleted">
+        <item quantity="one">%1$s copy deleted, %2$s freed</item>
+        <item quantity="other">%1$s copies deleted, %2$s freed</item>
+    </plurals>
+    <string name="xmp_export">Export XMP</string>
+    <string name="xmp_export_decided">Export XMP of decided shots</string>
+    <string name="xmp_export_running">Exporting XMP…</string>
+    <plurals name="xmp_export_done">
+        <item quantity="one">%1$s sidecar written</item>
+        <item quantity="other">%1$s sidecars written</item>
+    </plurals>
+    <plurals name="xmp_export_malformed">
+        <item quantity="one">%1$s sidecar is not valid XMP and was left as it was</item>
+        <item quantity="other">%1$s sidecars are not valid XMP and were left as they were</item>
+    </plurals>
+    <plurals name="xmp_export_failed">
+        <item quantity="one">%1$s sidecar could not be written</item>
+        <item quantity="other">%1$s sidecars could not be written</item>
+    </plurals>
+    <string name="xmp_export_nothing">No decided shots to export.</string>
+    <string name="xmp_export_folder_refused">The chosen folder refused some sidecars.</string>
+    <string name="xmp_export_failed_all">Export XMP failed</string>
+    <string name="xmp_export_read_only_title">This folder is read-only</string>
+    <string name="xmp_export_read_only_body">Hoard cannot write sidecars next to these photos. Choose another folder for the .xmp files.</string>
+    <string name="xmp_export_choose_folder">Choose folder</string>
+    <string name="cull_xmp_export_hidden_hint">\"Export XMP\" names new sidecars with a dot so they stay out of sight. Reveal and digiKam read them; Lightroom does not. Hoard no longer writes sidecars on its own.</string>
 </resources>

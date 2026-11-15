@@ -95,8 +95,6 @@ data class CullView(
     val byId: Map<String, Shot> by lazy { core.shots.associateBy { it.id } }
     val readOnly: Boolean get() = core.access == SmbAccess.READ
 
-    /** Decisions stay in Hoard only: Save ratings is on but the folder is read-only (listing, or a refused write). */
-    val sidecarsReadOnly: Boolean get() = settings.saveXmp && (readOnly || core.sidecarsRefused)
     val picks: List<Shot> get() = core.shots.filter { core.decisions[it.id]?.flag == Flag.Pick }
 
     companion object {
@@ -142,13 +140,12 @@ data class CullView(
 /** One-off messages for the screen (toasts). */
 sealed interface CullEvent {
     data object SaveFailed : CullEvent
-    /** Sidecars that could not be written so far (one toast per folder session, ADR 0011). */
-    data class SidecarsNotWritten(val count: Int) : CullEvent
 }
 
 /**
  * A folder opened for culling (ADR 0008, 0009, 0011): the Kotlin side of `useCullFolder` + `useCullAssist`. Decisions
- * apply at once and are saved in the background (Room, then the shot's sidecar natively); open and resume import
+ * apply at once and are saved in the background (Room; since 2.2.0 never a sidecar: "Export XMP" writes those on
+ * demand, ADR 0011 amendment); open and resume import
  * sidecars newer than Hoard's (precedence in [importAfter]); analyses come from the cache, then natively in small
  * batches around the shot on screen. Suggestions never decide: only [decide] writes.
  */
@@ -199,8 +196,6 @@ class CullViewModel(
     private var sidecarStates = HashMap<String, SidecarState>()
     private val touched = HashSet<String>()
     private val writing = HashMap<String, Int>()
-    private var sidecarErrors = 0
-    private var sidecarToastShown = false
     private var openJob: Job? = null
     private var analysisJob: Job? = null
     private var focus: String? = null
@@ -389,52 +384,7 @@ class CullViewModel(
                 events.trySend(CullEvent.SaveFailed)
             }
         }
-        // The sidecars next to the photos (ADR 0011): native coalesces and writes them.
-        val s = settingsState.value
-        if (!s.saveXmp || core.value.access == SmbAccess.READ || core.value.sidecarsRefused) return
-        val items = change.shotIds.mapIndexed { i, id -> id to values[i].toXmp() }
-        for ((id, _) in items) writing[id] = (writing[id] ?: 0) + 1
-        viewModelScope.launch {
-            try {
-                onSidecarsWritten(backend.writeSidecars(items, s.xmpHidden))
-            } catch (e: CancellationException) {
-                for ((id, _) in items) writing.remove(id)
-                throw e
-            } catch (e: Throwable) {
-                for ((id, _) in items) writing.remove(id)
-                sidecarFailures(items.size)
-            }
-        }
-    }
-
-    private fun onSidecarsWritten(result: SidecarWrites) {
-        val rows = ArrayList<CullDao.SidecarUpdate>()
-        var failed = 0
-        for (r in result.results) {
-            val left = (writing[r.shotId] ?: 1) - 1
-            if (left > 0) writing[r.shotId] = left else writing.remove(r.shotId)
-            if (r.status == "malformed" || r.status == "failed") failed++
-            val mtime = r.modifiedMillis
-            if (r.status != "written" || mtime == null) continue
-            // Only when the sidecar now holds the shot's latest decision (a newer write may be on its way).
-            if (!r.fields.sameAs(core.value.decisions.of(r.shotId))) continue
-            sidecarStates[r.shotId] = SidecarState(sidecarStates[r.shotId]?.decidedAt, mtime, true)
-            rows += CullDao.SidecarUpdate(r.shotId, sidecarMtime = mtime, setSidecarMtime = true, synced = true)
-        }
-        if (result.readOnly) core.update { it.copy(sidecarsRefused = true) }
-        if (failed > 0) sidecarFailures(failed)
-        if (rows.isNotEmpty()) viewModelScope.launch { runCatching { serial { store.saveSidecars(rows) } } }
-    }
-
-    private fun sidecarFailures(count: Int) {
-        sidecarErrors += count
-        if (sidecarToastShown) return
-        sidecarToastShown = true
-        // A moment later, so a batch's failures are counted together.
-        viewModelScope.launch {
-            delay(1500)
-            events.trySend(CullEvent.SidecarsNotWritten(sidecarErrors))
-        }
+        // 2.2.0 (ADR 0011 amendment): no sidecar is written automatically; "Export XMP" does it on demand.
     }
 
     /** Deletes one file of the folder ("Delete rejects"). */
@@ -610,6 +560,3 @@ class CullViewModel(
     }
 }
 
-/** The sidecar fields Copy picks writes, for a plan (rejects never). */
-fun copySidecars(plan: CopyPlan, order: List<Shot>, decisions: Decisions, saveXmp: Boolean): Map<String, XmpFields> =
-    if (saveXmp) sidecarsFor(plan.items, order, decisions) else emptyMap()
