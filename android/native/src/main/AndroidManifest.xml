@@ -3,21 +3,11 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      Hoard 2 (ADR 0019). Backup stays off as in the Capacitor app (ADR 0003): the Keystore key behind the saved
-      passwords never migrates. Phase 2b brings the Files side's components over from the Capacitor app's manifest:
-      the stream provider and service, the FileProvider, the in-app web viewer, WorkManager's transfer service and the
-      share targets.
+      Hoard 2 (ADR 0019), dev.hfps.hoard since 2.0.0: it replaces Hoard 1 in place. Backup stays off as in Hoard 1
+      (ADR 0003): the Keystore key behind the saved passwords never migrates. The components Hoard 1 declared keep
+      their authorities (they follow the application id): Reveal's persisted links to content://dev.hfps.hoard.stream/…
+      keep working after the upgrade.
     -->
-
-    <!--
-      Import bridge (ADR 0019 "Side-by-side test build"): Hoard 1.11+ serves a read-only snapshot of its data to an
-      app signed with the same key. Declared here too (same signature), so Hoard Next can be installed first.
-    -->
-    <permission
-        android:name="dev.hfps.hoard.permission.IMPORT_BRIDGE"
-        android:label="@string/import_bridge_permission"
-        android:protectionLevel="signature" />
-    <uses-permission android:name="dev.hfps.hoard.permission.IMPORT_BRIDGE" />
 
     <!-- SMB over TCP, probes. -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -47,9 +37,6 @@
 
     <!-- Open with / tap to open, Edit in Reveal, the web viewer's "open in browser" (package visibility). -->
     <queries>
-        <!-- Hoard 1 and its import bridge (first launch of Hoard Next). -->
-        <package android:name="dev.hfps.hoard" />
-        <provider android:authorities="dev.hfps.hoard.importbridge" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:mimeType="*/*" />
@@ -85,10 +72,6 @@
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode"
             android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
             <!-- Share to Hoard (ADR 0007): any files from another app's share sheet → "Save to Hoard". -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
@@ -101,6 +84,20 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!--
+          The launcher entry keeps Hoard 1's component name (dev.hfps.hoard/.MainActivity), so home-screen icons and
+          shortcuts pinned before the upgrade to 2.0.0 still open Hoard.
+        -->
+        <activity-alias
+            android:name="dev.hfps.hoard.MainActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <!-- Opener / ShareOut: cached SMB files and local files shared with the viewing app. -->
         <provider

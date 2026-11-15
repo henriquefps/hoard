@@ -10,8 +10,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.hfps.hoard.app.AppContainer
 import dev.hfps.hoard.app.ui.importer.ImportScreen
-import dev.hfps.hoard.app.ui.importer.OfferActions
-import dev.hfps.hoard.app.ui.machines.PasswordsRoute
 import dev.hfps.hoard.app.ui.importer.ImportUiState
 import dev.hfps.hoard.app.ui.importer.ImportViewModel
 import dev.hfps.hoard.app.ui.shell.HoardShell
@@ -32,7 +30,7 @@ fun HoardApp(container: AppContainer, systemBars: @Composable (dark: Boolean) ->
     val dark = themeModeOf(mode).isDark()
     systemBars(dark)
     HfpsTheme(darkTheme = dark, palette = HfpsPalette.fromId(paletteId)) {
-        val importer: ImportViewModel = viewModel(factory = ImportViewModel.factory(container.importer, container.importBridge))
+        val importer: ImportViewModel = viewModel(factory = ImportViewModel.factory(container.importer))
         val state by importer.state.collectAsStateWithLifecycle()
         when (val current = state) {
             ImportUiState.Ready -> {
@@ -42,13 +40,10 @@ fun HoardApp(container: AppContainer, systemBars: @Composable (dark: Boolean) ->
             }
             // A fresh install or an earlier import: decided in a few milliseconds, show the window background.
             ImportUiState.Checking -> Box(Modifier.fillMaxSize().background(HfpsTheme.colors.background))
-            // After an import from Hoard 1 through the bridge: each machine's password, once.
-            ImportUiState.Passwords -> PasswordsRoute(container, onDone = importer::passwordsDone)
             else -> ImportScreen(
                 state = current,
                 onContinue = importer::finish,
                 onRetry = importer::retry,
-                offer = OfferActions(import = importer::importFromHoard, fresh = importer::startFresh, checkAgain = importer::checkAgain),
             )
         }
     }

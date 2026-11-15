@@ -6,7 +6,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import java.io.File
 import java.security.MessageDigest
 
-/** The Capacitor databases made by scripts/legacy-db/fixtures.ts (test resources under `legacy/`). */
+/** The Capacitor databases made by scripts/legacy-db/fixtures.ts, frozen since 2.0.0 (test resources under `legacy/`). */
 object LegacyFixtures {
     const val V7 = "hoard-v7.db"
     const val V1 = "hoard-v1.db"

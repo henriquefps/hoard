@@ -87,49 +87,7 @@
     <string name="licence_mlkit_terms">Termos de serviço do ML Kit</string>
     <string name="language_system">Idioma do sistema</string>
 
-    <!-- Fase 2d: a ponte de importação da versão lado a lado (Hoard Next ao lado do Hoard 1). -->
-    <string name="import_bridge_permission">Ler os dados do Hoard para o Hoard Next</string>
-    <string name="import_offer_title">Traga seus dados do Hoard</string>
-    <string name="import_offer_text">O Hoard %1$s está neste celular. O Hoard Next pode copiar as máquinas, favoritos, transferências e decisões de seleção dele. O Hoard continua funcionando como está: nada nele muda.</string>
-    <string name="import_offer_brings">O que vem junto</string>
-    <string name="import_offer_passwords_note">As senhas não podem vir: cada app as guarda no próprio cofre de chaves. O Hoard Next pede a senha de cada máquina uma vez, logo depois da importação.</string>
-    <string name="import_offer_import">Importar do Hoard</string>
-    <string name="import_offer_fresh">Começar sem importar</string>
-    <string name="import_offer_update_title">Atualize o Hoard para trazer seus dados</string>
-    <string name="import_offer_update_text">O Hoard %1$s está neste celular. O Hoard 1.11.0 ou mais novo entrega os dados ao Hoard Next. Atualize-o e verifique de novo.</string>
-    <string name="import_offer_check_again">Verificar de novo</string>
-    <string name="import_offer_refused_title">O Hoard não compartilhou os dados</string>
-    <string name="import_offer_refused_text">O Hoard deste celular não foi assinado com a mesma chave do Hoard Next (uma versão de teste ao lado de uma oficial, por exemplo), então guarda os dados para si. Instale os dois da mesma origem, ou comece sem importar.</string>
-    <string name="import_done_text_bridge">Tudo o que o Hoard salvou veio junto, menos as senhas: cada app as guarda no próprio cofre de chaves.</string>
-    <plurals name="import_done_passwords">
-        <item quantity="one">%1$d máquina precisa da senha. O Hoard Next pede em seguida.</item>
-        <item quantity="many">%1$d máquinas precisam da senha. O Hoard Next pede em seguida.</item>
-        <item quantity="other">%1$d máquinas precisam da senha. O Hoard Next pede em seguida.</item>
-    </plurals>
-    <plurals name="import_count_analyses">
-        <item quantity="one">%1$d foto analisada</item>
-        <item quantity="many">%1$d fotos analisadas</item>
-        <item quantity="other">%1$d fotos analisadas</item>
-    </plurals>
-    <string name="passwords_title">Senhas</string>
-    <string name="passwords_intro">O Hoard guarda a senha de cada máquina num cofre de chaves que só ele abre, então elas não puderam vir. Digite cada uma uma vez: o Hoard Next a guarda no próprio cofre, nunca no banco de dados.</string>
-    <string name="passwords_signs_in_as">Entra como %1$s</string>
-    <string name="passwords_field">Senha de %1$s</string>
-    <string name="passwords_show">Mostrar senha</string>
-    <string name="passwords_hide">Ocultar senha</string>
-    <string name="passwords_save">Salvar e conectar</string>
-    <string name="passwords_later">Depois</string>
-    <string name="passwords_done">Concluir</string>
-    <string name="passwords_connected">Salva. Conectado a %1$s.</string>
-    <string name="passwords_saved_offline">Salva. %1$s não está acessível agora: o Hoard Next conecta quando estiver.</string>
-    <string name="passwords_wrong">%1$s recusou esta senha. Confira e tente de novo.</string>
-    <string name="passwords_all_set">Todas as máquinas têm senha.</string>
-    <plurals name="passwords_notice">
-        <item quantity="one">%1$d máquina precisa da senha</item>
-        <item quantity="many">%1$d máquinas precisam da senha</item>
-        <item quantity="other">%1$d máquinas precisam da senha</item>
-    </plurals>
-    <string name="passwords_notice_action">Digitar</string>
+    <!-- Fase 2d. -->
     <string name="text_image_failed">A imagem não pôde ser exibida: %1$s</string>
     <string name="cull_compare_focus_hint">Ainda não analisadas: a nota de foco (área mais nítida) compara as duas.</string>
 </resources>

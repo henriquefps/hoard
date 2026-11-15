@@ -7,7 +7,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /*
- * The Capacitor app's schema (src/db/migrations.ts, version 7; docs/adr/0003-storage.md) as Room entities: same
+ * The Capacitor app's schema (Hoard 1's src/db/migrations.ts, removed in 2.0.0, version 7; docs/adr/0003-storage.md) as Room entities: same
  * tables, column names, types, nullability, defaults, keys, indexes and cascades, so the importer copies rows column
  * for column and every id the native side already knows (machine ids for credentials, transfer ids, culling keys)
  * keeps meaning the same thing. Room cannot declare CHECK constraints: the allowed values are listed on each column

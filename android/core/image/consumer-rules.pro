@@ -1,4 +1,4 @@
-# :core:image rules, applied by R8 to every app that uses the module (:app, :native). Moved from
+# :core:image rules, applied by R8 to every app that uses the module (:native). Moved from Hoard 1's
 # app/proguard-rules.pro unchanged (ADR 0019).
 
 # JNI: native methods are bound by name; the native code constructs LibRawException(int, String)

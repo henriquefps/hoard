@@ -8,12 +8,11 @@ buildscript {
     }
     dependencies {
         // R8 newer than AGP 8.13's own: it reads Kotlin 2.4 metadata (the bundled one warns and keeps it unparsed, which
-        // :app's release shrinking must not rely on). Drop this line with the swap PR's move to AGP 9 (ADR 0019).
+        // release shrinking must not rely on). Drop this line with the move to AGP 9 (ADR 0019).
         classpath 'com.android.tools:r8:9.5.32'
         classpath 'com.android.tools.build:gradle:8.13.0'
-        classpath 'com.google.gms:google-services:4.4.4'
-        // Kotlin for the native modules (core/*, the HoardSmb plugin in :app, :native; ADR 0019). One version for
-        // the whole build, the one in gradle/libs.versions.toml.
+        // Kotlin for every module (core/*, :native; ADR 0019). One version for the whole build, the one in
+        // gradle/libs.versions.toml.
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${libs.versions.kotlin.get()}"
         // :native and :core:designsystem (Compose), :native (type-safe navigation), :core:data (Room through KSP),
         // screenshot tests (Roborazzi).

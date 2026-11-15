@@ -1,49 +1,69 @@
 # Hoard: notes for agents
 
-Android file manager and photo culling app (Capacitor 8 + React): the phone's storage, USB drives, SD
-cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share between any of them (ADR 0007). Read `README.md` and `docs/adr/` first.
+Android file manager and photo culling app, native since 2.0.0 (Kotlin + Jetpack Compose, ADR 0019): the phone's
+storage, USB drives, SD cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share between any of them
+(ADR 0007), and a Gallery tab (photos on the phone and on hoard-server). Hoard 1.x (Capacitor + React) was removed in
+2.0.0; ADRs 0001–0018 describe it where they mention `src/`, the plugin contract or the WebView. Read `README.md` and
+`docs/adr/` first.
 
 ## Commands
 
-- `bun run dev` (browser, web mock), `bun run lint`, `bun run typecheck`, `bun run test`, `bun run build`.
-- `bun run android:debug` builds the APK (`android/app/build/outputs/apk/debug/app-debug.apk`);
-  it sets `JAVA_HOME` to Android Studio's JBR (no system JDK on this Mac). A fresh worktree needs
-  `android/local.properties` (git-ignored) with `sdk.dir=/Users/<you>/Library/Android/sdk`.
-- `bun run android:release` builds the signed release APK
-  (`android/app/build/outputs/apk/release/app-release.apk`) under `skv run hoard`: the keystore and
-  its passwords live only in the skv group `hoard` (never copy the .jks into the repo or print the
-  passwords). Without those variables Gradle builds `app-release-unsigned.apk` and warns.
-- With a phone plugged in, target the emulator explicitly (`adb -s emulator-5554`, or
-  `ANDROID_SERIAL`); never install test builds on the owner's phone.
-- End-to-end testing against a real Samba: see `docs/testing/release-1.0.0.md` (container, routes
-  through a killable throttled TCP proxy, driving the WebView over CDP in debug builds).
+- From `android/` (a fresh worktree needs `android/local.properties`, git-ignored, with `sdk.dir=…`):
+  `./gradlew :native:assembleDebug` (debug: `dev.hfps.hoard`, debug key, "Hoard debug"), `testDebugUnitTest` (JVM +
+  Robolectric for every module), `lint`, `:native:recordRoborazziDebug` / `verifyRoborazziDebug` (goldens in
+  `native/src/test/screenshots/`, copies in `docs/testing/<report>/`), `:native:assembleRelease` (R8; signed only
+  under `skv run hoard`). The bun scripts wrap them with the Mac's SDK and Android Studio's JBR (overridable with
+  `ANDROID_HOME` / `JAVA_HOME`): `bun run android:debug`, `bun run android:test`.
+- `bun run android:release` builds the signed release APK (`android/native/build/outputs/hoard/hoard-<version>.apk`,
+  task `:native:hoardReleaseApk`) under `skv run hoard`: the keystore (Hoard 1's, the upgrade in place needs it) and its
+  passwords live only in the skv group `hoard` (never copy the .jks into the repo or print the passwords). Without
+  those variables Gradle builds `hoard-<version>-unsigned.apk` and warns. cachy has no skv group `hoard`: release
+  builds there are unsigned; the owner's Mac signs.
+- Gradle on cachy: `--max-workers=4`, the `-Xmx3g` of `gradle.properties`; one emulator, `-memory 3072 -no-window`;
+  wrap every `adb` call in `timeout`.
+- With a phone plugged in, target the emulator explicitly (`adb -s emulator-5554`, or `ANDROID_SERIAL`); never install
+  test builds on the owner's phone. The debug build has the release's id with another key: on a phone with Hoard it
+  would not install, and uninstalling Hoard deletes its data.
+- Modules: `:core:smb` (SMB over smbj, Keystore credentials, locations and `HoardFs`, the transfer engine, streaming +
+  `StreamProvider`, share in/out, Reveal hand-off, culling's native side), `:core:image` (LibRaw, decoders, caches,
+  analysis), `:core:xmp`, `:core:data` (Room + the Hoard 1 importer), `:core:designsystem` (hfps theme, Inter,
+  Phosphor), `:native` (`route/`, `transfers/`, `files/`, `cull/`, `smb/`, `data/`, `ui/`).
+- Upgrade from Hoard 1 (ADR 0019): the first launch runs `CapacitorImporter` (`:core:data`) on Hoard 1's
+  `databases/hoardSQLite.db` (schema v7, read only, copied first). The Kotlin copy of Hoard 1's migrations
+  (`LegacyMigrations.kt`) and the fixtures in `core/data/fixtures/` are frozen: Hoard 1's sources are gone, so never
+  regenerate them. E2E: `docs/testing/hoard-2.0.0.md` (a Hoard 1.11.0 debug build from commit `29cabe0`, the last with Hoard 1, then this
+  debug build over it, `UpgradeE2eTest` opt-in with `-e hoardUpgradeE2e true`; `FirstLaunchTest` replaces the
+  install's databases, opt-in with `-e hoardFirstLaunch true`). Never `connectedAndroidTest` on an install with data:
+  it uninstalls the app.
+- End-to-end testing against a real Samba: `docs/testing/samba/` and `docs/testing/xmp-sidecars/samba/` (containers),
+  `docs/testing/tools/proxy.mjs` (a killable throttled TCP proxy); drive the app with `adb shell input` and
+  `uiautomator dump`, screenshots with `adb exec-out screencap -p`.
 - Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/core/image/src/main/cpp`): see
   `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
   `HOARD_ARW_DIR` JVM tests. Real photos are private: never commit them, use copies.
-- Culling (ADR 0008, `src/features/cull/`): the WebView shows JPEG files the image core writes
-  (`cull*` plugin methods); pure logic in `model.ts` (tested). Measure on the emulator with
-  `hoardCull.summary()` over CDP and `adb logcat -s HoardCull HoardImage`. The copy step goes only
-  through `copyPicks.ts` (the transfer engine's adapter), never a culling-specific copy.
-- Assisted culling (ADR 0009): native measurements in `dev.hfps.hoard.image.analysis` (pure Kotlin,
-  JVM-tested; formulas written platform-neutrally in the ADR), flags / bursts / suggestions in
-  `src/features/cull/assist.ts`. Changing a measurement bumps `ShotAnalysis.VERSION` and
-  `ANALYSIS_VERSION` together (cached rows in `cull_analysis` are then recomputed). Suggestions
-  never decide: only the user's accept writes decisions. Calibrate on copies with
-  `AnalysisCalibrationTest` (JVM, `HOARD_ARW_DIR`) and `AnalysisHarnessTest` (emulator, ML Kit);
+- Culling (ADR 0008, `native/.../cull/`, `ui/cull/`): pure logic in `CullLogic.kt` (tested), `CullViewModel` over
+  `CullBackend` (`NativeCullBackend`: the image core and `CullService` of `:core:smb`). Measure with
+  `adb logcat -s HoardCull HoardImage`. "Copy picks" goes only through the transfer engine (`TransferRequest` with
+  `sidecars`), never a culling-specific copy.
+- Assisted culling (ADR 0009): native measurements in `dev.hfps.hoard.image.analysis` (pure Kotlin, JVM-tested;
+  formulas written platform-neutrally in the ADR), flags / bursts / suggestions in `cull/Assist.kt` and `Burst.kt`.
+  Changing a measurement bumps `ShotAnalysis.VERSION` and `ANALYSIS_VERSION` (`Assist.kt`) together (cached rows in
+  `cull_analysis` are then recomputed). Suggestions never decide: only the user's accept writes decisions. Calibrate
+  on copies with `AnalysisCalibrationTest` (JVM, `HOARD_ARW_DIR`) and `AnalysisHarnessTest` (emulator, ML Kit);
   report aggregates only.
 - Culling sidecars (ADR 0011): one native module `dev.hfps.hoard.xmp` (ported from Reveal's `Xmp.kt`; JVM-tested)
-  reads, merges and writes XMP for the culling writer/reader (`smb/cull/CullSidecars.kt`, `cullReadSidecars` /
-  `cullWriteSidecars`) and for "Copy picks" (`TransferRunner.writeSidecar`, `startTransfer`'s `sidecars` as
-  fields). Never overwrite a malformed sidecar; never write into a folder not opened for culling; opening a folder
-  never writes. Precedence rule and `cull_sidecars` in `src/features/cull/xmp.ts`. E2E: `docs/testing/xmp-sidecars.md`.
-- Edit in Reveal (ADR 0010): `smb/share/RevealHandoff.kt` builds Reveal's `DEVELOP` intent (Reveal ADR
-  0011), sent to one package (`RevealPackages`: release, else debug; never a chooser); `src/features/reveal/` decides
-  what is sent. Read + **persistable** grant on exactly the URIs sent, never a write flag on the intent; write
-  (`grantUriPermission`) only on sidecar items (`openInReveal`'s `sidecars`, when `cullSaveXmp` is on); decisions go
-  as the `CULLING` extra (ADR 0011). SMB photos go as stable links `content://<app>.stream/h/<id>/<tag>%2F<name>`
-  (`smb/handoff/`: `HandoffStore` JSON in `noBackupFilesDir`, `HandoffServer` inside `StreamProvider`, served after a
-  cold start through the native machine mirror `syncMachines` + `NativeRoute`); the short-lived token URIs stay for
-  share-out and streaming. Settings › "Reveal links" (`revealLinks` / `revokeRevealLinks`). E2E:
+  reads, merges and writes XMP for the culling writer/reader (`smb/cull/CullSidecars.kt`, `CullSidecarWriter`) and for
+  "Copy picks" (`TransferRunner.writeSidecar`). Never overwrite a malformed sidecar; never write into a folder not
+  opened for culling; opening a folder never writes. Precedence rule and `cull_sidecars` in `cull/CullXmp.kt`. E2E:
+  `docs/testing/xmp-sidecars.md`.
+- Edit in Reveal (ADR 0010): `smb/share/RevealHandoff.kt` builds Reveal's `DEVELOP` intent (Reveal ADR 0011), sent to
+  one package (`RevealPackages`: release, else debug; never a chooser); `ui/reveal/Reveal.kt` decides what is sent.
+  Read + **persistable** grant on exactly the URIs sent, never a write flag on the intent; write
+  (`grantUriPermission`) only on sidecar items (when `cullSaveXmp` is on); decisions go as the `CULLING` extra
+  (ADR 0011). SMB photos go as stable links `content://<app>.stream/h/<id>/<tag>%2F<name>` (`smb/handoff/`:
+  `HandoffStore` JSON in `noBackupFilesDir`, `HandoffServer` inside `StreamProvider`, served after a cold start through
+  the native machine mirror); the authority follows the application id, so links Hoard 1 gave keep working. Keep the
+  `StreamProvider` authority and `HandoffStore`'s file. Settings › "Reveal links". E2E:
   `docs/testing/persistable-handoff.md`. Test with Reveal's debug APK on the emulator only
   (`./gradlew :app:assembleDebug` in a copy of the reveal repo; its `release` variant did not compile in a clean clone
   on 2026-11-12).
@@ -52,7 +72,7 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and
   `TestRevealProtocolContract`; video tests need ffmpeg/ffprobe on PATH), `docker build -t hoard-server .`, `gofmt`/golangci-lint as in
   `.github/workflows/server.yml`. Releases: tag `server-v<version>` (`server-release.yml` → GHCR); the app keeps `v*`.
-  The bun scripts (ESLint, Prettier, Vitest, tsc) ignore `server/`. Run test servers on temp dirs and other ports;
+  Run test servers on temp dirs and other ports;
   never touch the owner's deployed server (`~/Apps/reveal-sync` on cachyos-fps, containers `reveal-sync` and
   `reveal-sync-tunnel`) or its data.
 - **Web gallery** (`server/web/`, ADR 0018): Vite + React + shadcn in the hfps identity, built into
@@ -60,71 +80,38 @@ cards and SMB shares, all as _locations_ (ADR 0005), with copy/move/share betwee
   cookie). `cd server/web && bun run lint && bun run typecheck && bun run test && bun run e2e` (Playwright against the
   binary with a synthetic library; `HOARD_WEB_SCREENSHOTS=1`, `HOARD_WEB_BENCH=1`): `docs/testing/web-gallery.md`.
   Strings in `server/web/src/i18n/locales/{en,pt-BR}.json`.
-- **Hoard 2 (native, ADR 0019)**: one Gradle project. Native code lives in `android/core/{smb,image,xmp}` (used by the
-  Capacitor `:app` and by the Compose app `:native`, id `dev.hfps.hoard.next` until the swap), the database and the
-  one-time import of `hoardSQLite.db` in `:core:data` (Room, schema = Capacitor v7), the hfps theme in
-  `:core:designsystem`. `cd android && ./gradlew testDebugUnitTest` runs every JVM test; `:native:recordRoborazziDebug`
-  re-records screenshots. Phase 2b (the Files tab): the route engine, transfer bookkeeping and browser rules are Kotlin in
-  `:native` (`route/`, `transfers/`, `files/`); its strings are Hoard 1's, generated by
-  `python3 android/scripts/strings/export_strings.py` (run it after changing `src/i18n/locales/*.json`;
-  `nativeStrings.test.ts` checks it); E2E: `docs/testing/native-2b.md`. A Capacitor migration also regenerates `LegacyMigrations.kt`
-  (`bun scripts/legacy-db/export-migrations.ts`) and the fixtures (`bun scripts/legacy-db/fixtures.ts`). Upgrade test
-  with `-Phoard.native.sameId=true` on the emulator only: `docs/testing/native-2a.md`.
-- **Running `:native`** (from `android/`; a fresh worktree needs `local.properties` and, for `:app`, `bun run build &&
-  bunx cap sync android` once): `./gradlew :native:assembleDebug` (debug, `dev.hfps.hoard.next`), `:native:assembleRelease`
-  (R8; signed only under `skv run hoard`), `testDebugUnitTest` (JVM + Robolectric for every module),
-  `:native:recordRoborazziDebug` / `verifyRoborazziDebug` (goldens in `native/src/test/screenshots/`, copied to
-  `docs/testing/native-2*/`), `lint`. Gradle on cachy: `--max-workers=4`, the `-Xmx3g` of `gradle.properties`; one
-  emulator, `-memory 3072`; wrap every `adb` call in `timeout`. Modules: `:core:smb` (SMB, locations, transfers,
-  streaming, hand-off, culling's native side, the import bridge contract), `:core:image` (LibRaw, analysis),
-  `:core:xmp`, `:core:data` (Room + importer), `:core:designsystem` (hfps theme, Phosphor), `:native` (`route/`,
-  `transfers/`, `files/`, `cull/`, `importer/`, `ui/`). Rules as in Hoard 1: strings in both languages (Hoard 1's
-  via `export_strings.py`, native-only ones in `native/src/main/res/values{,-pt-rBR}/strings.xml`), one transfer
-  engine, passwords only in the Keystore, licences of new libraries in Settings › Licences (`LicencesScreen.kt`).
-- **Hoard Next** (phase 2d, ADR 0019): `bun run android:next` builds the side-by-side test build
-  (`nextRelease`: `dev.hfps.hoard.next`, "Hoard Next", violet icon with a dot from `scripts/glyph-next.svg`) as
-  `android/native/build/outputs/hoard-next/hoard-next-<version>.apk`, signed with the Hoard keystore under
-  `skv run hoard` (unsigned with a warning otherwise; `-Phoard.next.debugSigned=true` for the emulator only). It reads
-  Hoard 1.11+'s data through the import bridge (`ImportBridgeProvider` in `:app`, signature permission
-  `dev.hfps.hoard.permission.IMPORT_BRIDGE`, contract `ImportBridgeContract`); passwords are typed again once (the
-  Passwords step). E2E: `docs/testing/native-2d.md`.
-- Package manager is **bun**. Never commit secrets; credentials live in `skv`.
+- A side-by-side beta (another id next to Hoard, like 2.0.0-beta.1's "Hoard Next"): see ADR 0019, "After the swap".
+- Package manager is **bun** (the scripts above, `server/web`). Never commit secrets; credentials live in `skv`.
 
 ## Rules
 
-- **UI follows the `hfps-kit` skill (`react/GUIDE.md`)** (type scale, single card surface, density, list → card list
-  below `@xl`, breadcrumbs via `Page` + `components/page/breadcrumbs.ts`, `ResponsiveDialog` for
-  form dialogs (Drawer on phones), motion and gesture rules, no raw Tailwind colors). After any
-  `shadcn add`: fix `from "cn"` imports, keep `sonner.tsx` without next-themes, re-apply the
-  `tabs.tsx` focus fix, the `progress.tsx` `tone` variant and the `sidebar.tsx` short-screen rail
-  (`useIsShort`, `short:block` / `short:flex`).
-- **Page header** (1.9.1, `components/page/`): `Page` collapses its header on scroll (quick-return,
-  `collapse.ts`) behind a compact bar. A `fill` page puts its scrolling list in `PageScroll`
-  (header, `toolbar`, `compactTools`, `compactMenu`), and a virtual list in it uses
-  `useScrollMargin`. Header buttons wrap their text in `ActionLabel` (icon only when compact and on
-  `short` screens: viewport ≤ 500px tall, where the top bar becomes the sidebar rail).
-- **No hard-coded UI strings.** Every string goes through i18next with keys in both
-  `src/i18n/locales/en.json` and `pt-BR.json`.
-- **Plugin contract rule.** `src/plugins/smb/definitions.ts` is the contract. Any change touches, in
-  the same PR: `definitions.ts`, the web mock (`web.ts` + `mockData.ts`, with tests in
-  `web.test.ts`) and the Kotlin plugin (facade `android/app/.../smb/HoardSmbPlugin.kt`, the rest in `android/core/smb/`, including
-  `ErrorCode.kt`). Every rejection carries a `HoardSmbErrorCode` in `error.code`.
-- **Locations** (ADR 0005): file calls take a `location` (`LocationRef`); pages work through
-  `BrowseLocation.run` (`src/features/locations/useBrowseLocation.ts`), never with a raw
-  `sessionId`. Route ids: machine id, `device`, `vol-<uuid>`. Native file operations go through
-  `HoardFs` (`smb/location/`: `SmbFs`, `PathFs`, `SafFs`).
+- **UI follows the `hfps-kit` skill's Android guide** through `:core:designsystem` (`HfpsTheme` tokens, the five
+  palettes, Inter, Phosphor `ImageVector`s from `android/scripts/icons/`, one card surface, eyebrow labels,
+  `HfpsScaffold`'s collapsing top bar). No raw colours or ad-hoc Material components where a design-system one exists.
+  Layout: bottom bar on phones in portrait, a rail when the window is ≥ 600 dp wide or ≤ 500 dp tall.
+- **No hard-coded UI strings.** Every string is a resource in both `native/src/main/res/values/` and
+  `values-pt-rBR/` (`strings.xml`; Hoard 1's words, `t_` names, in `strings_hoard1.xml`, now edited by hand; names of
+  components and licences in `licences.xml`, not translated). pt-BR plurals have `one`, `many` and `other`.
+- **Locations** (ADR 0005): screens work through `FileService.run(BrowseLocation…)` (`files/Locations.kt`), which
+  takes the route engine's session; never a raw smbj session. Route ids: machine id, `device`, `vol-<uuid>`. Native
+  file operations go through `HoardFs` (`smb/location/`: `SmbFs`, `PathFs`, `SafFs`). Every failure carries a
+  `HoardSmbErrorCode` (`ErrorCode.kt`) that the UI maps to its state.
 - Emulator volumes: `adb shell sm set-virtual-disk true` + `sm partition disk:7,432 public` (pull
   it out with `false`); see `docs/testing/locations.md`.
-- **Bytes never cross the bridge**: transfers, open and thumbnails work with native files and URLs.
-- **Transfers** (ADR 0007): every byte that moves between locations goes through one engine —
-  `useTransferActions().start(request)` in JS, `startTransfer` in the contract, `TransferRunner`
-  over `TransferFs` endpoints natively (`smb/transfer/`). Don't add a second copy path. Pure logic
-  is JVM-tested with the in-memory `MemoryFs` (`TransferRunnerTest`). Share in/out: `smb/share/`.
-- **Passwords never go to SQLite or JS storage**: only `HoardSmb.setCredentials` (Android Keystore).
-- **Schema changes** append a migration to `src/db/migrations.ts` (never edit a released one) and
-  update `src/db/types.ts`, `docs/adr/0003-storage.md` and `src/db/db.test.ts`.
-- All data access goes through the `Db` interface (`useDb`, `useLiveQuery`); the app's `Db` notifies
-  live queries after every committed write (`src/db/changes.ts`).
+- **Transfers** (ADR 0007): every byte that moves between locations goes through one engine: `TransferService` in
+  `:native` (the `transfers` row first, then `TransferManager.start`), `TransferRunner` over `TransferFs` endpoints
+  (`smb/transfer/`). Don't add a second copy path. Pure logic is JVM-tested with the in-memory `MemoryFs`
+  (`TransferRunnerTest`). Share in/out: `smb/share/`.
+- **Passwords never go to the database, settings or logs**: only `CredentialStore` (Android Keystore, alias
+  `dev.hfps.hoard.credentials.v1`, unchanged since Hoard 1 so saved passwords survive the upgrade).
+- **Schema changes** are Room migrations in `:core:data` (bump the version, export the schema to
+  `core/data/schemas/`, a migration test; never edit a released one) and update `docs/adr/0003-storage.md`. Settings
+  stay JSON rows of `settings` (`SettingsStore`, `AppSettings` with Hoard 1's validators).
+- **Don't rename what an upgrade depends on**: the application id, the signing key, the `dev.hfps.hoard.*` package and
+  class names WorkManager and JNI bind (`LibRawNative`), the Keystore alias, provider authorities, `HandoffStore`'s
+  file, and the launcher alias `dev.hfps.hoard.MainActivity` (pinned icons from Hoard 1).
+- **Licences**: a new library in the APK goes into Settings › Licences (`LicencesScreen.kt`, `licences.xml`) and
+  `docs/licences.md` in the same PR.
 - **Server compatibility** (ADR 0012): `/v1` is frozen for Reveal — additions only (new optional fields, new routes;
   incompatible changes go to `/v2` next to it), each written into ADR 0013 and `api/openapi.yaml` in the same PR;
   `server/testdata/v1-routes.txt` never shrinks. Keep `rvk1_` keys, the `revealsync://pair` URI, the SQLite schema

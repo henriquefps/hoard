@@ -17,8 +17,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Opt-in (`-e hoardUpgradeE2e true`), on the same-id build installed OVER a Capacitor debug app that has real data,
- * after its first launch imported it (docs/testing/native-2a.md). Checks, in the upgraded app's own process:
+ * Opt-in (`-e hoardUpgradeE2e true`), on a debug build installed OVER a Hoard 1 debug app that has real data, after
+ * its first launch imported it (docs/testing/hoard-2.0.0.md). Checks, in the upgraded app's own process:
  * every Capacitor row arrived unchanged; the Keystore passwords the Capacitor app saved still decrypt; and with them
  * the imported machines still sign in to their (test) Samba.
  */
