@@ -3,6 +3,7 @@ package dev.hfps.hoard.server.preview
 import dev.hfps.hoard.image.source.RandomAccessSource
 import dev.hfps.hoard.server.api.PreviewResult
 import dev.hfps.hoard.server.api.ServerApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -22,6 +23,13 @@ enum class PreviewSize(val wire: String, val format: String, val ext: String) {
  * edit or item is fetched again.
  */
 class PreviewCache(private val dir: File, @Volatile var maxBytes: Long, private val api: suspend () -> ServerApi?) {
+    /**
+     * Called, off the main thread, with every complete original thumb this cache hands out (downloaded now or already
+     * cached; never an edit's, never a partial file): Hoard 2.2.2 keeps them in the offline thumbnails. A failure here
+     * never fails the preview.
+     */
+    @Volatile var onOriginalThumb: (suspend (itemId: String, file: File) -> Unit)? = null
+
     val locks = KeyedLocks()
     private val used = AtomicLong(-1)
 
@@ -34,6 +42,21 @@ class PreviewCache(private val dir: File, @Volatile var maxBytes: Long, private 
 
     /** The preview file, downloaded when needed; null when the server has none (or is not reachable). */
     suspend fun get(itemId: String, size: PreviewSize, edit: String? = null, version: String = "0", waitPending: Int = 6): File? {
+        val file = fetch(itemId, size, edit, version, waitPending)
+        val hook = onOriginalThumb
+        if (file != null && hook != null && size == PreviewSize.Thumb && edit == null) {
+            try {
+                withContext(Dispatchers.IO) { hook(itemId, file) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // The offline copy is a convenience.
+            }
+        }
+        return file
+    }
+
+    private suspend fun fetch(itemId: String, size: PreviewSize, edit: String?, version: String, waitPending: Int): File? {
         cached(itemId, size, edit, version)?.let { return it }
         val target = file(itemId, size, edit, version)
         // One download per preview at a time (a refcounted lock); [ServerApi.downloadPreview] writes a unique temporary

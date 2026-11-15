@@ -6,6 +6,7 @@
 - **The fast scroller no longer grabs your scrolls.** It only reacts to a touch that starts on its handle, in a narrow strip at the right edge; a swipe anywhere else, even near the edge, scrolls the grid normally. The handle shows while you scroll and fades out when you stop; dragging it still shows the month and the years.
 - **Server photos open offline.** In airplane mode or away from the server, the viewer shows the copy the phone already has (the thumbnail the grid shows) with a small "Offline · low resolution" note, instead of "This shot could not be shown."; online it shows that thumbnail at once and swaps in the full preview when it arrives. The filmstrip shows the thumbnails too. A photo with no copy on the phone at all says "Not available offline" rather than an error.
   - Why the filmstrip was empty: the grid draws server photos from the offline thumbnails (kept for the whole library), while the viewer and its filmstrip looked only in the preview cache, which has no copy of the photos the grid showed from those thumbnails. Both now read the same files.
+- **Photos you browse stay available offline.** Every server thumbnail the grid or the filmstrip downloads is now also kept in the offline thumbnails (unless you turned them off in Settings › Photo server), so what you scrolled past on mobile data still shows in airplane mode. No extra download; the count in Settings includes them.
 
 ## 2.2.1
 
