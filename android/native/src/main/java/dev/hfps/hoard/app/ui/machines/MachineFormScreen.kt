@@ -1,5 +1,7 @@
 package dev.hfps.hoard.app.ui.machines
 
+import dev.hfps.hoard.app.ui.common.reorderable
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -207,8 +209,13 @@ fun MachineFormScreen(viewModel: MachineFormViewModel, state: MachineFormState, 
                 }
 
                 Section(stringResource(R.string.t_machines_form_addresses), stringResource(R.string.t_machines_form_addresses_hint)) {
+                    val addressDrag = dev.hfps.hoard.app.ui.common.rememberDragReorder(draft.addresses.size) { from, to ->
+                        viewModel.setAddresses(dev.hfps.hoard.app.ui.common.moved(draft.addresses, from, to), manual = true)
+                    }
                     draft.addresses.forEachIndexed { index, address ->
-                        AddressEditor(index, address, draft.addresses, state, viewModel)
+                        androidx.compose.foundation.layout.Box(Modifier.reorderable(addressDrag, index).background(HfpsTheme.colors.card)) {
+                            AddressEditor(index, address, draft.addresses, state, viewModel, addressDrag)
+                        }
                     }
                     state.errors.addresses?.let { Text(stringResource(R.string.t_machines_form_errors_addresses), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.destructive) }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -314,7 +321,7 @@ private fun Field(value: String, onChange: (String) -> Unit, label: String, plac
 }
 
 @Composable
-private fun AddressEditor(index: Int, address: DraftAddress, all: List<DraftAddress>, state: MachineFormState, viewModel: MachineFormViewModel) {
+private fun AddressEditor(index: Int, address: DraftAddress, all: List<DraftAddress>, state: MachineFormState, viewModel: MachineFormViewModel, drag: dev.hfps.hoard.app.ui.common.DragReorder? = null) {
     val error = state.errors.byAddress[address.key]
     val kind = address.host.takeIf { it.isNotBlank() }?.let { AddressKind.detect(dev.hfps.hoard.app.route.parseHostInput(it)?.host ?: it) }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -348,6 +355,7 @@ private fun AddressEditor(index: Int, address: DraftAddress, all: List<DraftAddr
             } else {
                 Box(Modifier.weight(1f))
             }
+            if (drag != null && all.size > 1) dev.hfps.hoard.app.ui.common.DragHandle(drag, index, stringResource(R.string.t_favorites_reorder))
             HfpsIconButton(PhosphorRegular.ArrowUp, stringResource(R.string.t_common_move_up, address.host), {
                 viewModel.setAddresses(all.toMutableList().apply { add(index - 1, removeAt(index)) }, manual = true)
             }, enabled = index > 0)
