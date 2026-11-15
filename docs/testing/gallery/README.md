@@ -82,3 +82,39 @@ Software GPU, cachy loaded (load average 13–38): absolute numbers are the emul
 | Same, debug build | p50 81 ms, p90 200 ms |
 | Baseline: Settings, 30 flings, same build | p50 28 ms, p90 53 ms, 17.3 % janky |
 | Offline thumbnails | 6,249 kept so far, 49 MB on disk (≈ 8 KB each for 240×160 bench images); the rest waits for the server's previews, retried with back-off |
+
+## Hoard 2.2.2: scroll state, fast scroller, viewer offline (2026-11-15)
+
+Owner feedback on 2.2.1 (ADR 0021 "Amendment 2.2.2").
+
+| Suite | What it checks |
+| --- | --- |
+| `:native` `GridAnchorTest` | the anchor is the first visible cell (a header anchors to the next cell); after a reload with 300 newer shots above, the same shot is found by key at its new row; nothing to do when already there or when the shot is gone; back from the viewer the shot is scrolled to mid-screen only when off screen; the scroller's hit area (inside the 24 dp strip and the thumb ± slop, only when shown) |
+| `:native` `GalleryStateTest` | hiding the tab bar keeps the screens' composition (fails on 2.2.1's `TabbedLayout`); the grid keeps its shot across the viewer, a reload that adds shots above, and a new process (anchor from saved state, grid state at 0); the shot swiped to in the viewer is on screen after closing; a drag in the edge strip off the thumb, or in the middle, scrolls the grid (no jump); a hidden thumb cannot be grabbed; dragging the thumb scrubs to the matching fraction |
+| `:native` `ServerShotImagesTest` | the filmstrip finds the grid's offline thumbnail (same item, same file); the screen preview first (final), then the 512 px thumb, then the offline thumbnail (low resolution); an edit falls back to the original's thumbs; a network failure is "offline", a server error or no server is not |
+| `:native` `OfflineViewerTest` | offline the cached thumbnail shows with the "Offline · low resolution" note and no error text; online a spinner shows over it until the screen image arrives; a shot with no copy gets the offline placeholder |
+
+Goldens: `gallery_scroller_{shown,hidden,dragging}_phone_light`, `gallery_viewer_offline_phone`,
+`gallery_viewer_offline_none_phone` (copies here).
+
+### Emulator run
+
+Pixel API 36 (`-memory 2048 -no-window`), debug build `-Phoard.native.debugSuffix=.gallery`, my own hoard-server 0.10.1
+container (temporary data, `127.0.0.1:3995` → `http://10.0.2.2:3995`, `--cpus 2 --memory 1536m`) with 4,000
+synthetic JPEGs (`TestWriteWebBench`, drawn 240×160 images, nothing private), plus the emulator's 6 phone shots.
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Pair, first sync | 4,000 items pulled in 2.2 s | — |
+| Scroll deep (row of IMG_003151, 864th of 4,006), open IMG_003142, swipe 16 shots to IMG_003126, close | the grid is on the same rows at the same pixel offsets; IMG_003126 fully on screen | `e2e-222/e2e-03-back.png` |
+| Home, `am kill`, relaunch | the grid opens on the same rows (anchor from saved state) | — |
+| Airplane mode, open IMG_003114 (never opened) | its offline thumbnail with "Offline · low resolution"; the filmstrip full of thumbnails | `e2e-222/e2e-04-offline-viewer.png` |
+| Drag the fast scroller's thumb to the bottom | IMG_000000 at the end of the grid | `e2e-222/e2e-05-scrubbed.png` |
+| Drag along the right edge, not on the thumb | the grid scrolls by the finger's 414 px, no jump | — |
+| Both caches of the test install removed, airplane mode, open a server shot | "Not available offline" placeholder, no error | `e2e-222/e2e-06-offline-none.png` |
+| Airplane mode off, same shot | the screen preview loads, no note | — |
+
+Stores after the run (before removing them): offline thumbnails 4,000 files, 34 MB (≈ 8.5 KB each from 240×160
+sources); preview cache 212 files, 2.9 MB: **183 thumbs** (the filmstrip's, online) and 29 screens. The grid at 4
+columns drew every server cell from the offline thumbnails and wrote nothing to the preview cache, which is what the
+2.2.1 viewer read.
