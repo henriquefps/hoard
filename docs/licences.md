@@ -17,8 +17,9 @@ PR; check with `./gradlew :native:dependencies --configuration releaseRuntimeCla
 | AndroidX, Jetpack Compose, Room | Apache License 2.0 | `androidx.*` (Compose, Material 3, Navigation, Lifecycle, Room, WorkManager, AppCompat, ExifInterface…) |
 | Kotlin, kotlinx.coroutines, kotlinx.serialization, JetBrains annotations | Apache License 2.0 | `org.jetbrains.kotlin`, `org.jetbrains.kotlinx`, `org.jetbrains:annotations` |
 | Guava, javax.inject, JSpecify | Apache License 2.0 | transitive (ML Kit, AndroidX) |
-| Java core library desugaring | GPL-2.0 with the Classpath Exception | `com.android.tools:desugar_jdk_libs` (`java.time` on Android 7) |
+| Java core library desugaring (desugar_jdk_libs) | GPL-2.0 with the Classpath Exception | `com.android.tools:desugar_jdk_libs` (`java.time` on Android 7) |
 | ML Kit face detection, with its Google Play services and Firebase components | ML Kit terms of service | `com.google.mlkit:face-detection` (bundled model) |
+| Google code scanner (ML Kit, through Google Play services) | ML Kit terms of service | `com.google.android.gms:play-services-code-scanner` (QR codes for pairing; the scanner module is downloaded by Google Play services, no camera permission) |
 | Inter | SIL Open Font License 1.1 | `android/core/designsystem/fonts/` |
 | Phosphor Icons | MIT | generated as `ImageVector`s (`android/scripts/icons/`) |
 | Mermaid | MIT | vendored in `android/native/src/main/assets/mermaid/` (text viewer) |

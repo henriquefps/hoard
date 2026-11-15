@@ -5,6 +5,8 @@
   restart, sidecar write-back, explicit Reveal package. Sections marked **(1.10.0)** replace what 1.8.0 said.
   Amended 2026-11-15 (2.0.1): "Bursts of opens" (limits on the provider, the `busy:` failure contract).
   Amended 2026-11-15 (2.0.2): "Idle reclaim" (idle proxy descriptors give their read slot back; the contract unchanged).
+  Amended 2026-11-15 (2.1.0): **server items** go by reference, `CULLING` version 2 (section "Server items (2.1.0)",
+  Reveal ADR 0011 amendment W3/H).
 
 ## Context
 
@@ -267,6 +269,35 @@ Icon: Phosphor `SlidersHorizontal`. Strings under `reveal.*` (en, pt-BR).
   other files are left out. A single row opens in the editor at once.
 - **Batches above 200 files** ask first ("Open 640 files in Reveal?").
 - **Settings → About** shows one line about Reveal when it is installed.
+
+### Server items (2.1.0)
+
+Reveal ADR 0011 amendment W3/H (frozen 2026-11-15; `docs/integration/README.md` contracts 9 and 10). Sender:
+`RevealHandoff.launchMixed` (`:core:smb`), decided per shot by `GalleryReveal` (`:native`, ADR 0021).
+
+- **Which shots.** A shot goes as a **server item** when Hoard's paired server holds it (a Gallery item on the server,
+  or a phone shot whose fingerprint the server has) and the installed Reveal is ≥ 0.9.0 (`versionCode >= 90000`,
+  `RevealHandoff.acceptsServerReferences`). Otherwise a shot on the phone goes as a URI item (as before), and a shot
+  only on the server cannot go: the viewer says "update Reveal". Hoard never streams a server photo to Reveal (no
+  provider, no grant, nothing in `HandoffStore`), and never falls back to URIs for a photo the server holds when
+  Reveal takes references, whether or not that Reveal is paired (Reveal offers to pair or claim). SMB files of Files
+  and folder culling still go as URIs until 2.2.0 maps share paths to server items (`items-by-path`).
+- **The intent.** The same `dev.hfps.reveal.action.DEVELOP` to one package (release, else debug). Server items add
+  `SERVER_REF_VERSION` = 1, `SERVER_ID` (the paired server's id), `SERVER_ITEMS` (an `ArrayList<Bundle>`, order kept,
+  one per shot: `itemId`; `fingerprint` = the main file's `v1:`; `fingerprints` = every member's when more than one;
+  `name` ≤ 255) and `INITIAL_ITEM` (wins over `INITIAL_URI`). No ClipData, URI, grant or culling key for server items.
+  At most 500 server items per intent; more go as several intents with the same `TITLE` (`startActivities`). One
+  intent may also carry URI items (ClipData, grants and `CULLING` for those only). A full batch of 500 pairs is
+  ≈ 320 KB of extras, a third of the Binder buffer.
+- **Culling first.** Before sending, the shots' pending culling changes are pushed (best effort, 3 s); Reveal pulls
+  the items' culling records on receipt.
+- **`CULLING` version 2** (URI items): per field `ratingModifiedAt` / `flagModifiedAt` / `labelModifiedAt` (ms, the
+  time of Hoard's decision row) and `ratingDevice` / `flagDevice` / `labelDevice` (Hoard's server `deviceId`, only when
+  paired). Sent as version 2 to Reveal ≥ 0.9.0; an older Reveal gets version 1 with the times and without the devices.
+- **Tests.** `RevealHandoffTest` (batches, fields, sizes, versions) and `ServerReferenceIntentTest` (Robolectric: a
+  test receiver `dev.hfps.reveal` at versionCode 90000 reads the intents back: no ClipData or grants, extras, 1,001
+  items in three intents, mixed URI + server items, CULLING v2; an older Reveal takes none). An end-to-end run with a
+  real Reveal 0.9.0 waits for that build.
 
 ## Alternatives considered
 
