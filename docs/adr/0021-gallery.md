@@ -5,6 +5,8 @@
 - **Builds on**: ADR 0013 (protocol, pairing, keys), 0014 (items), 0015 (previews), 0016 (culling sync, "Client
   rules"), 0017 (device identity, "Client calls"), 0020 (edited previews), 0008/0009/0011 (culling, analysis,
   sidecars), 0010 (Edit in Reveal; amended in the same PR for server references).
+- **Amended**: 2026-11-15 (Hoard 2.2.0, ADR 0022): `gallery.db` version 2 (SMB ↔ NAS mappings), `items-by-path` is
+  called, and the sync engine also carries folder culling of mapped SMB shots (sections "Modules", "Seams", "Consequences").
 
 ## Context
 
@@ -31,7 +33,8 @@ through the server (ADR 0016). Backup, freeing space, video compression and serv
   - `db/`: **`gallery.db`**, a Room database apart from `hoard.db` (which stays Hoard 1's schema v7 table for table,
     ADR 0019): `server_account` (one row), `server_items` (+ `server_item_files`, every member fingerprint),
     `culling` (+ `culling_fingerprints`), `culling_pending` (the queue), `device_media`, `device_folders`,
-    `device_pushed`. Items and records are a cache ("Clear cache" pulls again); the queue and the device index are not.
+    `device_pushed`; since 2.2.0 `smb_mappings` and `smb_mapping_misses` (ADR 0022). Items and records are a cache
+    ("Clear cache" pulls again); the queue, the device index and the mappings are not.
   - `sync/`: `CullingRules` (pure, rules 1–4 and 6 of ADR 0016), `Feed` (a page as writes), `SyncEngine` (pair, claim,
     declare `culling`, push → pull → push, see "Sync passes"), `GallerySyncWorker` (hourly with a network, and "soon"
     after a decision), `OfflineThumbsWorker`.
@@ -186,12 +189,14 @@ server-only shot cannot go (the owner is told to update Reveal); Hoard never str
 Backup (`POST /v1/uploads` of what `device_media` + `server_item_files` say is missing), free up space (phone shots
 whose every file is on the server), video compression and server-side analysis plug into `DeviceIndexer`,
 `GalleryRepository` and `CullBackend.analyze`. `POST /v1/items/by-path` (hoard-server 0.10.0, feature
-`items-by-path`) is for Hoard 2.2.0's SMB path mapping (ADR 0010 "Server items" transition) and is not called here.
+`items-by-path`) is called since Hoard 2.2.0 by the SMB path mapping (ADR 0022, `:core:server` `paths/`), with
+`GET /v1/items?folder=&path=`; its culling dual write queues through this ADR's `SyncEngine` (plus `redate`, which dates a
+pending change by the sidecar written with it).
 
 ## Consequences
 
 - Hoard has a second database. `hoard.db` keeps Hoard 1's schema; `gallery.db` starts at Room version 1 with its own
-  schema history in `core/server/schemas/`.
+  schema history in `core/server/schemas/` (version 2 in 2.2.0: the SMB mappings of ADR 0022, migration 1 → 2).
 - Hoard keeps a copy of the whole items feed (a row per item with its JSON, its member files and culling records;
   not yet measured on the owner's 21k library), plus offline thumbnails when on (≈ 8–15 KB per item).
 - Cleartext stays limited to loopback in the network security config; a plain-HTTP server is reached through the
