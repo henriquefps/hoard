@@ -60,6 +60,8 @@ class ServerReferenceIntentTest {
         assertThat(intent.getStringExtra(RevealHandoff.EXTRA_INITIAL_ITEM)).isEqualTo("item-2")
         assertThat(intent.getStringExtra(RevealHandoff.EXTRA_TITLE)).isEqualTo("Trip")
         assertThat(intent.hasExtra(RevealHandoff.EXTRA_CULLING)).isFalse()
+        assertThat(intent.hasExtra(RevealHandoff.EXTRA_BATCH_INDEX)).isFalse()
+        assertThat(intent.hasExtra(RevealHandoff.EXTRA_BATCH_COUNT)).isFalse()
         @Suppress("DEPRECATION")
         val items = intent.getParcelableArrayListExtra<Bundle>(RevealHandoff.EXTRA_SERVER_ITEMS)!!
         assertThat(items.map { it.getString("itemId") }).containsExactly("item-1", "item-2").inOrder()
@@ -85,6 +87,18 @@ class ServerReferenceIntentTest {
         started[0].extras!!.writeToParcel(parcel, 0)
         assertThat(parcel.dataSize()).isLessThan(400_000)
         parcel.recycle()
+    }
+
+    @Test
+    fun everyIntentOfABatchCarriesItsIndexAndTheCount() {
+        installReveal(90100)
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        handoff().launchMixed(activity, emptyList(), "Year", null, emptyMap(), RevealHandoff.ServerItems("srv-1", (1..1001).map { item(it) }, initialItemId = "item-3"))
+        val started = generateSequence { shadowOf(activity).nextStartedActivity }.toList().sortedBy { it.getIntExtra(RevealHandoff.EXTRA_BATCH_INDEX, -1) }
+        assertThat(started.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_INDEX, -1) }).containsExactly(0, 1, 2).inOrder()
+        assertThat(started.map { it.getIntExtra(RevealHandoff.EXTRA_BATCH_COUNT, -1) }).containsExactly(3, 3, 3)
+        assertThat(started[0].getStringExtra(RevealHandoff.EXTRA_INITIAL_ITEM)).isEqualTo("item-3")
+        assertThat(started[1].hasExtra(RevealHandoff.EXTRA_INITIAL_ITEM)).isFalse()
     }
 
     @Test

@@ -209,6 +209,11 @@ class RevealHandoff(private val context: Context, private val opener: Opener, pr
             }
         }
         intents.add(0, first)
+        // More than one intent: each says where it stands in the batch (Reveal ADR 0011 W3/H "Batches over 500").
+        if (intents.size > 1) intents.forEachIndexed { i, intent ->
+            intent.putExtra(EXTRA_BATCH_INDEX, i)
+            intent.putExtra(EXTRA_BATCH_COUNT, intents.size)
+        }
         if (first.resolveActivity(context.packageManager) == null) smbFail(ErrorCode.NO_APP, "Reveal is not installed")
         // Write only on the sidecar items, to the one package chosen.
         writable.forEach { context.grantUriPermission(target, it, SIDECAR_GRANT) }
@@ -292,6 +297,9 @@ class RevealHandoff(private val context: Context, private val opener: Opener, pr
         const val EXTRA_SERVER_ID = "dev.hfps.reveal.extra.SERVER_ID"
         const val EXTRA_SERVER_ITEMS = "dev.hfps.reveal.extra.SERVER_ITEMS"
         const val EXTRA_INITIAL_ITEM = "dev.hfps.reveal.extra.INITIAL_ITEM"
+        /** On every intent of a multi-intent batch: its position (0 = the first, with INITIAL_ITEM / INITIAL_URI) and the count. */
+        const val EXTRA_BATCH_INDEX = "dev.hfps.reveal.extra.BATCH_INDEX"
+        const val EXTRA_BATCH_COUNT = "dev.hfps.reveal.extra.BATCH_COUNT"
         const val SERVER_REF_VERSION = 1
         const val MAX_SERVER_ITEMS = 500
         const val MAX_NAME = 255
