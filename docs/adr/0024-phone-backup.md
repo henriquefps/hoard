@@ -1,7 +1,7 @@
 # ADR 0024: Phone backup and free up space
 
 - **Date**: 2026-11-15
-- **Status**: Proposed (Hoard 2 phase 4; hoard-server 0.12.0, Hoard 2.4.0–2.6.0, Reveal 0.10.0)
+- **Status**: Accepted 2026-11-15 (Hoard 2 phase 4; hoard-server 0.12.0, Hoard 2.4.0–2.6.0, Reveal 0.10.0)
 - **Builds on**: ADR 0012 (compatibility promise), 0013 (protocol: blobs, uploads, lookups, deleting an original),
   0014 (items, sources, pairing rule), 0015 (previews), 0017 (physical devices, liveness), 0018 (web gallery),
   0021 (Gallery: `DeviceIndexer`, `gallery.db`, caches, "Seams"), 0022 (SMB folders); Reveal ADR 0018 ("Originals
@@ -668,15 +668,17 @@ of A1–A3 except item 6, which must ship before A3 frees Reveal-edited shots (A
 - The `originals` table still keeps one `sha256` per fingerprint; a `v1:` collision (a file edited in place keeping its
   size, head and tail) is stored as a second blob and kept by its mirror entry's own `sha256`, not by the lookup.
 
-## Open questions for the owner
+## Owner's decisions (2026-11-15)
 
-1. Deleted-from-the-phone files: kept forever (proposed), or dropped after a period (one year?) unless freed?
-2. Photos the server holds only on the NAS that a phone no longer has (freed or deleted there): keep a server copy in
-   the backup folder (proposed: on, see "With ADR 0023's trash"), or trust the NAS as the backup?
-3. Free up's defaults: keep the last 30 days on the phone, and keep favourites?
-4. Which folders are on by default after pairing: none (proposed: the owner picks), or Camera and Screenshots?
-5. Device folders directly under the backup root (proposed, as decided), or under one `phones/` folder?
-6. Reveal's grace window for covered candidates: 24 hours?
-7. A partner's phone on the same server sees every backup (today's model): acceptable, or should backups be readable
-   only by the same physical device and the admin?
-8. Videos: same network rule as photos, or "videos only while charging"?
+Henrique accepted this ADR with these answers to its open questions; where they differ from a line above, they win.
+
+1. **Files deleted on the phone are kept in the backup forever** (for now; a retention setting may come later).
+2. **"Keep a copy of NAS files a phone no longer has" is on by default.**
+3. **Free up keeps the last 30 days and favourites on the phone by default** (both settings).
+4. **No folders are on by default after pairing**: the owner picks.
+5. **Device folders sit directly under the backup root.**
+6. **Reveal's grace window is 24 hours.**
+7. **Every paired device of the server sees every backup** (today's trust model). Only the owner uses the server
+   today; revisit (per-device read scopes in a later ADR) if anyone else's device is ever paired.
+8. **Videos back up on unmetered networks and while charging by default** (Settings › Backup: "Videos only while
+   charging", on); photos keep "Only on Wi-Fi and other unmetered networks" (on) and "Only while charging" (off).
