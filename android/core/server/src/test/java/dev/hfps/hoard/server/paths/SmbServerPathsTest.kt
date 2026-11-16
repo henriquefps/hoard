@@ -332,4 +332,29 @@ class SmbServerPathsTest {
         val error = runCatching { api.nasWalk(listOf("unknown")) }.exceptionOrNull()
         assertThat((error as dev.hfps.hoard.server.api.ServerException).status).isEqualTo(404)
     }
+
+    // --- Review of PR #58: a folder with no photos of its own ---
+
+    @Test
+    fun trashMappingStateLearnsFromPhotosUnderTheSelection() = runBlocking<Unit> {
+        for (n in 1..5) server.putItem(shot(n))
+        val parent = SmbFolderRef("m1", "Photos", "Imagens/2024", "guid-1")
+        val months = listOf(MappingDiscovery.SmbFile("Imagens/2024/notes.txt", 10, 1))
+        val state = paths.mappingState(parent, months, reader) { SelectionMedia(listing(1..5).filter { it.name.endsWith("JPG") }, complete = true) }
+        assertThat((state as MappingState.Mapped).mapping.smbPrefix).isEqualTo("Imagens")
+    }
+
+    @Test
+    fun trashMappingStateWithNoPhotosAnywhereIsNeverCase4WithoutAServer() = runBlocking<Unit> {
+        for (n in 1..5) server.putItem(shot(n))
+        val parent = SmbFolderRef("m1", "Photos", "Imagens/2024", "guid-1")
+        val selection = SelectionMedia(listing(1..5).filter { it.name.endsWith("JPG") }, complete = true)
+        // The server is down: photos under the selection cannot be placed, so it is refused (case 5), not case 4.
+        server.close()
+        assertThat(paths.mappingState(parent, emptyList(), reader) { selection }).isEqualTo(MappingState.Unreachable)
+        // A walk that could not finish is not "nothing indexed moves".
+        assertThat(paths.mappingState(parent, emptyList(), reader) { SelectionMedia(emptyList(), complete = false) }).isEqualTo(MappingState.Unreachable)
+        // Nothing indexed anywhere in the selection (a document, an empty folder): the root does not matter to the server.
+        assertThat(paths.mappingState(parent, emptyList(), reader) { SelectionMedia(emptyList(), complete = true) }).isEqualTo(MappingState.NotOnServer)
+    }
 }

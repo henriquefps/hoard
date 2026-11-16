@@ -508,6 +508,17 @@ abstract class TrashDao {
     @Query("SELECT * FROM trash_entries WHERE id IN (:ids)")
     abstract suspend fun byIds(ids: List<String>): List<TrashEntryEntity>
 
+    /** Every row of the shots (or plain items) [shotKeys] in one day folder of one root: a unit restored or emptied whole. */
+    @Query(
+        "SELECT * FROM trash_entries WHERE location_id = :locationId AND share = :share AND trash_root = :root " +
+            "AND day_folder = :day AND shot_key IN (:shotKeys)",
+    )
+    abstract suspend fun units(locationId: String, share: String, root: String, day: String, shotKeys: List<String>): List<TrashEntryEntity>
+
+    /** The newest trash time this device wrote (rows found by listing other devices' trash excluded). */
+    @Query("SELECT MAX(trashed_at) FROM trash_entries WHERE run_id != 'scan'")
+    abstract suspend fun newestOwnTrashedAt(): Long?
+
     @Query("SELECT * FROM trash_entries WHERE location_id = :locationId AND share = :share AND trash_root = :root")
     abstract suspend fun inRoot(locationId: String, share: String, root: String): List<TrashEntryEntity>
 

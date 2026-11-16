@@ -19,7 +19,7 @@ class Killed : Error("killed")
  * is a `TransferFs`): renames keep size and mtime, a move never replaces, and failures can be injected.
  */
 class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
-    class Node(val isDirectory: Boolean, val size: Long = 0, val modified: Long = 1_000L)
+    class Node(val isDirectory: Boolean, val size: Long = 0, var modified: Long = 1_000L)
 
     val nodes = LinkedHashMap<String, Node>().apply { put("", Node(true)) }
 
@@ -32,6 +32,17 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
     /** Moves of these source paths fail (`ACCESS_DENIED`: a file in use). */
     val busy = HashSet<String>()
 
+    /** The server's clock: mtimes of folders created and of folders a move changes. */
+    var clock: () -> Long = { 1_000L }
+
+    /** After this many moves the share is gone (`UNREACHABLE` for every call). */
+    var dropAfterMoves: Int? = null
+
+    private fun reachable() {
+        val drop = dropAfterMoves
+        if (drop != null && moves >= drop) throw HoardSmbException(ErrorCode.UNREACHABLE, "connection reset")
+    }
+
     /** Throw [Killed] instead of the move that would make this many moves (the process dies mid-run). */
     var killAtMove: Int? = null
     var moves = 0
@@ -39,12 +50,13 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
     fun file(path: String, size: Long = 10, modified: Long = 1_000L) {
         dirs(SharePaths.parent(path))
         nodes[path] = Node(false, size, modified)
+        nodes[SharePaths.parent(path)]?.modified = clock()
     }
 
     fun dirs(path: String) {
         if (path.isEmpty()) return
         dirs(SharePaths.parent(path))
-        nodes.getOrPut(path) { Node(true) }
+        nodes.getOrPut(path) { Node(true, modified = clock()) }
     }
 
     fun exists(path: String) = nodes.containsKey(path)
@@ -57,26 +69,32 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
         SmbEntry(SharePaths.name(path), path, node.isDirectory, node.size, IsoTime.format(node.modified), SharePaths.name(path).startsWith("."))
 
     override fun list(path: String, cancellation: Cancellation): FolderListing {
+        reachable()
         val node = nodes[path] ?: missing(path)
         if (!node.isDirectory) missing(path)
         val children = nodes.filterKeys { it.isNotEmpty() && SharePaths.parent(it) == path && it != path }
         return FolderListing(children.map { (p, n) -> entry(p, n) }, SmbAccess.READ_WRITE)
     }
 
-    override fun stat(path: String): SmbEntry = nodes[path]?.let { entry(path, it) } ?: missing(path)
+    override fun stat(path: String): SmbEntry {
+        reachable()
+        return nodes[path]?.let { entry(path, it) } ?: missing(path)
+    }
 
     override fun createFolder(path: String, name: String): SmbEntry {
         val target = SharePaths.join(path, name)
         if (nodes[path]?.isDirectory != true) missing(path)
         if (path in readOnly) throw HoardSmbException(ErrorCode.ACCESS_DENIED, "$path is read-only")
         if (nodes.containsKey(target)) throw HoardSmbException(ErrorCode.ALREADY_EXISTS, "$target already exists")
-        nodes[target] = Node(true)
+        nodes[target] = Node(true, modified = clock())
+        nodes[path]?.modified = clock()
         return stat(target)
     }
 
     override fun rename(path: String, newName: String): SmbEntry = move(path, SharePaths.join(SharePaths.parent(path), newName))
 
     override fun move(path: String, targetPath: String): SmbEntry {
+        reachable()
         if (!nodes.containsKey(path)) missing(path)
         if (nodes[SharePaths.parent(targetPath)]?.isDirectory != true) missing(SharePaths.parent(targetPath))
         if (nodes.containsKey(targetPath)) throw HoardSmbException(ErrorCode.ALREADY_EXISTS, "$targetPath already exists")
@@ -88,7 +106,9 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
         moves++
         val moved = nodes.keys.filter { it == path || it.startsWith("$path/") }
         for (key in moved) nodes[targetPath + key.removePrefix(path)] = nodes.remove(key)!!
-        return stat(targetPath)
+        nodes[SharePaths.parent(targetPath)]?.modified = clock()
+        nodes[SharePaths.parent(path)]?.modified = clock()
+        return entry(targetPath, nodes.getValue(targetPath))
     }
 
     override fun delete(path: String, recursive: Boolean, cancellation: Cancellation) {
@@ -104,7 +124,7 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
     override fun writeText(path: String, text: String, encoding: String, mode: String, expectedModifiedAt: String?): SmbEntry {
         if (nodes[SharePaths.parent(path)]?.isDirectory != true) missing(SharePaths.parent(path))
         if (mode == "create" && nodes.containsKey(path)) throw HoardSmbException(ErrorCode.ALREADY_EXISTS, "$path already exists")
-        nodes[path] = Node(false, text.length.toLong())
+        nodes[path] = Node(false, text.length.toLong(), clock())
         return stat(path)
     }
 }

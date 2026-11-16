@@ -64,6 +64,12 @@ enum class TrashRefusal {
     /** The file is gone from its folder. */
     NOT_FOUND,
 
+    /**
+     * Mapped photos were found, but this item is outside the mapping that was learned (e.g. a sibling of a NAS folder
+     * selected from above it): where its trash belongs is not known, so it is not guessed.
+     */
+    UNKNOWN_PLACE,
+
     /** The phone's MediaStore trash (Android 11+) comes with phase A3. */
     PHONE_TRASH_UNAVAILABLE,
 
@@ -243,11 +249,17 @@ object TrashPlanner {
      *   `<serverPrefix>/.hoard-trash` inside its NAS folder; the prefix keeps the path's own letter case;
      * - not on the server (case 4): the share root;
      * - not known and the server unreachable (case 5): refused.
+     * A path the mapping does not cover is refused ([TrashRefusal.UNKNOWN_PLACE]): a mapping learned from photos under
+     * the selection may be deeper than the folder on screen, and its siblings are not known.
      */
     fun smbRoot(path: String, state: MappingState): RootChoice = when (state) {
         is MappingState.Mapped -> {
-            val depth = SharePaths.segments(state.mapping.smbPrefix).size
-            RootChoice.Root(SharePaths.segments(path).take(depth).joinToString("/"), state.mapping.folderId, state.mapping.serverPrefix)
+            if (!state.mapping.covers(path)) {
+                RootChoice.Refused(TrashRefusal.UNKNOWN_PLACE)
+            } else {
+                val depth = SharePaths.segments(state.mapping.smbPrefix).size
+                RootChoice.Root(SharePaths.segments(path).take(depth).joinToString("/"), state.mapping.folderId, state.mapping.serverPrefix)
+            }
         }
         MappingState.NotOnServer -> RootChoice.Root("")
         MappingState.Unreachable -> RootChoice.Refused(TrashRefusal.SERVER_UNREACHABLE)
@@ -260,32 +272,44 @@ object TrashPlanner {
     fun localRoot(moveRoot: String?): RootChoice =
         moveRoot?.let { RootChoice.Root(SharePaths.normalize(it)) } ?: RootChoice.Refused(TrashRefusal.MOVE_UNSUPPORTED)
 
-    /** Refusals that do not depend on the root rule: inside a trash already, or a folder holding its trash root. */
-    fun refusalOf(unit: TrashUnit, root: String?): TrashRefusal? {
+    /**
+     * Refusals that do not depend on the root rule (review of PR #58): inside a trash already; or a folder that holds a
+     * place the trash must never move: a mapping's `smbPrefix` (the whole NAS folder would leave the server), a known
+     * trash root ([protectedPaths]), the unit's own trash root, or any `.hoard-trash` below it ([holdsTrash], from a
+     * walk of the folder; true when the walk could not finish).
+     */
+    fun refusalOf(unit: TrashUnit, root: String?, protectedPaths: Collection<String> = emptyList(), holdsTrash: (String) -> Boolean = { false }): TrashRefusal? {
         if (unit.all.any { TrashPaths.isInTrash(it.path) }) return TrashRefusal.ALREADY_IN_TRASH
-        if (root != null) {
-            for (f in unit.files) if (f.isDirectory && SharePaths.rest(root, f.path) != null) return TrashRefusal.CONTAINS_TRASH
+        for (f in unit.files) {
+            if (!f.isDirectory) continue
+            val guarded = protectedPaths + listOfNotNull(root)
+            if (guarded.any { SharePaths.rest(it, f.path) != null }) return TrashRefusal.CONTAINS_TRASH
+            if (holdsTrash(f.path)) return TrashRefusal.CONTAINS_TRASH
         }
         return null
     }
 
     /**
-     * Plans [units] of one folder with its root choice ([choice], from [smbRoot] or [localRoot]). [serverHasTrash]:
-     * the paired server lists `trash`; without it a mapped unit sets [TrashPlan.oldServerWarning] (ADR 0023 "Older
-     * servers"). [serverItems]: the server's item id of a file path, when known.
+     * Plans [units] of one folder, each with its root choice ([choiceFor], from [smbRoot] or [localRoot]).
+     * [serverHasTrash]: the paired server lists `trash`; without it a mapped unit sets [TrashPlan.oldServerWarning]
+     * (ADR 0023 "Older servers"). [serverItems]: the server's item id of a file path, when known. [protectedPaths] and
+     * [holdsTrash]: see [refusalOf].
      */
     fun plan(
         place: TrashPlace,
         units: List<TrashUnit>,
-        choice: RootChoice,
+        choiceFor: (TrashUnit) -> RootChoice,
         serverHasTrash: Boolean,
         serverItems: (String) -> String? = { null },
+        protectedPaths: Collection<String> = emptyList(),
+        holdsTrash: (String) -> Boolean = { false },
     ): TrashPlan {
         val planned = ArrayList<PlannedUnit>()
         val refused = ArrayList<RefusedUnit>()
         for (unit in units) {
+            val choice = choiceFor(unit)
             val root = (choice as? RootChoice.Root)?.path
-            val early = refusalOf(unit, root)
+            val early = refusalOf(unit, root, protectedPaths, holdsTrash)
             when {
                 early != null -> refused += RefusedUnit(unit, early)
                 choice is RootChoice.Refused -> refused += RefusedUnit(unit, choice.reason)
@@ -300,6 +324,10 @@ object TrashPlanner {
         val warn = !serverHasTrash && planned.any { it.serverFolderId != null }
         return TrashPlan(place, planned, refused, warn)
     }
+
+    /** [plan] with one root choice for every unit. */
+    fun plan(place: TrashPlace, units: List<TrashUnit>, choice: RootChoice, serverHasTrash: Boolean, serverItems: (String) -> String? = { null }): TrashPlan =
+        plan(place, units, { choice }, serverHasTrash, serverItems)
 
     /** Merges plans of several folders of one place (a selection across folders, culling of several folders). */
     fun merge(plans: List<TrashPlan>): TrashPlan {

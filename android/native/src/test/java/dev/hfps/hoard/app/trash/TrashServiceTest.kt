@@ -26,11 +26,20 @@ class TrashServiceTest {
     private val share = TrashPlace("m1", "photos")
     private val drive = TrashPlace("vol-1A2B-3C4D")
     private val fs = HashMap<TrashPlace, MemoryHoardFs>()
+    /** The phone's date (its clock: noon of it) and the share's own date (its mtimes). */
     private var today = LocalDate.of(2026, 11, 15)
-    private var clock = 1_000_000L
+    private var serverDay = LocalDate.of(2026, 11, 15)
+    private fun noon(d: LocalDate) = d.atTime(12, 0).toInstant(java.time.ZoneOffset.UTC).toEpochMilli()
+    private val clock: Long get() = noon(today)
+
+    /** Both clocks agree on [d]. */
+    private fun day(d: LocalDate) {
+        today = d
+        serverDay = d
+    }
     private var ids = 0
 
-    private fun fsOf(place: TrashPlace) = fs.getOrPut(place) { MemoryHoardFs() }
+    private fun fsOf(place: TrashPlace) = fs.getOrPut(place) { MemoryHoardFs().apply { clock = { noon(serverDay) } } }
     private val nas get() = fsOf(share)
 
     private fun runner(unreachable: Set<TrashPlace> = emptySet()) = TrashRunner(
@@ -70,6 +79,9 @@ class TrashServiceTest {
 
     private suspend fun rows() = db.trash().all()
 
+    /** Files in the share's trash, without auto-empty's clock probe. */
+    private fun trashFiles() = nas.filesUnder(".hoard-trash").filter { !it.endsWith(TrashRunner.CLOCK_FILE) }
+
     @Test
     fun trashesAShotWithItsSidecarIntoTheDayFolder() = runBlocking<Unit> {
         shot(1)
@@ -95,7 +107,7 @@ class TrashServiceTest {
         runner().trash(plan(share, "Trip", listOf("Trip/a.pdf")))
         nas.file("Trip/a.pdf", size = 99)
         runner().trash(plan(share, "Trip", listOf("Trip/a.pdf")))
-        assertThat(nas.filesUnder(".hoard-trash")).containsExactly(".hoard-trash/2026-11-15/Trip/a.pdf", ".hoard-trash/2026-11-15-2/Trip/a.pdf")
+        assertThat(trashFiles()).containsExactly(".hoard-trash/2026-11-15/Trip/a.pdf", ".hoard-trash/2026-11-15-2/Trip/a.pdf")
         assertThat(rows().map { it.dayFolder }).containsExactly("2026-11-15", "2026-11-15-2")
     }
 
@@ -112,7 +124,7 @@ class TrashServiceTest {
         // The started shot is completed (its two `moving` rows): all three files in the trash, no half shot left behind.
         assertThat(resumed.settled.map { it.originalPath }).containsExactly("Imagens/2024/Trip/DSC1.JPG", "Imagens/2024/Trip/DSC1.xmp")
         assertThat(resumed.rolledBack).isEmpty()
-        assertThat(nas.filesUnder(".hoard-trash")).hasSize(3)
+        assertThat(trashFiles()).hasSize(3)
         assertThat(nas.filesUnder("Imagens/2024/Trip")).containsExactly("Imagens/2024/Trip/DSC2.ARW", "Imagens/2024/Trip/DSC2.JPG", "Imagens/2024/Trip/DSC2.xmp")
         assertThat(rows().map { it.state }.distinct()).containsExactly(TrashStates.TRASHED)
     }
@@ -182,7 +194,7 @@ class TrashServiceTest {
         }
         assertThat(report.trashed).hasSize(1)
         assertThat(report.cancelled.single().unit.key).isEqualTo("imagens/2024/trip/dsc2")
-        assertThat(nas.filesUnder(".hoard-trash")).hasSize(3)
+        assertThat(trashFiles()).hasSize(3)
     }
 
     @Test
@@ -202,7 +214,7 @@ class TrashServiceTest {
             "Imagens/2024/Trip/DSC1.ARW", "Imagens/2024/Trip/DSC1.JPG", "Imagens/2024/Trip/DSC1.xmp", "Imagens/2024/Trip/DSC2.JPG",
         )
         assertThat(nas.nodes["Imagens/2024/Trip/DSC2.JPG"]!!.size).isEqualTo(77)
-        assertThat(nas.filesUnder(".hoard-trash")).hasSize(3)
+        assertThat(trashFiles()).hasSize(3)
         assertThat(rows().map { it.originalPath }).containsExactly("Imagens/2024/Trip/DSC2.ARW", "Imagens/2024/Trip/DSC2.JPG", "Imagens/2024/Trip/DSC2.xmp")
         // Moved away: restored, and the day folder it leaves empty is removed.
         nas.delete("Imagens/2024/Trip/DSC2.JPG", false)
@@ -230,7 +242,7 @@ class TrashServiceTest {
         val purged = runner().empty(rows())
         assertThat(purged).hasSize(3)
         assertThat(rows()).isEmpty()
-        assertThat(nas.filesUnder(".hoard-trash")).isEmpty()
+        assertThat(trashFiles()).isEmpty()
         assertThat(nas.exists(".hoard-trash/2026-11-15")).isFalse()
         assertThat(nas.filesUnder("Imagens")).containsExactly("Imagens/2024/Trip/keep.pdf")
     }
@@ -239,20 +251,22 @@ class TrashServiceTest {
     fun autoEmptyDeletesBackDatedDayFoldersInEveryReachableRoot() = runBlocking<Unit> {
         // Trashed 40 days ago by this device, 10 days ago, and 35 days ago by another device (not indexed).
         nas.file("Trip/old.jpg")
-        today = LocalDate.of(2026, 10, 6)
+        day(LocalDate.of(2026, 10, 6))
         runner().trash(plan(share, "Trip", listOf("Trip/old.jpg")))
         nas.file("Trip/new.jpg")
-        today = LocalDate.of(2026, 11, 5)
+        day(LocalDate.of(2026, 11, 5))
         runner().trash(plan(share, "Trip", listOf("Trip/new.jpg")))
         nas.file(".hoard-trash/2026-10-11/Other/b.jpg")
+        // Another device made it on Oct 11: the share's mtime says so too.
+        nas.nodes[".hoard-trash/2026-10-11"]!!.modified = noon(LocalDate.of(2026, 10, 11))
         nas.file(".hoard-trash/junk/c.jpg")
-        today = LocalDate.of(2026, 11, 15)
+        day(LocalDate.of(2026, 11, 15))
         val roots = listOf(TrashRunner.Root(share, "", "f1"), TrashRunner.Root(drive, ""))
         assertThat(runner().autoEmpty(roots, 0)).isEmpty()
         val expired = runner(unreachable = setOf(drive)).autoEmpty(roots, 30)
         assertThat(expired.single().dayFolders).containsExactly("2026-10-06", "2026-10-11").inOrder()
         assertThat(expired.single().purged.map { it.originalPath }).containsExactly("Trip/old.jpg")
-        assertThat(nas.filesUnder(".hoard-trash")).containsExactly(".hoard-trash/2026-11-05/Trip/new.jpg", ".hoard-trash/junk/c.jpg")
+        assertThat(trashFiles()).containsExactly(".hoard-trash/2026-11-05/Trip/new.jpg", ".hoard-trash/junk/c.jpg")
         assertThat(rows().map { it.originalPath }).containsExactly("Trip/new.jpg")
         assertThat(db.trash().root("m1", "photos", "")!!.lastListed).isEqualTo(clock)
         // 7 days: the 10-day-old one goes too.
@@ -300,5 +314,116 @@ class TrashServiceTest {
         assertThat(resumed.rolledBack.map { it.originalPath }).containsExactly("Trip/a.pdf")
         assertThat(rows().single().originalPath).isEqualTo("Trip/b.pdf")
         assertThat(rows().single().state).isEqualTo(TrashStates.TRASHED)
+    }
+
+    // --- Review of PR #58 ---
+
+    @Test
+    fun autoEmptyDoesNotTrustAClockThatJumpedAhead() = runBlocking<Unit> {
+        nas.file("Trip/a.jpg")
+        runner().trash(plan(share, "Trip", listOf("Trip/a.jpg")))
+        nas.file(".hoard-trash/2026-11-10/Other/b.jpg")
+        // The phone thinks it is a year later; the share's clock (its mtimes) does not.
+        today = LocalDate.of(2027, 11, 15)
+        val expired = runner().autoEmpty(listOf(TrashRunner.Root(share, "")), 30)
+        assertThat(expired).isEmpty()
+        assertThat(trashFiles()).hasSize(2)
+        assertThat(rows()).hasSize(1)
+    }
+
+    @Test
+    fun autoEmptySkipsWhileTheClockIsBeforeTheNewestTrash() = runBlocking<Unit> {
+        nas.file(".hoard-trash/2026-09-01/Old/x.jpg")
+        nas.nodes[".hoard-trash/2026-09-01"]!!.modified = noon(LocalDate.of(2026, 9, 1))
+        val root = listOf(TrashRunner.Root(share, ""))
+        // This device trashed something "tomorrow" (by its own clock then): now is before it, nothing runs.
+        assertThat(runner().autoEmpty(root, 30, notBefore = clock + 86_400_000)).isEmpty()
+        assertThat(nas.exists(".hoard-trash/2026-09-01")).isTrue()
+        assertThat(runner().autoEmpty(root, 30, notBefore = clock - 1).single().dayFolders).containsExactly("2026-09-01")
+    }
+
+    @Test
+    fun aDayFolderNamedByAClockThatWasBehindIsKept() = runBlocking<Unit> {
+        // The phone's clock said Sep 1 when it trashed; the share's clock said Nov 15.
+        today = LocalDate.of(2026, 9, 1)
+        nas.file("Trip/a.jpg")
+        runner().trash(plan(share, "Trip", listOf("Trip/a.jpg")))
+        assertThat(nas.exists(".hoard-trash/2026-09-01")).isTrue()
+        today = LocalDate.of(2026, 11, 15)
+        assertThat(runner().autoEmpty(listOf(TrashRunner.Root(share, "")), 30)).isEmpty()
+        assertThat(trashFiles()).containsExactly(".hoard-trash/2026-09-01/Trip/a.jpg")
+    }
+
+    @Test
+    fun aRefreshKeepsATrashedFolderAsOneRow() = runBlocking<Unit> {
+        nas.file("Docs/old/a.txt")
+        nas.file("Docs/old/sub/b.txt")
+        nas.dirs("Docs/old/empty")
+        runner().trash(plan(share, "Docs", listOf("Docs/old")))
+        assertThat(rows().single().isDirectory).isTrue()
+        val after = runner().scan(TrashRunner.Root(share, ""))
+        assertThat(after.map { it.originalPath to it.isDirectory }).containsExactly("Docs/old" to true)
+        // Restored as a folder, its empty subfolder too.
+        assertThat(runner().restore(after).single()).isInstanceOf(RestoreOutcome.Restored::class.java)
+        assertThat(nas.exists("Docs/old/empty")).isTrue()
+        assertThat(nas.filesUnder("Docs/old")).containsExactly("Docs/old/a.txt", "Docs/old/sub/b.txt")
+    }
+
+    @Test
+    fun emptyNeverDeletesOutsideTheRowsTrashFolder() = runBlocking<Unit> {
+        nas.file("Trip/a.jpg")
+        runner().trash(plan(share, "Trip", listOf("Trip/a.jpg")))
+        nas.file("Imagens/precious.jpg")
+        // A corrupt row pointing at the library.
+        val bad = rows().single().copy(id = "bad", trashedPath = "Imagens", shotKey = "x")
+        db.trash().put(listOf(bad))
+        val purged = runner().empty(listOf(bad))
+        assertThat(purged).isEmpty()
+        assertThat(nas.exists("Imagens/precious.jpg")).isTrue()
+        assertThat(db.trash().byIds(listOf("bad")).single().state).isEqualTo(TrashStates.TRASHED)
+        assertThrows(IllegalArgumentException::class.java) { TrashRunner.requireTrashPath("", "Imagens") }
+        assertThat(TrashRunner.requireTrashPath("Imagens", "Imagens/.hoard-trash/2026-11-15-2")).isEqualTo("Imagens/.hoard-trash/2026-11-15-2")
+    }
+
+    @Test
+    fun aShareThatDropsMidBatchStopsTheBatch() = runBlocking<Unit> {
+        shot(1)
+        shot(2)
+        shot(3)
+        nas.dropAfterMoves = 3
+        val report = runner().trash(plan(share, "Imagens/2024/Trip", listOf("Imagens/2024/Trip/DSC1.ARW", "Imagens/2024/Trip/DSC2.ARW", "Imagens/2024/Trip/DSC3.ARW")))
+        assertThat(report.trashed).hasSize(1)
+        assertThat(report.refused.map { it.reason }).containsExactly(TrashRefusal.UNREACHABLE, TrashRefusal.UNREACHABLE)
+        // Shot 3 was not even tried.
+        assertThat(nas.moves).isEqualTo(3)
+    }
+
+    @Test
+    fun wholeUnitQueriesAndTheNewestOwnTrashTime() = runBlocking<Unit> {
+        shot(1)
+        nas.file("Trip/a.pdf")
+        runner().trash(plan(share, "Imagens/2024/Trip", listOf("Imagens/2024/Trip/DSC1.JPG")))
+        runner().trash(plan(share, "Trip", listOf("Trip/a.pdf")))
+        val one = rows().first { it.originalPath.endsWith("DSC1.JPG") }
+        assertThat(db.trash().units("m1", "photos", "", one.dayFolder, listOf(one.shotKey)).map { it.originalPath })
+            .containsExactly("Imagens/2024/Trip/DSC1.ARW", "Imagens/2024/Trip/DSC1.JPG", "Imagens/2024/Trip/DSC1.xmp")
+        assertThat(db.trash().newestOwnTrashedAt()).isEqualTo(clock)
+        nas.file(".hoard-trash/2026-12-31/Other/z.jpg")
+        runner().scan(TrashRunner.Root(share, ""))
+        // Rows found by listing never move the clock guard.
+        assertThat(db.trash().newestOwnTrashedAt()).isEqualTo(clock)
+    }
+
+    @Test
+    fun theSelectionWalkFindsTrashFoldersAndMedia() {
+        nas.file("Imagens/2024/01/DSC1.JPG")
+        nas.file("Imagens/2024/02/DSC2.ARW")
+        nas.file("Imagens/2024/02/notes.txt")
+        nas.dirs("Disk/Imagens/.hoard-trash/2026-11-15")
+        val walk = TrashService.DirWalk.of(nas, listOf("Imagens/2024", "Disk"))
+        assertThat(walk.media.map { it.path }).containsExactly("Imagens/2024/01/DSC1.JPG", "Imagens/2024/02/DSC2.ARW")
+        assertThat(walk.holdsTrash).containsExactly("Disk")
+        assertThat(walk.incomplete).isEmpty()
+        assertThat(TrashService.DirWalk.of(nas, listOf("Missing")).incomplete).containsExactly("Missing")
     }
 }

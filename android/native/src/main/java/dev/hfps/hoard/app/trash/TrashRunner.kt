@@ -127,6 +127,7 @@ class TrashRunner(
         val day = today()
         /** Roots that refused (read-only, another filesystem): the other units there are refused at once. */
         val failedRoots = HashMap<String, TrashOutcome.Refused>()
+        var placeDown = false
         val readyRoots = HashSet<String>()
         val planned = HashSet<String>()
         report(null)
@@ -135,7 +136,7 @@ class TrashRunner(
                 outcomes += TrashOutcome.Cancelled(p.unit)
                 continue
             }
-            val outcome = if (fs == null) {
+            val outcome = if (fs == null || placeDown) {
                 TrashOutcome.Refused(p.unit, TrashRefusal.UNREACHABLE)
             } else {
                 failedRoots[p.root]?.let { it.copy(unit = p.unit) } ?: trashUnit(fs, place, p, runId, day, readyRoots, planned) { file ->
@@ -145,6 +146,9 @@ class TrashRunner(
                 }
             }
             if (outcome is TrashOutcome.Refused && outcome.reason in ROOT_REASONS) failedRoots[p.root] = outcome
+            // The share or drive went away: every other unit would wait for its own timeout. Stop the batch.
+            val gone = (outcome as? TrashOutcome.Refused)?.reason == TrashRefusal.UNREACHABLE || (outcome as? TrashOutcome.Partial)?.reason == TrashRefusal.UNREACHABLE
+            if (gone) placeDown = true
             outcomes += outcome
             unitsDone++
             report(null)
@@ -395,7 +399,7 @@ class TrashRunner(
                 if (cancelled()) break
                 index.setState(listOf(row.id), TrashStates.PURGING)
                 val ok = try {
-                    fs.use { hoard -> deleteIfExists(hoard, row.trashedPath) }
+                    fs.use { hoard -> deleteIfExists(hoard, requireTrashPath(row)) }
                     true
                 } catch (e: CancellationException) {
                     index.setState(listOf(row.id), TrashStates.TRASHED)
@@ -424,24 +428,51 @@ class TrashRunner(
 
     /**
      * Auto-empty (ADR 0023): in every reachable root, the day folders older than [days] days are deleted (including
-     * those another device made: the day folder dates them), with their rows. [days] ≤ 0 is off.
+     * those another device made), with their rows. [days] ≤ 0 is off. The phone's clock and the day folders' names are
+     * not trusted alone (review of PR #58):
+     * - the whole run is skipped while now is before [notBefore] (the newest trash time this device has written: a
+     *   clock that went back);
+     * - a day folder goes only when its name says so **and** its mtime on the share or drive (the server's clock) is
+     *   older than the setting too; a folder without an mtime goes only when it is this device's and every row of it
+     *   was trashed before the limit. A clock that jumped ahead, or a day folder named by a clock that was behind,
+     *   purges nothing.
      */
-    suspend fun autoEmpty(roots: List<Root>, days: Int): List<Expired> {
+    suspend fun autoEmpty(roots: List<Root>, days: Int, notBefore: Long = 0, trustedNow: () -> Long? = { null }): List<Expired> {
         if (days <= 0) return emptyList()
+        val phoneNow = now()
+        if (phoneNow < notBefore) return emptyList()
         val out = ArrayList<Expired>()
         val today = today()
         for (root in roots) {
             val fs = fsFor(root.place) ?: continue
             try {
                 val dir = TrashPaths.trashDir(root.path)
+                val rows = index.inRoot(root.place, root.path)
+                val byDay = rows.groupBy { it.dayFolder }
+                var nowMs = phoneNow
                 val expired = fs.use { hoard ->
-                    val names = listNames(hoard, dir) ?: return@use emptyList()
-                    TrashPlanner.expired(names, today, days).onEach { day -> deleteIfExists(hoard, SharePaths.join(dir, day)) }
+                    val entries = try {
+                        hoard.list(dir).entries
+                    } catch (e: HoardSmbException) {
+                        if (e.code == ErrorCode.NOT_FOUND) return@use emptyList() else throw e
+                    }
+                    // The share's (or drive's) own clock: the mtime of a file written now. A phone clock that jumped
+                    // ahead is then not believed; nor is it without that write (a read-only trash purges nothing).
+                    val probe = clockOf(hoard, dir) ?: return@use emptyList()
+                    nowMs = listOfNotNull(phoneNow, probe, trustedNow()).min()
+                    val limitMs = nowMs - days * DAY_MS
+                    val folders = entries.filter { it.isDirectory }.associateBy { it.name }
+                    val referenceDay = java.time.Instant.ofEpochMilli(nowMs).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+                    TrashPlanner.expired(folders.keys, minOf(today, referenceDay), days).filter { day ->
+                        val mtime = dev.hfps.hoard.smb.IsoTime.parse(folders.getValue(day).modifiedAt)
+                        val own = byDay[day].orEmpty().filter { it.runId != SCAN_RUN }
+                        if (mtime != null) mtime <= limitMs else own.isNotEmpty() && own.all { it.trashedAt <= limitMs }
+                    }.onEach { day -> deleteIfExists(hoard, requireTrashPath(root.path, SharePaths.join(dir, day))) }
                 }
-                val rows = index.inRoot(root.place, root.path).filter { it.dayFolder in expired }
-                if (rows.isNotEmpty()) index.delete(rows.map { it.id })
-                index.touchRoot(root.place, root.path, root.serverFolderId, now())
-                if (expired.isNotEmpty()) out += Expired(root, expired, rows)
+                val purged = rows.filter { it.dayFolder in expired }
+                if (purged.isNotEmpty()) index.delete(purged.map { it.id })
+                index.touchRoot(root.place, root.path, root.serverFolderId, nowMs)
+                if (expired.isNotEmpty()) out += Expired(root, expired, purged)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -458,8 +489,10 @@ class TrashRunner(
      */
     suspend fun scan(root: Root): List<TrashEntryEntity> {
         val fs = fsFor(root.place) ?: return index.inRoot(root.place, root.path)
-        val found = fs.use { hoard -> walk(hoard, TrashPaths.trashDir(root.path)) }
         val known = index.inRoot(root.place, root.path)
+        // A trashed folder is one row: the walk stops at it and reports it as a folder (its files stay one unit).
+        val folderRows = known.filter { it.isDirectory }.map { it.trashedPath.lowercase() }.toHashSet()
+        val found = fs.use { hoard -> walk(hoard, TrashPaths.trashDir(root.path), folderRows) }
         val byTrashed = known.associateBy { it.trashedPath.lowercase() }
         val foundKeys = found.map { it.path.lowercase() }.toHashSet()
         val gone = known.filter { it.state == TrashStates.TRASHED && it.trashedPath.lowercase() !in foundKeys }
@@ -496,8 +529,12 @@ class TrashRunner(
         return index.inRoot(root.place, root.path)
     }
 
-    /** Files under [dir], recursively (folders are walked, not returned). Empty when it does not exist. */
-    private fun walk(fs: HoardFs, dir: String): List<TrashFile> {
+    /**
+     * Files under [dir], recursively (folders are walked, not returned), except the folders in [stopAt] (lower-case
+     * paths: trashed folders the index knows), which are returned as folders and not entered. Empty when it does not
+     * exist.
+     */
+    private fun walk(fs: HoardFs, dir: String, stopAt: Set<String> = emptySet()): List<TrashFile> {
         val out = ArrayList<TrashFile>()
         val entries = try {
             fs.list(dir).entries
@@ -505,9 +542,11 @@ class TrashRunner(
             if (e.code == ErrorCode.NOT_FOUND) return out else throw e
         }
         for (e in entries) {
-            if (e.isDirectory) {
-                out += walk(fs, e.path)
-            } else if (e.name != TrashPaths.NO_MEDIA) {
+            if (e.isDirectory && e.path.lowercase() in stopAt) {
+                out += TrashFile(e.path, 0, dev.hfps.hoard.smb.IsoTime.parse(e.modifiedAt), isDirectory = true)
+            } else if (e.isDirectory) {
+                out += walk(fs, e.path, stopAt)
+            } else if (e.name != TrashPaths.NO_MEDIA && e.name != CLOCK_FILE) {
                 out += TrashFile(e.path, e.size, dev.hfps.hoard.smb.IsoTime.parse(e.modifiedAt))
             }
         }
@@ -623,6 +662,36 @@ class TrashRunner(
                     }
                 }
             }
+        }
+
+        /**
+         * The row's trashed path, checked to be `<trash root>/.hoard-trash/<day folder>/…` of that very row before
+         * anything is deleted recursively there (a corrupt row must never point a delete at the library).
+         */
+        fun requireTrashPath(row: TrashEntryEntity): String {
+            val parsed = TrashPaths.parse(row.trashedPath)
+            require(parsed != null && parsed.root.equals(row.trashRoot, ignoreCase = true) && parsed.dayFolder == row.dayFolder) {
+                "Not a trash path: ${row.trashedPath}"
+            }
+            return row.trashedPath
+        }
+
+        /** The probe file auto-empty writes in each `.hoard-trash` to read the share's clock. */
+        const val CLOCK_FILE = ".hoard-clock"
+
+        /** The share's "now": the mtime of [CLOCK_FILE] written in [trashDir] (null when it cannot be written or read). */
+        fun clockOf(fs: HoardFs, trashDir: String): Long? = runCatching {
+            val written = fs.writeText(SharePaths.join(trashDir, CLOCK_FILE), "", "utf-8", "overwrite", null)
+            dev.hfps.hoard.smb.IsoTime.parse(written.modifiedAt)
+        }.getOrNull()
+
+        /** A day folder [path] checked to be exactly `<root>/.hoard-trash/<day>`. */
+        fun requireTrashPath(root: String, path: String): String {
+            val day = SharePaths.name(path)
+            require(TrashPaths.isDayFolder(day) && SharePaths.join(TrashPaths.trashDir(root), day).equals(SharePaths.normalize(path), ignoreCase = true)) {
+                "Not a day folder: $path"
+            }
+            return path
         }
 
         fun deleteIfExists(fs: HoardFs, path: String) {

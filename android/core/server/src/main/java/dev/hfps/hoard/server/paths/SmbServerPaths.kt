@@ -33,6 +33,9 @@ sealed interface MappingState {
     data object Unreachable : MappingState
 }
 
+/** Photos and videos found under the selected folders of a trash (bounded walk): [complete] false when it stopped early. */
+data class SelectionMedia(val files: List<MappingDiscovery.SmbFile>, val complete: Boolean)
+
 /** Reads the v1 fingerprint of one file of the share (2 MiB: the first and the last MiB). */
 fun interface FingerprintReader {
     suspend fun fingerprint(path: String): String
@@ -201,32 +204,52 @@ class SmbServerPaths(
 
     /**
      * Where [folder] stands with the paired server, for the trash root (ADR 0023 "The SMB trash root"): a stored
-     * mapping, else learned now (the same two reads as opening the folder); [MappingState.NotOnServer] when there is no
-     * paired server (or one without `items-by-path`) or learning found nothing; [MappingState.Unreachable] when the
-     * server (or the file to fingerprint) could not be read, so the caller refuses instead of guessing.
+     * mapping, else learned now (the same two reads as opening the folder). [MappingState.NotOnServer] only on a server
+     * answer (no paired server, a server without `items-by-path`, or learning found the photos are not there) or when
+     * nothing the server indexes moves (no photo or video in the folder nor anywhere under the selected folders);
+     * [MappingState.Unreachable] otherwise (the server or the file to fingerprint could not be read, or the selection
+     * could not be walked in full), so the caller refuses instead of guessing.
      *
-     * A folder with fewer than two photos cannot learn a mapping (one file is never trusted alone to store one): its
-     * biggest indexed file is looked up, and a hit places it under that file's mapping without storing it.
+     * A folder with no photos of its own learns from the photos [selection] finds under the selected folders
+     * (recursively, bounded): selecting `2024` from `Imagens` must not be case 4 because `Imagens` itself holds only
+     * folders. A folder (or selection) with fewer than two photos cannot learn a mapping (one file is never trusted
+     * alone to store one): its biggest indexed file is looked up, and a hit places it under that file's mapping
+     * without storing it.
      */
-    suspend fun mappingState(folder: SmbFolderRef, listed: List<MappingDiscovery.SmbFile>, reader: FingerprintReader): MappingState {
+    suspend fun mappingState(
+        folder: SmbFolderRef,
+        listed: List<MappingDiscovery.SmbFile>,
+        reader: FingerprintReader,
+        selection: suspend () -> SelectionMedia = { SelectionMedia(emptyList(), complete = true) },
+    ): MappingState {
         val account = db.account().get()
         onServer(account?.serverId)
         account ?: return MappingState.NotOnServer
         val serverId = account.serverId
         learning.withLock { storedMapping(folder, serverId) }?.let { return MappingState.Mapped(it) }
         if (!account.has(Features.ITEMS_BY_PATH)) return MappingState.NotOnServer
-        val files = listed.filter { MappingDiscovery.indexed(it.name) }
-        if (files.isEmpty()) return MappingState.NotOnServer
+        var files = listed.filter { MappingDiscovery.indexed(it.name) }
+        var fromSelection = false
+        if (files.isEmpty()) {
+            val deeper = selection()
+            files = deeper.files.filter { MappingDiscovery.indexed(it.name) }
+            if (files.isEmpty()) {
+                // Nothing the server indexes moves: the root cannot make it see a deletion. Unless the walk stopped early.
+                return if (deeper.complete) MappingState.NotOnServer else MappingState.Unreachable
+            }
+            fromSelection = true
+        }
         val api = api() ?: return MappingState.Unreachable
         if (MappingDiscovery.samples(files).size < MappingDiscovery.SAMPLE_FILES) return placeOne(folder, files, reader, serverId, api)
         return learning.withLock {
             storedMapping(folder, serverId)?.let { return@withLock MappingState.Mapped(it) }
-            if (freshMiss(folder, serverId)) return@withLock MappingState.NotOnServer
+            // A miss is remembered for the folder's own photos; photos found deeper are always asked.
+            if (!fromSelection && freshMiss(folder, serverId)) return@withLock MappingState.NotOnServer
             when (val outcome = learn(folder, files, reader, serverId, api)) {
                 is Learned.Found -> MappingState.Mapped(outcome.mapping)
                 Learned.Failed -> MappingState.Unreachable
                 Learned.NotFound, Learned.TooFew -> {
-                    putMiss(folder, serverId)
+                    if (!fromSelection) putMiss(folder, serverId)
                     MappingState.NotOnServer
                 }
             }

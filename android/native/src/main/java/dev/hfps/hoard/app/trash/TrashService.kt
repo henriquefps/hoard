@@ -145,31 +145,104 @@ class TrashService(private val container: AppContainer) {
         if (backend(TrashKind.of(location.id)) == null) {
             return TrashPlan(place, emptyList(), units.map { RefusedUnit(it, TrashRefusal.PHONE_TRASH_UNAVAILABLE) })
         }
-        val choice: RootChoice
+        // Selected folders are walked once (bounded): what they hold decides both the refusals (a `.hoard-trash`
+        // inside) and, on a share, the mapping when the folder on screen has no photos of its own.
+        val dirs = units.flatMap { u -> u.files.filter { it.isDirectory }.map { it.path } }
+        val walk = try {
+            if (dirs.isEmpty()) DirWalk.EMPTY else container.files.run(location) { fs, cancel -> DirWalk.of(fs, dirs) { cancel.check() } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            return TrashPlan(place, emptyList(), units.map { RefusedUnit(it, TrashRefusal.UNREACHABLE) })
+        }
+        val protectedPaths = ArrayList<String>()
+        dao.roots().filter { it.locationId == place.locationId && it.share.equals(place.share, ignoreCase = true) }.forEach { protectedPaths += it.rootPath }
+        val choiceFor: (TrashUnit) -> RootChoice
         var items: (String) -> String? = { null }
         if (location.kind == LocationKind.Smb) {
             val links = container.serverLinks
             val ref = links.ref(location, folder) ?: return TrashPlan(place, emptyList(), units.map { RefusedUnit(it, TrashRefusal.UNREACHABLE) })
+            runCatching { links.paths.mappings() }.getOrDefault(emptyList())
+                .filter { it.sameShare(ref.machineId, ref.share) }
+                .forEach { protectedPaths += it.smbPrefix }
             val state = try {
-                links.paths.mappingState(ref, links.filesOf(listing), links.reader(location))
+                links.paths.mappingState(ref, links.filesOf(listing), links.reader(location)) {
+                    dev.hfps.hoard.server.paths.SelectionMedia(walk.media, complete = walk.incomplete.isEmpty())
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 Log.w(TAG, "mapping of ${ref.key} failed", e)
                 dev.hfps.hoard.server.paths.MappingState.Unreachable
             }
-            choice = TrashPlanner.smbRoot(folder, state)
+            choiceFor = { unit -> TrashPlanner.smbRoot(unit.files.first().path, state) }
             links.paths.cached(ref)?.let { r -> items = { path -> r.itemOf(path) } }
         } else {
-            choice = try {
+            val choice = try {
                 TrashPlanner.localRoot(container.files.run(location) { fs, _ -> fs.moveRootOf(folder) })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 RootChoice.Refused(TrashRefusal.UNREACHABLE)
             }
+            choiceFor = { choice }
         }
-        return TrashPlanner.plan(place, units, choice, serverHasTrash, items)
+        return TrashPlanner.plan(place, units, choiceFor, serverHasTrash, items, protectedPaths) { dir -> dir in walk.holdsTrash || dir in walk.incomplete }
+    }
+
+    /**
+     * A bounded walk of the selected folders: the photos and videos under them ([media]), which of them hold a
+     * `.hoard-trash` somewhere below ([holdsTrash]), and which could not be walked in full ([incomplete]: too deep,
+     * too many entries, or unreadable), which the plan treats as holding one.
+     */
+    class DirWalk(val media: List<dev.hfps.hoard.server.paths.MappingDiscovery.SmbFile>, val holdsTrash: Set<String>, val incomplete: Set<String>) {
+        companion object {
+            val EMPTY = DirWalk(emptyList(), emptySet(), emptySet())
+            const val MAX_ENTRIES = 20_000
+            const val MAX_DEPTH = 16
+
+            fun of(fs: HoardFs, dirs: List<String>, check: () -> Unit = {}): DirWalk {
+                val media = ArrayList<dev.hfps.hoard.server.paths.MappingDiscovery.SmbFile>()
+                val holds = HashSet<String>()
+                val incomplete = HashSet<String>()
+                var seen = 0
+                for (dir in dirs) {
+                    val stack = ArrayDeque(listOf(dir to 0))
+                    while (stack.isNotEmpty()) {
+                        val (at, depth) = stack.removeLast()
+                        check()
+                        val entries = try {
+                            fs.list(at).entries
+                        } catch (e: dev.hfps.hoard.smb.HoardSmbException) {
+                            incomplete += dir
+                            break
+                        }
+                        seen += entries.size
+                        if (seen > MAX_ENTRIES) {
+                            incomplete += dir
+                            break
+                        }
+                        for (e in entries) {
+                            if (e.isDirectory) {
+                                if (e.name.equals(TrashPaths.DIR, ignoreCase = true)) {
+                                    holds += dir
+                                } else if (depth + 1 > MAX_DEPTH) {
+                                    incomplete += dir
+                                } else {
+                                    stack.addLast(e.path to depth + 1)
+                                }
+                            } else if (TrashPlanner.isMedia(e.name) && media.size < MAX_MEDIA) {
+                                media += dev.hfps.hoard.server.paths.MappingDiscovery.SmbFile(e.path, e.size, IsoTime.parse(e.modifiedAt) ?: 0L)
+                            }
+                        }
+                        if (dir in holds) break
+                    }
+                }
+                return DirWalk(media, holds, incomplete)
+            }
+
+            private const val MAX_MEDIA = 500
+        }
     }
 
     /** Asks the running [run] to stop after the unit it is moving (a unit is never left half-moved by Cancel). */
@@ -186,6 +259,10 @@ class TrashService(private val container: AppContainer) {
             val report = backend?.trash(plan, { cancelRequested.get() }) { _progress.value = it }
                 ?: TrashReport(plan.place, plan.units.map { TrashOutcome.Refused(it.unit, TrashRefusal.PHONE_TRASH_UNAVAILABLE) } + plan.refused.map { TrashOutcome.Refused(it.unit, it.reason) })
             val touched = report.entries
+            touched.maxOfOrNull { it.trashedAt }?.let { newest ->
+                val before = container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L
+                if (newest > before) container.settingsStore.putJson(NEWEST_TRASHED, newest.toString())
+            }
             if (touched.isNotEmpty()) {
                 invalidate(plan.place, touched)
                 requestWalk(touched.mapNotNull { it.serverFolderId })
@@ -197,10 +274,40 @@ class TrashService(private val container: AppContainer) {
         }
     }
 
+    private val recovered = kotlinx.coroutines.CompletableDeferred<Unit>()
+    private val recovering = AtomicBoolean(false)
+
+    /**
+     * Start-up recovery runs once before anything else that walks the trash (auto-empty can be the first caller, from
+     * WorkManager, before the app's own start): later callers wait for it.
+     */
+    private suspend fun ensureRecovered() {
+        if (recovering.compareAndSet(false, true)) {
+            try {
+                running.withLock { settle() }
+            } finally {
+                recovered.complete(Unit)
+            }
+        }
+        recovered.await()
+    }
+
     /** Settles rows a killed process left (app start). Places that cannot be reached now are tried at the next start. */
-    suspend fun resume(): ResumeReport? = running.withLock {
-        if (dao.unsettled().isEmpty()) return@withLock null
-        runner.resume().also { r ->
+    suspend fun resume(): ResumeReport? {
+        if (recovering.compareAndSet(false, true)) {
+            try {
+                return running.withLock { settle() }
+            } finally {
+                recovered.complete(Unit)
+            }
+        }
+        recovered.await()
+        return running.withLock { settle() }
+    }
+
+    private suspend fun settle(): ResumeReport? {
+        if (dao.unsettled().isEmpty()) return null
+        return runner.resume().also { r ->
             Log.i(TAG, "resume: ${r.settled.size} settled, ${r.rolledBack.size} rolled back, ${r.dropped.size} dropped, ${r.unreachable.size} places unreachable")
             if (r.settled.isNotEmpty()) requestWalk(r.settled.mapNotNull { it.serverFolderId })
         }
@@ -208,7 +315,7 @@ class TrashService(private val container: AppContainer) {
 
     /** Restores the rows [ids] (ADR 0023 "Restore"): exact original paths, a conflict refuses the unit. */
     suspend fun restore(ids: List<String>): List<RestoreOutcome> = running.withLock {
-        val rows = dao.byIds(ids)
+        val rows = wholeUnits(dao.byIds(ids))
         val out = ArrayList<RestoreOutcome>()
         for ((kind, inKind) in rows.groupBy { TrashKind.of(it.locationId) }) {
             val backend = backend(kind) ?: continue
@@ -231,7 +338,20 @@ class TrashService(private val container: AppContainer) {
     /** Empties the rows [ids] for good (after the dialog's confirmation). Returns the rows purged. */
     suspend fun empty(ids: List<String>): List<TrashEntryEntity> = running.withLock {
         cancelRequested.set(false)
-        purge(dao.byIds(ids))
+        purge(wholeUnits(dao.byIds(ids)))
+    }
+
+    /**
+     * [rows] completed to whole units (review of PR #58): every row of the same shot (or plain item) in the same day
+     * folder of the same root, so restore and Empty never split a shot, whatever ids the caller passed.
+     */
+    private suspend fun wholeUnits(rows: List<TrashEntryEntity>): List<TrashEntryEntity> {
+        val out = LinkedHashMap<String, TrashEntryEntity>()
+        rows.forEach { out[it.id] = it }
+        for ((key, inUnit) in rows.groupBy { listOf(it.locationId, it.share, it.trashRoot, it.dayFolder) }) {
+            dao.units(key[0], key[1], key[2], key[3], inUnit.map { it.shotKey }.distinct()).forEach { out.putIfAbsent(it.id, it) }
+        }
+        return out.values.toList()
     }
 
     /** Empty trash: every root is listed first (what other devices trashed is emptied too), then everything goes. */
@@ -274,13 +394,27 @@ class TrashService(private val container: AppContainer) {
      * Auto-empty (ADR 0023, [TrashCleanupWorker]): day folders older than the setting in every reachable root. Off
      * (0) does nothing. Returns how many day folders went.
      */
-    suspend fun autoEmpty(): Int = running.withLock {
+    suspend fun autoEmpty(): Int {
+        ensureRecovered()
+        return running.withLock { autoEmptyLocked() }
+    }
+
+    private suspend fun autoEmptyLocked(): Int {
         val days = container.appSettings.trashAutoEmptyDaysNow()
-        if (days <= 0) return@withLock 0
-        val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days)
+        if (days <= 0) return 0
+        // A clock that went back: nothing runs until it is past the newest trash time this device wrote.
+        val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
+        val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime)
         afterPurge(expired.flatMap { it.purged })
         requestWalk(expired.mapNotNull { it.root.serverFolderId })
-        expired.sumOf { it.dayFolders.size }
+        return expired.sumOf { it.dayFolders.size }
+    }
+
+    /** The network's time when Android has one (API 33+), a clock the phone's own setting cannot move. */
+    private fun networkTime(): Long? = if (Build.VERSION.SDK_INT >= 33) {
+        runCatching { android.os.SystemClock.currentNetworkTimeClock().millis() }.getOrNull()
+    } else {
+        null
     }
 
     /** Purged shots: their folder culling rows are forgotten (as "Delete rejects" did), and the server walks. */
@@ -315,7 +449,10 @@ class TrashService(private val container: AppContainer) {
         }
     }
 
-    private companion object {
-        const val TAG = "HoardTrash"
+    companion object {
+        private const val TAG = "HoardTrash"
+
+        /** Settings key: the newest trash time this device wrote (outlives Empty; auto-empty's clock guard). */
+        const val NEWEST_TRASHED = "trashNewestTrashedAt"
     }
 }

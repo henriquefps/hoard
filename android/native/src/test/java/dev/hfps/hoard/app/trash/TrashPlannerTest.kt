@@ -189,4 +189,33 @@ class TrashPlannerTest {
         assertThat(parse("7.5")).isEqualTo(30)
         assertThat(parse("\"7\"")).isEqualTo(30)
     }
+
+    // --- Review of PR #58 ---
+
+    @Test
+    fun `a selection that holds a NAS folder, a trash root or a hoard-trash is refused`() {
+        val listing = listOf(f("Imagens", 0, dir = true), f("Other", 0, dir = true), f("Music", 0, dir = true), f("Free", 0, dir = true))
+        val units = TrashPlanner.units("", listing, listOf("Imagens", "Other", "Music", "Free"))
+        val plan = TrashPlanner.plan(
+            TrashPlace("m1", "disk"),
+            units,
+            { RootChoice.Root("") },
+            serverHasTrash = true,
+            protectedPaths = listOf("Imagens", "Other/Phone"),
+        ) { dir -> dir == "Music" }
+        // Imagens is a mapping's smbPrefix, Other holds a known trash root, Music a .hoard-trash found by the walk.
+        assertThat(plan.refused.map { it.unit.key to it.reason }).containsExactly(
+            "imagens" to TrashRefusal.CONTAINS_TRASH,
+            "other" to TrashRefusal.CONTAINS_TRASH,
+            "music" to TrashRefusal.CONTAINS_TRASH,
+        )
+        assertThat(plan.units.map { it.unit.key }).containsExactly("free")
+    }
+
+    @Test
+    fun `a path the learned mapping does not cover is not guessed`() {
+        val state = MappingState.Mapped(mapping("Imagens/2024", ""))
+        assertThat(TrashPlanner.smbRoot("Imagens/2023/a.jpg", state)).isEqualTo(RootChoice.Refused(TrashRefusal.UNKNOWN_PLACE))
+        assertThat((TrashPlanner.smbRoot("Imagens/2024/Trip/a.jpg", state) as RootChoice.Root).path).isEqualTo("Imagens/2024")
+    }
 }

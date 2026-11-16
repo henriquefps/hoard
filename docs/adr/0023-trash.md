@@ -368,6 +368,37 @@ the decision above with these small, justified deviations:
    volume); on Android 11+ the phone is refused (`PHONE_TRASH_UNAVAILABLE`) until A3 plugs the MediaStore trash in as
    another `TrashBackend`.
 
+**Review of PR #58** (fixes before merge):
+
+10. **Case 4 needs a server answer, or nothing indexed moving.** A folder with no photos of its own (e.g. `Imagens/2024`
+    holding only month folders) learns from the photos under the selected folders (a bounded walk: 20,000 entries,
+    depth 16); with the server down that is case 5 (refused), never the share root. `NotOnServer` comes only from a
+    server answer (no paired server, a server without `items-by-path`, a learning miss) or when the selection holds no
+    photo or video at all (then the root cannot make the server see a deletion); a walk that could not finish refuses.
+    A unit outside the mapping learned that way is refused (`UNKNOWN_PLACE`), not guessed.
+11. **A selection that holds a NAS folder or a trash is refused** (`CONTAINS_TRASH`): a folder containing a mapping's
+    `smbPrefix`, a known trash root (`trash_roots`), its own trash root, or any `.hoard-trash` below it (found by the
+    same walk; an unfinished walk counts as holding one). Trashing `Imagens` from a disk share's root would otherwise
+    move the whole NAS folder, its trash included, into the share-root trash.
+12. **Auto-empty does not trust the phone's clock or the day folders' names alone.** The run is skipped while now is
+    before the newest trash time this device wrote (`trashNewestTrashedAt`, which outlives Empty). Each root's "now"
+    is the earliest of the phone's clock, the mtime of a probe file auto-empty writes in that `.hoard-trash`
+    (`.hoard-clock`: the share's own clock) and a trusted network time when one is available; a day folder goes only
+    when its name **and** its mtime are older than the setting by that "now" (no mtime: only this device's folders,
+    every row trashed before the limit); a trash that cannot be written purges nothing. Known limit: on a local drive
+    the probe's mtime is the phone's own clock, so a clock that jumps ahead there is caught only when a trusted
+    network time is available.
+13. **A trashed folder stays one row** through a refresh: the listing stops at a folder the index knows and reports it
+    as a folder, so restore moves it back whole, empty subfolders included.
+14. **Restore and Empty work on whole units in the service**: the ids given are completed with every row of the same
+    shot (or plain item) in the same day folder of the same root.
+15. **Deletes are fenced**: Empty deletes a row's path only when it parses as `<trash root>/.hoard-trash/<day>/…` of
+    that row; auto-empty deletes only `<root>/.hoard-trash/<yyyy-MM-dd(-n)>`.
+16. **Smaller**: `PathFs.move` uses `link` + `remove` where the filesystem has hard links (fails `EEXIST` atomically,
+    never replaces), else the existence check then `renameTo`; a share that drops mid-batch stops the batch (the rest
+    refused `UNREACHABLE` at once); auto-empty waits for start-up recovery, which it runs itself when the worker comes
+    first.
+
 ## Alternatives considered
 
 - **Tombstones keep their edits (B)**: see "Server": blind to the trash, previews lost, the empty-mount guard keeps

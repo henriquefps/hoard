@@ -193,7 +193,7 @@ class PathFs(
         source.parentFile?.let(::requireWritable)
         requireWritable(parent)
         if (destination.exists()) smbFail(ErrorCode.ALREADY_EXISTS, "${destination.name} already exists")
-        if (!source.renameTo(destination)) {
+        if (!NoReplace.move(source, destination)) {
             checkRoot()
             if (destination.exists()) smbFail(ErrorCode.ALREADY_EXISTS, "${destination.name} already exists")
             smbFail(ErrorCode.ACCESS_DENIED, "Could not move ${source.name}")
@@ -289,5 +289,42 @@ class PathFs(
     private fun scan(vararg files: File) {
         if (sdkInt >= 30) return
         runCatching { MediaScannerConnection.scanFile(context, files.map { it.absolutePath }.toTypedArray(), null, null) }
+    }
+}
+
+/**
+ * A rename that never replaces (review of PR #58). `rename(2)` replaces an existing target, and `renameat2`'s
+ * `RENAME_NOREPLACE` is not reachable from Android's `Os`. Where the filesystem has hard links (ext4, f2fs: a
+ * volume's own Linux filesystem), a file moves as `link` (fails `EEXIST` atomically when the target exists) then
+ * `remove`, the same inode with its size and mtime. Elsewhere (FAT/exFAT, the FUSE of `/storage/emulated`, folders)
+ * it falls back to `renameTo` after the caller's existence check, a race only another writer in the same instant hits.
+ */
+internal object NoReplace {
+    fun move(source: File, destination: File): Boolean {
+        if (source.isFile) {
+            val linked = try {
+                android.system.Os.link(source.path, destination.path)
+                true
+            } catch (e: android.system.ErrnoException) {
+                if (e.errno == android.system.OsConstants.EEXIST) smbFail(ErrorCode.ALREADY_EXISTS, "${destination.name} already exists")
+                false
+            } catch (e: Throwable) {
+                // No Os (JVM tests) or no hard links here.
+                false
+            }
+            if (linked) {
+                try {
+                    android.system.Os.remove(source.path)
+                    if (!source.exists()) return true
+                    // Two names left (an Os that did not remove): back to one, then the plain rename.
+                    android.system.Os.remove(destination.path)
+                } catch (e: Throwable) {
+                    // Keep one name only: undo the link, then try the plain rename below.
+                    runCatching { android.system.Os.remove(destination.path) }
+                }
+            }
+        }
+        if (destination.exists()) smbFail(ErrorCode.ALREADY_EXISTS, "${destination.name} already exists")
+        return source.renameTo(destination)
     }
 }
