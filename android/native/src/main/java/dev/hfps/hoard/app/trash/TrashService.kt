@@ -512,6 +512,15 @@ class TrashService(private val container: AppContainer) {
         // A clock that went back: nothing runs until it is past the newest trash time this device wrote.
         val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
         val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime)
+        // The phone's trash: only Hoard's own rows (no consent can be shown here); Android expires the rest itself.
+        val phonePurged = media?.let { m ->
+            val nowMs = listOfNotNull(System.currentTimeMillis(), networkTime()).min()
+            if (nowMs < notBefore) emptyList() else m.autoEmpty(dao.all().filter { it.mediaUri != null }, nowMs - days * 86_400_000L)
+        }.orEmpty()
+        if (phonePurged.isNotEmpty()) {
+            afterPurge(phonePurged)
+            changed()
+        }
         afterPurge(expired.flatMap { it.purged })
         requestWalk(expired.mapNotNull { it.root.serverFolderId })
         if (expired.isNotEmpty()) changed()

@@ -506,7 +506,17 @@ findings and deviations (emulator API 36, docs/testing/trash.md):
 5. **Media management** is offered once, in the first phone trash dialog (`trashMediaManagementAsked`), and in
    Settings › Trash (its state, and Allow / Change opening Android's screen). `MANAGE_MEDIA` is declared in the
    manifest.
-6. **Below Android 11** the phone keeps the folder trash (`.hoard-trash` with `.nomedia`); not run on an API 29 image
+6. **Permanent deletes always ask** (the coordinator's decision on PR #60): trash and restore stay direct under All
+   files access (item 1), but Delete permanently and Empty of phone rows Hoard does not own **always** go through
+   Android's `createDeleteRequest` consent (batches of at most 500, whole shots), even when a direct delete would be
+   allowed; Hoard's own rows (`Pictures/Hoard/`) are deleted directly. A shot's sidecars (plain rows, which a consent
+   cannot hold) are deleted directly only after the consent for that shot's media succeeded, never when it was
+   declined; a shot with no media row of someone else needs no consent.
+7. **Auto-empty leaves the phone's trash to Android**: a background run cannot show a consent, so
+   `TrashCleanupWorker` skips phone rows Hoard does not own (Android deletes them itself at their `DATE_EXPIRES`, which
+   the Trash screen shows) and only purges Hoard's own phone rows older than the setting, directly (with the same
+   clock guard as the folder trash).
+8. **Below Android 11** the phone keeps the folder trash (`.hoard-trash` with `.nomedia`); not run on an API 29 image
    (none on the build host).
 
 ## Alternatives considered

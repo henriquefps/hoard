@@ -64,8 +64,14 @@ class FakeMediaStore : MediaStoreOps {
         return true
     }
 
+    /** Direct deletes of media rows Hoard does not own (the backend must never use them for a permanent delete). */
+    var directMediaDeletes = 0
+
     override fun delete(uris: List<String>): Boolean {
-        if (uris.any { byUri[it]?.owned == false } && !directAllowed) return false
+        val rows = uris.mapNotNull { byUri[it] }
+        if (rows.any { !it.owned && it.isMedia } && !directAllowed) return false
+        if (rows.any { !it.owned && !it.isMedia } && !plainDirect) return false
+        directMediaDeletes += rows.count { !it.owned && it.isMedia }
         uris.forEach { byUri.remove(it) }
         return true
     }
@@ -231,5 +237,61 @@ class MediaStoreTrashTest {
         assertThat(owned.map { it.uri }).containsExactly("u1")
         assertThat(others.map { it.uri }).containsExactly("u2")
         assertThat(AndroidMediaStoreOps.originalName("1700000000-IMG_1-final.JPG")).isEqualTo("IMG_1-final.JPG")
+    }
+
+    // --- Review of PR #60: permanent deletes always ask, sidecars only after their shot's consent ---
+
+    @Test
+    fun `empty of rows Hoard does not own always asks, even when a direct delete would work`() = runBlocking<Unit> {
+        ms.add("DCIM/Camera/A.JPG")
+        ms.add("Pictures/Hoard/b.jpg", owned = true)
+        ms.tryDirect = true
+        ms.directAllowed = true
+        val p = TrashPlanner.merge(listOf(plan("DCIM/Camera", listOf(f("DCIM/Camera/A.JPG")), listOf("DCIM/Camera/A.JPG")), plan("Pictures/Hoard", listOf(f("Pictures/Hoard/b.jpg")), listOf("Pictures/Hoard/b.jpg"))))
+        backend.trash(p, { false }) {}
+        // Trash went directly (tryDirect).
+        assertThat(ms.requests).isEmpty()
+        backend.empty(index.rows.values.toList()) { false }
+        // The delete of someone else's photo asked; Hoard's own copy did not need to.
+        assertThat(ms.requests).containsExactly(MediaRequest.DELETE to 1)
+        assertThat(ms.directMediaDeletes).isEqualTo(0)
+        assertThat(ms.byUri).isEmpty()
+    }
+
+    @Test
+    fun `a sidecar is deleted only after its shot's consent, never when it was declined`() = runBlocking<Unit> {
+        ms.add("DCIM/Camera/A.JPG")
+        ms.add("DCIM/Camera/A.xmp")
+        val files = listOf(f("DCIM/Camera/A.JPG"), f("DCIM/Camera/A.xmp"))
+        backend.trash(plan("DCIM/Camera", files, listOf("DCIM/Camera/A.JPG")), { false }) {}
+        ms.requests.clear()
+        ms.approve = false
+        assertThat(backend.empty(index.rows.values.toList()) { false }).isEmpty()
+        // Declined: the photo and its sidecar are both still there, still in Hoard's trash.
+        assertThat(ms.byUri.values.map { it.path }).containsExactly("DCIM/Camera/A.JPG", "DCIM/Camera/A.xmp")
+        assertThat(index.rows.values.map { it.state }.distinct()).containsExactly(TrashStates.TRASHED)
+        ms.approve = true
+        val purged = backend.empty(index.rows.values.toList()) { false }
+        assertThat(purged.map { it.originalPath }).containsExactly("DCIM/Camera/A.JPG", "DCIM/Camera/A.xmp")
+        // The consent held the photo only (Android refuses plain rows); the sidecar followed directly.
+        assertThat(ms.requests).containsExactly(MediaRequest.DELETE to 1, MediaRequest.DELETE to 1).inOrder()
+        assertThat(ms.byUri).isEmpty()
+    }
+
+    @Test
+    fun `auto-empty never touches rows Hoard does not own and purges its own old ones`() = runBlocking<Unit> {
+        ms.add("DCIM/Camera/A.JPG")
+        ms.add("Pictures/Hoard/b.jpg", owned = true)
+        val p = TrashPlanner.merge(listOf(plan("DCIM/Camera", listOf(f("DCIM/Camera/A.JPG")), listOf("DCIM/Camera/A.JPG")), plan("Pictures/Hoard", listOf(f("Pictures/Hoard/b.jpg")), listOf("Pictures/Hoard/b.jpg"))))
+        backend.trash(p, { false }) {}
+        ms.requests.clear()
+        // Trashed at 1_000: a limit before it purges nothing.
+        assertThat(backend.autoEmpty(index.rows.values.toList(), limitMs = 999)).isEmpty()
+        val purged = backend.autoEmpty(index.rows.values.toList(), limitMs = 2_000)
+        assertThat(purged.map { it.originalPath }).containsExactly("Pictures/Hoard/b.jpg")
+        // No dialog from the background; Android's own expiry deletes the other one.
+        assertThat(ms.requests).isEmpty()
+        assertThat(ms.byUri.values.single().path).isEqualTo("DCIM/Camera/A.JPG")
+        assertThat(index.rows.values.single().originalPath).isEqualTo("DCIM/Camera/A.JPG")
     }
 }

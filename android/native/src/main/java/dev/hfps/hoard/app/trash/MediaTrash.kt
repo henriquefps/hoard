@@ -133,7 +133,8 @@ class MediaStoreTrashBackend(
         if (plain.isNotEmpty()) ok = direct(plain.map { it.uri }) && ok
         if (media.isNotEmpty()) {
             val uris = media.map { it.uri }
-            val done = (ops.tryDirect && direct(uris)) || ops.request(kind, uris)
+            // A permanent delete of someone else's media always asks Android (review of PR #60), whatever tryDirect says.
+            val done = (kind != MediaRequest.DELETE && ops.tryDirect && direct(uris)) || ops.request(kind, uris)
             ok = ok && done
         }
         return ok
@@ -288,7 +289,7 @@ class MediaStoreTrashBackend(
             if (cancelled()) break
             val flat = batch.flatten()
             index.setState(flat.map { it.first.id }, TrashStates.PURGING)
-            runCatching { apply(MediaRequest.DELETE, flat.map { it.second }) }.onFailure { if (it is CancellationException) throw it }
+            runCatching { deleteBatch(batch) }.onFailure { if (it is CancellationException) throw it }
             for ((e, _) in flat) {
                 if (runCatching { ops.get(e.mediaUri!!) }.getOrNull() == null) {
                     index.delete(listOf(e.id))
@@ -296,6 +297,46 @@ class MediaStoreTrashBackend(
                 } else {
                     index.setState(listOf(e.id), TrashStates.TRASHED)
                 }
+            }
+        }
+        return purged
+    }
+
+    /**
+     * A permanent delete of one batch of whole shots (review of PR #60): rows Hoard owns are deleted directly; the
+     * media rows of everyone else **always** go through Android's delete consent (`createDeleteRequest`), even when
+     * All files access would allow a direct delete; a shot's sidecars (plain rows, which a consent cannot hold) are
+     * deleted directly only once that consent succeeded, never when it was declined. A shot with no media row of
+     * someone else needs no consent, so its sidecars go with its owned files.
+     */
+    private suspend fun deleteBatch(batch: List<List<Pair<TrashEntryEntity, MediaRow>>>) {
+        val rows = batch.flatten().map { it.second }
+        val (owned, others) = MediaTrashLogic.split(rows)
+        if (owned.isNotEmpty()) ops.delete(owned.map { it.uri })
+        val media = others.filter { it.isMedia }
+        val approved = media.isEmpty() || ops.request(MediaRequest.DELETE, media.map { it.uri })
+        for (shot in batch) {
+            val shotRows = shot.map { it.second }
+            val plain = shotRows.filter { !it.owned && !it.isMedia }
+            if (plain.isEmpty()) continue
+            val needsConsent = shotRows.any { !it.owned && it.isMedia }
+            if (!needsConsent || approved) ops.delete(plain.map { it.uri })
+        }
+    }
+
+    /**
+     * Auto-empty of the phone's trash (review of PR #60): a background run cannot show Android's consent, so it never
+     * touches rows Hoard does not own (Android deletes them itself when their `DATE_EXPIRES` comes); only Hoard's own
+     * rows trashed before [limitMs] are deleted, directly. Returns the rows purged.
+     */
+    suspend fun autoEmpty(entries: List<TrashEntryEntity>, limitMs: Long): List<TrashEntryEntity> {
+        val purged = ArrayList<TrashEntryEntity>()
+        for (e in entries.filter { it.state == TrashStates.TRASHED && it.mediaUri != null && it.trashedAt <= limitMs }) {
+            val row = runCatching { ops.get(e.mediaUri!!) }.getOrElse { if (it is CancellationException) throw it else continue }
+            if (row == null || !row.owned || !row.trashed) continue
+            if (ops.delete(listOf(row.uri)) && runCatching { ops.get(row.uri) }.getOrNull() == null) {
+                index.delete(listOf(e.id))
+                purged += e
             }
         }
         return purged
