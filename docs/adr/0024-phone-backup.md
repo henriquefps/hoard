@@ -1,15 +1,16 @@
 # ADR 0024: Phone backup and free up space
 
 - **Date**: 2026-11-15
-- **Status**: Proposed (Hoard 2 phase 4; hoard-server 0.11.0, Hoard 2.3.0–2.5.0, Reveal 0.10.0)
+- **Status**: Proposed (Hoard 2 phase 4; hoard-server 0.12.0, Hoard 2.4.0–2.6.0, Reveal 0.10.0)
 - **Builds on**: ADR 0012 (compatibility promise), 0013 (protocol: blobs, uploads, lookups, deleting an original),
   0014 (items, sources, pairing rule), 0015 (previews), 0017 (physical devices, liveness), 0018 (web gallery),
   0021 (Gallery: `DeviceIndexer`, `gallery.db`, caches, "Seams"), 0022 (SMB folders); Reveal ADR 0018 ("Originals
   backup", FIX/P, FIX/W "Hand-off backup", W3/C, W5) and Reveal ADR 0027.
-- **Amends, when accepted**: ADR 0013 (additions under `/v1`, written there as "Phone backup (hoard-server 0.11.0)" in
+- **Amends, when accepted**: ADR 0013 (additions under `/v1`, written there as "Phone backup (hoard-server 0.12.0)" in
   the server PR), ADR 0014 (a third item source, `mirror`), ADR 0017 (a physical device with a backup is kept;
-  `physicalDevice.backup` in `GET /v1/device`), ADR 0021 (`gallery.db` version 3).
-- **Next to**: ADR 0023 (Hoard's trash, written in parallel). Free up space is not the trash (see "Free up space").
+  `physicalDevice.backup` in `GET /v1/device`), ADR 0021 (`gallery.db` version 4).
+- **After**: ADR 0023 (trash; Hoard 2.4.0 and hoard-server 0.11.0, which take server schema 9, `gallery.db` 3 and
+  `hoard.db` 4). Free up space is not the trash (see "Free up space"); how the two meet: "With ADR 0023's trash".
 
 ## Context
 
@@ -98,7 +99,7 @@ backup; storage counted once.
 - Mirror files and `.hoard-mirror/` are written only by the server, through `os.Root` opened on the device folder,
   from names in the database; never from a request path directly (see "Security").
 
-### The index (schema 9, `0009_mirror.sql`)
+### The index (schema 10, `0010_mirror.sql`)
 
 ```sql
 CREATE TABLE mirror_devices (           -- outlives its physical device row while entries exist
@@ -150,7 +151,7 @@ CREATE TABLE original_claims (          -- who asked the server to keep an origi
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (fingerprint, device_id)) STRICT, WITHOUT ROWID;
 INSERT INTO original_claims SELECT o.fingerprint, coalesce(b.device_id, ''), b.created_at
-    FROM originals o JOIN blobs b ON b.sha256 = o.sha256;          -- everything uploaded before 0.11.0 is claimed
+    FROM originals o JOIN blobs b ON b.sha256 = o.sha256;          -- everything uploaded before 0.12.0 is claimed
 
 ALTER TABLE nas_files ADD COLUMN sha256 TEXT;          -- full hash, made only for verification (below)
 ALTER TABLE nas_files ADD COLUMN sha_mtime INTEGER;    -- the mtime it was made for
@@ -226,7 +227,7 @@ Rules that keep start-up and the phone quiet:
 - Uploads read the file twice (hash, then send) because `POST /v1/uploads` takes the hash first (frozen). For photos
   the second read is mostly page cache; for large videos it is a real second read, accepted.
 
-## Protocol: `/v1` additions (hoard-server 0.11.0)
+## Protocol: `/v1` additions (hoard-server 0.12.0)
 
 All additive. `GET /v1/server` `features` gains `"backup"`, and a `backup` object with the limits:
 `{"maxRoots": 64, "maxReportEntries": 1000, "maxVerify": 500, "maxPath": 1024}`. Without the feature (an older
@@ -336,7 +337,8 @@ For free up: is the server's copy of each file byte-identical to the phone's, pr
 - **NAS-only content and free up**: by default the server makes its own copy before answering `yes` for an entry whose
   only copy is on the NAS: it copies the NAS file into the store (server-side, local disk to disk, no phone upload),
   checks its SHA-256 and links it (`store` becomes `blob`), so a phone file is never freed onto a share the server
-  cannot keep. Server setting "Keep a copy of NAS files freed from a phone" (on; see "Open questions").
+  cannot keep. Server setting "Keep a copy of NAS files a phone no longer has" (on; see "Open questions"); the same
+  copy is made when a phone deletes such a file ("With ADR 0023's trash").
 
 ### `GET /v1/device` gains `physicalDevice.backup`
 
@@ -371,7 +373,7 @@ Bytes are kept while **anything** names them, computed by query at the moment of
 
 1. a mirror entry (any state) with that `sha256` or fingerprint;
 2. a device claim (`original_claims`): a device that uploaded or registered the original with `claim` true (Reveal
-   today; every original stored before 0.11.0 is backfilled as claimed);
+   today; every original stored before 0.12.0 is backfilled as claimed);
 3. a live photo record naming the fingerprint (the existing `originalNamed` check);
 4. a live photo record naming a preview (`previewReferenced`, for previews).
 
@@ -447,7 +449,7 @@ contents only its entries name), "shared" (blob contents also named by another p
 | Both, not grouped (the owner answered "Another device", or Reveal is older than 0.10.0) | No delegation: both may upload, but never twice the same bytes (`exists`) and, for 0.10.0+, never at the same time (`wait`); the cost is a second hash on the phone. Hoard's backup settings say "Reveal on this phone is not grouped with Hoard" with a link to "This phone". |
 | Hoard paused, stopped, unpaired or uninstalled | Its roots stop being `active` within 7 days; Reveal resumes its own backup of those folders. |
 
-### For Reveal's orchestrator: what Reveal changes (Reveal 0.10.0, needs hoard-server 0.11.0, feature `backup`)
+### For Reveal's orchestrator: what Reveal changes (Reveal 0.10.0, needs hoard-server 0.12.0, feature `backup`)
 
 1. Read `physicalDevice.backup.roots` from `GET /v1/device` when `features` has `"backup"` (refreshed with the
    periodic sync); map each source's tree document id to `volume` + `path`; mark covered sources.
@@ -469,7 +471,7 @@ contents only its entries name), "shared" (blob contents also named by another p
 8. Tests: a fake server with `backup` (covered/uncovered sources, the 24 h rule, `in_progress`, `409 mirror`), and the
    adoption of a freed folder photo with edits.
 
-Nothing in Reveal 0.9.0 breaks against hoard-server 0.11.0: every addition is optional, `TestRevealProtocolContract`
+Nothing in Reveal 0.9.0 breaks against hoard-server 0.12.0: every addition is optional, `TestRevealProtocolContract`
 keeps replaying Reveal's `SyncApi` unchanged, and `server/testdata/v1-routes.txt` only grows.
 
 ## The app (Hoard)
@@ -481,7 +483,7 @@ keeps replaying Reveal's `SyncApi` unchanged, and `server/testdata/v1-routes.txt
   `in_progress`; chunks of the server's `chunkSize`, the offset saved after each; `HEAD` after a broken chunk; a
   process killed mid-way resumes from the stored upload id; `checksum_mismatch` marks the file `changed` and it is
   hashed again on the next run), `BackupWorker`, `FreeUpPlan` (pure). `ServerApi` gains the routes above.
-- `gallery.db` version 3 (migration 2 → 3, schema exported to `core/server/schemas/`, migration test):
+- `gallery.db` version 4 (migration 3 → 4, schema exported to `core/server/schemas/`, migration test):
   `backup_roots` (server root id, volume, path, Hoard location and folder, added at, paused), `backup_files` (media id,
   path, root, `sha256` with `sha_size`/`sha_modified`, state, upload id, offset, server state, verified at, attempts,
   next attempt, error), `freed` (path, item id, fingerprint, bytes, freed at); `device_media` gains `sha256`,
@@ -521,7 +523,7 @@ keeps replaying Reveal's `SyncApi` unchanged, and `server/testdata/v1-routes.txt
   `dataSync` budget ends a run early, and the next one resumes from the stored offsets.
 - Never at start-up; the first run after enabling waits for its constraints.
 
-### Other devices see backups (Hoard 2.4.0)
+### Other devices see backups (Hoard 2.5.0)
 
 The tablet's Gallery already holds every item (ADR 0021). It gains: a **Devices** entry in the Gallery's folder list
 (phone › volume › folders, from `GET /v1/backup/roots` and the items' `mirror` locations), the filter "Where: Pixel 8
@@ -531,7 +533,7 @@ owner taps **Save to this device** (a folder chosen once, default `Pictures/From
 `Pictures/Hoard/`), which goes through `TransferService` as above. A saved file in a backed-up folder is linked into
 that device's own mirror on its next report, without an upload.
 
-## Free up space (Hoard 2.5.0)
+## Free up space (Hoard 2.6.0)
 
 - **Candidates**: phone shots in backed-up roots, oldest first (`taken`), every file of the shot (a pair, a motion
   photo's still) with `store` `blob` or `nas` and its phone file unchanged since hashed. Left out: shots taken in the
@@ -557,17 +559,50 @@ that device's own mirror on its next report, without an upload.
 - After freeing, the Gallery shows those shots as server items (`DeviceIndexer` drops the rows; the item's mirror
   location says `onDevice: false`); `freed` keeps the local history for Settings ("18.4 GB freed").
 
+## With ADR 0023's trash
+
+**NAS references that become the only copy.** A mirror entry with `store = 'nas'` whose phone file is gone
+(`on_device = 0`, deleted or freed) holds the backup's only copy on a share the server does not control. If the owner
+then trashes that NAS file (`.hoard-trash`, ADR 0023) and empties the trash, or deletes it on the NAS directly, the
+backup would be lost without a word. Rule: **the server copies the NAS file into the store as soon as the entry becomes
+the only copy**, that is when a report sets `on_device = 0` on a `nas` entry (reason `deleted` or `freed`). The copy
+is server-side, disk to disk, and it is checked by SHA-256. The entry is then linked and `store` becomes `blob`, the same
+step verify already takes for free up. The bounded queue does the work. Under the setting "Keep a copy of NAS files a
+phone no longer has" (on).
+
+- **Why not when the NAS file leaves the live set** (the proposed alternative): a file deleted on the NAS directly,
+  or by another tool, is already gone when the walk notices, so there is nothing left to copy. Only a trash move would
+  still be caught. Copying when the phone's copy goes covers every case and costs the same bytes.
+- **The walk stays a backstop**: when a NAS file referenced by a `nas` entry with `on_device = 0` becomes a trash row
+  (ADR 0023 walk step 1) and the copy has not been made yet, the server copies it from `.hoard-trash` before anything
+  else. A purge or a direct deletion that still finds no copy marks the entry `store = 'none'`. It also raises a warning
+  on the admin page ("N phone backups lost their only copy on the NAS"). It is never silent.
+- **While the phone still has the file** (`on_device = 1`), a NAS file that is trashed, purged or removed turns the
+  entry to `store = 'none'`. The next report answers `missing`, and the phone uploads it. A restore from the trash before
+  that brings it back to `nas`.
+- A trashed NAS file is still found by fingerprint until it is purged (ADR 0023), so a report in between keeps
+  `nas`. The rule above copies it anyway if the phone's file is gone.
+
+**Phone files in Android's trash.** A file moved to the system trash (`IS_TRASHED = 1`, by Hoard's trash on API 30+,
+Google Photos or Files) leaves MediaStore's default queries, so `DeviceIndexer` no longer sees it. It is **reported
+`removed`, reason `deleted`**, under the usual completeness rule. The mirror keeps it (shown as "deleted from the
+phone"), so nothing is lost when Android empties the trash after 30 days. Nothing more is reported then. Below API 30,
+ADR 0023 moves the file into `<volume>/.hoard-trash/`. That is a dot folder, which is never backed up, so the file is
+also gone from its root and is reported `deleted`. An **untrash** (or a restore out of `.hoard-trash`) brings the same
+content back to the same path. That is a restore: the report sends the entry again, which becomes current again with
+`on_device = 1`, no upload. Trashed phone files are never free-up candidates (they are not indexed).
+
 ## Build plan
 
 Each phase is one PR with its tests, shippable alone.
 
 | Phase | PR | Contents | Tests |
 | --- | --- | --- | --- |
-| S1 | hoard-server 0.11.0 | Schema 9; roots, report, verify, `wait`/`claim` on uploads, `409 mirror`, `physicalDevice.backup`; hard links with fallback and `0400`; manifests; `mirror` item source and `SyncBackup` joining mirror items; `GET /v1/items?folder=<rootId>`; admin page: per phone backup, purge, storage accounting, "Keep a copy of NAS files freed from a phone"; ADR 0013 section, `openapi.yaml`, `v1-routes.txt`. | Go: path validation and traversal on every input; a root of another phone `404`; link, `EXDEV` fallback (an injected linker), no copy; move, rename, rewrite, delete, restore; waiting entries linked on another device's upload; `wait` with a live and a stalled upload; verify with a corrupted blob and a changed NAS file; ownership (Reveal delete vs mirror, purge vs claim/record); revoke and claim/merge; `TestRevealProtocolContract` and `TestOpensRevealSyncDataDir` unchanged; `TestUpgradesHoardServer040DataDir`; the end-to-end test extended with a phone report, an interrupted upload and a verify. |
-| S2 | hoard-server 0.11.x | Web gallery: Devices in Folders, "Where" filter, "Deleted from the phone" badge, strings in `en` and `pt-BR`. | `bun run lint/typecheck/test/e2e` with a synthetic phone mirror. |
-| A1 | Hoard 2.3.0 | `gallery.db` 3; `BackupPlan`, `BackupUploader`, `BackupWorker`; Settings › Backup with status per folder and file; Gallery badges. | JVM: `BackupPlan`, `FreeUpPlan` later, the uploader against a fake server (resume, `in_progress`, checksum, 401), migration 2 → 3, Roborazzi goldens of the screen. Emulator against a local hoard-server container (`docs/testing/backup.md`): synthetic photos in `DCIM/Camera`, a NAS duplicate referenced not uploaded, the process killed mid-upload and resumed, a rename on the phone moved on the server, unmetered/charging rules. |
-| A2 | Hoard 2.4.0 | Devices view, filter and badge; `ServerFs` and "Save to this device" through `TransferService`. | JVM: `ServerFs` in `TransferRunnerTest` style; emulator: two debug ids (`-Phoard.native.debugSuffix`) as phone and tablet. |
-| A3 | Hoard 2.5.0 | Free up space: candidates, preview, verify, `createDeleteRequest`, report `freed`. | JVM: `FreeUpPlan` (exclusions, whole shots, staleness); emulator: free synthetic files, refuse a partial consent, a corrupted server copy not freed. |
+| S1 | hoard-server 0.12.0 | Schema 10; roots, report, verify, `wait`/`claim` on uploads, `409 mirror`, `physicalDevice.backup`; hard links with fallback and `0400`; manifests; `mirror` item source and `SyncBackup` joining mirror items; `GET /v1/items?folder=<rootId>`; admin page: per phone backup, purge, storage accounting, "Keep a copy of NAS files a phone no longer has"; ADR 0013 section, `openapi.yaml`, `v1-routes.txt`. | Go: path validation and traversal on every input; a root of another phone `404`; link, `EXDEV` fallback (an injected linker), no copy; move, rename, rewrite, delete, restore; waiting entries linked on another device's upload; `wait` with a live and a stalled upload; verify with a corrupted blob and a changed NAS file; ownership (Reveal delete vs mirror, purge vs claim/record); revoke and claim/merge; `TestRevealProtocolContract` and `TestOpensRevealSyncDataDir` unchanged; `TestUpgradesHoardServer040DataDir`; the end-to-end test extended with a phone report, an interrupted upload and a verify. |
+| S2 | hoard-server 0.12.x | Web gallery: Devices in Folders, "Where" filter, "Deleted from the phone" badge, strings in `en` and `pt-BR`. | `bun run lint/typecheck/test/e2e` with a synthetic phone mirror. |
+| A1 | Hoard 2.4.0 | `gallery.db` 4; `BackupPlan`, `BackupUploader`, `BackupWorker`; Settings › Backup with status per folder and file; Gallery badges. | JVM: `BackupPlan`, `FreeUpPlan` later, the uploader against a fake server (resume, `in_progress`, checksum, 401), migration 3 → 4, Roborazzi goldens of the screen. Emulator against a local hoard-server container (`docs/testing/backup.md`): synthetic photos in `DCIM/Camera`, a NAS duplicate referenced not uploaded, the process killed mid-upload and resumed, a rename on the phone moved on the server, unmetered/charging rules. |
+| A2 | Hoard 2.5.0 | Devices view, filter and badge; `ServerFs` and "Save to this device" through `TransferService`. | JVM: `ServerFs` in `TransferRunnerTest` style; emulator: two debug ids (`-Phoard.native.debugSuffix`) as phone and tablet. |
+| A3 | Hoard 2.6.0 | Free up space: candidates, preview, verify, `createDeleteRequest`, report `freed`. | JVM: `FreeUpPlan` (exclusions, whole shots, staleness); emulator: free synthetic files, refuse a partial consent, a corrupted server copy not freed. |
 | R1 | Reveal 0.10.0 | "For Reveal's orchestrator" above. | Reveal's own. |
 
 S1 ships alone (nothing calls it until A1; Reveal 0.9.0 keeps working). A1 needs S1. R1 needs S1 and is independent
@@ -588,8 +623,8 @@ of A1–A3 except item 6, which must ship before A3 frees Reveal-edited shots (A
 ## Open questions for the owner
 
 1. Deleted-from-the-phone files: kept forever (proposed), or dropped after a period (one year?) unless freed?
-2. Free up of photos the server holds only on the NAS: keep a server copy in the backup folder first (proposed: on),
-   or trust the NAS as the backup?
+2. Photos the server holds only on the NAS that a phone no longer has (freed or deleted there): keep a server copy in
+   the backup folder (proposed: on, see "With ADR 0023's trash"), or trust the NAS as the backup?
 3. Free up's defaults: keep the last 30 days on the phone, and keep favourites?
 4. Which folders are on by default after pairing: none (proposed: the owner picks), or Camera and Screenshots?
 5. Device folders directly under the backup root (proposed, as decided), or under one `phones/` folder?
