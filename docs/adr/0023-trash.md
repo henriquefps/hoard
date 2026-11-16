@@ -1,7 +1,7 @@
 # ADR 0023: Trash for rejects
 
 - **Date**: 2026-11-15
-- **Status**: Proposed (Hoard 2.3.0; needs hoard-server 0.11.0, feature `trash`)
+- **Status**: Accepted 2026-11-15 (Hoard 2.3.0; needs hoard-server 0.11.0, feature `trash`)
 - **Builds on**: ADR 0005 (locations, `HoardFs`), 0007 (transfers), 0008 (culling, "Delete rejects"), 0011 (sidecars),
   0014 (items, the NAS walk), 0016 (culling sync), 0020 (edited previews, "Lifecycle"), 0021 (Gallery), 0022 (SMB ↔
   NAS mappings).
@@ -322,13 +322,17 @@ Order: S1 first and released; A1 → A2 → A3 → A4 (A2 and A3 work without a 
 - `.hoard-trash` folders appear on shares and drives (hidden by dot, `.nomedia` on volumes); other tools see them.
 - A share whose root sits above the NAS folder has two trash roots.
 
-## Open questions for the owner
+## Owner's decisions (2026-11-15)
 
-1. Should the plain **Files delete** (a selection outside culling) also go to the trash?
-2. Auto-empty: on by default at 30 days (7 / 30 / 90), fine?
-3. Case 5: refuse when the server is unreachable and the folder is not yet mapped, or trash to the share root and
-   accept that the server forgets those edits?
-4. Ask for **Media management** in the first trash dialog, or only from Settings?
+Henrique accepted this ADR with these answers to its open questions; where they differ from a line above, they win.
+
+1. **The plain Files delete goes to the trash too.** Deleting a selection in Files (outside culling) moves it to the
+   trash by the same rules (whole shots with their sidecars when the selection names a shot; other files as they are);
+   permanent delete stays only where the trash is not possible, with today's warning.
+2. **Auto-empty is on by default after 30 days** (Settings › Trash: 7 / 30 / 90 days, or off).
+3. **Case 5 refuses**: when the folder's mapping is not known yet and the server cannot be reached, the shot is not
+   trashed: "Try again when the photo server is reachable".
+4. **Media management is asked in the first trash dialog** (once), and offered again in Settings › Trash.
 
 ## Alternatives considered
 
