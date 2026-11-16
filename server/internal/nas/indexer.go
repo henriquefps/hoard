@@ -40,6 +40,9 @@ type Indexer struct {
 	Prober *media.Prober
 	// OpenBlob opens an uploaded blob by SHA-256 (nil: uploaded originals are not items yet).
 	OpenBlob func(sha256 string) (*os.File, error)
+	// AfterWalk runs after the folders are walked, before the uploaded originals and phone backups are synced (ADR
+	// 0024: the phone backup's NAS references are checked against what the walk found).
+	AfterWalk func(context.Context)
 
 	trigger chan struct{}
 	backup  chan struct{}
@@ -196,6 +199,10 @@ func (ix *Indexer) walkQueued(ctx context.Context) {
 			ix.Log.Warn("nas: folder not indexed", "folder", f.ID, "err", errorClass(err))
 		}
 	}
+	if ix.AfterWalk != nil && ctx.Err() == nil {
+		ix.AfterWalk(ctx)
+		ix.Backup(ctx)
+	}
 }
 
 // Trigger asks for a walk soon (coalesced).
@@ -285,6 +292,9 @@ func (ix *Indexer) All(ctx context.Context) {
 	}
 	if ctx.Err() != nil {
 		return
+	}
+	if ix.AfterWalk != nil {
+		ix.AfterWalk(ctx)
 	}
 	withSources, err := ix.Store.SourceFolders(ctx)
 	if err != nil {
@@ -916,6 +926,12 @@ func (ix *Indexer) Backup(ctx context.Context) {
 		case m.Media == media.MediaImage:
 			roles[fp] = media.RoleRendered
 		}
+	}
+	// Phone backups (ADR 0024) first: an upload then joins the mirror item that holds its file.
+	if mst, err := ix.syncer(ctx).SyncMirrors(ctx); err != nil {
+		ix.Log.Error("items: phone backups", "err", err)
+	} else if mst.Sources > 0 {
+		ix.Log.Info("items: phone backups synced", "sources", mst.Sources, "items", mst.Items)
 	}
 	st, err := ix.syncer(ctx).SyncBackup(ctx, originals, roles)
 	if err != nil {

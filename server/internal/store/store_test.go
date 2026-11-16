@@ -16,7 +16,7 @@ func TestMigrationsAreIdempotentAndRefuseNewerSchemas(t *testing.T) {
 	}
 	ctx := context.Background()
 	v, err := s.SchemaVersion(ctx)
-	if err != nil || v != 9 {
+	if err != nil || v != 10 {
 		t.Fatalf("schema %d %v", v, err)
 	}
 	var mode string

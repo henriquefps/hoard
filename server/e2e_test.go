@@ -24,7 +24,8 @@ import (
 )
 
 // TestEndToEnd builds the real binary, runs it and drives a scripted client through
-// pair -> push edits -> second device pulls -> conflict -> chunked upload, interrupted and resumed -> download.
+// pair -> push edits -> second device pulls -> conflict -> chunked upload, interrupted and resumed -> download ->
+// a phone backup (ADR 0024): report, an interrupted mirror upload resumed, hard links in the tree, verify.
 func TestEndToEnd(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds and runs the binary")
@@ -293,12 +294,138 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatalf("range %d", status)
 	}
 
+	// Phone backup (ADR 0024): Hoard on a phone backs up DCIM/Camera. The RAW the phone's Reveal uploaded is linked,
+	// not uploaded; a new photo is uploaded for the mirror (claim false), interrupted and resumed; then verified.
+	hoard := pairDevice("Pixel 8")
+	root := call(hoard, "POST", "/v1/backup/roots", map[string]any{"volume": "primary", "path": "DCIM/Camera", "types": []string{"image", "raw"}}, 201)
+	rootID, folder := root["id"].(string), root["folder"].(string)
+	photo := fingerprint.VectorBytes(12<<20+777, 7) // two chunks
+	photoFp := fingerprint.Bytes(photo)
+	ph := sha256.Sum256(photo)
+	photoSha := hex.EncodeToString(ph[:])
+	entries := []any{
+		map[string]any{"path": "DCIM/Camera/PXL_1.dng", "fingerprint": fp, "size": len(raw), "modifiedAt": 1730455000000, "sha256": sha},
+		map[string]any{"path": "DCIM/Camera/PXL_2.jpg", "fingerprint": photoFp, "size": len(photo), "modifiedAt": 1730455000000, "sha256": photoSha},
+	}
+	rep := call(hoard, "POST", "/v1/backup/report", map[string]any{"rootId": rootID, "entries": entries}, 200)
+	states := func(m map[string]any) string {
+		var out []string
+		for _, r := range m["results"].([]any) {
+			out = append(out, r.(map[string]any)["state"].(string))
+		}
+		return strings.Join(out, ",")
+	}
+	if got := states(rep); got != "stored,missing" {
+		t.Fatalf("report %s", got)
+	}
+	up = call(hoard, "POST", "/v1/uploads", map[string]any{"sha256": photoSha, "size": len(photo), "kind": "original", "fingerprint": photoFp,
+		"wait": true, "claim": false}, 201)
+	mirrorUpload := up["uploadId"].(string)
+	mpatch := func(offset int, body []byte) *http.Response {
+		req, _ := http.NewRequest("PATCH", baseURL+"/v1/uploads/"+mirrorUpload, bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+hoard.key)
+		req.Header.Set("Content-Type", "application/offset+octet-stream")
+		req.Header.Set("Upload-Offset", strconv.Itoa(offset))
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res
+	}
+	if res := mpatch(0, photo[:chunk]); res.StatusCode != 204 {
+		t.Fatalf("mirror chunk 1: %d", res.StatusCode)
+	}
+	conn, err = net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprintf(conn, "PATCH /v1/uploads/%s HTTP/1.1\r\nHost: %s\r\nAuthorization: Bearer %s\r\nContent-Type: application/offset+octet-stream\r\n"+
+		"Upload-Offset: %d\r\nContent-Length: %d\r\n\r\n", mirrorUpload, addr, hoard.key, chunk, len(photo)-chunk)
+	if _, err := conn.Write(photo[chunk : chunk+1<<20]); err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	// A process killed mid-way asks again: the same upload, to resume.
+	again := call(hoard, "POST", "/v1/uploads", map[string]any{"sha256": photoSha, "size": len(photo), "kind": "original", "fingerprint": photoFp,
+		"wait": true, "claim": false}, 200)
+	if again["status"] != "resume" || again["uploadId"] != mirrorUpload {
+		t.Fatalf("resume %v", again)
+	}
+	moffset := 0
+	for range 100 {
+		req, _ := http.NewRequest("HEAD", baseURL+"/v1/uploads/"+mirrorUpload, nil)
+		req.Header.Set("Authorization", "Bearer "+hoard.key)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if moffset, _ = strconv.Atoi(res.Header.Get("Upload-Offset")); moffset > chunk {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if moffset != chunk+1<<20 {
+		t.Fatalf("mirror upload holds %d bytes after the interruption", moffset)
+	}
+	if res := mpatch(moffset, photo[moffset:]); res.StatusCode != 204 || res.Header.Get("Upload-Complete") != "1" {
+		t.Fatalf("mirror upload resume: %d", res.StatusCode)
+	}
+	if got := states(call(hoard, "POST", "/v1/backup/report", map[string]any{"rootId": rootID, "entries": entries}, 200)); got != "stored,stored" {
+		t.Fatalf("report after upload %s", got)
+	}
+	// Both files are hard links of their blobs in the phone's folder; the blobs are read-only.
+	for name, s := range map[string]string{"PXL_1.dng": sha, "PXL_2.jpg": photoSha} {
+		blob, err := os.Stat(filepath.Join(mnt, "backup", "reveal-sync", "blobs", s[:2], s[2:4], s))
+		if err != nil {
+			t.Fatal(err)
+		}
+		link, err := os.Stat(filepath.Join(mnt, "backup", folder, "DCIM", "Camera", name))
+		if err != nil || !os.SameFile(blob, link) || blob.Mode().Perm() != 0o400 {
+			t.Fatalf("%s: link %v, mode %v", name, err, blob.Mode().Perm())
+		}
+	}
+	// Verify for free up: pending while the server re-hashes its copies, then yes.
+	verify := map[string]any{"entries": []any{
+		map[string]any{"rootId": rootID, "path": "DCIM/Camera/PXL_1.dng", "sha256": sha, "size": len(raw)},
+		map[string]any{"rootId": rootID, "path": "DCIM/Camera/PXL_2.jpg", "sha256": photoSha, "size": len(photo)},
+	}}
+	verified := ""
+	for range 200 {
+		v := call(hoard, "POST", "/v1/backup/verify", verify, 200)["results"].([]any)
+		a, b := v[0].(map[string]any), v[1].(map[string]any)
+		verified = fmt.Sprint(a["verified"], ",", b["verified"])
+		if verified == "yes,yes" {
+			if a["namedByRecord"] != true || b["namedByRecord"] != false {
+				t.Fatalf("namedByRecord %v %v", a, b)
+			}
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if verified != "yes,yes" {
+		t.Fatalf("verify %s", verified)
+	}
+	// Reveal deleting the RAW (its photo record's tombstone first) is refused while the phone's backup holds it.
+	var photoRev float64
+	for _, c := range pullAll(&device{key: tablet.key}) {
+		if c["id"] == photoID {
+			photoRev = c["rev"].(float64)
+		}
+	}
+	call(phone, "POST", "/v1/changes", map[string]any{"changes": []any{
+		map[string]any{"kind": "photo", "id": photoID, "baseRev": photoRev, "modifiedAt": 5000, "deleted": true}}}, 200)
+	if m := call(phone, "DELETE", "/v1/originals/"+fp, nil, 409); m["error"].(map[string]any)["details"].(map[string]any)["reason"] != "mirror" {
+		t.Fatalf("%v", m)
+	}
+
 	// Revoking the phone locks it out; the tablet keeps working.
 	adminCall("POST", "devices/"+phone.id+"/revoke", map[string]any{})
 	call(phone, "GET", "/v1/changes", nil, 401)
 	call(tablet, "GET", "/v1/server", nil, 200)
 	health := call(nil, "GET", "/v1/health", nil, 200)
-	if c := health["counts"].(map[string]any); c["blobs"].(float64) != 1 || c["devices"].(float64) != 1 {
+	if c := health["counts"].(map[string]any); c["blobs"].(float64) != 2 || c["devices"].(float64) != 2 {
 		t.Fatalf("health %v", health)
 	}
 
@@ -317,7 +444,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal("no clean shutdown")
 	}
 	<-scanned
-	for _, secret := range []string{phone.key, tablet.key, "end to end password"} {
+	for _, secret := range []string{phone.key, tablet.key, hoard.key, "end to end password", "DCIM", "PXL_"} { // no phone paths either
 		if strings.Contains(logs.String(), secret) {
 			t.Fatal("a secret reached the logs")
 		}

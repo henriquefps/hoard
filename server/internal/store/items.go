@@ -125,6 +125,15 @@ func (s *Store) ItemSources(ctx context.Context, source, folderID string) ([]Ite
 	return scanSources(rows)
 }
 
+// ItemSourcesOf lists every source of one kind (all folders).
+func (s *Store) ItemSourcesOf(ctx context.Context, source string) ([]ItemSource, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+sourceCols+" FROM item_sources WHERE source = ?", source)
+	if err != nil {
+		return nil, err
+	}
+	return scanSources(rows)
+}
+
 // SourceFolders lists the folder ids that still have NAS sources (or trash ones, ADR 0023).
 func (s *Store) SourceFolders(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT folder_id FROM item_sources WHERE source IN ('nas', 'trash')")
@@ -289,15 +298,29 @@ func (t *ItemTx) writeItem(id, mainFP, kind string, sortTime int64, data []byte,
 	return true, nil
 }
 
-// LiveItemWithFile returns a live item, other than except, that has fp as a member and at least one source of the
-// given kind ("" = any): the item fp's file belongs to. A trashed item is not live (ADR 0023): never an heir or a
-// replacement.
-func (t *ItemTx) LiveItemWithFile(fp, except, sourceKind string) (string, error) {
+// LiveItemWithFile returns a live item, other than except, that has fp as a member and at least one source of one of
+// the given kinds ("" or none = any): the item fp's file belongs to. A trashed item is not live (ADR 0023): never an
+// heir or a replacement.
+func (t *ItemTx) LiveItemWithFile(fp, except string, sourceKinds ...string) (string, error) {
+	kinds := []string{}
+	for _, k := range sourceKinds {
+		if k != "" {
+			kinds = append(kinds, k)
+		}
+	}
+	cond := ""
+	args := []any{fp, except}
+	if len(kinds) > 0 {
+		cond = "AND EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = f.item_id AND s.source IN (" + placeholders(len(kinds)) + "))"
+		for _, k := range kinds {
+			args = append(args, k)
+		}
+	}
 	var id string
+	//nolint:gosec // placeholders only; the kinds are arguments
 	err := t.tx.QueryRowContext(t.ctx, `SELECT f.item_id FROM item_files f JOIN items i ON i.id = f.item_id
-		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0 AND i.trashed_at IS NULL
-		AND (? = '' OR EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = f.item_id AND s.source = ?))
-		ORDER BY (i.main_fp = f.fingerprint) DESC, f.item_id LIMIT 1`, fp, except, sourceKind, sourceKind).Scan(&id)
+		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0 AND i.trashed_at IS NULL `+cond+`
+		ORDER BY (i.main_fp = f.fingerprint) DESC, f.item_id LIMIT 1`, args...).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -402,6 +425,7 @@ type ItemQuery struct {
 	Kinds    []string
 	From, To *int64 // sort time, [From, To)
 	FolderID string
+	Mirror   bool   // FolderID is a phone backup root (ADR 0024): its mirror sources
 	Dir      string // with FolderID: the directory and everything under it
 	Desc     bool
 	After    *ItemKey // keyset position
@@ -420,6 +444,9 @@ func (s *Store) QueryItems(ctx context.Context, q ItemQuery) ([]ItemRow, bool, e
 	source := "nas"
 	if q.Trashed {
 		where[0], source = "deleted = 0 AND trashed_at IS NOT NULL", "trash"
+	}
+	if q.Mirror {
+		source = "mirror"
 	}
 	var args []any
 	if len(q.Kinds) > 0 {

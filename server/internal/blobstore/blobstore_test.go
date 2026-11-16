@@ -134,3 +134,45 @@ func TestNamesCannotTraverse(t *testing.T) {
 		}
 	}
 }
+
+// A second upload of bytes the store has (Reveal 0.9 sends no "wait") never replaces the blob's file: a phone backup's
+// hard links keep sharing its inode (ADR 0024), and the part file goes.
+func TestCompleteKeepsAnExistingBlob(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	data := []byte("the same photo, uploaded twice")
+	sha := sum(data)
+	for i, id := range []string{upload, "1f8fad5b-d9cb-469f-a165-70867728950e"} {
+		if _, err := s.WriteChunk(id, 0, bytes.NewReader(data), 100); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Complete(id, sha, int64(len(data)), fingerprint.Bytes(data)); err != nil {
+			t.Fatal(err)
+		}
+		if s.PartSize(id) != 0 {
+			t.Fatal("part file left")
+		}
+		if i == 0 { // a mirror link of the first blob
+			if err := os.Link(filepath.Join(dir, Dir, "blobs", sha[:2], sha[2:4], sha), filepath.Join(dir, "link")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	a, _ := os.Stat(filepath.Join(dir, Dir, "blobs", sha[:2], sha[2:4], sha))
+	b, _ := os.Stat(filepath.Join(dir, "link"))
+	if !os.SameFile(a, b) {
+		t.Fatal("the second upload replaced the blob's file")
+	}
+	// Ingest says whether the bytes it returns were read back from disk.
+	if got, fresh, err := s.Ingest(bytes.NewReader(data), int64(len(data)), fingerprint.Bytes(data), nil); err != nil || got != sha || fresh {
+		t.Fatalf("%s %v %v", got, fresh, err)
+	}
+	other := []byte("a new file")
+	if _, fresh, err := s.Ingest(bytes.NewReader(other), int64(len(other)), fingerprint.Bytes(other), nil); err != nil || !fresh {
+		t.Fatalf("%v %v", fresh, err)
+	}
+}

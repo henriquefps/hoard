@@ -18,6 +18,7 @@ import (
 	"github.com/henriquefps/hoard/server/internal/auth"
 	"github.com/henriquefps/hoard/server/internal/blobstore"
 	"github.com/henriquefps/hoard/server/internal/fingerprint"
+	"github.com/henriquefps/hoard/server/internal/mirror"
 	"github.com/henriquefps/hoard/server/internal/previews"
 	"github.com/henriquefps/hoard/server/internal/ratelimit"
 	"github.com/henriquefps/hoard/server/internal/store"
@@ -63,6 +64,13 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/items/{itemId}/edits/{versionId}", s.device(s.handleEditDelete))
 	// The trash (ADR 0023, hoard-server 0.11.0): additions.
 	mux.HandleFunc("POST /v1/nas/walk", s.device(s.handleNasWalk))
+	// Phone backup (ADR 0024, hoard-server 0.12.0): additions.
+	mux.HandleFunc("GET /v1/backup/roots", s.device(s.handleBackupRoots))
+	mux.HandleFunc("POST /v1/backup/roots", s.device(s.handleBackupRootCreate))
+	mux.HandleFunc("PATCH /v1/backup/roots/{rootId}", s.device(s.handleBackupRootUpdate))
+	mux.HandleFunc("DELETE /v1/backup/roots/{rootId}", s.device(s.handleBackupRootStop))
+	mux.HandleFunc("POST /v1/backup/report", s.device(s.handleBackupReport))
+	mux.HandleFunc("POST /v1/backup/verify", s.device(s.handleBackupVerify))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -164,12 +172,15 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 			"proxyShortEdge": previews.ProxyEdge, "maxWarm": maxPreviewWarm, "requestsPerSecond": previewRate, "requestBurst": previewBurst}
 		out["edits"] = editsInfo() // ADR 0020
 	}
+	// Phone backup (ADR 0024, 0.12.0): its limits, next to "limits" like "previews".
+	out["backup"] = map[string]any{"maxRoots": backupMaxRoots, "maxReportEntries": backupMaxReport, "maxVerify": backupMaxVerify,
+		"maxPath": mirror.MaxPath}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
 // when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews), "items-by-path" (ADR 0014, 0.10.0),
-// "trash" (ADR 0023, 0.11.0).
+// "trash" (ADR 0023, 0.11.0), "backup" (ADR 0024, 0.12.0).
 func (s *Server) features() []string {
 	f := []string{"items", "items-by-path"}
 	if s.prev != nil {
@@ -179,7 +190,7 @@ func (s *Server) features() []string {
 	if s.prev != nil {
 		f = append(f, "edits")
 	}
-	return append(f, "trash")
+	return append(f, "trash", "backup")
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device
@@ -584,8 +595,11 @@ func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.completeMu.Lock()
 	defer s.completeMu.Unlock()
-	sha, err := s.store.DeleteOriginal(r.Context(), fp)
+	sha, err := s.store.DeleteOriginal(r.Context(), fp, info(r).device.ID)
 	switch {
+	case errors.Is(err, store.ErrMirror): // ADR 0024: a phone backup keeps it; the caller's claim was released
+		fail(w, r, http.StatusConflict, "conflict", "A phone backup holds this file; it stays on the server.", map[string]any{"reason": "mirror"})
+		return
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, r, http.StatusNotFound, "not_found", "No uploaded original with this fingerprint.", nil)
 		return
@@ -601,11 +615,9 @@ func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.indexer.TriggerBackup()
 	if sha != "" {
-		if bs := s.blobStore(); bs != nil {
-			if err := bs.Remove(sha); err != nil {
-				s.internal(w, r, fmt.Errorf("original deleted but its file stays: %w", err))
-				return
-			}
+		if err := s.removeReleasedBlobs(r.Context(), []string{sha}); err != nil {
+			s.internal(w, r, fmt.Errorf("original deleted but its file stays: %w", err))
+			return
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -690,10 +702,15 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 		Size        int64  `json:"size"`
 		Kind        string `json:"kind"`
 		Fingerprint string `json:"fingerprint"`
+		// ADR 0024 (0.12.0), optional: wait for another device's live upload of the same bytes; claim (default true)
+		// adds the device's claim on the original.
+		Wait  bool  `json:"wait"`
+		Claim *bool `json:"claim"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
+	claim := req.Claim == nil || *req.Claim
 	switch {
 	case !blobstore.ValidSHA256(req.SHA256):
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "sha256 must be 64 lower-case hex characters.", nil)
@@ -718,13 +735,15 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	dev := info(r).device
+	defer s.lockContent(req.SHA256)() // "exists" writes rows for the blob: not while its file is being removed
 	if b, err := s.store.BlobBySHA(ctx, req.SHA256); err == nil && bs.Has(req.SHA256) {
 		if b.Size != req.Size {
 			fail(w, r, http.StatusUnprocessableEntity, "checksum_mismatch", "A blob with this sha256 has another size.", nil)
 			return
 		}
 		if req.Fingerprint != "" {
-			if err := s.registerFingerprint(ctx, bs, b, req.Fingerprint, dev.ID); err == nil {
+			if err := s.registerFingerprint(ctx, bs, b, req.Fingerprint, dev.ID, claim); err == nil {
+				s.linkContent(ctx, req.Fingerprint, req.SHA256)
 				s.indexer.TriggerBackup()
 			} else {
 				if errors.Is(err, blobstore.ErrFingerprint) {
@@ -746,11 +765,27 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "An unfinished upload of this blob has other details; DELETE it first.", map[string]any{"uploadId": u.ID})
 			return
 		}
+		if err := s.store.SetUploadUnclaimed(ctx, u.ID, !claim); err != nil {
+			s.internal(w, r, err)
+			return
+		}
 		writeJSON(w, http.StatusOK, s.uploadResponse(u, "resume"))
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.internal(w, r, err)
 		return
+	}
+	if req.Wait { // ADR 0024: another device is sending these bytes right now
+		busy, err := s.store.ActiveUploadByOther(ctx, dev.ID, req.SHA256, s.store.Now().Add(-uploadLiveWindow).UnixMilli())
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		if busy {
+			w.Header().Set("Retry-After", strconv.Itoa(uploadRetryAfter))
+			writeJSON(w, http.StatusOK, map[string]any{"status": "in_progress", "retryAfter": uploadRetryAfter})
+			return
+		}
 	}
 	n, err := s.store.UploadCount(ctx, dev.ID)
 	if err != nil {
@@ -766,11 +801,17 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	if !claim {
+		if err := s.store.SetUploadUnclaimed(ctx, u.ID, true); err != nil {
+			s.internal(w, r, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusCreated, s.uploadResponse(u, "created"))
 }
 
 // registerFingerprint links an existing original blob to a fingerprint after checking it (2 MiB read).
-func (s *Server) registerFingerprint(ctx context.Context, bs *blobstore.Store, b store.Blob, fp, deviceID string) error {
+func (s *Server) registerFingerprint(ctx context.Context, bs *blobstore.Store, b store.Blob, fp, deviceID string, claim bool) error {
 	f, err := bs.Open(b.SHA256)
 	if err != nil {
 		return err
@@ -783,7 +824,7 @@ func (s *Server) registerFingerprint(ctx context.Context, bs *blobstore.Store, b
 	if got != fp {
 		return blobstore.ErrFingerprint
 	}
-	return s.store.AddBlob(ctx, b, fp, deviceID)
+	return s.store.AddBlobClaim(ctx, b, fp, deviceID, claim)
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) (store.Upload, bool) {
@@ -893,6 +934,15 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		s.completeMu.Lock()
 		defer s.completeMu.Unlock()
 	}
+	unlockContent := s.lockContent(u.SHA256) // the file and its rows together (ADR 0024: purges remove files)
+	contentHeld := true
+	release := func() {
+		if contentHeld {
+			contentHeld = false
+			unlockContent()
+		}
+	}
+	defer release()
 	err = bs.Complete(u.ID, u.SHA256, u.Size, u.Fingerprint)
 	if errors.Is(err, blobstore.ErrChecksum) || errors.Is(err, blobstore.ErrFingerprint) {
 		_ = s.store.SetUploadOffset(ctx, u.ID, 0)
@@ -908,17 +958,24 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
-	if err := s.store.AddBlob(ctx, store.Blob{SHA256: u.SHA256, Size: u.Size, Kind: u.Kind}, u.Fingerprint, u.DeviceID); err != nil {
+	unclaimed, err := s.store.UploadUnclaimed(ctx, u.ID)
+	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
+	if err := s.store.AddBlobClaim(ctx, store.Blob{SHA256: u.SHA256, Size: u.Size, Kind: u.Kind}, u.Fingerprint, u.DeviceID, !unclaimed); err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	release()
 	if err := s.store.DeleteUpload(ctx, u.ID); err != nil {
 		s.internal(w, r, err)
 		return
 	}
 	s.uploadLocks.Delete(u.ID)
 	if u.Kind == store.BlobOriginal {
-		s.indexer.TriggerBackup() // the original becomes (part of) an item (ADR 0014)
+		s.linkContent(ctx, u.Fingerprint, u.SHA256) // the phone backup entries waiting for it (ADR 0024)
+		s.indexer.TriggerBackup()                   // the original becomes (part of) an item (ADR 0014)
 	}
 	uploadHeaders(w, u, u.Size)
 	w.Header().Set("Upload-Complete", "1")

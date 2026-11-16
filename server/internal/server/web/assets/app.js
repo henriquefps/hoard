@@ -76,7 +76,7 @@ const when = (ms) => (ms ? new Intl.DateTimeFormat(lang, { dateStyle: "medium", 
 
 const TABS = [
   ["status", "tabStatus", "pulse"], ["devices", "tabDevices", "device-mobile"],
-  ["storage", "tabStorage", "hard-drives"], ["nas", "tabNas", "folder-simple"],
+  ["storage", "tabStorage", "hard-drives"], ["nas", "tabNas", "folder-simple"], ["backup", "tabBackup", "device-mobile"],
 ];
 const page = () => document.getElementById("page");
 let timers = [];
@@ -108,7 +108,7 @@ async function route(forceState) {
   if (!state.signedIn || forceState === true) { renderTabs("", false); return renderSignIn(); }
   const key = (location.hash || "#status").slice(1);
   renderTabs(key, true);
-  const view = { status: renderStatus, devices: renderDevices, storage: renderStorage, nas: renderNas }[key] || renderStatus;
+  const view = { status: renderStatus, devices: renderDevices, storage: renderStorage, nas: renderNas, backup: renderBackup }[key] || renderStatus;
   try { await view(); } catch (e) { page().replaceChildren(h("p.error", e.message)); }
 }
 
@@ -366,6 +366,68 @@ async function renderNas() {
       rows.length ? h("div.list", rows) : h("p.empty", t("noFolders"))),
     h("div.section", h("h2", t("available")), candidates.length ? h("div.list", candidates) : h("p.empty", t("noCandidates"))));
   if (s.indexing || s.folders.some((f) => f.state === "indexing" || f.state === "pending")) timers.push(setInterval(route, 3000));
+}
+
+// --- phone backups (ADR 0024) -------------------------------------------------------------------------------------
+
+async function renderBackup() {
+  const s = await api("GET", "backup");
+  const metric = (label, value, hint) => h("div.metric", h("div.eyebrow", label), h("div.value", value), hint ? h("div.meta", hint) : null);
+  const keep = h("input", {
+    type: "checkbox", checked: s.keepNasCopies,
+    onchange: async () => { try { await api("PUT", "backup/settings", { keepNasCopies: keep.checked }); toast(t("saved")); } catch (e) { toast(e.message); route(); } },
+  });
+  const phones = s.phones.map((p) => {
+    const u = p.usage || {};
+    const roots = p.roots.map((r) => {
+      const st = r.stats || {};
+      const state = r.stopped ? ["idle", "backupStopped"] : r.paused ? ["warn", "backupPaused"] : r.active ? ["ok", "backupActive"] : ["idle", "backupInactive"];
+      return h("div.row", icon("folder-simple"),
+        h("div.main", h("div.name.mono", (r.volume === "primary" ? "" : `SD card ${r.volume}/`) + (r.path || "/")),
+          h("div.meta", t("backupRootFiles", { n: num(st.files), stored: num(st.stored), nas: num(st.nas), waiting: num(st.waiting) }),
+            " · ", bytes(st.bytes), " · ", `${t("backupLastReport")}: ${when(r.lastReportAt)}`)),
+        h("span.badge." + state[0], t(state[1])));
+    });
+    const rename = async () => {
+      const name = prompt(t("backupRenamePrompt"), p.folder);
+      if (!name || name === p.folder) return;
+      try { await api("PUT", `backup/${encodeURIComponent(p.physicalDeviceId)}/folder`, { folder: name }); route(); } catch (e) { toast(e.message); }
+    };
+    const purge = async () => {
+      let msg = t("backupPurgeConfirm", { name: p.name, entries: num(u.entries) });
+      if (u.pinned) msg += "\n\n" + t("backupPurgePinned", { pinned: num(u.pinned) });
+      msg += "\n\n" + t("backupPurgeForeign", { folder: p.folder });
+      if (!confirm(msg)) return;
+      try {
+        const res = await api("POST", `backup/${encodeURIComponent(p.physicalDeviceId)}/purge`, { confirmPinned: u.pinned || 0 });
+        toast(res.keptFiles ? t("backupPurgedKept", { n: num(res.keptFiles), folder: p.folder }) : t("backupPurged"));
+        route();
+      }
+      catch (e) { toast(e.message); route(); }
+    };
+    return h("div.list",
+      h("div.group-head", h("span.eyebrow", t("physicalDevice")), h("span.name", p.name),
+        h("span.badge." + (p.live ? "ok" : "idle"), t(p.live ? "backupLive" : "backupNotLive"))),
+      h("div.row", icon("hard-drives"), h("div.main", h("div.meta", `${t("backupFolder")}: `, h("span.mono", p.folder))),
+        h("div.actions", h("button.button", { onclick: rename }, t("backupRename")), h("button.button.danger", { onclick: purge, icon: "trash" }, t("backupPurge")))),
+      h("div.metrics",
+        metric(t("backupOwn"), `${num(u.ownFiles)} · ${bytes(u.ownBytes)}`),
+        metric(t("backupShared"), `${num(u.sharedFiles)} · ${bytes(u.sharedBytes)}`, t("backupSharedHint")),
+        metric(t("backupNas"), `${num(u.nasFiles)} · ${bytes(u.nasBytes)}`),
+        metric(t("backupPinned"), num(u.pinned), u.pinned ? t("backupPinnedHint") : null),
+        metric(t("backupDeleted"), num(u.deletedFromPhone)),
+        metric(t("backupWaiting"), num(u.waiting))),
+      roots);
+  });
+  page().replaceChildren(
+    h("div.section",
+      h("div.section-head", h("h2", t("backupTitle"))),
+      h("p.muted", t("backupIntro")),
+      s.available ? null : h("p", h("span.badge.warn", t("backupNotSet"))),
+      s.lost ? h("p", h("span.badge.bad", t("backupLost", { n: num(s.lost) }))) : null,
+      phones.length ? h("div.groups", phones) : h("p.empty", t("backupNone"))),
+    h("div.section", h("h2", t("settingsTitle")),
+      h("div.form", h("label.switch", keep, h("span", t("backupKeepNas"), h("p.hint", t("backupKeepNasHint")))))));
 }
 
 // --- boot ---------------------------------------------------------------------------------------------------------

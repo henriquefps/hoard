@@ -30,7 +30,25 @@ const (
 	// SourceTrash is a group of files in a NAS folder's .hoard-trash (ADR 0023): grouped by their original path, served
 	// as NAS locations with a "trash" path.
 	SourceTrash = "trash"
+	// SourceMirror is a group of a phone backup's root (ADR 0024): folder_id is the root id, dir is relative to the
+	// root.
+	SourceMirror = "mirror"
 )
+
+// MirrorRef is what a mirror member adds to a member: where the file is (or was) on its phone, and where its bytes
+// are on the server.
+type MirrorRef struct {
+	PhysicalID string `json:"pd"`
+	DeviceName string `json:"dn"`
+	RootID     string `json:"root"`
+	Volume     string `json:"vol"`
+	OnDevice   bool   `json:"on"`
+	Gone       string `json:"gone,omitempty"` // freed | deleted (absent while on the phone)
+	// A NAS reference's live NAS file (served as a nas location next to the mirror one).
+	NasFolderID string `json:"nf,omitempty"`
+	NasPath     string `json:"np,omitempty"`
+	NasMTime    int64  `json:"nm,omitempty"`
+}
 
 // Member is one file of a source (a NAS group or an uploaded original), as stored with the source.
 type Member struct {
@@ -41,7 +59,9 @@ type Member struct {
 	Trash       string `json:"trash,omitempty"` // in a trash (ADR 0023): where the file is, relative to the folder
 	Size        int64  `json:"size"`
 	MTime       int64  `json:"mtime"`            // NAS: modification time (ns); backup: upload time (ns)
-	SHA256      string `json:"sha256,omitempty"` // backup
+	SHA256      string `json:"sha256,omitempty"` // backup; mirror: the blob when the bytes are stored
+	// Mirror (ADR 0024): Path is the path on the phone's volume, MTime the phone's mtime (ns).
+	Mirror *MirrorRef `json:"mirror,omitempty"`
 }
 
 // Seen is a file a folder walk saw (the indexer's view).

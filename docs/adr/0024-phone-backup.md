@@ -83,6 +83,8 @@ backup; storage counted once.
   nothing on disk). The admin page can rename it (one `rename` inside the backup root).
 - **Path on the phone**: the path relative to its storage volume, exactly as the phone has it (`DCIM/Camera/…`). The
   primary volume has no prefix; another volume (an SD card, `vol-<uuid>` in ADR 0005) goes under `SD card <UUID>/`.
+  So that the two never mix, a primary-volume path whose first segment is `SD card <UUID>` (any case, a UUID of the
+  form a volume has) is refused (S1 amendment).
   On the wire a volume is `"primary"` or the volume's UUID as Android shows it (`1234-ABCD`, compared without case),
   so it matches both MediaStore (`VOLUME_NAME`) and SAF document ids (`primary:DCIM/Camera`, `1234-ABCD:DCIM`), which
   Reveal uses.
@@ -682,3 +684,83 @@ Henrique accepted this ADR with these answers to its open questions; where they 
    today; revisit (per-device read scopes in a later ADR) if anyone else's device is ever paired.
 8. **Videos back up on unmetered networks and while charging by default** (Settings › Backup: "Videos only while
    charging", on); photos keep "Only on Wi-Fi and other unmetered networks" (on) and "Only while charging" (off).
+
+## Amendment (S1, hoard-server 0.12.0)
+
+What the server PR settled where the text above was silent or loose. Where this differs from a line above, this wins.
+
+- **Schema 10 additions** to the tables above, all in `0010_mirror.sql` (one transaction, no index on an existing
+  table, so it needs no temporary directory; `TestMigrationsNeedNoTempDir` runs it with a broken `TMPDIR`):
+  `mirror_roots.types` (JSON, default `["image","video"]`; the column the `types` of the routes needed),
+  `mirror_roots.physical_id ... ON UPDATE CASCADE` (a phone's backup moves with a claim), `mirror_entries.tree_path`
+  (where the entry's link is, so a moved or rewritten file's link is found again) and `lost_at` (the admin warning),
+  an index `(root_id, path)`, `upload_unclaimed` (uploads made with `"claim": false`; `uploads` stays untouched) and
+  `blob_verifications` (one re-hash per content, kept 30 days).
+- **Entry and verify paths are relative to the volume** (as in the examples: root `DCIM/Camera`, entry
+  `DCIM/Camera/PXL_….jpg`) and must lie inside the root (`422` otherwise). Entries must be photos, videos or sidecars by
+  ADR 0014 extension; removals may name any path.
+- **Paused roots** still take reports (pausing is the phone's upload rule); stopped roots answer `409 stopped`. Only
+  roots that are not stopped cover a path (`409 covered`) and count towards `maxRoots`.
+- **`active`** counts the root's creation as a report (a root is active before its first report). Only a live device
+  can report (a revoked key is `401`), so a revoked phone's roots turn inactive 7 days after its last report.
+- **Writes go through `os.Root` opened on the backup root**, not on the device folder: a hard link needs the blob and
+  the new name in one root. Device folder names are validated as one path segment (never `reveal-sync`, never a dot
+  name) and phone paths as above, so no name leaves the phone's folder; a symbolic link out of the backup root is
+  refused by `os.Root`. A file in the way that is not a hard link of a blob (one name only) is never replaced.
+- **Moves**: a `moved` removal whose new path has not been reported keeps its content out of the tree and settles as
+  `deleted` after 24 hours (`replaced` when another file took the path meanwhile). The inferred move applies to
+  `deleted` entries only: a `freed` entry stays pinned even when its content comes back at another path (that path is a
+  current entry of its own). A `deleted` report never turns a `freed` entry back.
+- **Rewritten files**: each previous version is an item of its own (its own group, keyed by the entry), linked at
+  `.hoard-mirror/previous/<SD card prefix><path>~<sha8>` and served as a `mirror` location of its old path with
+  `onDevice: false`, `gone: "deleted"`.
+- **Mirror items** join the live NAS item that holds their main file (as an upload does); a `mirror` location carries
+  its own `backup` (`sha256`) location for stored bytes, or the `nas` location of a live NAS copy for a reference, so
+  it always sits next to the bytes even when the NAS shot is grouped otherwise.
+- **NAS references and the trash**: a reference stays `nas` while the file is findable by fingerprint, in a trash too
+  ("a report in between keeps `nas`"); it turns `none` when the file is purged or deleted (and `lost_at` is set when the
+  phone no longer has it). After every walk the server re-checks every reference; with the setting on, a reference
+  whose phone file is gone is copied into the store from wherever the file is (a trash first if that is all there is).
+  Content uploaded meanwhile turns references into `blob`.
+- **The server's own NAS copy** is made through the blob store's ingest: hashed while written, then read back and
+  checked by SHA-256 and fingerprint before it is moved into place; that read is the re-hash `verify` needs. It is
+  nobody's claim (`blobs.device_id` is null): the mirror entry keeps it. A copy whose bytes differ from the phone's
+  `sha256` is discarded and verify answers `differs`.
+- **`DELETE /v1/originals`** checks the live-record rule (`referenced`) before the mirror rule (`mirror`); the claim is
+  released only on `mirror`.
+- **Purge** is per phone: `POST /admin/api/backup/{physicalDeviceId}/purge` with `{"confirmPinned": n}`, where `n` must
+  equal the phone's current number of freed entries (`409` otherwise), so a purge never removes files freed after the
+  page looked. Contents another phone's entry, a claim or a live photo record name stay; the phone's folder is removed.
+  The page also renames a phone's folder (`PUT /admin/api/backup/{id}/folder`) and sets "Keep a copy of NAS files a
+  phone no longer has" (`PUT /admin/api/backup/settings`).
+- **Claims and moves**: when the moving device's old physical device keeps no live device, its backup moves. If the
+  target has no backup, the folder row moves (the folder keeps its name). If it has one, roots of the same volume and
+  path merge, the files are re-linked into the target's folder and the old folder is pruned; on a path both hold, the
+  newer `modified_at` wins (a tie: the moving phone's entry loses), and the loser becomes `replaced`, or `moved` when it
+  is the same content.
+- **Revoking** keeps today's sweep: a revoked device's unfinished uploads are removed at the next sweep, not after
+  7 days.
+- `GET /v1/device` always carries `physicalDevice.backup` in 0.12.0 (the feature is always on; `POST
+  /v1/backup/roots` answers `503 storage_not_configured` while no backup folder is chosen).
+- `POST /v1/uploads` with `wait`: an upload created or given a chunk in the last 10 minutes is live (its row's
+  `updated_at`).
+
+From the S1 review (same PR):
+
+- **A blob is never replaced.** Completing an upload of bytes the store already has (two devices at once; Reveal 0.9
+  sends no `wait`) drops the new part file instead of renaming it over the blob, so the mirror's hard links keep the
+  blob's inode (a link attempt that fails when the name exists, a rename only on filesystems without hard links).
+- **A NAS copy that finds the blob already there** does not mark it verified: its bytes on disk were not read back, so
+  a re-hash is queued and verify answers `pending` until it is done.
+- **Pinned is a flag** (`mirror_entries.pinned`), set by a `freed` report and cleared only when the phone has that
+  file again (a restore). A rewrite of the path or a lost merge no longer hides it: the purge's "only copies" count
+  (and its `confirmPinned`) and the admin page count `pinned`.
+- **Main storage and SD cards never share a folder**: on the primary volume, a path whose first segment is
+  `SD card <UUID>` (any case) is refused (`422`, roots and reports), since the tree keeps other volumes there.
+- **The purge removes only what the server made** in the phone's folder: the hard links it recorded, its manifests,
+  then directories left empty. Files the owner put there stay (the answer's `keptFiles`, and the page says so before and
+  after).
+- **Blob files are removed under a per-content lock** (a purge, `DELETE /v1/originals`), and only if no row came back
+  meanwhile; completing an upload, registering an existing blob (`exists`) and a NAS copy write their rows under the
+  same lock, so a row never outlives its file.
+

@@ -29,8 +29,14 @@ func (s *Store) BlobBySHA(ctx context.Context, sha string) (Blob, error) {
 	return b, err
 }
 
-// AddBlob records a stored blob (idempotent) and, for an original, its fingerprint.
+// AddBlob records a stored blob (idempotent) and, for an original, its fingerprint and deviceID's claim on it (ADR
+// 0024 "Ownership").
 func (s *Store) AddBlob(ctx context.Context, b Blob, fingerprint, deviceID string) error {
+	return s.AddBlobClaim(ctx, b, fingerprint, deviceID, true)
+}
+
+// AddBlobClaim is AddBlob with the claim optional: an upload made with "claim": false (the mirror's) adds none.
+func (s *Store) AddBlobClaim(ctx context.Context, b Blob, fingerprint, deviceID string, claim bool) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO blobs (sha256, size, kind, created_at, device_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
 			b.SHA256, b.Size, b.Kind, s.nowMs(), deviceID); err != nil {
@@ -39,7 +45,14 @@ func (s *Store) AddBlob(ctx context.Context, b Blob, fingerprint, deviceID strin
 		if fingerprint == "" {
 			return nil
 		}
-		_, err := tx.ExecContext(ctx, "INSERT INTO originals (fingerprint, sha256) VALUES (?, ?) ON CONFLICT DO NOTHING", fingerprint, b.SHA256)
+		if _, err := tx.ExecContext(ctx, "INSERT INTO originals (fingerprint, sha256) VALUES (?, ?) ON CONFLICT DO NOTHING", fingerprint, b.SHA256); err != nil {
+			return err
+		}
+		if !claim || deviceID == "" {
+			return nil
+		}
+		_, err := tx.ExecContext(ctx, "INSERT INTO original_claims (fingerprint, device_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
+			fingerprint, deviceID, s.nowMs())
 		return err
 	})
 }
@@ -131,10 +144,15 @@ func (s *Store) SetUploadOffset(ctx context.Context, id string, offset int64) er
 	return err
 }
 
-// DeleteUpload removes an upload's row.
+// DeleteUpload removes an upload's row (and its "claim": false mark, ADR 0024).
 func (s *Store) DeleteUpload(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM uploads WHERE id = ?", id)
-	return err
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM uploads WHERE id = ?", id); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, "DELETE FROM upload_unclaimed WHERE upload_id = ?", id)
+		return err
+	})
 }
 
 // StaleUploads lists uploads not touched since before (ms), and uploads of revoked devices.
@@ -267,10 +285,13 @@ func originalNamed(ctx context.Context, q queryer, fp string) (bool, error) {
 	return err == nil, err
 }
 
-// DeleteOriginal forgets the uploaded original of fp once no live photo record names it (ADR 0013 "Deleting an
-// original"): the user deleted the photo from the server. The check and the delete are one transaction. It returns the
-// blob's sha256 when its row went too (no other fingerprint uses the bytes): the caller removes the file.
-func (s *Store) DeleteOriginal(ctx context.Context, fp string) (string, error) {
+// DeleteOriginal forgets the uploaded original of fp once nothing else needs it (ADR 0013 "Deleting an original",
+// ADR 0024 "Ownership"): the user deleted the photo from the server. A live photo record that names it keeps it
+// (ErrReferenced); a phone backup entry that names it keeps it too (ErrMirror), and then only deviceID's claim on it is
+// released. Otherwise every claim and the originals row go. The checks and the delete are one transaction. It returns
+// the blob's sha256 when its row went too (no other fingerprint or mirror entry uses the bytes): the caller removes the
+// file.
+func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string, error) {
 	var removed string
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		removed = ""
@@ -298,6 +319,16 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp string) (string, error) {
 		if named {
 			return ErrReferenced
 		}
+		mirrored, err := mirrorNames(ctx, tx, fp, sha)
+		if err != nil {
+			return err
+		}
+		if mirrored {
+			return ErrMirror // nothing is deleted; the caller's claim is released below
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM original_claims WHERE fingerprint = ?", fp); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM originals WHERE fingerprint = ?", fp); err != nil {
 			return err
 		}
@@ -311,8 +342,17 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp string) (string, error) {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM blobs WHERE sha256 = ?", sha); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM blob_verifications WHERE sha256 = ?", sha); err != nil {
+			return err
+		}
 		removed = sha
 		return nil
 	})
+	if errors.Is(err, ErrMirror) {
+		// The device's claim goes (so the bytes go when the mirror no longer needs them).
+		if _, cerr := s.db.ExecContext(ctx, "DELETE FROM original_claims WHERE fingerprint = ? AND device_id = ?", fp, deviceID); cerr != nil {
+			return "", cerr
+		}
+	}
 	return removed, err
 }

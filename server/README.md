@@ -22,6 +22,9 @@ it moved here ([ADR 0012](../docs/adr/0012-hoard-server.md)); an existing reveal
 - Conflicts never lose an edit: the newer one wins and the other becomes a virtual copy.
 - A web gallery for your computers on the LAN or Tailscale: browse every item by date, search and filter, cull with
   Hoard's keys, view at 100 %, play videos, download originals or a zip ([ADR 0018](../docs/adr/0018-web-gallery.md)).
+- Phone backup (0.12.0): the folders you pick on a phone are mirrored under the backup folder, one folder per phone,
+  as hard links into the same content store Reveal uploads to (nothing stored twice, nothing the NAS already has
+  uploaded); files deleted on the phone are kept ([ADR 0024](../docs/adr/0024-phone-backup.md)).
 
 The protocol (for the apps and any other client) is [ADR 0013](../docs/adr/0013-server-protocol.md), with an OpenAPI
 description in [`api/openapi.yaml`](api/openapi.yaml). `/v1` is frozen: additions only (ADR 0012).
@@ -205,6 +208,30 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.12.0 (phone backup)
+
+0.12.0 adds the phone backup (ADR 0024) for Hoard 2.4.0 and later: nothing happens until you turn on a folder in
+Hoard's Settings › Backup. Each phone gets a folder next to `reveal-sync/` in the backup folder,
+`<backup folder>/<phone name> (<8 hex digits>)/<path on the phone>` (an SD card under `SD card <UUID>/`), whose
+files are **hard links** into `reveal-sync/blobs/`: a photo Reveal already uploaded, or one the NAS already holds, is
+never uploaded again, and the folder takes no extra space. A NAS file is not copied there (it is listed in the
+folder's `.hoard-mirror/manifest-<root>.tsv`); when the phone no longer has such a file, the server keeps its own copy
+(Setup page › Phone backups › "Keep a copy of NAS files a phone no longer has", on). Files deleted on the phone stay;
+deleting a phone's backup is done only on the setup page, which shows first how many files exist nowhere else (freed
+on the phone); it removes only what the server put in the phone's folder, so files you added there yourself stay. On
+the phone's main storage, a folder named like an SD card's (`SD card 1234-ABCD`) cannot be backed up.
+
+- Keep the blob store and the phone folders on **one filesystem** (they are both in the backup folder, as the example
+  compose file mounts it). If a hard link is impossible (another filesystem, `EXDEV`, or `EPERM`), the server keeps
+  the file in its index only and never copies it; the manifest lists it as `blob-unlinked`.
+- Stored blobs become read-only (`0400`) as they are linked. **Copy the backup folder with hard links preserved**
+  (`cp -a`, `rsync -aH`), or it takes the mirror's space twice.
+- A database migration (schema 10) is applied in place on start: no step to take, and it needs no temporary directory
+  (it builds indexes on new, empty tables only). Every original uploaded before 0.12.0 is recorded as claimed by its
+  uploader, so nothing Reveal backed up can be deleted through a phone backup. **Back up `data/` before upgrading**:
+  0.11.x refuses a schema-10 database.
+- Released Reveal (0.9.0) keeps working unchanged; Reveal 0.10.0 stops uploading from folders Hoard backs up.
+
 ## Upgrading to 0.11.1 (a read-only container starts)
 
 0.11.0 could crash-loop on upgrade in a container with `read_only: true` and no writable `/tmp` (the example
@@ -308,7 +335,12 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
   files). Back it up with the server stopped, or with
   `sqlite3 hoard-server.db ".backup copy.db"` while it runs.
 - `<backup folder>/reveal-sync/blobs/` holds the uploaded originals and previews, named by their SHA-256; files are
-  mode 0600. The backup folder is fixed once it holds files: to move it, stop the server, move the `reveal-sync`
+  mode 0600 (0400 once a phone backup links them, 0.12.0).
+- `<backup folder>/<phone name> (<8 hex digits>)/` (0.12.0, ADR 0024) mirrors a phone's backed-up folders: hard links
+  into `reveal-sync/blobs/`, plus `.hoard-mirror/manifest-<root>.tsv` (every file of a folder: path, size, SHA-256,
+  fingerprint, where its bytes are, whether the phone still has it) and `.hoard-mirror/previous/` (earlier content of
+  files rewritten on the phone). The tree plus its manifests describe a phone's backup without the database. Copy it
+  with hard links preserved (`cp -a`, `rsync -aH`). The setup page can rename a phone's folder. The backup folder is fixed once it holds files: to move it, stop the server, move the `reveal-sync`
   folder to the new place, mount it at the same path inside the container (or update the `backupRoot` setting).
 - `/data/edits/` holds Reveal's edited previews (0.9.0, ADR 0020; one file per image, named by its SHA-256, metadata
   removed). Back it up with the database: unlike the previews below, the server cannot make them again (Reveal can

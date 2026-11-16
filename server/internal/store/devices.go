@@ -211,8 +211,18 @@ func (s *Store) PhysicalExists(ctx context.Context, id string) (bool, error) {
 // MoveDevice moves a device into a physical device (to == "": one of its own, with the device's id when free). The
 // physical device it leaves is deleted when no device is left in it.
 func (s *Store) MoveDevice(ctx context.Context, deviceID, to string) (string, error) {
+	id, _, err := s.MoveDeviceMirror(ctx, deviceID, to)
+	return id, err
+}
+
+// MoveDeviceMirror is MoveDevice that also reports what happened to a phone backup (ADR 0024 "Claims and moves"):
+// when the device was the last live device of the physical device it leaves, that physical device's backup moves with
+// it (nil when nothing moved); the caller then moves the links on disk.
+func (s *Store) MoveDeviceMirror(ctx context.Context, deviceID, to string) (string, *MirrorMove, error) {
 	now := s.nowMs()
+	var mv *MirrorMove
 	err := s.tx(ctx, func(tx *sql.Tx) error {
+		mv = nil
 		var from string
 		var app sql.NullString
 		err := tx.QueryRowContext(ctx, "SELECT physical_id, app FROM devices WHERE id = ?", deviceID).Scan(&from, &app)
@@ -268,12 +278,23 @@ func (s *Store) MoveDevice(ctx context.Context, deviceID, to string) (string, er
 		if _, err := tx.ExecContext(ctx, "UPDATE devices SET physical_id = ? WHERE id = ?", to, deviceID); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, "DELETE FROM physical_devices WHERE id = ? AND NOT EXISTS (SELECT 1 FROM devices WHERE physical_id = ?)", from, from)
+		var live int
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM devices WHERE physical_id = ? AND revoked_at IS NULL", from).Scan(&live); err != nil {
+			return err
+		}
+		if live == 0 { // its last live device left: the backup goes with it (ADR 0024)
+			if mv, err = moveMirror(ctx, tx, from, to, now); err != nil {
+				return err
+			}
+		}
+		// A physical device with no device left is deleted, unless it still has a backup (ADR 0024).
+		_, err = tx.ExecContext(ctx, `DELETE FROM physical_devices WHERE id = ? AND NOT EXISTS (SELECT 1 FROM devices WHERE physical_id = ?)
+			AND NOT EXISTS (SELECT 1 FROM mirror_devices WHERE physical_id = ?)`, from, from, from)
 		return err
 	})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	d, err := s.DeviceByID(ctx, deviceID)
-	return d.PhysicalID, err
+	return d.PhysicalID, mv, err
 }

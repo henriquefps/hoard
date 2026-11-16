@@ -106,6 +106,8 @@ p { margin: 0 0 0.75rem; }
 
 .list { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .groups { display: grid; gap: 0.75rem; }
+.list > .metrics { padding: 0.75rem 1rem; border-top: 1px solid var(--border); }
+.metric .meta { font-size: 0.8125rem; color: var(--muted-foreground); }
 .group-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; padding: 0.625rem 1rem; }
 .group-head .name { font-weight: 600; overflow-wrap: anywhere; }
 .group-head .muted { font-size: 0.8125rem; }

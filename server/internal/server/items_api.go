@@ -130,8 +130,16 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 	}
 	iq.FolderID = q.Get("folder")
 	if iq.FolderID != "" && !uuidPattern.MatchString(iq.FolderID) {
-		bad("folder is a NAS folder id.")
+		bad("folder is a NAS folder id or a phone backup root id.")
 		return
+	}
+	if iq.FolderID != "" { // a phone backup root (ADR 0024): its mirror items, path relative to the root
+		mirrorRoot, err := s.store.IsMirrorRoot(r.Context(), iq.FolderID)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		iq.Mirror = mirrorRoot
 	}
 	if p := q.Get("path"); p != "" {
 		if iq.FolderID == "" || strings.HasPrefix(p, "/") || strings.HasSuffix(p, "/") || strings.Contains(p, "//") || len(p) > 1024 {

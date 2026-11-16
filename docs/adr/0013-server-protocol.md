@@ -452,12 +452,62 @@ again with `"removed": true` and no `trashed`. `counts.nasFiles` and `counts.ite
 The web gallery serves nothing in a trash: trashed items are absent from every `/web/` route, and a live item's
 members only in a trash are left out of its files, downloads and library row.
 
+## Phone backup (hoard-server 0.12.0)
+
+Added by ADR 0024, which is the reference (the mirror, the entry rules, Reveal's delegation, free up). Additions only;
+`features` gains `"backup"` and `GET /v1/server` a `backup` object with the limits `{"maxRoots": 64,
+"maxReportEntries": 1000, "maxVerify": 500, "maxPath": 1024}`. Schema 10 (`0010_mirror.sql`: `mirror_devices`,
+`mirror_roots`, `mirror_entries`, `original_claims` backfilled from every uploaded original, `upload_unclaimed`,
+`blob_verifications`; `nas_files.sha256` and `sha_mtime`).
+
+A **root** is a folder of a phone (a volume, `primary` or the volume UUID, and a path relative to it) that the server
+mirrors under `<backup root>/<Device name> (<8 hex of the physical device id>)/<path on the phone>` (an SD card under
+`SD card <UUID>/`): hard links into the blob store, one content store for every app. Content the server has (any
+upload, any device) is linked, not uploaded; an indexed NAS file is referenced (no file in the tree; listed in the
+root's manifest, `.hoard-mirror/manifest-<rootId>.tsv`). A hard link that cannot be made (`EXDEV`, `EPERM`) leaves the
+entry in the index only; the server never copies. Blobs become `0400`. Every route needs a device key; a root of
+another physical device answers `404 not_found`, like an unknown one.
+
+**Paths** (roots, entries, removals): relative, `/`-separated, NFC, at most 1024 bytes, segments at most 255 bytes;
+`422 invalid_request` when absolute, empty (except a root's `""`), with `.` or `..` segments, a segment starting with
+`.`, a backslash, a NUL or a control character (`a//b` is read as `a/b`); on the primary volume, a first segment
+`SD card <UUID>` (any case) too, reserved for the SD cards' folders of the tree. Entry paths are relative to the volume and
+inside the root; entries are photos, videos and sidecars (ADR 0014 extensions).
+
+| Method and path | Answer |
+| --- | --- |
+| `GET /v1/backup/roots` | `{"roots": [{"id", "physicalDeviceId", "deviceName", "mine", "folder", "volume", "path", "createdBy", "app", "createdAt", "types", "paused", "stopped", "active", "lastReportAt", "stats": {"files", "bytes", "stored", "nas", "waiting", "removedFromDevice", "freed", "verified"}}]}`: every root of every phone (every paired device reads every backup). `active` = not paused, not stopped, and a live device of that phone reported (or made the root) in the last 7 days. `types` ⊆ `image`, `video`, `raw`, `sidecar`. |
+| `POST /v1/backup/roots` `{"volume", "path", "types"?}` | `201` with the root; `200` when it exists (a stopped or paused root is resumed). Inside a root of this phone that is not stopped: `409 conflict`, `details: {"reason": "covered", "rootId"}`; containing roots: they are absorbed (`details.absorbed`). Over `maxRoots`: `422`. No backup folder: `503 storage_not_configured`. `types` default `["image", "video"]`. |
+| `PATCH /v1/backup/roots/{rootId}` `{"paused"?, "types"?}` | `200` with the root. |
+| `DELETE /v1/backup/roots/{rootId}` | **Stops** the root: `200 {"status": "stopped"}`; the mirror, its files and items stay. No device key deletes backed-up content; only the admin page purges a phone's backup. |
+| `POST /v1/backup/report` `{"rootId", "entries": [{"path", "fingerprint", "size", "modifiedAt", "sha256"?}], "removed": [{"path", "reason"}]}` | At most `maxReportEntries` of each; idempotent. `200 {"results": [{"index", "path", "state", "itemId"?, "verified", "retryAfter"?}], "removed": [{"index", "path", "state"}]}`. `state`: `stored`, `nas`, `missing` (upload it), `in_progress` (another device's upload of it is live), `differs` (the server has the fingerprint with another SHA-256: upload it). `verified`: `yes`, `pending`, `no`. Removal `reason`: `deleted`, `moved`, `freed`; its `state`: `kept`, `moved`, `unknown`. A malformed entry: `422` with `details.index` and `details.field`, nothing applied. A stopped root: `409`, reason `stopped`. |
+| `POST /v1/backup/verify` `{"entries": [{"rootId", "path", "sha256", "size"}]}` | At most `maxVerify`. `200 {"results": [{"index", "verified": "yes"\|"pending"\|"no", "verifiedAt"?, "retryAfter"?, "reason"?, "namedByRecord"}]}`: the server's own re-hash of its copy (kept 30 days per content; a background queue, one file at a time). `reason`: `differs`, `missing`, `changed_on_nas`, `unavailable`, `not_found`. `namedByRecord`: a live photo record names the fingerprint, or a live version record names it as `data.photoFingerprint`. A NAS-only entry is first copied into the store while the setting "Keep a copy of NAS files a phone no longer has" is on (default). |
+
+Changes to existing routes, all optional for clients:
+
+- `POST /v1/uploads` takes `"wait": true` (another device's upload of the same `sha256` with a chunk in the last 10
+  minutes answers `200 {"status": "in_progress", "retryAfter": 300}` and `Retry-After`) and `"claim": false` (no device
+  claim; Hoard's backup). Every completed original links the mirror entries waiting for that content.
+- `DELETE /v1/originals/{fingerprint}`: `409 conflict`, `details.reason = "mirror"` while a mirror entry (current,
+  deleted or freed) names the file; nothing is deleted and the caller's claim is released. Ownership is computed at the
+  delete: bytes stay while a mirror entry, a device claim (`original_claims`), or a live photo record names them.
+- `GET /v1/device`: `physicalDevice.backup = {"roots": [{"id", "volume", "path", "app", "active", "since", "types"}]}`,
+  the caller's phone's roots (`[]` when none).
+- `GET /v1/items?folder=<rootId>&path=<dir>`: a backup root id where a NAS folder id was accepted; `path` relative to
+  the root. Items gain a third source, `mirror`, and files gain `mirror` locations `{"source": "mirror",
+  "physicalDeviceId", "deviceName", "rootId", "volume", "path", "modifiedAt", "onDevice", "gone"?}` next to the `backup`
+  or `nas` location that holds the bytes; `onDevice: false` with `gone`: `freed` or `deleted` (unknown values mean
+  `deleted`). Clients ignore unknown sources.
+- Physical devices (ADR 0017): one with a backup is kept after its last device; when its last live device moves to
+  another physical device, its backup moves with it (a root of the same volume and path is merged: the newer file
+  wins a path).
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
 | --- | --- | --- |
 | `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads", "items" (0.5.0)}}`: counts only, no names or paths |
-| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "items-by-path" (0.10.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0), "edits" (0.9.0), "trash" (0.11.0)], "previews": {…} (0.6.0, when enabled), "edits": {…} (0.9.0)}` |
+| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "items-by-path" (0.10.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0), "edits" (0.9.0), "trash" (0.11.0), "backup" (0.12.0)], "previews": {…} (0.6.0, when enabled), "edits": {…} (0.9.0), "backup": {…} (0.12.0)}` |
 | `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform", "physicalDeviceId" (0.7.0), "app" (0.7.0)}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
 | `POST /v1/pair` | pairing token | see "Pairing" |
 
@@ -477,6 +527,8 @@ members only in a trash are left out of its files, downloads and library row.
 | Items per preview warm (0.6.0) | 500 | `422 invalid_request` |
 | Unauthenticated requests per address (pair, failed device auth) | 10 per minute, burst 10 | `429` + `Retry-After` |
 | Admin sign-in and setup per address | 5 per minute, burst 5 | `429` + `Retry-After` |
+| Backup roots per phone, not stopped (0.12.0) | 64 | `422 invalid_request` |
+| Entries and removals per report / entries per verify (0.12.0) | 1000 / 500 | `422 invalid_request` |
 
 `GET /v1/server` returns the limits that apply, so clients read them instead of hard-coding them.
 
@@ -499,7 +551,7 @@ Every error is JSON:
 | 404 | `not_found`, `preview_unavailable` (0.6.0, `details.reason`) |
 | 422 (0.9.0) | `invalid_image` (an edited preview, ADR 0020, `details.reason`) |
 | 405 | `method_not_allowed` |
-| 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced) |
+| 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced; 0.12.0: `details.reason` `mirror` on `DELETE /v1/originals`, `covered` and `stopped` on backup roots) |
 | 413 | `too_large` |
 | 415 | `unsupported_media_type` |
 | 422 | `invalid_change`, `checksum_mismatch` |

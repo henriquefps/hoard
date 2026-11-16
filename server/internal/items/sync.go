@@ -86,8 +86,8 @@ func (y *Syncer) SyncFolder(ctx context.Context, folderID string, groups []Group
 	return y.apply(ctx, ops)
 }
 
-// SyncBackup makes the backup sources equal to the uploaded originals. An original joins the live NAS item that has
-// its fingerprint as a member (a RAW+JPEG pair the NAS also holds); otherwise it is an item of its own. roles gives
+// SyncBackup makes the backup sources equal to the uploaded originals. An original joins the live NAS or mirror item
+// (ADR 0024) that has its fingerprint as a member (a RAW+JPEG pair the NAS also holds); otherwise it is an item of its own. roles gives
 // each fingerprint's role (from its content); originals without one are not items.
 func (y *Syncer) SyncBackup(ctx context.Context, originals []store.UploadedOriginal, roles map[string]string) (Stats, error) {
 	existing, err := y.Store.ItemSources(ctx, SourceBackup, "")
@@ -108,7 +108,9 @@ func (y *Syncer) SyncBackup(ctx context.Context, originals []store.UploadedOrigi
 			prev, had := old[o.Fingerprint]
 			delete(old, o.Fingerprint)
 			target, main := ID(o.Fingerprint), o.Fingerprint
-			owner, err := tx.LiveItemWithFile(o.Fingerprint, "", SourceNAS)
+			// The live NAS or phone backup item that holds the file (ADR 0024: a phone's upload never becomes a second,
+			// ungrouped item).
+			owner, err := tx.LiveItemWithFile(o.Fingerprint, "", SourceNAS, SourceMirror)
 			if err != nil {
 				return err
 			}
@@ -213,7 +215,7 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 				fps = append(fps, m.Fingerprint)
 				hasMain = hasMain || m.Fingerprint == main
 			}
-			sources = append(sources, Source{Type: r.Source, FolderID: r.FolderID, FolderName: y.FolderNames[r.FolderID], Members: ms})
+			sources = append(sources, Source{Type: r.Source, FolderID: r.FolderID, FolderName: y.FolderNames[r.FolderID], Members: ms, Names: y.FolderNames})
 		}
 		if !hasMain { // no file of the shot's main is left (an upload still pointing here moves on the next backup pass)
 			dead = append(dead, id)
