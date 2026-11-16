@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.2.2
+## 2.2.2 (2026-11-15)
 
 - **The Gallery keeps your place** ([ADR 0021](docs/adr/0021-gallery.md), "Amendment 2.2.2"). Opening a photo and coming back no longer sends you to the top of the library: the grid stays where it was, and if you swiped to other photos in the viewer, the one you closed on is brought into view. The grid also stays on the same photo when a sync adds new photos above it, when a decision changes a filtered list, and after Android closes Hoard in the background.
 - **The fast scroller no longer grabs your scrolls.** It only reacts to a touch that starts on its handle, in a narrow strip at the right edge; a swipe anywhere else, even near the edge, scrolls the grid normally. The handle shows while you scroll and fades out when you stop; dragging it still shows the month and the years.
@@ -8,13 +8,13 @@
   - Why the filmstrip was empty: the grid draws server photos from the offline thumbnails (kept for the whole library), while the viewer and its filmstrip looked only in the preview cache, which has no copy of the photos the grid showed from those thumbnails. Both now read the same files.
 - **Photos you browse stay available offline.** Every server thumbnail the grid or the filmstrip downloads is now also kept in the offline thumbnails (unless you turned them off in Settings › Photo server), so what you scrolled past on mobile data still shows in airplane mode. No extra download; the count in Settings includes them.
 
-## 2.2.1
+## 2.2.1 (2026-11-15)
 
 - **A sidecar made by another app no longer overwrites your stars** ([ADR 0011](docs/adr/0011-culling-sidecars.md), "Amendment 2.2.1"). When Lightroom, darktable or another tool creates an `.xmp` file for a photo you already rated in Hoard, the file starts from that tool's defaults (often 1 star or none), not from your decision. Hoard now remembers which sidecars it has read and what they said. The first time it sees a sidecar, it only fills what you have not set (stars when the shot has none, a pick or reject when it has neither); your own stars, picks and rejects stay, however new the file is. After that, only what changes in the file counts: rating a photo 2 stars in Lightroom still shows up in Hoard, while a file rewritten without changing the rating leaves Hoard's newer edits alone. The same rule as hoard-server 0.10.1 and Reveal.
   - Sidecars written by **Export XMP** are recorded as read, so Hoard never takes them back as someone else's.
   - When a sidecar is deleted, Hoard forgets it (only after listing the folder in full; a drive or share that shows up empty forgets nothing), and a new one later is read as a first read again.
 
-## 2.2.0
+## 2.2.0 (2026-11-15)
 
 - **Your share's photos are your server's photos** ([ADR 0022](docs/adr/0022-smb-folders-on-the-server.md)). When a folder of an SMB share is also one of hoard-server's NAS folders (the same files), Hoard recognises it the first time you open a folder there, by reading two of its photos (2 MB each), and from then on knows which files the server holds by their path, size and date. Needs hoard-server 0.10.0.
   - Files and the culling grid show the **on the server** mark (the cloud of the Gallery) on those photos.
