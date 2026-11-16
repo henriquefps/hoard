@@ -41,7 +41,10 @@ func TestBackupSDCardPrefixReserved(t *testing.T) {
 	expect(t, hs.do("POST", "/v1/backup/roots", map[string]any{"volume": "primary", "path": "SD card 1234-abcd/DCIM"}, bearer(pixel.key)), 422, "invalid_request")
 	whole := hs.addRoot(pixel, "primary", "", 201)["id"].(string)
 	w := hs.do("POST", "/v1/backup/report", map[string]any{"rootId": whole, "entries": []any{fileEntry("SD card 1234-ABCD/DCIM/a.jpg", shot(1), true)}}, bearer(pixel.key))
-	expect(t, w, 422, "invalid_request")
+	expect(t, w, 200, "")
+	if r := decode(t, w)["results"].([]any)[0].(map[string]any); r["state"] != "refused" || r["reason"] != "reserved_prefix" {
+		t.Fatalf("%v", r)
+	}
 	sd := hs.addRoot(pixel, "1234-ABCD", "", 201)["id"].(string)
 	hs.report(pixel, sd, []map[string]any{fileEntry("SD card 1234-ABCD/DCIM/a.jpg", shot(1), true)}, nil) // on the card itself: its own folder
 }

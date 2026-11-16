@@ -5,6 +5,8 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"errors"
+	"sort"
+	"strings"
 )
 
 // Device is a paired device.
@@ -26,6 +28,8 @@ type Device struct {
 	Model        *string `json:"model"`
 	// CullingSince is when the device declared the "culling" capability or first pushed culling (ADR 0016; nil: never).
 	CullingSince *int64 `json:"-"`
+	// Features are the other capabilities the device declared (sorted; "culling" is CullingSince's).
+	Features []string `json:"-"`
 }
 
 // ErrInvalidToken is returned for an unknown, used or expired pairing token.
@@ -96,13 +100,17 @@ func (s *Store) RedeemPairing(ctx context.Context, tokenHash []byte, d Device) (
 	return d, err
 }
 
-const deviceCols = "id, name, platform, app_version, key_id, key_hash, created_at, last_seen_at, last_sync_at, revoked_at, physical_id, app, manufacturer, model, culling_since"
+const deviceCols = "id, name, platform, app_version, key_id, key_hash, created_at, last_seen_at, last_sync_at, revoked_at, physical_id, app, manufacturer, model, culling_since, features"
 
 func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 	var d Device
 	var physical sql.NullString
+	var features string
 	err := row.Scan(&d.ID, &d.Name, &d.Platform, &d.AppVersion, &d.KeyID, &d.KeyHash, &d.CreatedAt, &d.LastSeenAt, &d.LastSyncAt, &d.RevokedAt,
-		&physical, &d.App, &d.Manufacturer, &d.Model, &d.CullingSince)
+		&physical, &d.App, &d.Manufacturer, &d.Model, &d.CullingSince, &features)
+	if features != "" {
+		d.Features = strings.Split(features, ",")
+	}
 	d.PhysicalID = physical.String
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
@@ -182,6 +190,32 @@ func (s *Store) UpdateDeviceInfo(ctx context.Context, id string, info DeviceInfo
 	_, err := s.db.ExecContext(ctx, `UPDATE devices SET app = coalesce(?, app), manufacturer = coalesce(?, manufacturer),
 		model = coalesce(?, model) WHERE id = ?`, info.App, info.Manufacturer, info.Model, id)
 	return err
+}
+
+// AddDeviceFeatures records capabilities a device declared (names [a-z0-9-], never undone, so a repeat is harmless).
+func (s *Store) AddDeviceFeatures(ctx context.Context, id string, features []string) error {
+	if len(features) == 0 {
+		return nil
+	}
+	return s.tx(ctx, func(tx *sql.Tx) error {
+		var cur string
+		if err := tx.QueryRowContext(ctx, "SELECT features FROM devices WHERE id = ?", id).Scan(&cur); err != nil {
+			return err
+		}
+		set := map[string]bool{}
+		for _, f := range append(strings.Split(cur, ","), features...) {
+			if f != "" {
+				set[f] = true
+			}
+		}
+		all := make([]string, 0, len(set))
+		for f := range set {
+			all = append(all, f)
+		}
+		sort.Strings(all)
+		_, err := tx.ExecContext(ctx, "UPDATE devices SET features = ? WHERE id = ?", strings.Join(all, ","), id)
+		return err
+	})
 }
 
 // MarkCullingAware records that a device syncs culling per field (ADR 0016 "Reveal's records"): from now on the

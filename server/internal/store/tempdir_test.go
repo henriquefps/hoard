@@ -62,6 +62,7 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 		"ALTER TABLE items DROP COLUMN trashed_at",
 		"CREATE INDEX items_time ON items (sort_time, id) WHERE deleted = 0",
 		"CREATE INDEX items_kind_time ON items (kind, sort_time, id) WHERE deleted = 0",
+		"ALTER TABLE devices DROP COLUMN features",
 		"PRAGMA user_version = 8",
 	} {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
@@ -85,7 +86,7 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 		t.Fatalf("migrating with no temp directory: %v", err)
 	}
 	defer s.Close()
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 10 {
+	if v, err := s.SchemaVersion(ctx); err != nil || v != 11 {
 		t.Fatalf("schema %d %v", v, err)
 	}
 	var claims, unowned int

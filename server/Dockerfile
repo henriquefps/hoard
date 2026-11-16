@@ -55,7 +55,7 @@ RUN curl -fsSL -o heif.tar.gz "https://github.com/strukturag/libheif/releases/do
       -DWITH_UVG266=OFF \
  && ninja -C heif/build -j"$(nproc)" install && rm -rf heif heif.tar.gz
 
-# libvips: JPEG, PNG, WebP, HEIF/AVIF, RAW (LibRaw), PPM; lcms2 for ICC profiles, libexif for orientation.
+# libvips: JPEG, PNG, WebP, GIF (libnsgif, built in), HEIF/AVIF, RAW (LibRaw), PPM; lcms2 for ICC profiles, libexif for orientation.
 ARG VIPS_VERSION=8.18.7
 ARG VIPS_SHA256=5baaead3b0bb20ffdb9e9ff09aa9fda08620923df77b63b436654cb5e0b3bf94
 RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/download/v${VIPS_VERSION}/vips-${VIPS_VERSION}.tar.xz" \
@@ -65,7 +65,7 @@ RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/downl
       --buildtype=release -Dauto_features=disabled -Dmodules=disabled -Ddeprecated=false -Dexamples=false \
       -Dcplusplus=false -Dintrospection=disabled -Dvapi=false -Ddocs=false -Dcpp-docs=false \
       -Djpeg=enabled -Dspng=enabled -Dwebp=enabled -Dheif=enabled -Draw=enabled -Dlcms=enabled -Dexif=enabled \
-      -Dhighway=enabled -Dzlib=enabled -Dppm=true -Dnsgif=false -Danalyze=false -Dradiance=false \
+      -Dhighway=enabled -Dzlib=enabled -Dppm=true -Dnsgif=true -Danalyze=false -Dradiance=false \
  && ninja -C vips/build -j"$(nproc)" install && rm -rf vips vips.tar.xz \
  && /opt/hoard/bin/vips --version
 
@@ -112,6 +112,18 @@ RUN export LD_LIBRARY_PATH=/opt/hoard/lib \
  && /opt/hoard/bin/ffmpeg -hide_banner -encoders | grep -q libx264 \
  && /opt/hoard/bin/ffmpeg -hide_banner -filters | grep -q tonemap \
  && /opt/hoard/bin/ffprobe -version | head -1
+# The stills a phone backup holds (ADR 0024: PNG screenshots, WebP, GIF) must make a thumbnail with this image's own
+# libvips, with the untrusted-loader block the server sets on the source: a 1x1 GIF, a PNG with alpha and a WebP; transparent pixels must come out white.
+RUN export LD_LIBRARY_PATH=/opt/hoard/lib \
+ && v=/opt/hoard/bin/vips && d=$(mktemp -d) \
+ && echo 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' | base64 -d > "$d/a.gif" \
+ && $v black "$d/b.png" 8 8 --bands 4 && $v black "$d/c.webp" 8 8 \
+ && for f in a.gif b.png c.webp; do \
+      VIPS_BLOCK_UNTRUSTED=1 $v thumbnail "$d/$f" "$d/$f.v" 4 --size down \
+        && $v copy "$d/$f.v" "$d/$f.jpg[background=255]" && test -s "$d/$f.jpg" || { echo "no thumbnail from $f" >&2; exit 1; }; \
+    done \
+ && m=$(LC_ALL=C $v avg "$d/b.png.jpg") && [ "${m%%.*}" -ge 250 ] || { echo "a transparent PNG is not white: mean $m" >&2; exit 1; } \
+ && rm -rf "$d"
 COPY --from=build /out/hoard-server /usr/local/bin/hoard-server
 # Owned by the image's user (65532), so fresh named volumes are writable. Bind mounts keep their host
 # ownership: chown them to 65532 (README, "Docker").

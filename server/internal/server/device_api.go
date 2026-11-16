@@ -34,7 +34,8 @@ type deviceEntry struct {
 // lastSeenAt (ms, null: never) is hoard-server 0.10.0 (ADR 0017 "Liveness").
 type physicalEntry struct {
 	deviceEntry
-	LastSeenAt *int64 `json:"lastSeenAt"`
+	LastSeenAt *int64   `json:"lastSeenAt"`
+	Features   []string `json:"features"` // hoard-server 0.12.0: what the device declared ("culling", "freed-adopt")
 }
 
 type physicalView struct {
@@ -140,15 +141,13 @@ func (s *Server) deviceView(ctx context.Context, id string) (deviceView, error) 
 	v := deviceView{DeviceID: d.ID, Name: d.Name, Platform: d.Platform, App: d.App, Manufacturer: d.Manufacturer, Model: d.Model,
 		Features:       []string{},
 		PhysicalDevice: physicalView{ID: d.PhysicalID, Name: d.Name, Devices: []physicalEntry{}}, Candidates: candidatesFor(d, all)}
-	if d.CullingSince != nil {
-		v.Features = append(v.Features, featureCulling)
-	}
+	v.Features = deviceFeatures(d)
 	members := groups(all)[d.PhysicalID]
 	if len(members) > 0 {
 		v.PhysicalDevice.Name = members[0].Name
 	}
 	for _, m := range members {
-		v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, physicalEntry{entry(m), m.LastSeenAt})
+		v.PhysicalDevice.Devices = append(v.PhysicalDevice.Devices, physicalEntry{entry(m), m.LastSeenAt, deviceFeatures(m)})
 	}
 	return v, nil
 }
@@ -197,22 +196,46 @@ func readDeviceInfo(app, manufacturer, model *string) (store.DeviceInfo, bool) {
 
 const deviceInfoProblem = "app is a lower-case name with an optional build variant (reveal, reveal-debug), at most 32 characters; manufacturer and model are at most 64 characters; features is a list of at most 16 names [a-z0-9-]{1,32}."
 
-// featureCulling is the capability of a device that syncs culling per field (ADR 0016 "Reveal's records").
-const featureCulling = "culling"
+// Capabilities a device declares (PATCH /v1/device features). Names the server does not know are accepted and ignored.
+const (
+	// featureCulling: the device syncs culling per field (ADR 0016 "Reveal's records"). Stored as devices.culling_since,
+	// which pushing culling also sets: the one place the bridge reads.
+	featureCulling = "culling"
+	// featureFreedAdopt: a Reveal that adopts a photo the phone freed (ADR 0024 "Amendment (S1)"): the free-up gate looks
+	// for a live device that declared it. Stored in devices.features.
+	featureFreedAdopt = "freed-adopt"
+)
 
-// readFeatures validates the capabilities a device declares (unknown names are accepted and ignored) and reports
-// whether "culling" is among them.
-func readFeatures(features []string) (culling, ok bool) {
+// knownFeatures are the declared names the server keeps besides featureCulling.
+var knownFeatures = map[string]bool{featureFreedAdopt: true}
+
+// deviceFeatures lists a device's stored capabilities, sorted: "culling" (when culling_since is set) and the others.
+func deviceFeatures(d store.Device) []string {
+	out := []string{}
+	if d.CullingSince != nil {
+		out = append(out, featureCulling)
+	}
+	out = append(out, d.Features...)
+	sort.Strings(out)
+	return out
+}
+
+// readFeatures validates the capabilities a device declares (unknown names are accepted and ignored) and returns the
+// known ones: culling, and the names of knownFeatures.
+func readFeatures(features []string) (culling bool, known []string, ok bool) {
 	if len(features) > 16 {
-		return false, false
+		return false, nil, false
 	}
 	for _, f := range features {
 		if !featurePattern.MatchString(f) {
-			return false, false
+			return false, nil, false
 		}
 		culling = culling || f == featureCulling
+		if knownFeatures[f] {
+			known = append(known, f)
+		}
 	}
-	return culling, true
+	return culling, known, true
 }
 
 func (s *Server) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +249,7 @@ func (s *Server) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	di, ok := readDeviceInfo(req.App, req.Manufacturer, req.Model)
-	culling, okFeatures := readFeatures(req.Features)
+	culling, known, okFeatures := readFeatures(req.Features)
 	if !ok || !okFeatures {
 		fail(w, r, http.StatusBadRequest, "invalid_request", deviceInfoProblem, nil)
 		return
@@ -237,6 +260,10 @@ func (s *Server) handleDeviceUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Declared capabilities are added, never removed: a device that once synced culling per field keeps its photo
 	// records out of the bridge (ADR 0016).
+	if err := s.store.AddDeviceFeatures(r.Context(), info(r).device.ID, known); err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	if culling {
 		if err := s.store.MarkCullingAware(r.Context(), info(r).device.ID); err != nil {
 			s.internal(w, r, err)

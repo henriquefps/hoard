@@ -64,12 +64,32 @@ func Classify(name string) (mediaClass, role string) {
 	return "", ""
 }
 
-// RenderedRank orders renderings of one shot: JPEG before HEIF.
-func RenderedRank(name string) int {
-	if renderedExt[Ext(name)] == "jpeg" {
-		return 0
+// mirrorStillExt are the stills a phone backup accepts on top of Classify's: what MediaStore lists as an image and
+// browsers and libvips read (PNG screenshots, WebP, GIF). They are the main file of a shot of their own. The NAS walk
+// keeps Classify, so a PNG or GIF on the NAS stays unindexed.
+var mirrorStillExt = map[string]bool{"png": true, "webp": true, "gif": true}
+
+// ClassifyMirror is Classify for a phone backup's entries (ADR 0024): the same classes plus PNG, WebP and GIF as
+// rendered stills. Only the mirror paths use it; the NAS walk and trash use Classify.
+func ClassifyMirror(name string) (mediaClass, role string) {
+	if mediaClass, role = Classify(name); mediaClass != "" {
+		return mediaClass, role
 	}
-	return 1
+	if !Hidden(name) && mirrorStillExt[Ext(name)] {
+		return MediaImage, RoleRendered
+	}
+	return "", ""
+}
+
+// RenderedRank orders renderings of one shot: JPEG, then HEIF, then PNG, WebP and GIF.
+func RenderedRank(name string) int {
+	switch renderedExt[Ext(name)] {
+	case "jpeg":
+		return 0
+	case "heif":
+		return 1
+	}
+	return 2
 }
 
 // Sniff classifies content without a name (uploaded originals): its media class, role and format.

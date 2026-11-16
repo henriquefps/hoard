@@ -159,6 +159,27 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// TestClassifyMirror: a phone backup takes PNG, WebP and GIF as stills; the NAS walk (Classify) keeps ignoring them.
+func TestClassifyMirror(t *testing.T) {
+	for _, name := range []string{"Screenshot_1.png", "a.WEBP", "b.GIF"} {
+		if m, r := Classify(name); m != "" || r != "" {
+			t.Errorf("Classify(%s) = %s %s: the NAS must not index it", name, m, r)
+		}
+		if m, r := ClassifyMirror(name); m != MediaImage || r != RoleRendered {
+			t.Errorf("ClassifyMirror(%s) = %s %s", name, m, r)
+		}
+	}
+	for name, want := range map[string][2]string{"a.ARW": {MediaImage, RoleRaw}, "b.jpg": {MediaImage, RoleRendered}, "c.mp4": {MediaVideo, RoleVideo},
+		"d.xmp": {MediaSidecar, RoleSidecar}, ".x.png": {"", ""}, "notes.txt": {"", ""}, "png": {"", ""}, "a.bmp": {"", ""}} {
+		if m, r := ClassifyMirror(name); m != want[0] || r != want[1] {
+			t.Errorf("ClassifyMirror(%s) = %s %s", name, m, r)
+		}
+	}
+	if RenderedRank("a.jpg") >= RenderedRank("a.heic") || RenderedRank("a.heic") >= RenderedRank("a.png") {
+		t.Fatal("rendering order: JPEG, HEIF, then PNG/WebP/GIF")
+	}
+}
+
 func TestParseProbe(t *testing.T) {
 	js := `{"streams":[{"codec_type":"video","codec_name":"hevc","profile":"Main 10","width":3840,"height":2160,
 	"pix_fmt":"yuv420p10le","avg_frame_rate":"30000/1001","color_transfer":"arib-std-b67","color_primaries":"bt2020",

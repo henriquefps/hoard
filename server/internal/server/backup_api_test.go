@@ -190,37 +190,66 @@ func TestBackupRootsValidationAndOwnership(t *testing.T) {
 		t.Fatalf("mine %d theirs %d", mine, theirs)
 	}
 
-	// Paths of reports and removals: validated, and inside the root (relative to the volume).
-	for _, p := range []string{"DCIM/Camera/../../etc/passwd", "/DCIM/Camera/a.jpg", "DCIM/Camera/.hidden.jpg", "DCIM/Other/a.jpg",
-		"DCIM/Camera", "DCIM/Camera/a\x00.jpg", `DCIM/Camera\a.jpg`, "DCIM/Camera/" + strings.Repeat("x", 300) + ".jpg", "DCIM/Camera/a.txt",
-		"DCIM/Camera/Café.jpg"} {
+	// Paths of reports and removals: validated, and inside the root (relative to the volume). One bad entry is refused
+	// on its own (state refused + a reason); the good entry of the same batch is applied.
+	wantReason := map[string]string{"DCIM/Camera/../../etc/passwd": "invalid_path", "/DCIM/Camera/a.jpg": "invalid_path",
+		"DCIM/Camera/.hidden.jpg": "invalid_path", "DCIM/Other/a.jpg": "outside_root", "DCIM/Camera": "invalid_path", /* see below */
+		"DCIM/Camera/a\x00.jpg": "invalid_path", `DCIM/Camera\a.jpg`: "invalid_path",
+		"DCIM/Camera/" + strings.Repeat("x", 300) + ".jpg": "invalid_path", "DCIM/Camera/a.txt": "unsupported_type",
+		"DCIM/Camera/Cafe\u0301.jpg": "invalid_path"}
+	wantReason["DCIM/Camera"] = "outside_root" // the root itself is not a file inside it
+	for p, reason := range wantReason {
 		w := hs.do("POST", "/v1/backup/report", map[string]any{"rootId": camID, "entries": []any{fileEntry("DCIM/Camera/ok.jpg", data, false),
-			fileEntry(p, data, false)}}, bearer(pixel.key))
-		expect(t, w, 422, "invalid_request")
-		if d := decode(t, w)["error"].(map[string]any)["details"].(map[string]any); d["index"] != float64(1) || d["field"] != "entries" {
-			t.Fatalf("%q: %v", p, d)
+			fileEntry(p, data, false)}, "removed": []any{map[string]any{"path": p, "reason": "deleted"}}}, bearer(pixel.key))
+		expect(t, w, 200, "")
+		out := decode(t, w)
+		res := out["results"].([]any)
+		if len(res) != 2 || res[0].(map[string]any)["state"] == "refused" || res[0].(map[string]any)["index"] != float64(0) {
+			t.Fatalf("%q: the good entry must apply: %v", p, res)
 		}
-		w = hs.do("POST", "/v1/backup/report", map[string]any{"rootId": camID, "removed": []any{map[string]any{"path": p, "reason": "deleted"}}}, bearer(pixel.key))
+		bad := res[1].(map[string]any)
+		if bad["state"] != "refused" || bad["index"] != float64(1) || bad["reason"] != reason || bad["path"] != p {
+			t.Fatalf("%q: %v (want %s)", p, bad, reason)
+		}
+		rem := out["removed"].([]any)
 		if p != "DCIM/Camera/a.txt" { // a removal may name any file
-			expect(t, w, 422, "invalid_request")
+			if len(rem) != 1 || rem[0].(map[string]any)["state"] != "refused" || rem[0].(map[string]any)["index"] != float64(0) {
+				t.Fatalf("%q removal: %v", p, rem)
+			}
 		}
 	}
-	for _, bad := range []map[string]any{
-		{"path": "DCIM/Camera/a.jpg", "fingerprint": "v1:x", "size": 1, "modifiedAt": 1},
-		{"path": "DCIM/Camera/a.jpg", "fingerprint": fingerprint.Bytes(data), "size": 0, "modifiedAt": 1},
-		{"path": "DCIM/Camera/a.jpg", "fingerprint": fingerprint.Bytes(data), "size": 1},
-		{"path": "DCIM/Camera/a.jpg", "fingerprint": fingerprint.Bytes(data), "size": 1, "modifiedAt": 1, "sha256": "XY"},
+	for want, bad := range map[string]map[string]any{
+		"invalid_fingerprint": {"path": "DCIM/Camera/a.jpg", "fingerprint": "v1:x", "size": 1, "modifiedAt": 1},
+		"invalid_size":        {"path": "DCIM/Camera/a.jpg", "fingerprint": fingerprint.Bytes(data), "size": 0, "modifiedAt": 1},
+		"invalid_modified_at": {"path": "DCIM/Camera/a.jpg", "fingerprint": fingerprint.Bytes(data), "size": 1},
+		"invalid_sha256":      {"path": "DCIM/Camera/a.jpg", "fingerprint": fingerprint.Bytes(data), "size": 1, "modifiedAt": 1, "sha256": "XY"},
 	} {
-		expect(t, hs.do("POST", "/v1/backup/report", map[string]any{"rootId": camID, "entries": []any{bad}}, bearer(pixel.key)), 422, "invalid_request")
+		out := decode(t, hs.do("POST", "/v1/backup/report", map[string]any{"rootId": camID, "entries": []any{bad}}, bearer(pixel.key)))
+		if r := out["results"].([]any)[0].(map[string]any); r["state"] != "refused" || r["reason"] != want {
+			t.Fatalf("%s: %v", want, r)
+		}
 	}
-	expect(t, hs.do("POST", "/v1/backup/report", map[string]any{"rootId": camID, "removed": []any{map[string]any{"path": "DCIM/Camera/a.jpg", "reason": "gone"}}},
-		bearer(pixel.key)), 422, "invalid_request")
-	if n, _ := hs.st.MirrorEntriesOfRoot(t.Context(), camID); len(n) != 0 {
-		t.Fatal("a refused report applied something")
+	out := decode(t, hs.do("POST", "/v1/backup/report", map[string]any{"rootId": camID, "removed": []any{map[string]any{"path": "DCIM/Camera/a.jpg", "reason": "gone"}}},
+		bearer(pixel.key)))
+	if r := out["removed"].([]any)[0].(map[string]any); r["state"] != "refused" || r["reason"] != "invalid_reason" {
+		t.Fatalf("removal reason: %v", r)
 	}
-	// Verify paths too.
-	expect(t, hs.do("POST", "/v1/backup/verify", map[string]any{"entries": []any{map[string]any{"rootId": camID, "path": "DCIM/Camera/../x.jpg",
-		"sha256": sum(data), "size": 1}}}, bearer(pixel.key)), 422, "invalid_request")
+	// Only a malformed request as a whole is a 422: an unknown root, too many entries, bad JSON.
+	expect(t, hs.do("POST", "/v1/backup/report", map[string]any{"rootId": "nope", "entries": []any{}}, bearer(pixel.key)), 404, "")
+	if n, _ := hs.st.MirrorEntriesOfRoot(t.Context(), camID); len(n) != 1 {
+		t.Fatalf("only ok.jpg is applied, got %d entries", len(n))
+	}
+	// Verify: one bad entry is refused on its own, the other answered.
+	vw := decode(t, hs.do("POST", "/v1/backup/verify", map[string]any{"entries": []any{
+		map[string]any{"rootId": camID, "path": "DCIM/Camera/../x.jpg", "sha256": sum(data), "size": 1},
+		map[string]any{"rootId": camID, "path": "DCIM/Camera/nothere.jpg", "sha256": sum(data), "size": 1}}}, bearer(pixel.key)))
+	vr := vw["results"].([]any)
+	if v := vr[0].(map[string]any); v["state"] != "refused" || v["reason"] != "invalid_path" || v["verified"] != "no" {
+		t.Fatalf("verify refusal: %v", v)
+	}
+	if v := vr[1].(map[string]any); v["reason"] != "not_found" || v["state"] != nil {
+		t.Fatalf("verify other: %v", v)
+	}
 
 	// GET /v1/device: the caller's phone's roots, with types.
 	dv := decode(t, hs.do("GET", "/v1/device", nil, bearer(pixel.key)))
@@ -874,5 +903,95 @@ func TestBackupMirrorItems(t *testing.T) {
 	// A NAS folder id still works the old way; an unknown id lists nothing.
 	if n := len(page(t, hs, reveal.key, "/v1/items?folder=0b6f0b6f-0b6f-4b6f-8b6f-0b6f0b6f0b6f").Items); n != 0 {
 		t.Fatal(n)
+	}
+}
+
+// TestBackupAcceptsPNGWebPGIF: the phone's screenshots (PNG), WebP and GIF stills are accepted by report and verify,
+// stored, and become items of their own (a PNG is the main file of its shot). A mixed batch applies the good entries
+// and refuses the others one by one.
+func TestBackupAcceptsPNGWebPGIF(t *testing.T) {
+	hs := newHarness(t, true)
+	pixel := hs.phone("Pixel 8", "hoard")
+	reveal := hs.phone("Pixel 8", "reveal")
+	root := hs.addRoot(pixel, "primary", "Pictures", 201)["id"].(string)
+	files := map[string][]byte{"Pictures/Screenshots/Screenshot_1.png": []byte("\x89PNG\r\n\x1a\n one"), "Pictures/Screenshots/b.WEBP": []byte("RIFF\x00\x00\x00\x00WEBPVP8 two"),
+		"Pictures/Memes/c.gif": []byte("GIF89a three")}
+	var entries []map[string]any
+	for p, d := range files {
+		uploadFor(t, hs, pixel.key, d, false)
+		entries = append(entries, fileEntry(p, d, true))
+	}
+	entries = append(entries, fileEntry("Pictures/Screenshots/notes.bmp", []byte("bmp"), false))
+	out := hs.report(pixel, root, entries, nil)
+	refused := 0
+	for _, r := range out["results"].([]any) {
+		m := r.(map[string]any)
+		if m["state"] == "refused" {
+			refused++
+			if m["reason"] != "unsupported_type" || m["path"] != "Pictures/Screenshots/notes.bmp" {
+				t.Fatalf("%v", m)
+			}
+		} else if m["state"] != "stored" {
+			t.Fatalf("%v", m)
+		}
+	}
+	if refused != 1 {
+		t.Fatalf("results %v", out["results"])
+	}
+	hs.srv.IndexNow(t.Context())
+	items := page(t, hs, reveal.key, "/v1/items?limit=50&folder="+root).Items
+	if len(items) != 3 {
+		t.Fatalf("%d items: %v", len(items), items)
+	}
+	for _, it := range items {
+		if it["kind"] != "photo" || len(it["files"].([]any)) != 1 {
+			t.Fatalf("%v", it)
+		}
+	}
+	// Verify takes them too.
+	d := files["Pictures/Screenshots/Screenshot_1.png"]
+	v := decode(t, hs.do("POST", "/v1/backup/verify", map[string]any{"entries": []any{map[string]any{"rootId": root,
+		"path": "Pictures/Screenshots/Screenshot_1.png", "sha256": sum(d), "size": len(d)}}}, bearer(pixel.key)))
+	if r := v["results"].([]any)[0].(map[string]any); r["state"] != nil || r["reason"] == "not_found" {
+		t.Fatalf("%v", r)
+	}
+}
+
+// TestDeviceDeclaresFreedAdopt: PATCH /v1/device stores every known declared feature (culling and freed-adopt;
+// unknown names are dropped) and GET /v1/device shows them per device under physicalDevice.devices[].
+func TestDeviceDeclaresFreedAdopt(t *testing.T) {
+	hs := newHarness(t, true)
+	hoard := hs.phone("Pixel 8", "hoard")
+	reveal := hs.phone("Pixel 8", "reveal")
+	strs := func(v any) []string {
+		var out []string
+		for _, x := range v.([]any) {
+			out = append(out, x.(string))
+		}
+		return out
+	}
+	w := hs.do("PATCH", "/v1/device", map[string]any{"app": "reveal", "features": []string{"freed-adopt", "culling", "albums-v2"}}, bearer(reveal.key))
+	expect(t, w, 200, "")
+	if f := strs(decode(t, w)["features"]); len(f) != 2 || f[0] != "culling" || f[1] != "freed-adopt" {
+		t.Fatalf("%v", f)
+	}
+	// Declared once, kept: a later PATCH without the name does not remove it.
+	expect(t, hs.do("PATCH", "/v1/device", map[string]any{"features": []string{}}, bearer(reveal.key)), 200, "")
+	expect(t, hs.do("POST", "/v1/device/claim", map[string]any{"physicalDeviceId": reveal.physical}, bearer(hoard.key)), 200, "")
+	// Hoard sees "a Reveal on this phone declared freed-adopt" in its own GET /v1/device.
+	got := map[string][]string{}
+	dv := decode(t, hs.do("GET", "/v1/device", nil, bearer(hoard.key)))
+	if f := strs(dv["features"]); len(f) != 0 {
+		t.Fatalf("hoard's own features %v", f)
+	}
+	for _, d := range dv["physicalDevice"].(map[string]any)["devices"].([]any) {
+		m := d.(map[string]any)
+		got[m["id"].(string)] = strs(m["features"])
+	}
+	if f := got[reveal.id]; len(f) != 2 || f[0] != "culling" || f[1] != "freed-adopt" {
+		t.Fatalf("devices[] features %v", got)
+	}
+	if f, ok := got[hoard.id]; !ok || len(f) != 0 {
+		t.Fatalf("devices[] features %v", got)
 	}
 }

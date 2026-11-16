@@ -19,7 +19,7 @@ func GroupMirror(rootPath string, members []store.MirrorMember, deviceName strin
 	byKey := map[[2]string][]Member{}
 	for _, e := range members {
 		name := path.Base(e.Path)
-		mediaClass, role := media.Classify(name)
+		mediaClass, role := media.ClassifyMirror(name)
 		if mediaClass == "" {
 			continue
 		}
@@ -31,7 +31,7 @@ func GroupMirror(rootPath string, members []store.MirrorMember, deviceName strin
 		if dir == "." {
 			dir = ""
 		}
-		key := stemKey(name, role)
+		key := stemKey(name, role, media.ClassifyMirror)
 		if e.RemovedReason == store.RemovedReplaced {
 			key += "~" + strconv.FormatInt(e.ID, 10)
 		}

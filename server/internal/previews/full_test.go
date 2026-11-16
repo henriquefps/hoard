@@ -32,6 +32,8 @@ func TestPlanFull(t *testing.T) {
 		{"heif photo", items.Data{Kind: items.KindPhoto, MainFingerprint: "h", Files: []items.File{file("h", media.RoleRendered, "A.HEIC", "heif")}}, true, ""},
 		{"lone raw", items.Data{Kind: items.KindPhoto, MainFingerprint: "r", Width: 6000, Height: 4000, Orientation: 6,
 			Files: []items.File{file("r", media.RoleRaw, "A.ARW", "tiff")}}, true, ""},
+		{"png screenshot", items.Data{Kind: items.KindPhoto, MainFingerprint: "p", Files: []items.File{file("p", media.RoleRendered, "Screenshot_1.png", "")}}, false, "p"},
+		{"gif", items.Data{Kind: items.KindPhoto, MainFingerprint: "g", Files: []items.File{file("g", media.RoleRendered, "a.gif", "gif")}}, false, "g"},
 		{"video", items.Data{Kind: items.KindVideo, MainFingerprint: "v", Files: []items.File{file("v", media.RoleVideo, "A.MP4", "mp4")}}, false, ""},
 	}
 	for _, c := range cases {

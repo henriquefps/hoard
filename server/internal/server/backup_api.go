@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -266,24 +267,36 @@ func (s *Server) handleBackupRootStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "stopped"})
 }
 
-// phonePath validates a reported path: a phone path (mirror.CleanPath) inside the root, of a photo, video or sidecar.
-func phonePath(rt store.MirrorRoot, p string, needMedia bool) (string, string) {
+// Reasons a report or verify entry is refused on its own (ADR 0024 "Amendment (S1)"): the rest of the batch is applied.
+const (
+	refusedUnsupported = "unsupported_type"
+	refusedInvalidPath = "invalid_path"
+	refusedOutside     = "outside_root"
+	refusedReserved    = "reserved_prefix"
+)
+
+// refusal is why one entry is refused: a machine reason and a human detail.
+type refusal struct{ reason, detail string }
+
+// phonePath validates a reported path: a phone path (mirror.CleanPath) inside the root, of a photo, video or sidecar
+// (media.ClassifyMirror: also PNG, WebP and GIF). A refusal is the entry's own, never the request's.
+func phonePath(rt store.MirrorRoot, p string, needMedia bool) (string, *refusal) {
 	c, err := mirror.CleanPath(p, false)
-	if err == nil {
-		err = mirror.CheckVolumePath(rt.Volume, c)
-	}
 	if err != nil {
-		return "", err.Error()
+		return "", &refusal{refusedInvalidPath, err.Error()}
+	}
+	if err := mirror.CheckVolumePath(rt.Volume, c); err != nil {
+		return "", &refusal{refusedReserved, err.Error()}
 	}
 	if !mirror.Within(rt.Path, c) || c == rt.Path {
-		return "", "the path is not inside the root (paths are relative to the volume)"
+		return "", &refusal{refusedOutside, "the path is not inside the root (paths are relative to the volume)"}
 	}
 	if needMedia {
-		if class, _ := media.Classify(path.Base(c)); class == "" {
-			return "", "not a photo, video or sidecar"
+		if class, _ := media.ClassifyMirror(path.Base(c)); class == "" {
+			return "", &refusal{refusedUnsupported, "not a photo, video or sidecar the backup takes"}
 		}
 	}
-	return c, ""
+	return c, nil
 }
 
 type reportEntryIn struct {
@@ -316,43 +329,46 @@ func (s *Server) handleBackupReport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	bad := func(field string, i int, msg string) {
-		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", msg, map[string]any{"index": i, "field": field})
-	}
-	entries := make([]store.ReportEntry, len(req.Entries))
+	// One bad entry never fails the batch: it is refused on its own and the others are applied.
+	entries := make([]store.ReportEntry, 0, len(req.Entries))
+	entryAt := make([]int, 0, len(req.Entries)) // the request's index of each applied entry
+	refusedEntries := map[int]refusal{}
 	for i, e := range req.Entries {
-		p, problem := phonePath(rt, e.Path, true)
+		p, rf := phonePath(rt, e.Path, true)
 		switch {
-		case problem != "":
-			bad("entries", i, "path: "+problem+".")
-			return
+		case rf != nil:
+			refusedEntries[i] = *rf
+			continue
 		case !fingerprint.Valid(e.Fingerprint):
-			bad("entries", i, "fingerprint is v1: + 64 lower-case hex.")
-			return
+			rf = &refusal{"invalid_fingerprint", "fingerprint is v1: + 64 lower-case hex."}
 		case e.Size <= 0 || e.Size > 1<<50:
-			bad("entries", i, "size must be positive.")
-			return
+			rf = &refusal{"invalid_size", "size must be positive."}
 		case e.ModifiedAt <= 0 || e.ModifiedAt > 1<<53:
-			bad("entries", i, "modifiedAt (Unix milliseconds) is required.")
-			return
+			rf = &refusal{"invalid_modified_at", "modifiedAt (Unix milliseconds) is required."}
 		case e.SHA256 != "" && !blobstore.ValidSHA256(e.SHA256):
-			bad("entries", i, "sha256 is 64 lower-case hex characters.")
-			return
+			rf = &refusal{"invalid_sha256", "sha256 is 64 lower-case hex characters."}
 		}
-		entries[i] = store.ReportEntry{Path: p, Fingerprint: e.Fingerprint, SHA256: e.SHA256, Size: e.Size, ModifiedAt: e.ModifiedAt}
+		if rf != nil {
+			refusedEntries[i] = *rf
+			continue
+		}
+		entries = append(entries, store.ReportEntry{Path: p, Fingerprint: e.Fingerprint, SHA256: e.SHA256, Size: e.Size, ModifiedAt: e.ModifiedAt})
+		entryAt = append(entryAt, i)
 	}
-	removed := make([]store.ReportRemoval, len(req.Removed))
+	removed := make([]store.ReportRemoval, 0, len(req.Removed))
+	removedAt := make([]int, 0, len(req.Removed))
+	refusedRemovals := map[int]refusal{}
 	for i, rm := range req.Removed {
-		p, problem := phonePath(rt, rm.Path, false)
-		if problem != "" {
-			bad("removed", i, "path: "+problem+".")
-			return
+		p, rf := phonePath(rt, rm.Path, false)
+		if rf == nil && rm.Reason != store.RemovedDeleted && rm.Reason != store.RemovedMoved && rm.Reason != store.RemovedFreed {
+			rf = &refusal{"invalid_reason", "reason is deleted, moved or freed."}
 		}
-		if rm.Reason != store.RemovedDeleted && rm.Reason != store.RemovedMoved && rm.Reason != store.RemovedFreed {
-			bad("removed", i, "reason is deleted, moved or freed.")
-			return
+		if rf != nil {
+			refusedRemovals[i] = *rf
+			continue
 		}
-		removed[i] = store.ReportRemoval{Path: p, Reason: rm.Reason}
+		removed = append(removed, store.ReportRemoval{Path: p, Reason: rm.Reason})
+		removedAt = append(removedAt, i)
 	}
 	if rt.Stopped() {
 		fail(w, r, http.StatusConflict, "conflict", "This backup folder is stopped; add it again to resume.", map[string]any{"reason": "stopped"})
@@ -398,9 +414,9 @@ func (s *Server) handleBackupReport(w http.ResponseWriter, r *http.Request) {
 			itemOf[f.Fingerprint] = f.ItemID
 		}
 	}
-	results := make([]map[string]any, 0, len(out.Results))
+	results := make([]map[string]any, 0, len(req.Entries))
 	for _, res := range out.Results {
-		m := map[string]any{"index": res.Index, "path": res.Path, "state": res.State}
+		m := map[string]any{"index": entryAt[res.Index], "path": res.Path, "state": res.State}
 		if id := itemOf[res.Fingerprint]; id != "" {
 			m["itemId"] = id
 		}
@@ -414,10 +430,20 @@ func (s *Server) handleBackupReport(w http.ResponseWriter, r *http.Request) {
 		}
 		results = append(results, m)
 	}
-	removedOut := make([]map[string]any, 0, len(out.Removed))
-	for _, rm := range out.Removed {
-		removedOut = append(removedOut, map[string]any{"index": rm.Index, "path": rm.Path, "state": rm.State})
+	for i, rf := range refusedEntries {
+		results = append(results, map[string]any{"index": i, "path": req.Entries[i].Path, "state": store.StateRefused,
+			"reason": rf.reason, "detail": rf.detail, "verified": "no"})
 	}
+	sort.Slice(results, func(i, j int) bool { return results[i]["index"].(int) < results[j]["index"].(int) })
+	removedOut := make([]map[string]any, 0, len(req.Removed))
+	for _, rm := range out.Removed {
+		removedOut = append(removedOut, map[string]any{"index": removedAt[rm.Index], "path": rm.Path, "state": rm.State})
+	}
+	for i, rf := range refusedRemovals {
+		removedOut = append(removedOut, map[string]any{"index": i, "path": req.Removed[i].Path, "state": store.StateRefused,
+			"reason": rf.reason, "detail": rf.detail})
+	}
+	sort.Slice(removedOut, func(i, j int) bool { return removedOut[i]["index"].(int) < removedOut[j]["index"].(int) })
 	s.touch(ctx, info(r).device.ID, true)
 	writeJSON(w, http.StatusOK, map[string]any{"results": results, "removed": removedOut})
 }
@@ -446,6 +472,7 @@ func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	roots := map[string]store.MirrorRoot{}
 	paths := make([]string, len(req.Entries))
+	refused := make([]*refusal, len(req.Entries)) // one bad entry is refused on its own, the others are answered
 	for i, e := range req.Entries {
 		rt, ok := roots[e.RootID]
 		if !ok {
@@ -454,20 +481,14 @@ func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 			}
 			roots[e.RootID] = rt
 		}
-		p, problem := phonePath(rt, e.Path, false)
-		bad := func(msg string) {
-			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", msg, map[string]any{"index": i})
-		}
+		p, rf := phonePath(rt, e.Path, false)
 		switch {
-		case problem != "":
-			bad("path: " + problem + ".")
-			return
+		case rf != nil:
+			refused[i] = rf
 		case !blobstore.ValidSHA256(e.SHA256):
-			bad("sha256 is 64 lower-case hex characters.")
-			return
+			refused[i] = &refusal{"invalid_sha256", "sha256 is 64 lower-case hex characters."}
 		case e.Size <= 0:
-			bad("size must be positive.")
-			return
+			refused[i] = &refusal{"invalid_size", "size must be positive."}
 		}
 		paths[i] = p
 	}
@@ -484,6 +505,12 @@ func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 		res := map[string]any{"index": i, "namedByRecord": false}
 		no := func(reason string) {
 			res["verified"], res["reason"] = "no", reason
+		}
+		if rf := refused[i]; rf != nil {
+			res["state"], res["detail"] = store.StateRefused, rf.detail
+			no(rf.reason)
+			results = append(results, res)
+			continue
 		}
 		pending := func() {
 			res["verified"], res["retryAfter"] = "pending", verifyRetryAfter

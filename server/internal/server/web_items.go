@@ -132,6 +132,8 @@ func contentType(name string) string {
 		return "image/png"
 	case ".webp":
 		return "image/webp"
+	case ".gif":
+		return "image/gif"
 	case ".mp4":
 		return "video/mp4"
 	case ".mov":

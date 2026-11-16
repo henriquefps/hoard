@@ -162,10 +162,12 @@ func (c *CPU) still(ctx context.Context, input string, src *os.File, dir string,
 		"--size", "down", "--export-profile", "srgb", "--intent", "perceptual"); err != nil {
 		return nil, err
 	}
+	// The JPEG files flatten transparent pixels (a PNG screenshot, a WebP, a GIF) onto white (background=255), not the
+	// black a JPEG would give them; the WebP files keep the alpha.
 	steps := [][]string{
-		{"copy", inter, fmt.Sprintf("%s[Q=%d,optimize_coding,interlace,keep=none]", filepath.Join(dir, FileScreen), ScreenQuality)},
+		{"copy", inter, fmt.Sprintf("%s[Q=%d,optimize_coding,interlace,background=255,keep=none]", filepath.Join(dir, FileScreen), ScreenQuality)},
 		{"copy", inter, fmt.Sprintf("%s[Q=%d,effort=4,keep=none]", filepath.Join(dir, FileScreenWebP), ScreenWebPQuality)},
-		{"thumbnail", inter, fmt.Sprintf("%s[Q=%d,optimize_coding,keep=none]", filepath.Join(dir, FileThumb), ThumbQuality),
+		{"thumbnail", inter, fmt.Sprintf("%s[Q=%d,optimize_coding,background=255,keep=none]", filepath.Join(dir, FileThumb), ThumbQuality),
 			strconv.Itoa(ThumbEdge), "--size", "down"},
 		{"thumbnail", inter, fmt.Sprintf("%s[Q=%d,effort=4,keep=none]", filepath.Join(dir, FileThumbWebP), ThumbWebPQuality),
 			strconv.Itoa(ThumbEdge), "--size", "down"},
@@ -291,7 +293,7 @@ func (c *CPU) full(ctx context.Context, j Job, src *os.File, dir string) (Result
 		if blockUntrusted {
 			env = append(env, "VIPS_BLOCK_UNTRUSTED=1")
 		}
-		out := fmt.Sprintf("%s[Q=%d,optimize_coding,keep=none]", filepath.Join(dir, FileFull), FullQuality)
+		out := fmt.Sprintf("%s[Q=%d,optimize_coding,background=255,keep=none]", filepath.Join(dir, FileFull), FullQuality)
 		if err := c.run(ctx, timeout, src, env, nil, c.vips, "thumbnail", input, out, strconv.Itoa(fullEdge),
 			"--size", "down", "--export-profile", "srgb", "--intent", "perceptual"); err != nil {
 			return nil, err
