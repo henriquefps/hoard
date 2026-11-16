@@ -52,6 +52,7 @@ fun GalleryFilterSheet(vm: GalleryViewModel, onDismiss: () -> Unit) {
     val filter by vm.filter.collectAsStateWithLifecycle()
     val cameras by vm.cameras.collectAsStateWithLifecycle()
     val lenses by vm.lenses.collectAsStateWithLifecycle()
+    val devices by vm.devices.collectAsStateWithLifecycle()
     var dates by remember { mutableStateOf(false) }
     fun set(f: GalleryFilter) = vm.setFilter(f)
 
@@ -79,6 +80,15 @@ fun GalleryFilterSheet(vm: GalleryViewModel, onDismiss: () -> Unit) {
                     SourceFilter.Server to R.string.gallery_source_server,
                     SourceFilter.Both to R.string.gallery_source_both,
                 ).forEach { (k, label) -> HfpsChip(stringResource(label), filter.source == k, { set(filter.copy(source = k)) }, Modifier.testTag("filter-source-${k.name}")) }
+            }
+            if (devices.isNotEmpty() || filter.where != null) {
+                // "Where: <phone> backup" (ADR 0024 A2); a folder picked in Devices shows as its phone's chip.
+                Section(R.string.gallery_filter_backup) {
+                    HfpsChip(stringResource(R.string.gallery_where_any), filter.where == null, { set(filter.copy(where = null)) }, Modifier.testTag("filter-where-any"))
+                    devices.forEach { d ->
+                        HfpsChip(stringResource(R.string.gallery_where_backup, d.name), filter.where?.physicalId == d.physicalId, { set(filter.copy(where = d.where)) }, Modifier.testTag("filter-where-${d.physicalId}"), icon = PhosphorRegular.DeviceMobile)
+                    }
+                }
             }
             Section(R.string.gallery_filter_rating) {
                 HfpsChip(stringResource(R.string.gallery_rating_any), filter.minRating == 0, { set(filter.copy(minRating = 0)) })

@@ -837,3 +837,50 @@ What the app PR settled where the text above was silent or loose. Where this dif
 - **Gallery badge**: only phone-only shots of backed-up folders that are not backed up yet get one (waiting, uploading,
   waiting for a rule, failed); a backed-up shot shows as on the server (the existing badge) once the feed has its item.
 - Not in A1 (A2): "Reveal on this phone is not grouped with Hoard" in Settings › Backup.
+
+## Amendment (A2, Hoard 2.5.0)
+
+What the app PR settled where the text above was silent or loose. Where this differs from a line above, this wins.
+
+- **Where Devices lives.** The Gallery has no folder list yet, so **Devices** is its first entry point: a button in the
+  Gallery's top bar (shown once the server has any backup) opening a sheet of phones › volumes › folders. Every root
+  of `GET /v1/backup/roots` is listed (stopped ones and roots with nothing on the server yet included), plus every
+  directory holding a backed-up shot; counts include sub-folders. Picking a row sets the **Where** filter
+  (`Where(physicalDeviceId, volume?, dir?)`, a folder matches its sub-folders); a bar above the grid names it with a ✕.
+  Filters gain "Phone backups": one chip per phone, "<phone> backup". This phone is listed first as "This phone".
+- **Data.** `gallery.db` 5 adds `server_item_mirrors` (item, fingerprint, physical device, its name, root, volume,
+  path, size, `modifiedAt`, `onDevice`, `gone`), written with the items in the feed's transaction, and
+  `server_account.backup_roots` (the last `GET /v1/backup/roots`, JSON, refreshed by every sync when the server has
+  `backup`) and `mirrors_indexed`. Items cached before the upgrade are indexed once from their JSON (no new pull).
+  `onDevice` absent reads as on the phone; an unknown `gone` as `deleted`. A server item filed nowhere on the NAS gets
+  `<phone>/<directory>` as its folder, and the phone's name is searchable.
+- **The badge** "Deleted from the phone": a shot with mirror locations none of which is still on its phone (one file
+  of a pair still there is enough to show no badge). While the grid shows one phone's backup it is about that phone
+  only. `gone: freed` shows the same icon described "Freed from the phone".
+- **This phone's files shown once.** Besides the fingerprint join (ADR 0021), a phone file the index has not
+  fingerprinted yet merges with the item that has a mirror location of **this** physical device at the same volume and
+  path, still on the phone, with the file's size. A saved file (below) is given to the index with the fingerprint it
+  has on the server, so it merges from its first scan.
+- **Previews and originals** are unchanged from ADR 0021: cells and the viewer use the server's previews; the viewer's
+  100 % and RAW decode read `GET /v1/originals/{fingerprint}` through `HttpRangeSource`, kept only within
+  `OriginalCache`'s budget.
+- **`ServerTransferFs`** (`:core:smb`, `Endpoint.Server(serverId)`, kind `server` in a job's JSON): read-only, paths
+  `<fingerprint>/<file name>` (an upload without a name: `<16 hex>.<format>`), `stat` by `HEAD`, reads one
+  `Range: bytes=<offset>-` stream (`ServerApi.openOriginal`). It is a network endpoint for the engine: a dropped
+  connection, a timeout or a `5xx` is retried and resumed at the byte written; a body that ends before the announced
+  size counts as a dropped connection; `404` fails that file alone (`NOT_FOUND`); `401`/`403` stop the job
+  (`AUTH_FAILED`). `:core:smb` does not know the server client: the app sets `TransferEndpoints.server` (in
+  `HoardApplication`'s constructor, so a transfer worker started in a fresh process has it). Server endpoints are
+  sources of copies only; for a job reading them the engine makes the destination folder (parents included) when it
+  is missing.
+- **Save to this device.** In the viewer (server-only shots) and the selection bar; one sheet: what is saved, the
+  folder, Change folder (the destination picker), Use the default, Save. The default is `Pictures/From <phone name>/`
+  per shot's phone (the server's name for NAS photos), one transfer per destination folder; a chosen folder is kept in
+  the setting `gallerySaveFolder` and used for every shot. `Pictures/Hoard` and `Download/Hoard` (and inside them) are
+  refused. The conflict policy is the owner's default (Settings › Files). Saving into the phone's folders needs All
+  files access (the sheet asks); a SAF folder from the picker works without it.
+- **Linked, not uploaded.** Nothing new on the backup side: a saved file inside a backed-up folder is a new file to
+  A1's engine, reported with its fingerprint; the server already has the content (`stored`), links it into this
+  phone's tree and nothing is uploaded (verified on the emulator, `docs/testing/backup.md` "A2").
+- Not in A2 (still open): "Reveal on this phone is not grouped with Hoard" in Settings › Backup (A1 deferred it here);
+  it needs `physicalDevice.devices` and is left for A3, where the Reveal gate reads the same list.

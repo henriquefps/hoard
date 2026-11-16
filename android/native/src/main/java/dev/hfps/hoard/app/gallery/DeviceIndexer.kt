@@ -99,6 +99,25 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
     /** Absolute folders indexed beyond the defaults and the owner's: the phone backup's roots (ADR 0024). */
     var extraFolders: (suspend () -> List<String>)? = null
 
+    /**
+     * Files whose fingerprint is known without reading them (ADR 0024 A2: "Save to this device" copied the server's
+     * bytes there): absolute path → (size, fingerprint). Taken when the index meets the file at that size, so the copy
+     * shows once, with its server item, from its first scan.
+     */
+    private val known = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
+
+    /** Records [fingerprint] for the file at [path] of [size] bytes, and gives it to a row already indexed. */
+    fun know(path: String, size: Long, fingerprint: String) {
+        known[path] = size to fingerprint
+        scope.launch(Dispatchers.IO) {
+            val row = dao.all().firstOrNull { it.path == path && it.size == size } ?: return@launch
+            if (row.fingerprint == fingerprint && row.fpSize == row.size && row.fpModified == row.modified) return@launch
+            dao.setFingerprint(row.id, fingerprint, row.size, row.modified, row.motion)
+            known.remove(path)
+            onFingerprints?.invoke()
+        }
+    }
+
     fun start() {
         if (observer != null) return
         observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -198,6 +217,7 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
                 val bytes = c.getLong(size)
                 val old = existing[rowId]
                 val same = old != null && old.path == path && old.size == bytes && old.modified == modifiedMs
+                val hint = if (same) null else known[path]?.takeIf { it.first == bytes }?.second?.also { known.remove(path) }
                 out += DeviceMediaEntity(
                     id = rowId,
                     path = path,
@@ -214,9 +234,9 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
                     height = c.getInt(height).takeIf { it > 0 },
                     orientation = if (video) null else c.getInt(extra),
                     video = video,
-                    fingerprint = if (same) old!!.fingerprint else null,
-                    fpSize = if (same) old!!.fpSize else null,
-                    fpModified = if (same) old!!.fpModified else null,
+                    fingerprint = if (same) old!!.fingerprint else hint,
+                    fpSize = if (same) old!!.fpSize else hint?.let { bytes },
+                    fpModified = if (same) old!!.fpModified else hint?.let { modifiedMs },
                     motion = same && old!!.motion,
                     sha256 = if (same) old!!.sha256 else null,
                     shaSize = if (same) old!!.shaSize else null,

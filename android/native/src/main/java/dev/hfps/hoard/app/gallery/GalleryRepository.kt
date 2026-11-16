@@ -97,10 +97,39 @@ class GalleryRepository(
     /** Phone files not backed up yet, by path (ADR 0024: the cells' backup badge). */
     private val backupStates: Flow<Map<String, String>> = db.backup().observeOpenStates().map { rows -> rows.associate { it.absolute to it.state } }
 
+    /** Item id → its `mirror` locations (ADR 0024 A2). */
+    private val mirrors: Flow<Map<String, List<dev.hfps.hoard.server.db.ServerItemMirrorEntity>>> = db.items().observeMirrors().map { rows -> rows.groupBy { it.itemId } }
+
+    /** This phone's physical device (ADR 0017), for the merge of its own backed-up files. */
+    private val physicalId: Flow<String?> = db.account().observe().map { it?.physicalDeviceId }.distinctUntilChanged()
+
+    /** Every phone's backup roots as of the last sync (`GET /v1/backup/roots`, ADR 0024 A2). */
+    val backupRoots: Flow<List<dev.hfps.hoard.server.api.BackupRoot>> = db.account().observe().map { it?.backupRoots }.distinctUntilChanged().map { json ->
+        json?.let { runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.BackupRoots.serializer(), it).roots }.getOrNull() }.orEmpty()
+    }
+
     /** Every shot, newest first; null until first computed. */
-    val entries: StateFlow<List<GalleryEntry>?> = combine(db.items().observeRows(), deviceShots, serverFiles, serverDecisions, combine(deviceDecisions, backupStates) { d, b -> d to b }) { server, shots, files, sd, (dd, backup) ->
-        GalleryModel.entries(GalleryInput(server, shots, files, sd, dd, backup = backup))
+    val entries: StateFlow<List<GalleryEntry>?> = combine(
+        db.items().observeRows(),
+        deviceShots,
+        serverFiles,
+        serverDecisions,
+        combine(deviceDecisions, backupStates, mirrors, physicalId) { d, b, m, p -> Extra(d, b, m, p) },
+    ) { server, shots, files, sd, extra ->
+        GalleryModel.entries(GalleryInput(server, shots, files, sd, extra.decisions, backup = extra.backup, mirrors = extra.mirrors, physicalId = extra.physicalId))
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, null)
+
+    private data class Extra(
+        val decisions: Map<String, EntryDecision>,
+        val backup: Map<String, String>,
+        val mirrors: Map<String, List<dev.hfps.hoard.server.db.ServerItemMirrorEntity>>,
+        val physicalId: String?,
+    )
+
+    /** Gallery › Devices (ADR 0024 A2): every phone with a backup, its volumes and folders. */
+    val devices: StateFlow<List<BackupDevice>> = combine(backupRoots, entries.filterNotNull(), physicalId) { roots, list, mine ->
+        DeviceTree.build(roots, list, mine)
+    }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Lazily, emptyList())
 
     /** Entry key → decision, for an open culling session ([dev.hfps.hoard.app.cull.CullStore.external]). */
     val decisions: Flow<Map<String, Decision>> = entries.filterNotNull().map { list ->

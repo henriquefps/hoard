@@ -111,6 +111,17 @@ class ServerTransferFsTest {
     }
 
     @Test
+    fun `the destination folder is made when missing, parents included`() {
+        originals.files["v1:n"] = bytes(5)
+        phoneFs.dirs("Pictures")
+        val job = job("v1:n/N.jpg")
+        run(job)
+        assertEquals(TransferStates.COMPLETED, job.state)
+        assertTrue(phoneFs.nodes["Pictures/From Pixel 8"]!!.isDirectory)
+        assertArrayEquals(bytes(5), phoneFs.bytes("Pictures/From Pixel 8/N.jpg"))
+    }
+
+    @Test
     fun `a dropped connection is retried and resumed by range at the byte written`() {
         originals.files["v1:mov"] = bytes(50)
         originals.dropAt = 20

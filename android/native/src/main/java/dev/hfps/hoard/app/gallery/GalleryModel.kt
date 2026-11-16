@@ -2,6 +2,7 @@ package dev.hfps.hoard.app.gallery
 
 import dev.hfps.hoard.image.format.ImageFormats
 import dev.hfps.hoard.server.db.DeviceMediaEntity
+import dev.hfps.hoard.server.db.ServerItemMirrorEntity
 import dev.hfps.hoard.server.db.ServerItemRow
 import java.time.Instant
 import java.time.LocalDate
@@ -124,6 +125,8 @@ data class GalleryEntry(
     val captureLocal: String? = null,
     /** A phone-only shot in a backed-up folder that is not backed up yet (ADR 0024: the Gallery's badge). */
     val backup: BackupBadge? = null,
+    /** Where a server item is in the phones' backups (ADR 0024 A2: Devices, "Where", the "Deleted from the phone" badge). */
+    val mirrors: List<MirrorSpot> = emptyList(),
 ) {
     val isVideo: Boolean get() = kind == Kind.Video
     val edited: Boolean get() = editPrimary != null
@@ -141,6 +144,10 @@ data class GalleryInput(
     val zone: ZoneId = ZoneId.systemDefault(),
     /** Phone path → backup state of files not backed up yet (`backup_files`, ADR 0024). */
     val backup: Map<String, String> = emptyMap(),
+    /** Item id → its `mirror` locations (ADR 0024 A2). */
+    val mirrors: Map<String, List<ServerItemMirrorEntity>> = emptyMap(),
+    /** This phone's physical device (ADR 0017): its own backed-up files merge with their items by place. */
+    val physicalId: String? = null,
 )
 
 /** A phone shot's backup as its cell shows it (backed-up shots show as on the server instead). */
@@ -165,8 +172,16 @@ object GalleryModel {
         val byItem = HashMap<String, DeviceShot>()
         val out = ArrayList<GalleryEntry>(input.server.size + input.device.size)
         val deviceOnly = ArrayList<DeviceShot>()
+        // ADR 0024 A2: this phone's backed-up files are also known by place (its mirror locations), so a file the index
+        // has not fingerprinted yet still shows once, with its item, never as a second phone-only cell.
+        val own = Mirrors.ownPlaces(input.mirrors.values.flatten(), input.physicalId)
         for (shot in input.device) {
             val item = shot.fingerprints.firstNotNullOfOrNull { input.serverFiles[it] }
+                ?: if (own.isEmpty()) null else shot.files.firstNotNullOfOrNull { f ->
+                    val volume = Mirrors.volumeOf(f.media.locationId) ?: return@firstNotNullOfOrNull null
+                    val path = if (f.media.dir.isEmpty()) f.media.name else "${f.media.dir.trim('/')}/${f.media.name}"
+                    own[Mirrors.placeKey(volume, path)]?.takeIf { it.second == f.media.size }?.first
+                }
             if (item != null) {
                 // Copies of one shot in two phone folders are one item: keep the first (they are the same bytes).
                 byItem.putIfAbsent(item, shot)
@@ -204,6 +219,7 @@ object GalleryModel {
                 decision = input.serverDecisions[row.id] ?: EntryDecision(),
                 search = row.search + (shot?.let { " " + it.dir.lowercase() } ?: ""),
                 captureLocal = row.captureLocal,
+                mirrors = input.mirrors[row.id]?.let(Mirrors::spots).orEmpty(),
             )
         }
         for (shot in deviceOnly) {
@@ -275,11 +291,14 @@ data class GalleryFilter(
     val from: LocalDate? = null,
     val to: LocalDate? = null,
     val query: String = "",
+    /** "Where: <phone> backup" (ADR 0024 A2), or one of its folders from Gallery › Devices. */
+    val where: Where? = null,
 ) {
     val active: Boolean get() = this.copy(query = "") != GalleryFilter()
-    val count: Int get() = listOf(kind != KindFilter.All, source != SourceFilter.All, minRating > 0, flag != FlagChoice.All, editedOnly, camera != null, lens != null, from != null || to != null).count { it }
+    val count: Int get() = listOf(kind != KindFilter.All, source != SourceFilter.All, minRating > 0, flag != FlagChoice.All, editedOnly, camera != null, lens != null, from != null || to != null, where != null).count { it }
 
     fun matches(e: GalleryEntry): Boolean {
+        if (where != null && e.mirrors.none(where::matches)) return false
         when (kind) {
             KindFilter.All -> Unit
             KindFilter.Photos -> if (e.kind == Kind.Video) return false

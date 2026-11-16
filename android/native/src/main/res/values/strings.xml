@@ -526,4 +526,46 @@
     <string name="gallery_badge_backup_uploading">Backing up</string>
     <string name="gallery_badge_backup_paused">Backup waits for Wi-Fi or charging</string>
     <string name="gallery_badge_backup_failed">Backup failed</string>
+    <!-- Other devices see backups (ADR 0024 A2, Hoard 2.5.0) -->
+    <string name="gallery_devices">Devices</string>
+    <string name="gallery_devices_empty">No phone has a backup on the server yet. Turn it on in Settings › Phone backup.</string>
+    <string name="gallery_devices_this">This phone</string>
+    <string name="gallery_devices_sd">SD card %1$s</string>
+    <string name="gallery_devices_whole">The whole storage</string>
+    <string name="gallery_devices_all">Everything from %1$s</string>
+    <string name="gallery_devices_inactive">No backup in the last 7 days</string>
+    <plurals name="gallery_devices_shots">
+        <item quantity="one">%1$s shot</item>
+        <item quantity="other">%1$s shots</item>
+    </plurals>
+    <plurals name="gallery_devices_off">
+        <item quantity="one">%1$s deleted from the phone</item>
+        <item quantity="other">%1$s deleted from the phone</item>
+    </plurals>
+    <string name="gallery_filter_backup">Phone backups</string>
+    <string name="gallery_where_any">Any</string>
+    <string name="gallery_where_backup">%1$s backup</string>
+    <string name="gallery_where_clear">Show every shot</string>
+    <string name="gallery_badge_off_phone">Deleted from the phone</string>
+    <string name="gallery_badge_freed">Freed from the phone</string>
+    <string name="save_device">Save to this device</string>
+    <plurals name="save_device_shots">
+        <item quantity="one">%1$s shot from the photo server, every file of it (RAW, JPEG, video, sidecar).</item>
+        <item quantity="other">%1$s shots from the photo server, every file of each (RAW, JPEG, video, sidecar).</item>
+    </plurals>
+    <string name="save_device_folder">Folder</string>
+    <string name="save_device_default_many">Pictures/From &lt;phone&gt;, one folder per phone</string>
+    <string name="save_device_change">Change folder</string>
+    <string name="save_device_reset">Use the default</string>
+    <string name="save_device_action">Save</string>
+    <plurals name="save_device_started">
+        <item quantity="one">Saving %1$s file to %2$s</item>
+        <item quantity="other">Saving %1$s files to %2$s</item>
+    </plurals>
+    <string name="save_device_refused">Hoard\'s copies for Reveal can\'t be the destination. Choose another folder.</string>
+    <string name="save_device_all_files">Saving into the phone\'s folders needs All files access.</string>
+    <string name="save_device_allow">Allow</string>
+    <string name="save_device_nothing">These shots are on this phone already: only photos from the server are saved.</string>
+    <string name="save_device_from_server">Photo server</string>
+    <string name="save_device_failed">Could not save: %1$s</string>
 </resources>
