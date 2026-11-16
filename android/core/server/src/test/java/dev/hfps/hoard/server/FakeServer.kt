@@ -71,6 +71,13 @@ class FakeServer : AutoCloseable {
     var lookupFailures = 0
     /** `POST /v1/nas/walk` bodies received (ADR 0023). */
     val walks = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
+    /** Answer this many walk requests with `429` and this `Retry-After`. */
+    var walkRateLimited = 0
+    var walkRetryAfter = 2
+    /** Folders whose walk the server defers (when it may start). */
+    val walkDeferred = HashMap<String, Long>()
+    /** The `include` of the last feed page asked for. */
+    @Volatile var lastInclude: String? = null
 
     init {
         Thread {
@@ -201,6 +208,7 @@ class FakeServer : AutoCloseable {
             path == "/v1/device/claim" -> send(ex, 200, """{"deviceId":"$deviceId","physicalDevice":{"id":"phys-reveal","devices":[]}}""")
             path == "/v1/items/changes" -> {
                 pageCalls++
+                lastInclude = query["include"]
                 val cursor = query["cursor"].orEmpty()
                 if (rejectNextCursor && cursor.isNotEmpty()) {
                     rejectNextCursor = false
@@ -216,7 +224,10 @@ class FakeServer : AutoCloseable {
                 rows.sortBy { it.rev }
                 val page = rows.take(limit)
                 val next = page.lastOrNull()?.rev ?: after
-                send(ex, 200, ServerJson.encodeToString(ItemsPage.serializer(), ItemsPage(page.mapNotNull { it.item }, page.mapNotNull { it.record }, "fake:i$next", rows.size > limit)))
+                // Without include=trash a trashed item is a tombstone (ADR 0023 "/v1 additions").
+                val withTrash = query["include"].orEmpty().split(',').contains("trash")
+                val served = page.mapNotNull { it.item }.map { i -> if (i.trashed != null && !withTrash) Item(id = i.id, rev = i.rev, deleted = true) else i }
+                send(ex, 200, ServerJson.encodeToString(ItemsPage.serializer(), ItemsPage(served, page.mapNotNull { it.record }, "fake:i$next", rows.size > limit)))
             }
             path == "/v1/culling" -> {
                 cullingCalls++
@@ -279,8 +290,13 @@ class FakeServer : AutoCloseable {
             path == "/v1/nas/walk" -> {
                 val folders = ServerJson.parseToJsonElement(body).jsonObject["folders"]!!.jsonArray.map { it.jsonPrimitive.content }
                 walks += folders
+                if (walkRateLimited > 0) {
+                    walkRateLimited--
+                    return sendBytes(ex, 429, """{"error":{"code":"rate_limited","message":"slow down"}}""".toByteArray(), mapOf("Content-Type" to "application/json", "Retry-After" to walkRetryAfter.toString()))
+                }
                 if (folders.any { it !in nasFolders }) return send(ex, 404, """{"error":{"code":"not_found","message":"unknown folder"}}""")
-                send(ex, 202, folders.joinToString(",", """{"queued":[""", "]}") { "\"$it\"" })
+                val deferred = folders.filter { it in walkDeferred }.joinToString(",", "{", "}") { "\"$it\":${walkDeferred[it]}" }
+                send(ex, 202, folders.joinToString(",", """{"queued":[""", "],\"deferred\":$deferred}") { "\"$it\"" })
             }
             path == "/v1/items/lookup" && lookupFailures > 0 -> {
                 lookupFailures--

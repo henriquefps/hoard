@@ -519,6 +519,31 @@ findings and deviations (emulator API 36, docs/testing/trash.md):
 8. **Below Android 11** the phone keeps the folder trash (`.hoard-trash` with `.nomedia`); not run on an API 29 image
    (none on the build host).
 
+## Amendment (A4)
+
+Phase A4 (the Gallery) follows the decision with these deviations:
+
+1. **`gallery.db` version 3** adds `server_items.trashed_since` (migration 2 → 3, `GalleryMigrationTest`). The feed is
+   pulled with `include=items,culling,trash` once the server lists `trash`; a trashed item keeps its row (hidden from
+   the grid, the counts and the offline thumbnails) and its member files no longer back up a phone shot. Items trashed
+   before the first `include=trash` pull came as tombstones and are not fetched again (the Trash screen finds them on
+   the share by listing).
+2. **The Gallery's Move to trash** plans every copy Hoard can reach (`GalleryTrash`): the phone's files, and the NAS
+   files through the share a stored mapping names (`smbPrefix` + the rest of the path under `serverPrefix`), grouped by
+   place and folder; the dialog runs each place in turn (the trash dialog takes several requests). Server shots with
+   no mapping, and upload-only shots, are left out and counted in the dialog. The shots whose share files all went
+   are hidden at once (`trashed_since` set locally) until the feed confirms.
+3. **Selection**: long press starts it; a tap then toggles, a day header selects (or clears) its day, Select all takes
+   the filtered list shown (the whole library, a search, a date range, Rejected). Back clears it.
+4. **The walk request** after a run (`NasWalks`): `202` with `deferred` is accepted as is (logged), `429` waits
+   `Retry-After` (at most 3 times, 120 s each), an unknown folder (`404`) is dropped; it runs in the process scope so a
+   wait never holds the trash, then asks a Gallery sync.
+5. **Server photos trashed by another device**: their trash root on a mapped share is recorded as a trash root
+   (`trash_roots`), so the Trash screen's refresh lists them as ordinary rows (restore, Empty through the same service).
+   Those without a mapping are listed in a server section with the server's thumbnail and no actions ("open its folder
+   in Files once").
+6. **Version 2.3.0** (versionCode 230); the CHANGELOG heading stays "unreleased" until the release is dated.
+
 ## Alternatives considered
 
 - **Tombstones keep their edits (B)**: see "Server": blind to the trash, previews lost, the empty-mount guard keeps

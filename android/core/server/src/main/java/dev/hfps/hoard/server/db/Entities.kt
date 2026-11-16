@@ -77,6 +77,8 @@ data class ServerItemEntity(
     @ColumnInfo(name = "edit_count") val editCount: Int,
     @ColumnInfo(name = "edited_at") val editedAt: Long?,
     val json: String,
+    /** In a trash since (Unix ms, ADR 0023: `include=trash`); null = live. Trashed items leave the grid. */
+    @ColumnInfo(name = "trashed_since") val trashedSince: Long? = null,
 )
 
 /** Which item holds which file (any member, ADR 0014): the "backed up" join of device items. */

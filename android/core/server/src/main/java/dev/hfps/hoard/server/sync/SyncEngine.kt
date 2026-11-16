@@ -397,7 +397,7 @@ class SyncEngine(
         while (true) {
             val account = db.account().get() ?: return applied
             val page = try {
-                api.itemsChanges(account.cursor, limit)
+                api.itemsChanges(account.cursor, limit, if (account.has(Features.TRASH)) dev.hfps.hoard.server.api.INCLUDE_ITEMS_CULLING_TRASH else dev.hfps.hoard.server.api.INCLUDE_ITEMS_CULLING)
             } catch (e: ServerException) {
                 if (e.code == "invalid_cursor" && !restarted) {
                     restarted = true

@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * `gallery.db` (ADR 0021). Room migrations checked against `core/server/schemas/`: version 2 (Hoard 2.2.0, ADR 0022)
- * adds `smb_mappings` and `smb_mapping_misses`.
+ * adds `smb_mappings` and `smb_mapping_misses`; version 3 (Hoard 2.3.0, ADR 0023) adds `server_items.trashed_since`.
  */
 @Database(
     entities = [
@@ -29,7 +29,7 @@ import kotlinx.coroutines.flow.Flow
         SmbMappingEntity::class,
         SmbMappingMissEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -63,13 +63,20 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        /** 2.3.0 (ADR 0023): trashed server items stay as rows (`include=trash`), hidden from the grid. */
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `server_items` ADD COLUMN `trashed_since` INTEGER")
+            }
+        }
+
         fun open(context: Context, name: String? = FILE_NAME): GalleryDatabase {
             val builder = if (name == null) {
                 Room.inMemoryDatabaseBuilder(context.applicationContext, GalleryDatabase::class.java)
             } else {
                 Room.databaseBuilder(context.applicationContext, GalleryDatabase::class.java, name)
             }
-            return builder.addMigrations(MIGRATION_1_2).build()
+            return builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
         }
     }
 }
@@ -133,11 +140,18 @@ data class ServerItemRow(
 
 @Dao
 interface ItemDao {
-    @Query("SELECT id, kind, main_fingerprint, sort_time, capture_local, make, model, lens, width, height, duration_ms, name, folder, search, has_raw, edit_primary, edit_count FROM server_items")
+    @Query("SELECT id, kind, main_fingerprint, sort_time, capture_local, make, model, lens, width, height, duration_ms, name, folder, search, has_raw, edit_primary, edit_count FROM server_items WHERE trashed_since IS NULL")
     fun observeRows(): Flow<List<ServerItemRow>>
 
+    /** Items in a trash (ADR 0023), newest trash first: the Trash screen's server photos. */
+    @Query("SELECT * FROM server_items WHERE trashed_since IS NOT NULL ORDER BY trashed_since DESC")
+    fun observeTrashed(): Flow<List<ServerItemEntity>>
+
+    @Query("SELECT * FROM server_items WHERE trashed_since IS NOT NULL")
+    suspend fun trashed(): List<ServerItemEntity>
+
     /** Item ids newest first, a page at a time (the offline thumbnails job). */
-    @Query("SELECT id FROM server_items ORDER BY sort_time DESC LIMIT :limit OFFSET :offset")
+    @Query("SELECT id FROM server_items WHERE trashed_since IS NULL ORDER BY sort_time DESC LIMIT :limit OFFSET :offset")
     suspend fun idsNewestFirst(limit: Int, offset: Int): List<String>
 
     @Query("SELECT json FROM server_items WHERE id = :id")
@@ -146,10 +160,10 @@ interface ItemDao {
     @Query("SELECT * FROM server_items WHERE id = :id")
     suspend fun get(id: String): ServerItemEntity?
 
-    @Query("SELECT COUNT(*) FROM server_items")
+    @Query("SELECT COUNT(*) FROM server_items WHERE trashed_since IS NULL")
     suspend fun count(): Int
 
-    @Query("SELECT COUNT(*) FROM server_items")
+    @Query("SELECT COUNT(*) FROM server_items WHERE trashed_since IS NULL")
     fun observeCount(): Flow<Int>
 
     @Upsert

@@ -19,6 +19,7 @@ import dev.hfps.hoard.smb.location.HoardFs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -457,7 +458,27 @@ class TrashService(private val container: AppContainer) {
     /** The roots, as the Trash screen lists them. */
     fun observeRoots() = dao.observeRoots()
 
+    /**
+     * Server photos another device trashed (ADR 0023, A4: `include=trash`): their trash root on a mapped share is
+     * recorded, so the refresh lists it and they become rows like any other (restore, Empty). Those without a mapping
+     * stay in the Trash screen's server section. Returns the ids of those that could not be placed.
+     */
+    suspend fun registerServerTrash(): List<String> = withContext(Dispatchers.IO) {
+        val db = container.gallery.db
+        val serverId = db.account().get()?.serverId ?: return@withContext emptyList()
+        val mappings = runCatching { container.serverLinks.paths.mappings() }.getOrDefault(emptyList()).filter { it.serverId == serverId }
+        val unplaced = ArrayList<String>()
+        for (row in db.items().trashed()) {
+            val item = runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json) }.getOrNull() ?: continue
+            val roots = item.files.flatMap { it.locations }.mapNotNull { dev.hfps.hoard.app.gallery.trashRootOf(it, mappings) }
+            if (roots.isEmpty()) unplaced += row.id
+            for ((m, root) in roots.distinct()) dao.touchRoot(m.machineId, m.share, root, m.folderId)
+        }
+        unplaced
+    }
+
     private suspend fun refreshRoots(): Set<TrashPlace> {
+        runCatching { registerServerTrash() }.onFailure { if (it is CancellationException) throw it }
         // The phone's trash: rows Android purged or the user restored elsewhere are forgotten, expiry dates updated.
         media?.let { m -> withContext(Dispatchers.IO) { m.reconcile(dao.all().filter { it.mediaUri != null }) } }
         val unreachable = HashSet<TrashPlace>()
@@ -553,18 +574,25 @@ class TrashService(private val container: AppContainer) {
     }
 
     /** `POST /v1/nas/walk` for [folderIds] (≤ 100 per call), only when the paired server lists `trash`. Best effort. */
-    private suspend fun requestWalk(folderIds: List<String>) {
+    private fun requestWalk(folderIds: List<String>) {
         val ids = folderIds.distinct()
         if (ids.isEmpty()) return
-        withContext(Dispatchers.IO) {
+        // In the process scope: a 429's Retry-After wait must not hold the trash's lock or the dialog. Then a sync, so the
+        // Gallery hears the server's trashed state soon (ADR 0023: "the local hide" covers the meantime).
+        container.scope.launch(Dispatchers.IO) {
             runCatching {
                 val account = container.gallery.db.account().get() ?: return@runCatching
                 if (!account.has(Features.TRASH)) return@runCatching
                 val api = container.gallery.api() ?: return@runCatching
-                for (chunk in ids.chunked(NasWalkRequest.MAX_FOLDERS)) api.nasWalk(chunk)
+                val outcome = dev.hfps.hoard.server.sync.NasWalks.request(api, ids)
+                Log.i(TAG, "walk: ${outcome.queued.size} queued, ${outcome.deferred.size} deferred, ${outcome.rateLimited.size} rate-limited, ${outcome.unknown.size} unknown")
+                val wait = outcome.deferred.values.maxOrNull()?.let { (it - System.currentTimeMillis()).coerceIn(0, 120_000) } ?: 0
+                kotlinx.coroutines.delay(wait + 5_000)
+                runCatching { dev.hfps.hoard.server.sync.GallerySyncWorker.soon(container.appContext, 1) }
             }.onFailure { if (it is CancellationException) throw it else Log.w(TAG, "walk request failed", it) }
         }
     }
+
 
     companion object {
         private const val TAG = "HoardTrash"

@@ -121,6 +121,8 @@ data class FileLocation(
     val path: String? = null,
     val modifiedAt: Long? = null,
     val sha256: String? = null,
+    /** `nas` with `include=trash` (0.11.0, ADR 0023): the file is in a trash, at this folder-relative path. */
+    val trash: String? = null,
 )
 
 @Serializable
@@ -195,7 +197,12 @@ data class Item(
     val video: VideoInfo? = null,
     val motion: MotionInfo? = null,
     val edits: List<ItemEdit> = emptyList(),
+    /** With `include=trash` (0.11.0, ADR 0023): the item is in a trash since [ItemTrash.since]; null = live. */
+    val trashed: ItemTrash? = null,
 )
+
+@Serializable
+data class ItemTrash(val since: Long = 0)
 
 // --- Culling (ADR 0016) ---------------------------------------------------------------------------------------------
 
@@ -280,7 +287,11 @@ data class NasWalkRequest(val folders: List<String>) {
 
 /** `202 {"queued": [...]}`: the folders whose walk was queued (a queued or running walk is not queued twice). */
 @Serializable
-data class NasWalkResponse(val queued: List<String> = emptyList())
+data class NasWalkResponse(
+    val queued: List<String> = emptyList(),
+    /** Queued folders whose walk waits for the server's budget, with when it may start (Unix ms). */
+    val deferred: Map<String, Long> = emptyMap(),
+)
 
 @Serializable
 data class ByPathRequest(val folder: String, val paths: List<String>)
@@ -328,4 +339,7 @@ object Features {
 
 /** The `include` of the items feed Hoard asks for: one cursor for items and culling (ADR 0016 rule 3). */
 const val INCLUDE_ITEMS_CULLING = "items,culling"
+
+/** The same with trashed items served whole (feature `trash`, ADR 0023). */
+const val INCLUDE_ITEMS_CULLING_TRASH = "items,culling,trash"
 

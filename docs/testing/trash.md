@@ -24,6 +24,9 @@ Hoard 2.3.0 (unreleased), branch `trash-a2-screens` on `main` 9144acc (A1, PR #5
 | `trash_media_ask_phone_light.png` | Phase A3: the first phone trash dialog, with the one-time Media management offer |
 | `trash_permanent_folder_phone_light.png` | Phase A3: a phone folder (Android's trash takes files only): the permanent-delete offer |
 | `trash_settings_media_allowed_phone_dark.png` | Phase A3: Settings › Trash with Media management allowed (`trash_settings_phone_*`: Robolectric's Android has none, "Needs Android 12 or later") |
+| `gallery_selection_phone_light.png`, `gallery_selection_phone_dark.png` | Phase A4: the Gallery while selecting (long press): the count, Select all, Move to trash; selected cells checked |
+| `trash_server_section_phone_light.png` | Phase A4: server photos another device trashed whose share Hoard does not know, with the server's thumbnails |
+| `trash_gallery_confirm_phone_light.png` | Phase A4: the confirmation of a Gallery selection over two places, with what is left out (unmapped, upload only) |
 | `trash_empty_confirm_phone_light.png` | Empty trash with a drive not reachable: only the reachable files counted, the rest named |
 
 The dialogs are captured as their body on a card (an `AlertDialog` opens its own window, which a root capture does not
@@ -112,4 +115,39 @@ request; sidecars now never go in one.
 **Not run here**: an **API 29** image (the folder trash below Android 11: `.hoard-trash` with `.nomedia`, the same code
 as a USB drive): only an API 36 system image is installed on this host. Not run: a request of more than 500 items
 (`MediaStoreTrashTest` covers the batching), a phone that never had All files access.
+
+## Full E2E before 2.3.0 (A1–A4): hoard-server 0.11.0 + Samba, emulator API 36
+
+Run on cachyos-fps on 2026-11-16, branch `trash-a4-gallery` (debug 2.3.0, versionCode 230, data cleared first).
+
+- **hoard-server 0.11.0** built from `main`'s `server/` (`docker build`, 4 CPUs), temporary data directory, port
+  `127.0.0.1:3996` (`http://10.0.2.2:3996` from the emulator), `--cpus 2 --memory 1536m`, `NAS_INTERVAL=1m`; a
+  temporary directory mounted **read-only** at `/mnt/nas`, NAS folder `/mnt/nas/Imagens`: 9 synthetic JPEGs (coloured
+  dots, EXIF dates; `2024/Trip` × 6, `2024/Beach` × 3). Set up through the admin API (setup code, password, NAS folder,
+  two pairing links); features `items, items-by-path, previews, culling, device-identity, edits, trash`.
+- **Samba** (Alpine 4.19.9) serving **the same directory** read-write as share `photos` (it holds `Imagens/`: share path
+  `Imagens/2024/Trip` = NAS path `2024/Trip`, ADR 0022 case 3), `127.0.0.1:14471`.
+- A second device paired from the host with `POST /v1/pair` stood in for Reveal and uploaded one **edit** of
+  `TRIP0003.JPG` (`PUT /v1/items/{id}/edits/{versionId}`, a 1200×900 JPEG, primary, label "Warm"; ADR 0020).
+- Emulator `hoard-burst` (API 36, `-port 5554 -memory 3072 -no-window`). The app paired by pasting the link; the
+  machine typed by hand (`10.0.2.2:14471`, the form checked before saving; the discovered LAN machine was not tapped).
+- Afterwards: both containers and both images removed, the temporary directories deleted, the phone's test files,
+  the consent flag and the appops cleared, the emulator stopped.
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Pair; Files › E2ESamba › photos › Imagens › 2024 › Trip | 9 items synced; `6 of 6 files on the server (… 2 files read)`: the mapping learned (`smbPrefix` `Imagens`), every row with the cloud mark | [`e01`](trash/full/e01-files-mapped.png) |
+| Gallery: open `TRIP0003.JPG`, Reject | `GET /v1/culling/{id}`: flag reject by Hoard's device | — |
+| **1.** Filters › Rejected; long press, Select all, Move to trash | "Move 1 shot to the trash? 1 file (162 KB) … in E2ESamba › photos › Imagens" (the trash inside the NAS folder); `Imagens/.hoard-trash/2026-11-16/2024/Trip/TRIP0003.JPG` on disk; `walk: 1 queued`; the shot left the Gallery. Server after the walk: `include=trash` → `deleted: false`, `trashed.since` set, **edits 1**, `GET …/edits/{v}` **200**; without `include=trash` a tombstone (old clients) | [`e02`](trash/full/e02-gallery-selected.png), [`e03`](trash/full/e03-gallery-confirm.png), [`e04`](trash/full/e04-gallery-after.png), [`e05`](trash/full/e05-trash.png) |
+| **2.** Trash › Imagens/2024/Trip › Restore | Back at `Imagens/2024/Trip/TRIP0003.JPG`; `walk: 1 queued, 1 deferred` (the server's 1-minute budget, honoured); server: **same id**, `deleted: false`, rev 13, **the edit still there** (`GET` 200) | — |
+| **3.** Move to trash again (Gallery), then Trash › Empty trash | "Empty the trash? 1 file (162 KB) will be deleted for good."; the file gone; server after the walk: **tombstone** (`deleted: true`, no `replacedBy`), the **edit dropped** (`GET` **404**), the culling record kept (flag reject) | [`e06`](trash/full/e06-empty-confirm.png) |
+| **4a.** A day folder `Imagens/.hoard-trash/2026-10-20/…` (another device's, mtime 2026-10-20) on the share; Settings › Trash › After 7 days | "Empty part of the trash now? With this setting, 1 file (182 KB) older than 7 days is deleted for good now." + "This includes what other devices put in the trash."; **Cancel**: the setting stays at 30 days, the folder stays | [`e07`](trash/full/e07-shorten-confirm.png), [`e07b`](trash/full/e07b-after-cancel.png) |
+| **4b.** Files › Internal storage › DCIM › `E2EOld` (a folder) › Delete | "Delete 1 item permanently? 1 item with folders in Internal storage cannot go to the trash: Android's trash takes files, not folders."; **Keep** (the default): nothing deleted | [`e09`](trash/full/e09-permanent-offer.png) |
+| **5.** `DCIM/E2E/PHONE0002.JPG` › Delete (consent forced, Media management off) | The first phone dialog with the one-time Media management offer; then Android: "Allow Hoard debug to move this photo to trash?" › Allow: `.trashed-…-PHONE0002.JPG` | [`e08a`](trash/full/e08a-phone-confirm-ask.png), [`e08`](trash/full/e08-phone-consent.png) |
+| Trash › Internal storage › DCIM/E2E › Delete permanently | "Android deletes them on Dec 16, 2026"; Hoard's "Delete 2 files permanently? 2 files (11.9 KB)…", then Android's "Allow Hoard debug to delete 2 photos?" (always asked, PR #60) › Allow: both gone | [`e10`](trash/full/e10-trash-phone.png), [`e11`](trash/full/e11-phone-delete-consent.png) |
+
+**Observed**: a Media management grant from an earlier run had stayed at the uid level (`appops get` → `Uid mode:
+MANAGE_MEDIA: allow`), so the first phone trash of this run was approved without a dialog (the Media management path);
+cleared with `appops set --uid … default` before step 5. Not run: the Trash screen's server section with a real
+unmapped folder (golden only), a 429 from the server (`SyncEngineTest` covers it).
 

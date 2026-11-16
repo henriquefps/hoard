@@ -88,19 +88,22 @@ fun trashWhere(location: BrowseLocation, plan: TrashPlan): String {
 private sealed interface Step {
     data object Preparing : Step
     data class PrepareFailed(val message: Int) : Step
-    data class Confirm(val plan: TrashPlan) : Step
+
+    /** Each request with its plan; [plan] is all of them together, for the counts. */
+    data class Confirm(val plans: List<Pair<TrashRequest, TrashPlan>>, val plan: TrashPlan) : Step
     data object Running : Step
 
-    /** Units the trash refused that can be deleted permanently instead ([trashed] already went to the trash). */
-    data class Offer(val units: List<TrashUnit>, val reason: TrashRefusal, val trashed: List<TrashUnit>) : Step
+    /** Units the trash refused that can be deleted permanently instead, by request ([trashed] already went to the trash). */
+    data class Offer(val units: List<Pair<TrashRequest, List<TrashUnit>>>, val reason: TrashRefusal, val trashed: List<TrashUnit>) : Step {
+        val all: List<TrashUnit> get() = units.flatMap { it.second }
+    }
 }
 
-/**
- * "Move to trash" (ADR 0023), for culling's rejects and the Files delete (the owner's decision 1): plans on a fresh
- * listing (the trash root may need the photo server), confirms with the counts, size and where, warns when the server
- * is too old to keep Reveal's edits, runs with progress and Cancel, and offers the permanent delete only for what the
- * trash refused for a reason that permanent delete solves.
- */
+/** Plans of several places shown as one (the counts, the size, the warnings; never run as one). */
+private fun combined(plans: List<TrashPlan>): TrashPlan =
+    TrashPlan(plans.first().place, plans.flatMap { it.units }, plans.flatMap { it.refused }, plans.any { it.oldServerWarning })
+
+/** One request: Files' delete, culling's rejects. */
 @Composable
 fun MoveToTrashDialog(
     container: AppContainer,
@@ -109,6 +112,24 @@ fun MoveToTrashDialog(
     onDone: (TrashDone) -> Unit,
     /** Culling (true): whole shots. Files (false): the selected files, sidecars only with a shot's last member. */
     shots: Boolean = true,
+) = MoveToTrashDialog(container, listOf(request), onDismiss, onDone, shots)
+
+/**
+ * "Move to trash" (ADR 0023), for culling's rejects, the Files delete (the owner's decision 1) and the Gallery's
+ * selection (several folders and places at once, [requests]): plans on fresh listings (the trash root may need the
+ * photo server), confirms with the counts, size and where, warns when the server is too old to keep Reveal's edits,
+ * says what is left out ([leftOut]: the Gallery's unmapped and upload-only server shots), runs each place in turn with
+ * progress and Cancel, and offers the permanent delete only for what the trash refused for a reason that permanent
+ * delete solves.
+ */
+@Composable
+fun MoveToTrashDialog(
+    container: AppContainer,
+    requests: List<TrashRequest>,
+    onDismiss: () -> Unit,
+    onDone: (TrashDone) -> Unit,
+    shots: Boolean = true,
+    leftOut: String? = null,
 ) {
     val res = LocalResources.current
     val toaster = LocalToaster.current
@@ -120,19 +141,26 @@ fun MoveToTrashDialog(
     val context = androidx.compose.ui.platform.LocalContext.current
     // ADR 0023 (the owner's decision 4): the first phone trash dialog offers Media management once.
     var askMedia by remember { mutableStateOf(false) }
-    LaunchedEffect(request) {
-        if (request.location.kind == dev.hfps.hoard.app.files.LocationKind.Device && mediaManagementOf(context) == MediaManagement.NotAllowed &&
+    LaunchedEffect(requests) {
+        if (requests.any { it.location.kind == dev.hfps.hoard.app.files.LocationKind.Device } && mediaManagementOf(context) == MediaManagement.NotAllowed &&
             !container.appSettings.trashMediaAskedNow()
         ) {
             askMedia = true
             container.appSettings.setTrashMediaAsked()
         }
     }
-    LaunchedEffect(request) {
+    LaunchedEffect(requests) {
         step = try {
-            val plan = container.trash.prepareFolder(request.location, request.folder, request.paths, wholeShots = shots)
-            val offer = plan.refused.filter { it.reason in PERMANENT_OFFER }
-            if (plan.units.isEmpty() && offer.isNotEmpty()) Step.Offer(offer.map { it.unit }, offer.first().reason, emptyList()) else Step.Confirm(plan)
+            val plans = requests.map { r -> r to container.trash.prepareFolder(r.location, r.folder, r.paths, wholeShots = shots) }
+            val offers = plans.map { (r, p) -> r to p.refused.filter { it.reason in PERMANENT_OFFER }.map { it.unit } }.filter { it.second.isNotEmpty() }
+            val firstReason = plans.flatMap { it.second.refused }.firstOrNull { it.reason in PERMANENT_OFFER }?.reason
+            if (plans.all { it.second.units.isEmpty() } && offers.isNotEmpty() && firstReason != null) {
+                Step.Offer(offers, firstReason, emptyList())
+            } else if (plans.isEmpty()) {
+                Step.Confirm(emptyList(), TrashPlan(dev.hfps.hoard.app.trash.TrashPlace("device"), emptyList()))
+            } else {
+                Step.Confirm(plans, combined(plans.map { it.second }))
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -145,32 +173,40 @@ fun MoveToTrashDialog(
         onDismiss()
     }
 
-    fun run(plan: TrashPlan) {
+    fun run(plans: List<Pair<TrashRequest, TrashPlan>>) {
         step = Step.Running
         scope.launch {
-            val report = try {
-                container.trash.start(plan).await()
+            val reports = ArrayList<Pair<TrashRequest, dev.hfps.hoard.app.trash.TrashReport>>()
+            try {
+                for ((r, p) in plans) {
+                    if (p.units.isEmpty() && p.refused.isEmpty()) continue
+                    reports += r to container.trash.start(p).await()
+                    if (reports.last().second.cancelled.isNotEmpty()) break
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 toaster.show(res.getString(errorTitle(errorCodeOf(e))))
-                finish(emptyList(), emptyList())
+                finish(reports.flatMap { it.second.trashed.map { t -> t.unit } }, emptyList())
                 return@launch
             }
-            val trashed = report.trashed.map { it.unit }
+            val all = reports.map { it.second }
+            val trashed = all.flatMap { r -> r.trashed.map { it.unit } }
+            val partial = all.sumOf { it.partial.size }
             val messages = buildList {
                 if (trashed.isNotEmpty()) add(res.getQuantityString(R.plurals.trash_moved, trashed.size, trashed.size.toString()))
-                if (report.partial.isNotEmpty()) add(res.getQuantityString(R.plurals.trash_partial, report.partial.size, report.partial.size.toString()))
-                if (report.cancelled.isNotEmpty()) add(res.getString(R.string.trash_cancelled))
-                val other = report.refused.filter { it.reason !in PERMANENT_OFFER }
+                if (partial > 0) add(res.getQuantityString(R.plurals.trash_partial, partial, partial.toString()))
+                if (all.any { it.cancelled.isNotEmpty() }) add(res.getString(R.string.trash_cancelled))
+                val other = all.flatMap { it.refused }.filter { it.reason !in PERMANENT_OFFER }
                 if (other.isNotEmpty()) {
                     add(res.getQuantityString(R.plurals.trash_refused_count, other.size, other.size.toString(), res.getString(reasonText(other.first().reason))))
                 }
             }
             if (messages.isNotEmpty()) toaster.show(messages.joinToString("\n"), long = messages.size > 1)
-            val offer = report.refused.filter { it.reason in PERMANENT_OFFER }
-            if (offer.isNotEmpty()) {
-                step = Step.Offer(offer.map { it.unit }, offer.first().reason, trashed)
+            val offers = reports.map { (r, rep) -> r to rep.refused.filter { it.reason in PERMANENT_OFFER }.map { it.unit } }.filter { it.second.isNotEmpty() }
+            val reason = all.flatMap { it.refused }.firstOrNull { it.reason in PERMANENT_OFFER }?.reason
+            if (offers.isNotEmpty() && reason != null) {
+                step = Step.Offer(offers, reason, trashed)
             } else {
                 finish(trashed, emptyList())
             }
@@ -206,14 +242,15 @@ fun MoveToTrashDialog(
                 onDismiss = onDismiss,
                 confirm = {
                     if (count > 0) {
-                        TextButton({ run(plan) }, Modifier.testTag("trash-confirm")) {
+                        TextButton({ run(s.plans) }, Modifier.testTag("trash-confirm")) {
                             Text(stringResource(R.string.trash_confirm_action), color = HfpsTheme.colors.primary, style = HfpsTheme.typography.ui.copy(fontWeight = FontWeight.SemiBold))
                         }
                     }
                 },
                 dismiss = { TextButton(onDismiss) { Text(stringResource(if (count == 0) R.string.t_common_close else R.string.t_common_cancel), color = HfpsTheme.colors.foreground) } },
             ) {
-                TrashConfirmBody(plan, trashWhere(request.location, plan), autoDays)
+                TrashConfirmBody(plan, s.plans.map { (r, p) -> trashWhere(r.location, p) }.distinct().joinToString(", "), autoDays)
+                if (leftOut != null) Text(leftOut, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(top = 8.dp).testTag("trash-left-out"))
                 if (askMedia) MediaManagementAsk { dev.hfps.hoard.app.ui.trash.openMediaManagement(context) }
             }
         }
@@ -227,7 +264,8 @@ fun MoveToTrashDialog(
         }
         is Step.Offer -> {
             var busy by remember { mutableStateOf(false) }
-            val count = s.units.size
+            val count = s.all.size
+            val first = s.units.first().first.location
             HoardDialog(
                 title = if (shots) pluralStringResource(R.plurals.trash_permanent_title_shots, count, formatNumber(count, locale()))
                 else pluralStringResource(R.plurals.trash_permanent_title, count, formatNumber(count, locale())),
@@ -243,7 +281,7 @@ fun MoveToTrashDialog(
                         {
                             busy = true
                             scope.launch {
-                                val deleted = container.trash.deletePermanently(request.location, s.units)
+                                val deleted = s.units.flatMap { (r, units) -> container.trash.deletePermanently(r.location, units) }
                                 toaster.show(res.getQuantityString(R.plurals.trash_deleted_permanently, deleted.size, deleted.size.toString()))
                                 finish(s.trashed, deleted)
                             }
@@ -255,7 +293,7 @@ fun MoveToTrashDialog(
                     }
                 },
             ) {
-                PermanentDeleteBody(s.units, placeOf(request.location), request.location.kind == dev.hfps.hoard.app.files.LocationKind.Device, s.reason, shots)
+                PermanentDeleteBody(s.all, s.units.map { placeOf(it.first.location) }.distinct().joinToString(", "), first.kind == dev.hfps.hoard.app.files.LocationKind.Device, s.reason, shots)
             }
         }
     }

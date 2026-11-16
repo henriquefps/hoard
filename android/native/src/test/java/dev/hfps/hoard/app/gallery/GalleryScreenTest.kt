@@ -100,6 +100,16 @@ class GalleryScreenTest {
 
     private fun grid(ui: GalleryUi): @Composable () -> Unit = { TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryContent(ui, FakeThumbs) } }
 
+    // ADR 0023, A4: the selection (long press, a day header, Select all) with Move to trash in the top bar.
+    private fun selecting(dark: Boolean): @Composable () -> Unit = {
+        val u = ui()
+        val keys = u.layout!!.entries.take(3).map { it.key }
+        TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryContent(u, FakeThumbs, selection = GallerySelection(keys.toSet())) }
+    }
+
+    @Test fun selectionPhoneLight() = shoot("gallery_selection_phone_light", ShellScreenshotTest.PHONE, false, selecting(false))
+    @Test fun selectionPhoneDark() = shoot("gallery_selection_phone_dark", ShellScreenshotTest.PHONE, true, selecting(true))
+
     @Test fun gridPhoneLight() = shoot("gallery_grid_phone_light", ShellScreenshotTest.PHONE, false, grid(ui()))
     @Test fun gridPhoneDark() = shoot("gallery_grid_phone_dark", ShellScreenshotTest.PHONE, true, grid(ui()))
     @Test fun gridLandscapeLight() = shoot("gallery_grid_landscape_light", ShellScreenshotTest.LANDSCAPE, false, grid(ui()))
