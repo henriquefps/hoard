@@ -79,6 +79,10 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   only (ADR 0010 "Server items"). E2E against your own hoard-server container: `docs/testing/gallery/README.md`
   (`-Phoard.native.debugSuffix=.gallery` for another debug id, `-Phoard.native.benchRelease=true` for a debug-signed
   R8 build to measure frames).
+- **Phone backup** (ADR 0024, A1): `:core:server` `backup/` (`BackupPlan` pure, `BackupUploader`, `BackupEngine` over a
+  `BackupSource`, `BackupWorker` with `BackupHost` = the application), `gallery.db` 4 (`backup_roots`, `backup_files`,
+  `freed`); `:native` `backup/PhoneBackup.kt` and `ui/backup/`. Hashing and uploads only inside the worker. E2E:
+  `docs/testing/backup.md`.
 - **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017; Reveal's edited previews ADR 0020): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and

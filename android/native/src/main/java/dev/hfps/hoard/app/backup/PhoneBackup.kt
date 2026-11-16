@@ -224,9 +224,11 @@ class PhoneBackup(
                 val caps = cm.getNetworkCapabilities(cm.activeNetwork)
                 caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
             }.getOrDefault(false)
+            // "While charging" = plugged in (what WorkManager's charging constraint means too): the battery's sticky
+            // broadcast says so at once, while BatteryManager.isCharging lags behind the plug and is false when full.
             val charging = runCatching {
-                val bm = context.getSystemService(BatteryManager::class.java)
-                bm.isCharging || bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS) == BatteryManager.BATTERY_STATUS_FULL
+                val battery = context.registerReceiver(null, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+                (battery?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
             }.getOrDefault(false)
             return Conditions(unmetered, charging)
         }

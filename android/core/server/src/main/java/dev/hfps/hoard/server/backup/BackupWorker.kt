@@ -110,12 +110,19 @@ class BackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             WorkManager.getInstance(context).enqueueUniqueWork(NOW, ExistingWorkPolicy.KEEP, request)
         }
 
-        /** Videos (or everything, with "Only while charging") wait for the charger: one run once it is plugged in. */
+        /**
+         * Videos (or everything, with "Only while charging") wait for the charger: one run once it is plugged in. One
+         * waits at a time; when the charging run itself leaves files waiting (unplugged again), one more follows it.
+         */
         fun whileCharging(context: Context, rules: BackupRules = BackupRules()) {
             val request = OneTimeWorkRequestBuilder<BackupWorker>()
                 .setConstraints(constraints(rules, charging = true))
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(CHARGING, ExistingWorkPolicy.KEEP, request)
+            val manager = WorkManager.getInstance(context)
+            val states = runCatching { manager.getWorkInfosForUniqueWork(CHARGING).get().map { it.state } }.getOrDefault(emptyList())
+            // One waiting is enough; called from the charging run itself (unplugged again meanwhile), one follows it.
+            if (states.any { it == WorkInfo.State.ENQUEUED || it == WorkInfo.State.BLOCKED }) return
+            manager.enqueueUniqueWork(CHARGING, if (WorkInfo.State.RUNNING in states) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE, request)
         }
 
         fun cancel(context: Context) {
