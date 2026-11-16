@@ -420,4 +420,74 @@ class SyncEngineTest {
         tailnet.sync()
         assertThat(asked.count { it.startsWith("https://") }).isEqualTo(2)
     }
+
+    // --- ADR 0023, phase A4: trashed items and the walk request ---
+
+    @Test
+    fun trashedRestoredAndPurgedItemsFromTheFeed() = runBlocking<Unit> {
+        server.features = server.features + "trash"
+        pair()
+        server.putItem(item(1))
+        server.putItem(item(2))
+        engine.sync()
+        assertThat(server.lastInclude).isEqualTo("items,culling,trash")
+        assertThat(db.items().count()).isEqualTo(2)
+        // Trashed on another device: kept as a row with its time, out of the grid.
+        server.putItem(item(1).copy(trashed = dev.hfps.hoard.server.api.ItemTrash(since = 5_000)))
+        engine.sync()
+        assertThat(db.items().count()).isEqualTo(1)
+        assertThat(db.items().observeRows().first().map { it.id }).containsExactly("item-2")
+        assertThat(db.items().trashed().single().let { it.id to it.trashedSince }).isEqualTo("item-1" to 5_000L)
+        // Restored: live again, same id.
+        server.putItem(item(1))
+        engine.sync()
+        assertThat(db.items().count()).isEqualTo(2)
+        assertThat(db.items().trashed()).isEmpty()
+        // Trashed then purged (Empty): a tombstone, gone.
+        server.putItem(item(1).copy(trashed = dev.hfps.hoard.server.api.ItemTrash(since = 6_000)))
+        engine.sync()
+        server.tombstone("item-1", null)
+        engine.sync()
+        assertThat(db.items().get("item-1")).isNull()
+        assertThat(db.items().trashed()).isEmpty()
+    }
+
+    @Test
+    fun anOlderServerIsAskedWithoutTrashAndSendsTombstones() = runBlocking<Unit> {
+        pair()
+        server.putItem(item(1).copy(trashed = dev.hfps.hoard.server.api.ItemTrash(since = 5_000)))
+        engine.sync()
+        assertThat(server.lastInclude).isEqualTo("items,culling")
+        assertThat(db.items().get("item-1")).isNull()
+    }
+
+    @Test
+    fun theWalkRequestHonoursDeferredAndRetryAfter() = runBlocking<Unit> {
+        server.features = server.features + "trash"
+        server.nasFolders += listOf("f1", "f2")
+        pair()
+        val api = engine.api()!!
+        val slept = ArrayList<Long>()
+        // 202 with a deferred folder: queued all the same, nothing to retry.
+        server.walkDeferred["f2"] = 99_000L
+        val first = NasWalks.request(api, listOf("f1", "f2")) { slept += it }
+        assertThat(first.queued).containsExactly("f1", "f2")
+        assertThat(first.deferred).containsExactly("f2", 99_000L)
+        assertThat(slept).isEmpty()
+        // 429 twice, then accepted: waits Retry-After each time.
+        server.walkRateLimited = 2
+        server.walkRetryAfter = 3
+        val second = NasWalks.request(api, listOf("f1")) { slept += it }
+        assertThat(second.queued).containsExactly("f1")
+        assertThat(slept).containsExactly(3_000L, 3_000L)
+        // Past the retries: reported, not thrown.
+        server.walkRateLimited = 10
+        val third = NasWalks.request(api, listOf("f1")) { slept += it }
+        assertThat(third.rateLimited).containsExactly("f1")
+        // An unknown folder is dropped, the others queued.
+        server.walkRateLimited = 0
+        val fourth = NasWalks.request(api, listOf("f1", "gone")) {}
+        assertThat(fourth.queued).containsExactly("f1")
+        assertThat(fourth.unknown).containsExactly("gone")
+    }
 }

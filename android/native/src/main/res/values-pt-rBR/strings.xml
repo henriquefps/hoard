@@ -431,4 +431,24 @@
         <item quantity="many">%1$s itens com pastas em %2$s não podem ir para a lixeira: %3$s.</item>
         <item quantity="other">%1$s itens com pastas em %2$s não podem ir para a lixeira: %3$s.</item>
     </plurals>
+    <plurals name="gallery_selected">
+        <item quantity="one">%1$s selecionada</item>
+        <item quantity="many">%1$s selecionadas</item>
+        <item quantity="other">%1$s selecionadas</item>
+    </plurals>
+    <string name="gallery_select_all">Selecionar tudo</string>
+    <string name="gallery_selection_clear">Limpar a seleção</string>
+    <string name="gallery_move_to_trash">Mover para a lixeira</string>
+    <plurals name="gallery_trash_unmapped">
+        <item quantity="one">%1$s foto do servidor fica de fora: o Hoard ainda não sabe em que compartilhamento ela está. Abra a pasta dela em Arquivos uma vez.</item>
+        <item quantity="many">%1$s fotos do servidor ficam de fora: o Hoard ainda não sabe em que compartilhamento elas estão. Abra a pasta delas em Arquivos uma vez.</item>
+        <item quantity="other">%1$s fotos do servidor ficam de fora: o Hoard ainda não sabe em que compartilhamento elas estão. Abra a pasta delas em Arquivos uma vez.</item>
+    </plurals>
+    <plurals name="gallery_trash_upload_only">
+        <item quantity="one">%1$s foto existe só como envio no servidor e fica de fora (o "Apagar do servidor" do Reveal a remove).</item>
+        <item quantity="many">%1$s fotos existem só como envios no servidor e ficam de fora (o "Apagar do servidor" do Reveal as remove).</item>
+        <item quantity="other">%1$s fotos existem só como envios no servidor e ficam de fora (o "Apagar do servidor" do Reveal as remove).</item>
+    </plurals>
+    <string name="trash_server_section">No servidor de fotos</string>
+    <string name="trash_server_hint">Enviada para a lixeira em outro dispositivo. Abra a pasta dela em Arquivos uma vez para restaurar ou esvaziar daqui.</string>
 </resources>

@@ -408,4 +408,21 @@
         <item quantity="one">%1$s item with folders in %2$s cannot go to the trash: %3$s.</item>
         <item quantity="other">%1$s items with folders in %2$s cannot go to the trash: %3$s.</item>
     </plurals>
+    <plurals name="gallery_selected">
+        <item quantity="one">%1$s selected</item>
+        <item quantity="other">%1$s selected</item>
+    </plurals>
+    <string name="gallery_select_all">Select all</string>
+    <string name="gallery_selection_clear">Clear the selection</string>
+    <string name="gallery_move_to_trash">Move to trash</string>
+    <plurals name="gallery_trash_unmapped">
+        <item quantity="one">%1$s server photo is left out: Hoard does not know its share yet. Open its folder in Files once.</item>
+        <item quantity="other">%1$s server photos are left out: Hoard does not know their share yet. Open their folder in Files once.</item>
+    </plurals>
+    <plurals name="gallery_trash_upload_only">
+        <item quantity="one">%1$s photo exists only as an upload on the server and is left out (Reveal\'s "Delete from server" removes it).</item>
+        <item quantity="other">%1$s photos exist only as uploads on the server and are left out (Reveal\'s "Delete from server" removes them).</item>
+    </plurals>
+    <string name="trash_server_section">On the photo server</string>
+    <string name="trash_server_hint">Trashed on another device. Open its folder in Files once to restore it or empty it from here.</string>
 </resources>

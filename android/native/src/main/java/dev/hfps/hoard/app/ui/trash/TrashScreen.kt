@@ -79,6 +79,8 @@ data class TrashUi(
     val refreshing: Boolean = false,
     val autoDays: Int = AppSettings.TRASH_AUTO_EMPTY_DEFAULT,
     val loaded: Boolean = false,
+    /** Server photos another device trashed whose share Hoard does not know (ADR 0023, A4). */
+    val server: List<ServerTrashRow> = emptyList(),
 ) {
     val files: Int get() = days.sumOf { it.files }
     val bytes: Long get() = days.sumOf { it.bytes }
@@ -88,9 +90,26 @@ data class TrashUi(
     val reachableBytes: Long get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.bytes } }
 }
 
+/** A server photo in a trash that Hoard cannot reach through a share: shown with the server's thumbnail, no actions. */
+data class ServerTrashRow(val entry: dev.hfps.hoard.app.gallery.GalleryEntry, val since: Long)
+
+/** The rows of [items] (trashed server items) as the Gallery's entries, for their thumbnails. */
+fun serverTrashRows(items: List<dev.hfps.hoard.server.db.ServerItemEntity>): List<ServerTrashRow> {
+    val rows = items.map {
+        dev.hfps.hoard.server.db.ServerItemRow(
+            it.id, it.kind, it.mainFingerprint, it.sortTime, it.captureLocal, it.make, it.model, it.lens, it.width, it.height,
+            it.durationMs, it.name, it.folder, it.search, it.hasRaw, it.editPrimary, it.editCount,
+        )
+    }
+    val since = items.associate { it.id to (it.trashedSince ?: 0L) }
+    val entries = dev.hfps.hoard.app.gallery.GalleryModel.entries(dev.hfps.hoard.app.gallery.GalleryInput(rows, emptyList(), emptyMap(), emptyMap(), emptyMap()))
+    return entries.map { ServerTrashRow(it, since[it.itemId] ?: 0L) }.sortedByDescending { it.since }
+}
+
 class TrashViewModel(private val container: AppContainer, private val phoneName: String, private val driveName: String) : ViewModel() {
     private val unreachable = MutableStateFlow<Set<TrashPlace>>(emptySet())
     private val refreshing = MutableStateFlow(false)
+    private val server = MutableStateFlow<List<ServerTrashRow>>(emptyList())
 
     val ui: StateFlow<TrashUi> = combine(
         container.trash.observe(),
@@ -109,7 +128,7 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
             }
         }
         TrashUi(TrashGroups.of(rows, away, label), busy, days, loaded = true)
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrashUi())
+    }.combine(server) { ui, srv -> ui.copy(server = srv) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrashUi())
 
     init {
         refresh()
@@ -121,6 +140,8 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
         viewModelScope.launch {
             try {
                 unreachable.value = container.trash.refresh()
+                val unplaced = runCatching { container.trash.registerServerTrash() }.getOrDefault(emptyList()).toSet()
+                server.value = serverTrashRows(container.gallery.db.items().trashed().filter { it.id in unplaced })
             } finally {
                 refreshing.value = false
             }
@@ -158,6 +179,7 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
     var dialog by remember { mutableStateOf<TrashDialog?>(null) }
     TrashContent(
         ui = ui,
+        thumbs = container.gallery.thumbs,
         onBack = onBack,
         onRefresh = vm::refresh,
         onEmpty = { dialog = TrashDialog.Empty },
@@ -234,6 +256,7 @@ fun TrashContent(
     onEmpty: () -> Unit = {},
     onRestore: (List<TrashEntryEntity>) -> Unit = {},
     onDelete: (List<TrashEntryEntity>) -> Unit = {},
+    thumbs: dev.hfps.hoard.app.gallery.ThumbSource? = null,
 ) {
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
@@ -262,7 +285,7 @@ fun TrashContent(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
-                if (ui.loaded && ui.days.isEmpty()) {
+                if (ui.loaded && ui.days.isEmpty() && ui.server.isEmpty()) {
                     item("empty") { EmptyTrash() }
                 }
                 for (day in ui.days) {
@@ -274,7 +297,37 @@ fun TrashContent(
                         }
                     }
                 }
+                if (ui.server.isNotEmpty()) {
+                    item("server") {
+                        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+                            Eyebrow(stringResource(R.string.trash_server_section))
+                            Text(stringResource(R.string.trash_server_hint), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+                        }
+                    }
+                    items(ui.server, key = { "srv-" + it.entry.key }) { row -> ServerRow(row, thumbs) }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun ServerRow(row: ServerTrashRow, thumbs: dev.hfps.hoard.app.gallery.ThumbSource?) {
+    val px = 144
+    val image by androidx.compose.runtime.produceState(thumbs?.peek(row.entry, px), row.entry.key) {
+        if (value == null && thumbs != null) value = runCatching { thumbs.load(row.entry, px) }.getOrNull()
+    }
+    Row(
+        Modifier.fillMaxWidth().background(HfpsTheme.colors.card).padding(horizontal = 16.dp, vertical = 8.dp).testTag("trash-server-row"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(48.dp).background(HfpsTheme.colors.muted, HfpsTheme.shapes.card)) {
+            image?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+        }
+        Column(Modifier.weight(1f)) {
+            Text(row.entry.name, style = HfpsTheme.typography.body, color = HfpsTheme.colors.cardForeground, maxLines = 1)
+            Text(row.entry.folder, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 1)
         }
     }
 }

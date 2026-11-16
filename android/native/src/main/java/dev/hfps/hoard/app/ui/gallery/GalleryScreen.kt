@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateZoom
@@ -135,6 +137,15 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     var filters by remember { mutableStateOf(false) }
     val grid = vm.grid
 
+    // ADR 0023: the selection and Move to trash.
+    var selection by remember { mutableStateOf(dev.hfps.hoard.app.gallery.GallerySelection()) }
+    LaunchedEffect(layout) { layout?.let { l -> selection = selection.prune(l.entries.map { it.key }) } }
+    var trashJob by remember { mutableStateOf<dev.hfps.hoard.app.gallery.GalleryTrashJob?>(null) }
+    val screenScope = rememberCoroutineScope()
+    val phoneName = stringResource(R.string.t_locations_internal)
+    val driveName = stringResource(R.string.t_locations_drive)
+    androidx.activity.compose.BackHandler(enabled = selection.active) { selection = dev.hfps.hoard.app.gallery.GallerySelection() }
+
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermission() }
     val askMedia = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refreshPermission() }
 
@@ -153,7 +164,31 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
         onOpen = vm::openViewer,
         onRefresh = vm::syncNow,
         onDismiss = vm::dismiss,
+        selection = selection,
+        onSelection = { selection = it },
+        onMoveToTrash = {
+            val chosen = layout?.entries.orEmpty().filter { it.key in selection.keys }
+            screenScope.launch { trashJob = dev.hfps.hoard.app.gallery.GalleryTrashJobs.prepare(container, chosen, phoneName, driveName) }
+        },
     )
+    trashJob?.let { job ->
+        val res = androidx.compose.ui.platform.LocalResources.current
+        val leftOut = listOfNotNull(
+            job.selection.noMapping.takeIf { it > 0 }?.let { res.getQuantityString(R.plurals.gallery_trash_unmapped, it, it.toString()) },
+            job.selection.uploadOnly.takeIf { it > 0 }?.let { res.getQuantityString(R.plurals.gallery_trash_upload_only, it, it.toString()) },
+        ).joinToString("\n").ifEmpty { null }
+        dev.hfps.hoard.app.ui.trash.MoveToTrashDialog(
+            container,
+            job.requests,
+            onDismiss = { trashJob = null },
+            onDone = { done ->
+                selection = dev.hfps.hoard.app.gallery.GallerySelection()
+                container.scope.launch { dev.hfps.hoard.app.gallery.GalleryTrashJobs.hide(container, job, done) }
+            },
+            shots = true,
+            leftOut = leftOut,
+        )
+    }
 
     KeepGridPosition(grid, layout, anchor = { vm.anchor }, setAnchor = { vm.anchor = it }, lastViewed = lastViewed, onRevealed = { vm.lastViewed.value = null })
 
@@ -220,6 +255,10 @@ fun GalleryContent(
     onRefresh: () -> Unit = {},
     onDismiss: (String) -> Unit = {},
     scroller: FastScrollerState = rememberFastScrollerState(),
+    /** ADR 0023: the selection (long press, a day header, Select all) and Move to trash. */
+    selection: dev.hfps.hoard.app.gallery.GallerySelection = dev.hfps.hoard.app.gallery.GallerySelection(),
+    onSelection: (dev.hfps.hoard.app.gallery.GallerySelection) -> Unit = {},
+    onMoveToTrash: () -> Unit = {},
 ) {
     var searching by remember { mutableStateOf(ui.filter.query.isNotEmpty()) }
     var goTo by remember { mutableStateOf(false) }
@@ -227,7 +266,14 @@ fun GalleryContent(
     val filter = ui.filter
     HfpsScaffold(
         topBar = {
-            if (searching) {
+            if (selection.active) {
+                SelectionBar(
+                    count = selection.keys.size,
+                    onClear = { onSelection(dev.hfps.hoard.app.gallery.GallerySelection()) },
+                    onSelectAll = { onSelection(selection.all(ui.layout?.entries.orEmpty().map { it.key })) },
+                    onMoveToTrash = onMoveToTrash,
+                )
+            } else if (searching) {
                 SearchBar(filter.query, onQuery = onQuery, onClose = {
                     searching = false
                     onQuery("")
@@ -282,6 +328,8 @@ fun GalleryContent(
                         onColumns = onColumns,
                         onOpen = onOpen,
                         scroller = scroller,
+                        selection = selection,
+                        onSelection = onSelection,
                     )
                 }
             }
@@ -289,6 +337,19 @@ fun GalleryContent(
     }
     val current = ui.layout
     if (goTo && current != null) GoToMonthSheet(current, onGo = { row -> scope.launch { grid.scrollToItem(row) } }, onDismiss = { goTo = false })
+}
+
+/** The top bar while selecting (ADR 0023): the count, Select all (the filtered list), Move to trash. */
+@Composable
+private fun SelectionBar(count: Int, onClear: () -> Unit, onSelectAll: () -> Unit, onMoveToTrash: () -> Unit) {
+    HfpsTopBar(
+        title = androidx.compose.ui.res.pluralStringResource(R.plurals.gallery_selected, count, count.toString()),
+        onBack = onClear,
+        backContentDescription = stringResource(R.string.gallery_selection_clear),
+    ) {
+        HfpsIconButton(PhosphorRegular.CheckSquare, stringResource(R.string.gallery_select_all), onSelectAll, modifier = Modifier.testTag("gallery-select-all"))
+        HfpsIconButton(PhosphorRegular.Trash, stringResource(R.string.gallery_move_to_trash), onMoveToTrash, modifier = Modifier.testTag("gallery-move-to-trash"))
+    }
 }
 
 @Composable
@@ -363,6 +424,8 @@ fun GalleryGrid(
     onColumns: (Int) -> Unit,
     onOpen: (String) -> Unit,
     scroller: FastScrollerState = rememberFastScrollerState(),
+    selection: dev.hfps.hoard.app.gallery.GallerySelection = dev.hfps.hoard.app.gallery.GallerySelection(),
+    onSelection: (dev.hfps.hoard.app.gallery.GallerySelection) -> Unit = {},
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -426,7 +489,13 @@ fun GalleryGrid(
             while (i < rows.size) {
                 val row = rows[i]
                 if (row is GridRow.Header) {
-                    stickyHeader(key = row.id, contentType = "header") { DateHeader(row, locale) }
+                    // The section's keys: a header tap selects (or clears) its day while selecting.
+                    var end = i + 1
+                    while (end < rows.size && rows[end] is GridRow.Cell) end++
+                    val dayKeys = rows.subList(i + 1, end).map { it.id }
+                    stickyHeader(key = row.id, contentType = "header") {
+                        DateHeader(row, locale, onClick = if (selection.active) ({ onSelection(selection.day(dayKeys)) }) else null)
+                    }
                     i++
                     continue
                 }
@@ -436,7 +505,14 @@ fun GalleryGrid(
                 val section = rows.subList(start, i)
                 items(section.size, key = { section[it].id }, contentType = { "cell" }) { n ->
                     val cell = section[n] as GridRow.Cell
-                    GalleryCell(cell.entry, thumbs, px, compact = widthDp / effective < COMPACT_CELL_DP, onOpen = onOpen, texts = texts)
+                    val key = cell.entry.key
+                    GalleryCell(
+                        cell.entry, thumbs, px, compact = widthDp / effective < COMPACT_CELL_DP,
+                        onOpen = { if (selection.active) onSelection(selection.toggle(key)) else onOpen(key) },
+                        texts = texts,
+                        selected = key in selection.keys,
+                        onLongPress = { onSelection(selection.toggle(key)) },
+                    )
                 }
             }
         }
@@ -465,10 +541,11 @@ private fun dayText(day: LocalDate, locale: Locale): String = HeaderTexts.day(da
 private fun monthText(year: Int, month: Int, locale: Locale): String = HeaderTexts.month(year, month, locale)
 
 @Composable
-private fun DateHeader(row: GridRow.Header, locale: Locale) {
+private fun DateHeader(row: GridRow.Header, locale: Locale, onClick: (() -> Unit)? = null) {
     val text = if (row.month) monthText(row.day.year, row.day.monthValue, locale) else dayText(row.day, locale)
     Row(
-        Modifier.fillMaxWidth().background(HfpsTheme.colors.card).padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp).testTag("gallery-header"),
+        Modifier.fillMaxWidth().background(HfpsTheme.colors.card).let { if (onClick != null) it.clickable(onClick = onClick) else it }
+            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 6.dp).testTag("gallery-header"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text, style = HfpsTheme.typography.uiMedium, color = HfpsTheme.colors.foreground, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -516,7 +593,17 @@ fun rememberCellTexts() = CellTexts(
 )
 
 @Composable
-fun GalleryCell(entry: GalleryEntry, thumbs: ThumbSource, px: Int, compact: Boolean, onOpen: (String) -> Unit, texts: CellTexts = rememberCellTexts()) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+fun GalleryCell(
+    entry: GalleryEntry,
+    thumbs: ThumbSource,
+    px: Int,
+    compact: Boolean,
+    onOpen: (String) -> Unit,
+    texts: CellTexts = rememberCellTexts(),
+    selected: Boolean = false,
+    onLongPress: (() -> Unit)? = null,
+) {
     val image: ImageBitmap? by produceState(thumbs.peek(entry, px), thumbs.key(entry, px)) {
         if (value == null) value = thumbs.load(entry, px)
     }
@@ -524,11 +611,24 @@ fun GalleryCell(entry: GalleryEntry, thumbs: ThumbSource, px: Int, compact: Bool
         Modifier
             .aspectRatio(1f)
             .background(HfpsTheme.colors.muted)
-            .clickable { onOpen(entry.key) }
-            .testTag("gallery-cell")
+            .let { m ->
+                if (onLongPress != null) m.combinedClickable(onClick = { onOpen(entry.key) }, onLongClick = onLongPress) else m.clickable { onOpen(entry.key) }
+            }
+            .let { m -> if (selected) m.border(3.dp, HfpsTheme.colors.primary) else m }
+            .testTag(if (selected) "gallery-cell-selected" else "gallery-cell")
             .semantics { contentDescription = entry.name },
     ) {
         image?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        if (selected) {
+            // Centred over a light scrim: the corners keep their badges.
+            Box(Modifier.fillMaxSize().background(HfpsTheme.colors.primary.copy(alpha = 0.18f)))
+            Icon(
+                PhosphorFill.CheckCircle,
+                null,
+                Modifier.align(Alignment.Center).size(28.dp).clip(CircleShape).background(HfpsTheme.colors.card),
+                tint = HfpsTheme.colors.primary,
+            )
+        }
         if (compact) {
             // The densest zoom: only the decision, as a dot.
             when (entry.decision.flag) {

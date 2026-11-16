@@ -33,6 +33,8 @@ object Feed {
                 continue
             }
             live += entity(item)
+            // A trashed item (include=trash) keeps its row, hidden from the grid; its files no longer back up a phone shot.
+            if (item.trashed != null) continue
             files += item.files.distinctBy { it.fingerprint }.map { ServerItemFileEntity(it.fingerprint, item.id, it.role) }
         }
         val records = ArrayList<CullingEntity>()
@@ -80,6 +82,7 @@ object Feed {
             editCount = item.edits.size,
             editedAt = primary?.updatedAt ?: primary?.editedAt,
             json = ServerJson.encodeToString(Item.serializer(), item),
+            trashedSince = item.trashed?.since,
         )
     }
 }

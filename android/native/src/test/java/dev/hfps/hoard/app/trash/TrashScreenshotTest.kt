@@ -156,4 +156,30 @@ class TrashScreenshotTest {
             Column { TrashSettingsContent(30, onDays = {}, onOpenTrash = {}, media = dev.hfps.hoard.app.ui.trash.MediaManagement.Allowed) }
         }
     }
+
+    // --- Phase A4: the Gallery's trash ---
+
+    @Test fun trashServerSectionPhoneLight() = shoot("trash_server_section_phone_light") {
+        val items = listOf("a", "b").map { id ->
+            dev.hfps.hoard.server.db.ServerItemEntity(
+                id = "srv-$id", rev = 1, kind = "photo", mainFingerprint = "fp-$id", sortTime = 1_700_000_000_000L, captureLocal = null,
+                make = null, model = null, lens = null, width = 2400, height = 1600, orientation = null, durationMs = null,
+                name = "DSC0100${if (id == "a") 1 else 2}.ARW", folder = "photos/2024/Wedding", search = "", hasRaw = true, editPrimary = null,
+                editCount = 0, editedAt = null, json = "{}", trashedSince = 1_700_000_100_000L,
+            )
+        }
+        TrashContent(ui().copy(server = dev.hfps.hoard.app.ui.trash.serverTrashRows(items)), onBack = {}, thumbs = dev.hfps.hoard.app.gallery.FakeThumbs)
+    }
+
+    @Test fun trashGalleryConfirmPhoneLight() = shoot("trash_gallery_confirm_phone_light") {
+        Card {
+            TrashConfirmBody(plan.copy(refused = emptyList()), "Internal storage, NAS › photos › Imagens", 30)
+            androidx.compose.material3.Text(
+                "1 server photo is left out: Hoard does not know its share yet. Open its folder in Files once.\n" +
+                    "1 photo exists only as an upload on the server and is left out (Reveal's \"Delete from server\" removes it).",
+                style = HfpsTheme.typography.ui,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+        }
+    }
 }
