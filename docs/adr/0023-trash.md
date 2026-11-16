@@ -139,8 +139,8 @@ with `include=trash` (below), so the Trash screen also shows server photos trash
 ### Restore
 
 Back to the **exact original path**. On a conflict (a file exists there) the shot is **refused**, never renamed: the
-server keeps the item's identity by fingerprint either way, but Reveal re-links a returning NAS file by **path +
-fingerprint**, ADR 0022 matches by path, size and mtime, and a file now at that path may be a newer one the owner
+server keeps the item's identity by fingerprint either way, but Reveal re-links a returning NAS file by its **folder +
+stem**, ADR 0022 matches by path, size and mtime, and a file now at that path may be a newer one the owner
 wants. The message names the file; the owner moves it and restores again. Missing directories are recreated. All
 files of a shot are restored together (a shot whose file fails reports which). Phone: `createTrashRequest(uris,
 false)` (the same consent rule), after checking that the original path is free.
@@ -165,7 +165,8 @@ false)` (the same consent rule), after checking that the original path is free.
 - **Gallery**: selection (long press, day header), the existing **Rejected** filter, **Select all** (the filtered
   list: the whole library, a folder search, a date range), **Move to trash**. A shot on the phone and the server moves
   every copy Hoard can reach. Server shots whose folder has no mapping ("open the folder in Files once"), and shots
-  that exist only as server uploads, are left out and counted in the dialog.
+  that exist only as server uploads, are left out and counted in the dialog (decided with Reveal: upload-only shots
+  never go to the trash; deleting them is Reveal's "Delete from server").
 - **Trash screen** (Files and Gallery overflow, Settings › Trash): grouped by **day**, then **folder**, with the
   shot count and size per group; the place (share, phone, drive) as an eyebrow; thumbnails (phone files, the server's
   preview of a trashed item, else none). Actions: **Restore**, **Delete permanently**, **Empty trash**. Unreachable
@@ -269,17 +270,20 @@ gets a warning in the dialog: "this photo server will forget Reveal's edits of t
 Reveal reads the NAS feed (`/v1/nas/files`), culling (`include=culling`) and edits.
 
 - **A trashed NAS photo Reveal edited.** The NAS feed sends each file's row `removed: true, trashed: true`. Reveal
-  deletes the file row as for any removal; its photo survives (edit, hand-off or record; W5) and its versions stay.
+  0.9.0 deletes the file row as for any removal; a photo with an edit, a hand-off or a record survives (W5) and stays
+  in its grid, unopenable, with its versions; unedited ones leave it.
   On the server, the item, its edits (edited previews) and its culling record stay; `PUT` of an edit gets `404`
   (rule 7: look up again, `missing`, retry on a later pass); `GET /v1/originals/{fp}` still serves the file.
 - **A restore.** The NAS feed sends `removed: false` at the **same path** with the **same fingerprint** (a rename
-  keeps the bytes; restore refuses a taken path), so Reveal re-links by path + fingerprint. Same item id, edits never
-  dropped; held uploads succeed.
+  keeps the bytes; restore refuses a taken path), so Reveal re-links the photo by **folder + stem**, which the exact-path
+  restore keeps. Same item id, edits never dropped; held uploads succeed.
 - **An Empty.** The NAS feed sends the row again, `removed: true` without `trashed`; the item becomes a tombstone and
   its server edits are removed (ADR 0020). Reveal's own photo, versions and records are untouched (the server never
   tombstones them); its original is no longer served, as for any deleted NAS file.
-- **Reveal must change: nothing.** Optional: read `trashed` on NAS feed entries to show "In trash" instead of
-  "unavailable", and keep the photo's server edits link across a `404` on `PUT` (it already does).
+- **Reveal must change: nothing for safety; 0.10.0 adds the in-trash state.** Reveal 0.10.0's plan: with feature
+  `trash` listed, read `trashed` on NAS feed entries, hide or badge those photos as in trash (instead of
+  unopenable), and on a purge (the row again without `trashed`) clear `original_on_server`. It already keeps the
+  photo's server edits link across a `404` on `PUT`.
 
 ## Build plan
 
@@ -307,8 +311,8 @@ Order: S1 first and released; A1 → A2 → A3 → A4 (A2 and A3 work without a 
   puts a photo back exactly where it was (if another file took its place, Hoard tells you instead of overwriting).
   **Empty trash** asks first and shows how much space it frees. The trash empties itself after 30 days (Settings ›
   Trash).
-- **Edits survive the trash.** With hoard-server 0.11.0, trashed photos leave the Gallery, Reveal and the web gallery
-  but keep their Reveal edits and ratings on the server; a restored photo comes back with them.
+- **Edits survive the trash.** With hoard-server 0.11.0, trashed photos leave the Gallery and the web gallery (Reveal
+  keeps the ones you edited until Reveal 0.10.0 shows them as in trash) but keep their Reveal edits and ratings on the server; a restored photo comes back with them.
 
 ## Consequences
 
@@ -320,13 +324,11 @@ Order: S1 first and released; A1 → A2 → A3 → A4 (A2 and A3 work without a 
 
 ## Open questions for the owner
 
-1. Server shots that exist only as **uploads** (Reveal's originals backup) are left out. Delete them through the server
-   later, or keep them out of the trash?
-2. Should the plain **Files delete** (a selection outside culling) also go to the trash?
-3. Auto-empty: on by default at 30 days (7 / 30 / 90), fine?
-4. Case 5: refuse when the server is unreachable and the folder is not yet mapped, or trash to the share root and
+1. Should the plain **Files delete** (a selection outside culling) also go to the trash?
+2. Auto-empty: on by default at 30 days (7 / 30 / 90), fine?
+3. Case 5: refuse when the server is unreachable and the folder is not yet mapped, or trash to the share root and
    accept that the server forgets those edits?
-5. Ask for **Media management** in the first trash dialog, or only from Settings?
+4. Ask for **Media management** in the first trash dialog, or only from Settings?
 
 ## Alternatives considered
 
