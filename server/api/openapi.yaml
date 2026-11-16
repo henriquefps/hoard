@@ -1597,7 +1597,8 @@ paths:
         containing roots absorbs them (`details.absorbed`). The phone's folder under the backup root is made with its
         first root. Paths: relative, '/'-separated, NFC, at most 1024 bytes, segments at most 255 bytes; refused when
         absolute, with "." or ".." segments, a segment starting with ".", a backslash, NUL or control character
-        ("a//b" is "a/b").
+        ("a//b" is "a/b"), or, on the primary volume, a first segment "SD card <UUID>" (any case; the tree's SD card
+        folders).
       requestBody:
         required: true
         content:

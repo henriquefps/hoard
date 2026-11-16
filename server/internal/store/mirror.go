@@ -626,7 +626,7 @@ func (s *Store) ApplyReport(ctx context.Context, root MirrorRoot, entries []Repo
 			if had && owner.Fingerprint == e.Fingerprint && owner.Size == e.Size && (e.SHA256 == "" || owner.SHA256 == "" || owner.SHA256 == e.SHA256) {
 				// The same file (again, or restored to the phone): a current entry, no upload.
 				if _, err := tx.ExecContext(ctx, `UPDATE mirror_entries SET root_id = ?, modified_at = ?, sha256 = coalesce(sha256, ?), on_device = 1,
-					removed_at = NULL, removed_reason = NULL, reported_by = ?, updated_at = ? WHERE id = ?`,
+					removed_at = NULL, removed_reason = NULL, pinned = 0, reported_by = ?, updated_at = ? WHERE id = ?`,
 					root.ID, e.ModifiedAt, nullString(e.SHA256), opt.DeviceID, now, owner.ID); err != nil {
 					return err
 				}
@@ -720,7 +720,8 @@ func (s *Store) ApplyReport(ctx context.Context, root MirrorRoot, entries []Repo
 				}
 			}
 			if _, err := tx.ExecContext(ctx, `UPDATE mirror_entries SET on_device = 0, removed_reason = ?, removed_at = coalesce(removed_at, ?),
-				reported_by = ?, updated_at = ? WHERE id = ?`, reason, now, opt.DeviceID, now, owner.ID); err != nil {
+				pinned = CASE WHEN ? = 'freed' THEN 1 ELSE pinned END, reported_by = ?, updated_at = ? WHERE id = ?`, reason, now, reason,
+				opt.DeviceID, now, owner.ID); err != nil {
 				return err
 			}
 			touch(owner.ID)
@@ -1151,12 +1152,16 @@ type PurgeResult struct {
 	DirName string   // the phone's folder (the caller removes it)
 	Removed []string // blobs no longer named by anything (the caller removes their files)
 	Entries int
-	Pinned  int // freed entries among them (the only copies)
+	Pinned  int // pinned entries among them: freed on the phone, the only copies
+	// Links are the hard links the server made in the phone's folder (the caller removes exactly these), Roots the
+	// roots whose manifests go.
+	Links []MirrorEntry
+	Roots []string
 }
 
 // MirrorPurgeInfo counts a phone's entries and its pinned (freed) ones, for the purge warning.
 func (s *Store) MirrorPurgeInfo(ctx context.Context, physicalID string) (entries, pinned int, err error) {
-	err = s.db.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(removed_reason = 'freed'), 0) FROM mirror_entries WHERE physical_id = ?", physicalID).
+	err = s.db.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(pinned), 0) FROM mirror_entries WHERE physical_id = ?", physicalID).
 		Scan(&entries, &pinned)
 	return
 }
@@ -1190,9 +1195,19 @@ func (s *Store) PurgeMirror(ctx context.Context, physicalID string) (PurgeResult
 			cs = append(cs, c)
 		}
 		rows.Close()
-		if err := tx.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(removed_reason = 'freed'), 0) FROM mirror_entries WHERE physical_id = ?",
+		if err := tx.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(pinned), 0) FROM mirror_entries WHERE physical_id = ?",
 			physicalID).Scan(&out.Entries, &out.Pinned); err != nil {
 			return err
+		}
+		if out.Links, err = queryMirrorEntries(ctx, tx, "WHERE e.physical_id = ? AND e.tree_path IS NOT NULL ORDER BY e.id", physicalID); err != nil {
+			return err
+		}
+		rs, err := queryMirrorRoots(ctx, tx, "WHERE r.physical_id = ?", physicalID)
+		if err != nil {
+			return err
+		}
+		for _, r := range rs {
+			out.Roots = append(out.Roots, r.ID)
 		}
 		for _, q := range []string{
 			"DELETE FROM mirror_entries WHERE physical_id = ?",
@@ -1281,7 +1296,7 @@ type MirrorUsage struct {
 	NasFiles     int    `json:"nasFiles"` // NAS references
 	NasBytes     int64  `json:"nasBytes"`
 	Waiting      int    `json:"waiting"`
-	Pinned       int    `json:"pinned"` // freed entries: the only copies
+	Pinned       int    `json:"pinned"` // entries freed on the phone (pinned): the only copies
 	Entries      int    `json:"entries"`
 	Lost         int    `json:"lost"`
 	Previous     int    `json:"previous"` // rewritten files' previous versions
@@ -1291,7 +1306,7 @@ type MirrorUsage struct {
 // MirrorUsageAll returns every phone's storage accounting.
 func (s *Store) MirrorUsageAll(ctx context.Context) (map[string]MirrorUsage, error) {
 	out := map[string]MirrorUsage{}
-	rows, err := s.db.QueryContext(ctx, `SELECT physical_id, count(*), coalesce(sum(removed_reason = 'freed'), 0), coalesce(sum(store = 'none'), 0),
+	rows, err := s.db.QueryContext(ctx, `SELECT physical_id, count(*), coalesce(sum(pinned), 0), coalesce(sum(store = 'none'), 0),
 		coalesce(sum(lost_at IS NOT NULL AND store = 'none'), 0), coalesce(sum(removed_reason = 'replaced'), 0),
 		coalesce(sum(removed_reason = 'deleted'), 0) FROM mirror_entries GROUP BY physical_id`)
 	if err != nil {

@@ -198,3 +198,20 @@ func TestManifest(t *testing.T) {
 		t.Fatalf("%q", b)
 	}
 }
+
+// A path on main storage can never land in an SD card's folder of the tree.
+func TestSDCardPrefixIsReservedOnMainStorage(t *testing.T) {
+	for _, p := range []string{"SD card 1234-ABCD", "SD card 1234-abcd/DCIM/a.jpg", "sd CARD 0123abcd-0123-4567-89ab-0123456789ab/x.jpg"} {
+		if err := CheckVolumePath(Primary, p); !errors.Is(err, ErrPath) {
+			t.Errorf("%q accepted on primary", p)
+		}
+		if err := CheckVolumePath("1234-ABCD", p); err != nil {
+			t.Errorf("%q refused on an SD card: %v", p, err)
+		}
+	}
+	for _, p := range []string{"", "DCIM/SD card 1234-ABCD/a.jpg", "SD card backup/a.jpg", "SD card 1234-ABCDE/a.jpg", "SD cards/a.jpg"} {
+		if err := CheckVolumePath(Primary, p); err != nil {
+			t.Errorf("%q refused: %v", p, err)
+		}
+	}
+}

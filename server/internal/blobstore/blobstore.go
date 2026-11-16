@@ -170,8 +170,22 @@ func (s *Store) Complete(id, sha string, size int64, fp string) error {
 	if err := s.root.MkdirAll(path.Dir(dst), 0o700); err != nil {
 		return err
 	}
-	if err := s.root.Rename(partPath(id), dst); err != nil {
-		return err
+	// Never replace a blob that is there: a phone backup's hard links (ADR 0024) share its inode, and a second copy
+	// would leave them on the old one (twice the disk, and a link Remove no longer recognises). A link is atomic and
+	// fails when the name exists; the part file then goes. Without hard links, a rename is made only when no blob is
+	// there (the bytes are the same either way).
+	err = s.root.Link(partPath(id), dst)
+	switch {
+	case err == nil || errors.Is(err, fs.ErrExist):
+		if rmErr := s.root.Remove(partPath(id)); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+			return rmErr
+		}
+	case s.Has(sha):
+		return s.Abort(id)
+	default:
+		if err := s.root.Rename(partPath(id), dst); err != nil {
+			return err
+		}
 	}
 	return s.syncDir(path.Dir(dst))
 }
@@ -213,10 +227,13 @@ func (s *Store) Remove(sha string) error {
 // file, disk to disk). The bytes are hashed as they are written; check (may be nil) sees the SHA-256 and may refuse
 // it; then Complete reads the stored file again and checks its SHA-256 and fingerprint fp before it moves it into
 // place, so a returned sha256 is the hash of the bytes on disk. A blob already in the store is kept as it is.
-func (s *Store) Ingest(r io.Reader, size int64, fp string, check func(sha string) error) (string, error) {
+//
+// fresh is false when the blob was already in the store: its bytes on disk were not read back, so they still need a
+// re-hash before anyone relies on them (ADR 0024 "verify").
+func (s *Store) Ingest(r io.Reader, size int64, fp string, check func(sha string) error) (sha string, fresh bool, err error) {
 	var b [16]byte
 	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
-		return "", err
+		return "", false, err
 	}
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
@@ -228,24 +245,24 @@ func (s *Store) Ingest(r io.Reader, size int64, fp string, check func(sha string
 	}
 	if err != nil {
 		_ = s.Abort(id)
-		return "", err
+		return "", false, err
 	}
-	sha := hex.EncodeToString(h.Sum(nil))
+	sha = hex.EncodeToString(h.Sum(nil))
 	if check != nil {
 		if err := check(sha); err != nil {
 			_ = s.Abort(id)
-			return "", err
+			return "", false, err
 		}
 	}
 	if s.Has(sha) {
 		_ = s.Abort(id)
-		return sha, nil
+		return sha, false, nil
 	}
 	if err := s.Complete(id, sha, size, fp); err != nil {
 		_ = s.Abort(id)
-		return "", err
+		return "", false, err
 	}
-	return sha, nil
+	return sha, true, nil
 }
 
 // HasAnyBlob reports whether the folder holds blobs (the backup root is then fixed).

@@ -197,14 +197,6 @@ func (t *Tree) RemoveFile(dir, rel string) error {
 	return err
 }
 
-// RemoveDevice deletes a device folder and everything in it (the admin's purge: its blobs are decided by the database).
-func (t *Tree) RemoveDevice(dir string) error {
-	if !ValidDirName(dir) {
-		return fmt.Errorf("%w: device folder", ErrPath)
-	}
-	return t.root.RemoveAll(dir)
-}
-
 // RenameDevice renames a device folder (the admin's rename); the new name must not exist.
 func (t *Tree) RenameDevice(from, to string) error {
 	if !ValidDirName(from) || !ValidDirName(to) {
@@ -220,23 +212,38 @@ func (t *Tree) RenameDevice(from, to string) error {
 	return err
 }
 
-// PruneDevice removes a device folder's manifests, then the directories left empty (a folder whose entries moved to
-// another phone's folder). Files that are not the server's stay, and so does the folder then.
-func (t *Tree) PruneDevice(dir string) {
+// PruneDevice removes a device folder's manifests (and their temporary files), then the directories left empty (a
+// folder whose entries moved to another phone's folder, or a purged phone's after its links went). It never removes
+// anything else: files the owner put there stay, and so do the directories holding them. It returns how many such
+// files are left.
+func (t *Tree) PruneDevice(dir string) int {
 	if !ValidDirName(dir) {
-		return
+		return 0
 	}
-	_ = t.root.RemoveAll(dir + "/" + MetaDir)
+	if ents, err := fs.ReadDir(t.root.FS(), dir+"/"+MetaDir); err == nil {
+		for _, e := range ents {
+			n := e.Name()
+			if e.Type().IsRegular() && strings.HasPrefix(n, "manifest-") && (strings.HasSuffix(n, ".tsv") || strings.HasSuffix(n, ".tsv.tmp")) {
+				_ = t.root.Remove(dir + "/" + MetaDir + "/" + n)
+			}
+		}
+	}
 	var dirs []string
+	left := 0
 	_ = fs.WalkDir(t.root.FS(), dir, func(p string, d fs.DirEntry, err error) error {
-		if err == nil && d.IsDir() {
+		switch {
+		case err != nil:
+		case d.IsDir():
 			dirs = append(dirs, p)
+		default:
+			left++
 		}
 		return nil
 	})
 	for i := len(dirs) - 1; i >= 0; i-- {
-		_ = t.root.Remove(dirs[i])
+		_ = t.root.Remove(dirs[i]) // only an empty directory goes
 	}
+	return left
 }
 
 // IsLinkError reports a failure of the link itself (the entry then stays index-only), as opposed to a missing blob.

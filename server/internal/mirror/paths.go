@@ -116,6 +116,23 @@ func VolumeDir(volume string) string {
 	return "SD card " + volume
 }
 
+// sdCardDir matches a first segment that names another volume's folder in the tree ("SD card 1234-ABCD", any case).
+var sdCardDir = regexp.MustCompile(`(?i)^sd card ([0-9a-f]{4}-[0-9a-f]{4}|[0-9a-f-]{36})$`)
+
+// CheckVolumePath refuses (ErrPath) a primary-volume path whose first segment is an SD card's folder name in the tree
+// ("SD card <UUID>", in any case): the tree puts other volumes there, so such a path would mix two volumes' files.
+// Paths on other volumes have their own folder and are never refused.
+func CheckVolumePath(volume, p string) error {
+	if volume != Primary {
+		return nil
+	}
+	first, _, _ := strings.Cut(p, "/")
+	if sdCardDir.MatchString(first) {
+		return pathErr("%q is reserved for an SD card's folder in the backup", first)
+	}
+	return nil
+}
+
 // TreePath is where a phone file lives inside its device folder.
 func TreePath(volume, p string) string {
 	if d := VolumeDir(volume); d != "" {

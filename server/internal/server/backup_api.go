@@ -135,6 +135,9 @@ func (s *Server) handleBackupRootCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	p, err := mirror.CleanPath(*req.Path, true)
+	if err == nil {
+		err = mirror.CheckVolumePath(volume, p)
+	}
 	if err != nil {
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "path: "+err.Error()+".", map[string]any{"field": "path"})
 		return
@@ -266,6 +269,9 @@ func (s *Server) handleBackupRootStop(w http.ResponseWriter, r *http.Request) {
 // phonePath validates a reported path: a phone path (mirror.CleanPath) inside the root, of a photo, video or sidecar.
 func phonePath(rt store.MirrorRoot, p string, needMedia bool) (string, string) {
 	c, err := mirror.CleanPath(p, false)
+	if err == nil {
+		err = mirror.CheckVolumePath(rt.Volume, c)
+	}
 	if err != nil {
 		return "", err.Error()
 	}

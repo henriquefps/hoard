@@ -53,6 +53,8 @@ export const STRINGS = {
     backupPurgeConfirm: "Delete the backup of {name}? {entries} files leave the server unless Reveal, another phone or an edit still needs them.",
     backupPurgePinned: "{pinned} of them were freed on the phone: these are the ONLY copies and will be lost for good.",
     backupPurged: "Backup deleted.",
+    backupPurgeForeign: "Only what the server put in the folder \"{folder}\" is removed; files you added there yourself stay.",
+    backupPurgedKept: "Backup deleted. {n} files you added stay in \"{folder}\".",
   },
   "pt-BR": {
     title: "Hoard server", theme: "Tema", themeSystem: "Sistema", themeLight: "Claro", themeDark: "Escuro", signOut: "Sair",
@@ -107,5 +109,7 @@ export const STRINGS = {
     backupPurgeConfirm: "Apagar o backup de {name}? {entries} arquivos saem do servidor, a menos que o Reveal, outro celular ou uma edição ainda precise deles.",
     backupPurgePinned: "{pinned} deles foram liberados no celular: são as ÚNICAS cópias e serão perdidos para sempre.",
     backupPurged: "Backup apagado.",
+    backupPurgeForeign: "Só o que o servidor colocou na pasta \"{folder}\" é removido; arquivos que você adicionou lá ficam.",
+    backupPurgedKept: "Backup apagado. {n} arquivos que você adicionou ficam em \"{folder}\".",
   },
 };

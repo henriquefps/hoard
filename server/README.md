@@ -218,7 +218,8 @@ never uploaded again, and the folder takes no extra space. A NAS file is not cop
 folder's `.hoard-mirror/manifest-<root>.tsv`); when the phone no longer has such a file, the server keeps its own copy
 (Setup page › Phone backups › "Keep a copy of NAS files a phone no longer has", on). Files deleted on the phone stay;
 deleting a phone's backup is done only on the setup page, which shows first how many files exist nowhere else (freed
-on the phone).
+on the phone); it removes only what the server put in the phone's folder, so files you added there yourself stay. On
+the phone's main storage, a folder named like an SD card's (`SD card 1234-ABCD`) cannot be backed up.
 
 - Keep the blob store and the phone folders on **one filesystem** (they are both in the backup folder, as the example
   compose file mounts it). If a hard link is impossible (another filesystem, `EXDEV`, or `EPERM`), the server keeps

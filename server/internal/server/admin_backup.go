@@ -123,24 +123,33 @@ func (s *Server) handleAdminBackupPurge(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.backup.fsMu.Lock()
-	s.completeMu.Lock()
 	res, err := s.store.PurgeMirror(ctx, id)
-	s.completeMu.Unlock()
 	if err != nil {
 		s.backup.fsMu.Unlock()
 		s.internal(w, r, err)
 		return
 	}
+	// Only what the server made goes: its hard links (while their blobs are still there to recognise them), the
+	// manifests, then the directories left empty. Files the owner put in the folder stay.
+	kept := 0
 	if t := s.mirrorTree(); t != nil {
-		if err := t.RemoveDevice(res.DirName); err != nil {
-			s.log.Warn("backup: purged phone's folder stays", "err", errorClassOf(err))
+		for _, e := range res.Links {
+			if err := t.Remove(res.DirName, e.TreePath, e.SHA256); err != nil {
+				s.log.Warn("backup: a link of a purged phone stays", "err", errorClassOf(err))
+			}
 		}
+		for _, rid := range res.Roots {
+			_ = t.RemoveFile(res.DirName, mirror.ManifestPath(rid))
+		}
+		kept = t.PruneDevice(res.DirName)
 	}
 	s.backup.fsMu.Unlock()
-	s.removeBlobFiles(res.Removed)
+	if err := s.removeReleasedBlobs(ctx, res.Removed); err != nil {
+		s.log.Warn("a released blob's file stays", "err", errorClassOf(err))
+	}
 	s.indexer.TriggerBackup()
-	s.log.Info("backup: phone purged", "physicalDevice", id, "entries", res.Entries, "pinned", res.Pinned, "blobs", len(res.Removed))
-	writeJSON(w, http.StatusOK, map[string]any{"entries": res.Entries, "pinned": res.Pinned, "removedFiles": len(res.Removed)})
+	s.log.Info("backup: phone purged", "physicalDevice", id, "entries", res.Entries, "pinned", res.Pinned, "blobs", len(res.Removed), "keptFiles", kept)
+	writeJSON(w, http.StatusOK, map[string]any{"entries": res.Entries, "pinned": res.Pinned, "removedFiles": len(res.Removed), "keptFiles": kept})
 }
 
 func (s *Server) handleAdminBackupRename(w http.ResponseWriter, r *http.Request) {

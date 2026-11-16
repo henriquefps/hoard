@@ -470,7 +470,8 @@ another physical device answers `404 not_found`, like an unknown one.
 
 **Paths** (roots, entries, removals): relative, `/`-separated, NFC, at most 1024 bytes, segments at most 255 bytes;
 `422 invalid_request` when absolute, empty (except a root's `""`), with `.` or `..` segments, a segment starting with
-`.`, a backslash, a NUL or a control character (`a//b` is read as `a/b`). Entry paths are relative to the volume and
+`.`, a backslash, a NUL or a control character (`a//b` is read as `a/b`); on the primary volume, a first segment
+`SD card <UUID>` (any case) too, reserved for the SD cards' folders of the tree. Entry paths are relative to the volume and
 inside the root; entries are photos, videos and sidecars (ADR 0014 extensions).
 
 | Method and path | Answer |

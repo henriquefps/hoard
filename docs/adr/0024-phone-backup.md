@@ -83,6 +83,8 @@ backup; storage counted once.
   nothing on disk). The admin page can rename it (one `rename` inside the backup root).
 - **Path on the phone**: the path relative to its storage volume, exactly as the phone has it (`DCIM/Camera/…`). The
   primary volume has no prefix; another volume (an SD card, `vol-<uuid>` in ADR 0005) goes under `SD card <UUID>/`.
+  So that the two never mix, a primary-volume path whose first segment is `SD card <UUID>` (any case, a UUID of the
+  form a volume has) is refused (S1 amendment).
   On the wire a volume is `"primary"` or the volume's UUID as Android shows it (`1234-ABCD`, compared without case),
   so it matches both MediaStore (`VOLUME_NAME`) and SAF document ids (`primary:DCIM/Camera`, `1234-ABCD:DCIM`), which
   Reveal uses.
@@ -742,4 +744,23 @@ What the server PR settled where the text above was silent or loose. Where this 
   /v1/backup/roots` answers `503 storage_not_configured` while no backup folder is chosen).
 - `POST /v1/uploads` with `wait`: an upload created or given a chunk in the last 10 minutes is live (its row's
   `updated_at`).
+
+From the S1 review (same PR):
+
+- **A blob is never replaced.** Completing an upload of bytes the store already has (two devices at once; Reveal 0.9
+  sends no `wait`) drops the new part file instead of renaming it over the blob, so the mirror's hard links keep the
+  blob's inode (a link attempt that fails when the name exists, a rename only on filesystems without hard links).
+- **A NAS copy that finds the blob already there** does not mark it verified: its bytes on disk were not read back, so
+  a re-hash is queued and verify answers `pending` until it is done.
+- **Pinned is a flag** (`mirror_entries.pinned`), set by a `freed` report and cleared only when the phone has that
+  file again (a restore). A rewrite of the path or a lost merge no longer hides it: the purge's "only copies" count
+  (and its `confirmPinned`) and the admin page count `pinned`.
+- **Main storage and SD cards never share a folder**: on the primary volume, a path whose first segment is
+  `SD card <UUID>` (any case) is refused (`422`, roots and reports), since the tree keeps other volumes there.
+- **The purge removes only what the server made** in the phone's folder: the hard links it recorded, its manifests,
+  then directories left empty. Files the owner put there stay (the answer's `keptFiles`, and the page says so before and
+  after).
+- **Blob files are removed under a per-content lock** (a purge, `DELETE /v1/originals`), and only if no row came back
+  meanwhile; completing an upload, registering an existing blob (`exists`) and a NAS copy write their rows under the
+  same lock, so a row never outlives its file.
 

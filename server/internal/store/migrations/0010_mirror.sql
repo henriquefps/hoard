@@ -42,6 +42,8 @@ CREATE TABLE mirror_entries (
     on_device       INTEGER NOT NULL DEFAULT 1,
     removed_at      INTEGER,
     removed_reason  TEXT,             -- 'deleted' | 'moved' | 'freed' | 'replaced'
+    pinned          INTEGER NOT NULL DEFAULT 0, -- freed on the phone (the only copies) until the phone has it again;
+                                                -- kept when the path is rewritten or lost in a merge
     verified_sha256 TEXT,             -- what the server's own re-hash of its copy found
     verified_at     INTEGER,
     reported_by     TEXT    NOT NULL, -- device id

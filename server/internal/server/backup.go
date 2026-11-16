@@ -293,10 +293,17 @@ func (s *Server) copyNasEntry(ctx context.Context, id int64) string {
 		s.indexer.Trigger()
 		return "changed_on_nas"
 	}
-	sha, err := bs.Ingest(f, nf.Size, e.Fingerprint, func(sha string) error {
+	var unlock func()
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
+	sha, fresh, err := bs.Ingest(f, nf.Size, e.Fingerprint, func(sha string) error {
 		if e.SHA256 != "" && e.SHA256 != sha {
 			return errNotPhoneBytes
 		}
+		unlock = s.lockContent(sha) // until its rows are written: a purge must not remove the file meanwhile
 		return nil
 	})
 	f.Close()
@@ -315,12 +322,57 @@ func (s *Server) copyNasEntry(ctx context.Context, id int64) string {
 		s.log.Error("backup: NAS copy", "err", err)
 		return "unavailable"
 	}
-	// Complete read the stored bytes again: that is the server's own re-hash of its copy.
-	if err := s.store.SetBlobVerification(ctx, sha, sha); err != nil {
-		return "unavailable"
+	unlock()
+	unlock = nil
+	if fresh {
+		// Complete read the stored bytes again: that is the server's own re-hash of its copy.
+		if err := s.store.SetBlobVerification(ctx, sha, sha); err != nil {
+			return "unavailable"
+		}
+	} else {
+		s.enqueue("hash:" + sha) // a blob that was already there: its bytes on disk were not read, so re-hash them
 	}
 	s.linkContent(ctx, e.Fingerprint, sha)
 	return ""
+}
+
+// lockContent serialises the work on one content (by SHA-256): a completing upload or NAS copy that writes a blob's
+// rows, and the removal of a blob file whose rows a purge or a delete just dropped (ADR 0024). Striped: two contents
+// may share a lock, never wait for long.
+func (s *Server) lockContent(sha string) func() {
+	i := 0
+	if len(sha) >= 2 {
+		if v, err := strconv.ParseUint(sha[:2], 16, 8); err == nil {
+			i = int(v) % len(s.contentLocks)
+		}
+	}
+	m := &s.contentLocks[i]
+	m.Lock()
+	return m.Unlock
+}
+
+// removeReleasedBlobs removes the files of originals whose rows a purge or a delete dropped, each under its content's
+// lock and only if no row came back meanwhile (an upload of the same bytes completing at that moment keeps the file).
+func (s *Server) removeReleasedBlobs(ctx context.Context, shas []string) error {
+	bs := s.blobStore()
+	if bs == nil {
+		return nil
+	}
+	var first error
+	for _, sha := range shas {
+		unlock := s.lockContent(sha)
+		_, err := s.store.BlobBySHA(ctx, sha)
+		switch {
+		case err == nil: // re-added: the file stays
+		case errors.Is(err, store.ErrNotFound):
+			err = bs.Remove(sha)
+		}
+		unlock()
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 func errorClassOf(err error) string {

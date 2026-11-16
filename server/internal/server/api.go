@@ -615,11 +615,9 @@ func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.indexer.TriggerBackup()
 	if sha != "" {
-		if bs := s.blobStore(); bs != nil {
-			if err := bs.Remove(sha); err != nil {
-				s.internal(w, r, fmt.Errorf("original deleted but its file stays: %w", err))
-				return
-			}
+		if err := s.removeReleasedBlobs(r.Context(), []string{sha}); err != nil {
+			s.internal(w, r, fmt.Errorf("original deleted but its file stays: %w", err))
+			return
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -737,6 +735,7 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	dev := info(r).device
+	defer s.lockContent(req.SHA256)() // "exists" writes rows for the blob: not while its file is being removed
 	if b, err := s.store.BlobBySHA(ctx, req.SHA256); err == nil && bs.Has(req.SHA256) {
 		if b.Size != req.Size {
 			fail(w, r, http.StatusUnprocessableEntity, "checksum_mismatch", "A blob with this sha256 has another size.", nil)
@@ -935,6 +934,15 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		s.completeMu.Lock()
 		defer s.completeMu.Unlock()
 	}
+	unlockContent := s.lockContent(u.SHA256) // the file and its rows together (ADR 0024: purges remove files)
+	contentHeld := true
+	release := func() {
+		if contentHeld {
+			contentHeld = false
+			unlockContent()
+		}
+	}
+	defer release()
 	err = bs.Complete(u.ID, u.SHA256, u.Size, u.Fingerprint)
 	if errors.Is(err, blobstore.ErrChecksum) || errors.Is(err, blobstore.ErrFingerprint) {
 		_ = s.store.SetUploadOffset(ctx, u.ID, 0)
@@ -959,6 +967,7 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	release()
 	if err := s.store.DeleteUpload(ctx, u.ID); err != nil {
 		s.internal(w, r, err)
 		return

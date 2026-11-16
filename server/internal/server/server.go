@@ -110,7 +110,8 @@ type Server struct {
 	blobs  *blobstore.Store // nil until a backup root is chosen
 	tree   *mirror.Tree     // the phone backup's tree in the same backup root (ADR 0024)
 
-	backup backupState // phone backup jobs (ADR 0024)
+	backup       backupState    // phone backup jobs (ADR 0024)
+	contentLocks [64]sync.Mutex // lockContent
 
 	deviceLimit  *ratelimit.Limiter
 	previewLimit *ratelimit.Limiter
