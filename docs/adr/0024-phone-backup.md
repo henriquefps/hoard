@@ -941,3 +941,33 @@ What the app PR settled where the text above was silent or loose. Where this dif
   `physicalDevice.devices`; its button goes back to Settings, where **This phone** is.
 - Client models gained `physicalDevice.devices[].lastSeenAt` and `features`, and the verify answer's `state`/`detail`
   (a refused entry). Nothing changed on the server or in `/v1`.
+
+From the PR review (same PR, an independent second read; each with tests):
+
+1. **A MediaStore id is checked against its file.** Just before each delete request, every media file's row is read
+   again by its id (`DATA`, `SIZE`, `DATE_MODIFIED`) and must name the same path with the size and time the check saw;
+   after a media index rebuild an old id could name another, never backed-up photo. A shot that fails is dropped from
+   the request (`FreeUpPlan.confirm`).
+2. **Unchanged since the check.** The check records each file's stamp (size, modified time in ms) when it hashes it;
+   just before each request every file of the shot (sidecars and listed RAWs included) must still have that stamp. A
+   shot that changed is checked once more (hashed and verified again) and otherwise stays (`changed`). A sidecar or
+   listed RAW is deleted only while its stamp is still the check's (`FreeUpPlan.unchanged`): one culling or Reveal
+   rewrote after the check is never deleted, and then not reported.
+3. **The current bytes, and a recent server re-hash.** The check hashes every file of every shot from the phone's
+   bytes (never a cached hash; a hash that differs from the reported one keeps the shot, `changed`), stamped before and
+   after the read. `POST /v1/backup/verify` is sent with `maxAge` = 24 h (hoard-server 0.12.1, PR #68: a stored re-hash
+   older than that is made again and answered `pending`), and a `yes` counts only when its `verifiedAt` is at most 24 h
+   before the response's `Date` (the server's clock). Against hoard-server 0.12.0, which ignores `maxAge` and reuses a
+   re-hash for 30 days, a file whose re-hash is older than a day keeps being asked and stays ("still being checked on
+   the server"); no `Date` header means no.
+4. **The Reveal gate fails closed.** When Reveal is installed on this phone (it answers Reveal's hand-off action) and
+   no live Reveal is in this phone's `physicalDevice.devices` (not grouped, or listed without `lastSeenAt`), the gate
+   is `Ungrouped`: as `Stale`, nothing is freed, and the preview says to group Reveal with Hoard (Reveal › Settings ›
+   Sync › This device).
+5. **The server's clock.** Staleness (30 minutes) and liveness (90 days) are measured against the `Date` header of
+   the `GET /v1/device` response, not the phone's clock (the phone's only when the server sends none).
+6. **A crash during the dialog.** Before each system dialog the request (its file keys and stamps) is written to
+   `noBackupFilesDir/free-up-pending.json`, and removed once the answer is settled. The next process start (when the file
+   exists), every backup run (before it lists anything) and the next free up settle a request left there: what the system
+   deleted is written to `freed` and reported `freed` (the shot's other files only when unchanged), so it is never
+   reported `deleted`.

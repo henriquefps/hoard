@@ -94,6 +94,7 @@ class FreeUpScreenshotTest {
     @Test fun freeUpPreviewTabletLight() = shoot("freeup_preview_tablet_light", TABLET) { FreeUpContent(preview, onBack = {}) }
     @Test fun freeUpRevealOnPhoneLight() = shoot("freeup_reveal_on_phone_light") { FreeUpContent(preview.copy(gate = RevealGate.On(now - 60_000)), onBack = {}) }
     @Test fun freeUpRevealStalePhoneLight() = shoot("freeup_reveal_stale_phone_light") { FreeUpContent(preview.copy(gate = RevealGate.Stale(now - 3_600_000)), onBack = {}) }
+    @Test fun freeUpRevealUngroupedPhoneDark() = shoot("freeup_reveal_ungrouped_phone_dark", dark = true) { FreeUpContent(preview.copy(gate = RevealGate.Ungrouped), onBack = {}) }
     @Test fun freeUpCheckingPhoneLight() = shoot("freeup_checking_phone_light") {
         FreeUpContent(preview.copy(stage = FreeUpStage.Checking, progress = FreeUpProgress(FreeUpEngine.PHASE_VERIFYING, 3, 8)), onBack = {})
     }

@@ -120,3 +120,21 @@ The server's tree after the run: [`backup-a3/e2e/server-tree.txt`](backup-a3/e2e
 their hard links in the phone's folder). Found and fixed during the run: the debug override of the request size was
 first read from the app's external files folder, which `adb shell` can write but the app could not read; it is now
 read from the app's own files folder (`run-as`). The preview's cover of a RAW + JPEG pair is the JPEG.
+
+### After the PR review (2026-11-16)
+
+New JVM tests: `FreeUpPlanTest` (`aYesCountsOnlyOnAServerRehashAtMost24HoursOld`, `theGateFailsClosedWhenRevealIsInstalledButNotGrouped`, `aRequestTakesOnlyFilesStillAsCheckedAndMediaIdsStillNamingThem`: an id naming another file, a file rewritten, a MediaStore row gone, a sidecar rewritten never deleted), `FreeUpEngineTest` (`theRevealGateUsesTheServersClock` with the phone's clock two hours ahead and one behind, `revealInstalledButNotGroupedFreesNothing`, `theCheckHashesTheCurrentBytesNotTheCachedHash` with the old time put back, `verifyAsksForARehashAtMost24HoursOld` against a server that honours `maxAge`, one that ignores it and one without `Date`, `aRequestLeftWaitingForConsentBySomeoneKillingTheProcessIsSettledAsFreed`, `aSidecarRewrittenAfterTheCheckIsNeverDeleted`); `FakeBackup` sends `Date` and honours `maxAge`. Golden `freeup_reveal_ungrouped_phone_dark`.
+
+Emulator rerun: a new `hoard-a3` AVD (port 5600) and my own hoard-server built from `server-0121-verify-maxage`
+(317a25c, 0.12.1 with `maxAge`), the same synthetic files, the same damaged blob and simulated Reveal; request size 1.
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Preview | the same as before: 6 photos, the Reveal note, 1 kept from the last 30 days | `e2e/r01-preview.png` |
+| Free up: allow, allow, deny, then **`kill -9` of Hoard's process while the 4th dialog is up**, then Allow | the first two requests freed the lone photo and the pair (JPEG, DNG, then its unchanged `.xmp`); the third (denied) stays; `free-up-pending.json` held the 4th request before its dialog; the dialog outlived the process and Android deleted the photo | `e2e/r02-dialog-before-kill.png` |
+| Hoard started again | "settled a request left waiting for consent: 1 files freed": the manifest has `PXL_20260902_080000.jpg` `freed` (never `deleted`); the pending file is gone | `e2e/r03-after-restart.png` |
+| The server's re-hash of `PXL_20260901_080000.jpg` aged by 2 days in its database (container stopped, `sqlite3`), then Free up | verify answered `pending` (with `maxAge` the server re-hashed), 30 s later `yes`; that photo freed (its `verified_at` then 52 s old); the damaged copy stays ("not the same"), "Kept for Reveal: 1" | `e2e/r04-rehash-24h.png` |
+
+Not on the emulator (JVM only): an id naming another file after a media index rebuild, a sidecar rewritten during the
+dialog, and the "not grouped" gate (no Reveal build was installed). During the rerun another session launched its own
+app (`com.hfps.dbinspector.sample`) on this AVD; it was left alone, and the AVD was deleted after the run.
