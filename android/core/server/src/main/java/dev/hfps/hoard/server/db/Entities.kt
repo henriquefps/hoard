@@ -178,6 +178,13 @@ data class DeviceMediaEntity(
     @ColumnInfo(name = "fp_modified") val fpModified: Long? = null,
     /** A Google / Samsung motion photo (MP4 inside the still), checked with the fingerprint. */
     @ColumnInfo(defaultValue = "0") val motion: Boolean = false,
+    /**
+     * The file's SHA-256 (ADR 0024 "Identity"), valid for [shaSize] and [shaModified]: made in the fingerprint's own
+     * read for files of at most 2 MiB, else by the backup just before an upload.
+     */
+    val sha256: String? = null,
+    @ColumnInfo(name = "sha_size") val shaSize: Long? = null,
+    @ColumnInfo(name = "sha_modified") val shaModified: Long? = null,
 )
 
 /** Folders the owner added to the device index beyond the defaults (DCIM, Pictures, Movies, WhatsApp). */
@@ -227,4 +234,80 @@ data class SmbMappingMissEntity(
     val path: String,
     @ColumnInfo(name = "server_id") val serverId: String,
     @ColumnInfo(name = "checked_at") val checkedAt: Long,
+)
+
+/**
+ * A phone folder backed up to the server (ADR 0024 "The app"): the server's root id, the folder as the server names it
+ * ([volume] `primary` or the volume UUID, [path] relative to it, `""` = the whole volume) and as Hoard does
+ * ([locationId] `device` / `vol-<uuid>`, [folder] inside it), the [types] declared to the server (comma-separated).
+ */
+@Entity(tableName = "backup_roots")
+data class BackupRootEntity(
+    @PrimaryKey val id: String,
+    val volume: String,
+    val path: String,
+    @ColumnInfo(name = "location_id") val locationId: String,
+    val folder: String,
+    val types: String,
+    @ColumnInfo(name = "added_at") val addedAt: Long,
+    @ColumnInfo(defaultValue = "0") val paused: Boolean = false,
+    /** The last pass that listed, reported and uploaded everything it could (Unix ms). */
+    @ColumnInfo(name = "last_pass_at") val lastPassAt: Long? = null,
+    /** The server's numbers of the root (`stats`, JSON) as of [lastPassAt]. */
+    @ColumnInfo(name = "server_stats") val serverStats: String? = null,
+)
+
+/**
+ * One file of a backed-up folder (ADR 0024): where it is ([path] relative to its volume, as reported; [absolute] on
+ * the phone; [mediaId] its `device_media` row, null for a RAW or sidecar found by listing), what it is ([kind]
+ * `image` / `video` / `raw` / `sidecar`; [size], [modified], [taken], its [fingerprint] and [sha256], each valid for the
+ * size and mtime it was made for), what the server said ([serverState], [itemId], [verifiedAt]), and the upload
+ * ([uploadId], [uploadOffset] saved after every chunk). [state] is what Settings and the Gallery show; [error] the
+ * reason of `failed`, `paused` (`wifi`, `charging`) or `refused` (the server's reason).
+ */
+@Entity(
+    tableName = "backup_files",
+    primaryKeys = ["root_id", "path"],
+    indices = [
+        Index(value = ["absolute"], name = "idx_backup_files_absolute"),
+        Index(value = ["state"], name = "idx_backup_files_state"),
+    ],
+)
+data class BackupFileEntity(
+    @ColumnInfo(name = "root_id") val rootId: String,
+    val path: String,
+    val absolute: String,
+    @ColumnInfo(name = "media_id") val mediaId: Long?,
+    val kind: String,
+    val size: Long,
+    val modified: Long,
+    val taken: Long,
+    val fingerprint: String? = null,
+    @ColumnInfo(name = "fp_size") val fpSize: Long? = null,
+    @ColumnInfo(name = "fp_modified") val fpModified: Long? = null,
+    val sha256: String? = null,
+    @ColumnInfo(name = "sha_size") val shaSize: Long? = null,
+    @ColumnInfo(name = "sha_modified") val shaModified: Long? = null,
+    val state: String,
+    /** `fingerprint|size|modified` as last reported (null = never): reported again when it differs. */
+    val reported: String? = null,
+    @ColumnInfo(name = "server_state") val serverState: String? = null,
+    @ColumnInfo(name = "item_id") val itemId: String? = null,
+    @ColumnInfo(name = "verified_at") val verifiedAt: Long? = null,
+    @ColumnInfo(name = "upload_id") val uploadId: String? = null,
+    @ColumnInfo(name = "upload_offset") val uploadOffset: Long = 0,
+    @ColumnInfo(defaultValue = "0") val attempts: Int = 0,
+    @ColumnInfo(name = "next_attempt_at") val nextAttemptAt: Long? = null,
+    val error: String? = null,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = 0,
+)
+
+/** A file free up deleted from the phone after the server verified it (ADR 0024 "Free up space", phase A3). */
+@Entity(tableName = "freed")
+data class FreedEntity(
+    @PrimaryKey val path: String,
+    @ColumnInfo(name = "item_id") val itemId: String?,
+    val fingerprint: String,
+    val bytes: Long,
+    @ColumnInfo(name = "freed_at") val freedAt: Long,
 )

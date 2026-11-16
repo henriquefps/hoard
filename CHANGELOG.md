@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.4.0 (unreleased)
+
+Phone backup ([ADR 0024](docs/adr/0024-phone-backup.md), phase A1). Needs hoard-server 0.12.0; with an older server Settings says so and nothing is sent.
+
+- **Settings › Photo server › Phone backup.** Your phone's folders with photos or videos (Camera, Screenshots, WhatsApp images and videos, the others), each with a switch; no folder is on until you turn it on. **Add a folder** backs up any other folder of the phone or of an SD card. The server keeps each folder exactly as the phone has it, in a folder of its own for this phone next to the backup's other files.
+- **Nothing is sent twice.** A photo the server already has (uploaded by Reveal or another phone, or a copy on your NAS) is linked, not uploaded: the folder says "950 already on the server". Only files the server is missing are uploaded, newest first, in resumable chunks: a backup cut off by the network, the phone or Android continues where it stopped.
+- **Rules**: only on Wi-Fi and other unmetered networks (on), only while charging (off), videos only while charging (on), and never while the battery is low. A folder's status says how many files wait for Wi-Fi or for the charger.
+- **Status per folder and per file**: "11,050 of 12,034 backed up · 950 already on the server · 34 waiting for Wi-Fi", the bytes, the last complete pass and, while it runs, the file being sent. Tap a folder for its files, filtered by state (waiting, queued, preparing, uploading, backed up, already on the server, waiting for a rule, failed with the reason). **Back up now** starts at once, within the rules.
+- **The Gallery** marks phone photos of backed-up folders that are not on the server yet (waiting, uploading, waiting for Wi-Fi or charging, failed); once backed up they show as on the server.
+- **Deleted, moved, renamed.** A file you delete on the phone (or move to Android's trash) stays in the backup, marked as deleted from the phone; a renamed or moved file is moved on the server, without uploading it again. Hoard reports a deletion only after reading the whole folder with its storage mounted, so an SD card taken out never deletes anything.
+- **RAW files and XMP sidecars** (CR3 and the RAWs Android does not list) are backed up too when Hoard has All files access; without it Settings › Backup says so and offers to allow it.
+- PNG screenshots, WebP and GIF are backed up like any photo. A file the server does not take is shown with the reason and never holds up the rest of its folder.
+- The backup runs in the background (every 6 hours, 2 minutes after new photos arrive, and on **Back up now**), never while Hoard starts; long uploads show a notification. Checksums are made only for files that must be uploaded (small files get theirs while the Gallery reads them anyway), at most 32 MB/s on battery.
+
 ## 2.3.0 (2026-11-16)
 
 A trash for everything Hoard deletes ([ADR 0023](docs/adr/0023-trash.md)). Needs hoard-server 0.11.0 for server photos to keep their edits while in the trash.

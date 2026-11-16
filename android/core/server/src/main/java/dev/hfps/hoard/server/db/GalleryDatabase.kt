@@ -13,7 +13,9 @@ import kotlinx.coroutines.flow.Flow
 
 /**
  * `gallery.db` (ADR 0021). Room migrations checked against `core/server/schemas/`: version 2 (Hoard 2.2.0, ADR 0022)
- * adds `smb_mappings` and `smb_mapping_misses`; version 3 (Hoard 2.3.0, ADR 0023) adds `server_items.trashed_since`.
+ * adds `smb_mappings` and `smb_mapping_misses`; version 3 (Hoard 2.3.0, ADR 0023) adds `server_items.trashed_since`;
+ * version 4 (Hoard 2.4.0, ADR 0024) adds the phone backup: `backup_roots`, `backup_files`, `freed` and
+ * `device_media.sha256` / `sha_size` / `sha_modified`.
  */
 @Database(
     entities = [
@@ -28,8 +30,11 @@ import kotlinx.coroutines.flow.Flow
         DevicePushedEntity::class,
         SmbMappingEntity::class,
         SmbMappingMissEntity::class,
+        BackupRootEntity::class,
+        BackupFileEntity::class,
+        FreedEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -38,6 +43,7 @@ abstract class GalleryDatabase : RoomDatabase() {
     abstract fun culling(): CullingDao
     abstract fun device(): DeviceDao
     abstract fun mappings(): MappingDao
+    abstract fun backup(): BackupDao
 
     /**
      * Emits whenever the culling records or the queue change (no rows read): a screen that needs only a few items
@@ -70,13 +76,41 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        /** 2.4.0 (ADR 0024): the phone backup's roots and files, `freed` (used from 2.6.0), and the SHA-256 of phone files. */
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `device_media` ADD COLUMN `sha256` TEXT")
+                db.execSQL("ALTER TABLE `device_media` ADD COLUMN `sha_size` INTEGER")
+                db.execSQL("ALTER TABLE `device_media` ADD COLUMN `sha_modified` INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `backup_roots` (`id` TEXT NOT NULL, `volume` TEXT NOT NULL, `path` TEXT NOT NULL, " +
+                        "`location_id` TEXT NOT NULL, `folder` TEXT NOT NULL, `types` TEXT NOT NULL, `added_at` INTEGER NOT NULL, " +
+                        "`paused` INTEGER NOT NULL DEFAULT 0, `last_pass_at` INTEGER, `server_stats` TEXT, PRIMARY KEY(`id`))",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `backup_files` (`root_id` TEXT NOT NULL, `path` TEXT NOT NULL, `absolute` TEXT NOT NULL, " +
+                        "`media_id` INTEGER, `kind` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified` INTEGER NOT NULL, `taken` INTEGER NOT NULL, " +
+                        "`fingerprint` TEXT, `fp_size` INTEGER, `fp_modified` INTEGER, `sha256` TEXT, `sha_size` INTEGER, `sha_modified` INTEGER, " +
+                        "`state` TEXT NOT NULL, `reported` TEXT, `server_state` TEXT, `item_id` TEXT, `verified_at` INTEGER, `upload_id` TEXT, " +
+                        "`upload_offset` INTEGER NOT NULL, `attempts` INTEGER NOT NULL DEFAULT 0, `next_attempt_at` INTEGER, `error` TEXT, " +
+                        "`updated_at` INTEGER NOT NULL, PRIMARY KEY(`root_id`, `path`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `idx_backup_files_absolute` ON `backup_files` (`absolute`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `idx_backup_files_state` ON `backup_files` (`state`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `freed` (`path` TEXT NOT NULL, `item_id` TEXT, `fingerprint` TEXT NOT NULL, " +
+                        "`bytes` INTEGER NOT NULL, `freed_at` INTEGER NOT NULL, PRIMARY KEY(`path`))",
+                )
+            }
+        }
+
         fun open(context: Context, name: String? = FILE_NAME): GalleryDatabase {
             val builder = if (name == null) {
                 Room.inMemoryDatabaseBuilder(context.applicationContext, GalleryDatabase::class.java)
             } else {
                 Room.databaseBuilder(context.applicationContext, GalleryDatabase::class.java, name)
             }
-            return builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+            return builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
         }
     }
 }
@@ -336,6 +370,22 @@ interface DeviceDao {
     @Query("UPDATE device_media SET fingerprint = :fingerprint, fp_size = :size, fp_modified = :modified, motion = :motion WHERE id = :id")
     suspend fun setFingerprint(id: Long, fingerprint: String, size: Long, modified: Long, motion: Boolean)
 
+    /** The fingerprint and, for a file of at most 2 MiB, its SHA-256 from the same read (ADR 0024 "Identity"). */
+    @Query(
+        "UPDATE device_media SET fingerprint = :fingerprint, fp_size = :size, fp_modified = :modified, motion = :motion, " +
+            "sha256 = :sha256, sha_size = CASE WHEN :sha256 IS NULL THEN NULL ELSE :size END, " +
+            "sha_modified = CASE WHEN :sha256 IS NULL THEN NULL ELSE :modified END WHERE id = :id",
+    )
+    suspend fun setIdentity(id: Long, fingerprint: String, size: Long, modified: Long, motion: Boolean, sha256: String?)
+
+    /** A SHA-256 the backup made just before an upload (ADR 0024), for the size and mtime it was made for. */
+    @Query("UPDATE device_media SET sha256 = :sha256, sha_size = :size, sha_modified = :modified WHERE id = :id")
+    suspend fun setSha(id: Long, sha256: String, size: Long, modified: Long)
+
+    /** The phone's folders with photos or videos, with their counts (Settings › Backup's folder list). */
+    @Query("SELECT location_id, dir, COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM device_media GROUP BY location_id, dir")
+    fun observeDirs(): Flow<List<DeviceDirRow>>
+
     @Query("SELECT * FROM device_folders ORDER BY path")
     fun observeFolders(): Flow<List<DeviceFolderEntity>>
 
@@ -394,4 +444,93 @@ interface MappingDao {
 
     @Query("DELETE FROM smb_mapping_misses")
     suspend fun clearAllMisses()
+}
+
+/** What Settings › Backup counts per folder: files and bytes by state (and the reason of `paused` / `failed`). */
+data class BackupCountRow(
+    @ColumnInfo(name = "root_id") val rootId: String,
+    val state: String,
+    val error: String?,
+    val files: Int,
+    val bytes: Long,
+)
+
+/** A phone folder of the index and what it holds. */
+data class DeviceDirRow(@ColumnInfo(name = "location_id") val locationId: String, val dir: String, val files: Int, val bytes: Long)
+
+/** A file's backup state by its path on the phone (the Gallery's badge). */
+data class BackupStateRow(val absolute: String, val state: String)
+
+@Dao
+interface BackupDao {
+    @Query("SELECT * FROM backup_roots ORDER BY volume, path")
+    suspend fun roots(): List<BackupRootEntity>
+
+    @Query("SELECT * FROM backup_roots ORDER BY volume, path")
+    fun observeRoots(): Flow<List<BackupRootEntity>>
+
+    @Query("SELECT * FROM backup_roots WHERE id = :id")
+    suspend fun root(id: String): BackupRootEntity?
+
+    @Upsert
+    suspend fun putRoot(root: BackupRootEntity)
+
+    @Query("UPDATE backup_roots SET last_pass_at = :at, server_stats = :stats WHERE id = :id")
+    suspend fun passed(id: String, at: Long, stats: String?)
+
+    @Query("UPDATE backup_roots SET types = :types WHERE id = :id")
+    suspend fun setTypes(id: String, types: String)
+
+    @Query("DELETE FROM backup_roots WHERE id = :id")
+    suspend fun deleteRootRow(id: String)
+
+    @Query("DELETE FROM backup_files WHERE root_id = :rootId")
+    suspend fun deleteRootFiles(rootId: String)
+
+    /** Forgets a folder here (the server keeps its backup: a device never deletes one, ADR 0024 "Security"). */
+    @Transaction
+    suspend fun deleteRoot(id: String) {
+        deleteRootFiles(id)
+        deleteRootRow(id)
+    }
+
+    /** A root that replaced another (the server's `absorbed`): its files move to [to] with their state. */
+    @Query("UPDATE OR REPLACE backup_files SET root_id = :to WHERE root_id = :from")
+    suspend fun moveFiles(from: String, to: String)
+
+    @Query("SELECT * FROM backup_files WHERE root_id = :rootId")
+    suspend fun files(rootId: String): List<BackupFileEntity>
+
+    @Query("SELECT * FROM backup_files WHERE root_id = :rootId ORDER BY taken DESC")
+    fun observeFiles(rootId: String): Flow<List<BackupFileEntity>>
+
+    @Query("SELECT * FROM backup_files WHERE root_id = :rootId AND path = :path")
+    suspend fun file(rootId: String, path: String): BackupFileEntity?
+
+    @Upsert
+    suspend fun putFiles(rows: List<BackupFileEntity>)
+
+    @Query("DELETE FROM backup_files WHERE root_id = :rootId AND path IN (:paths)")
+    suspend fun deleteFiles(rootId: String, paths: List<String>)
+
+    @Query("SELECT root_id, state, error, COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM backup_files GROUP BY root_id, state, error")
+    fun observeCounts(): Flow<List<BackupCountRow>>
+
+    @Query("SELECT root_id, state, error, COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM backup_files GROUP BY root_id, state, error")
+    suspend fun counts(): List<BackupCountRow>
+
+    /** Files not (yet) backed up, by phone path: the Gallery's badges (backed-up files show as on the server). */
+    @Query("SELECT absolute, state FROM backup_files WHERE state NOT IN ('stored', 'nas', 'verified')")
+    fun observeOpenStates(): Flow<List<BackupStateRow>>
+
+    /** A killed run left files `hashing` or `uploading`: they are queued again (the upload id and offset stay). */
+    @Query("UPDATE backup_files SET state = 'queued' WHERE state IN ('hashing', 'uploading')")
+    suspend fun settleInterrupted()
+
+    /** Rows of a folder turned off while a run was writing them. */
+    @Query("DELETE FROM backup_files WHERE root_id NOT IN (SELECT id FROM backup_roots)")
+    suspend fun deleteOrphans()
+
+    @Query("SELECT COUNT(*) FROM freed")
+    suspend fun freedCount(): Int
 }

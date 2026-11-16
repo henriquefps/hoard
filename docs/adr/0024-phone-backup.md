@@ -783,3 +783,57 @@ From the S1 review (same PR):
   meanwhile; completing an upload, registering an existing blob (`exists`) and a NAS copy write their rows under the
   same lock, so a row never outlives its file.
 
+
+## Amendment (A1, Hoard 2.4.0)
+
+What the app PR settled where the text above was silent or loose. Where this differs from a line above, this wins.
+
+- **Stills include PNG, WebP and GIF** (coordinator's decision, 2026-11-16): a root's `image` type covers every still
+  MediaStore lists whose extension the server takes for mirror entries: JPEG, HEIF, PNG, WebP, GIF and the RAWs Android
+  lists (a DNG from MediaStore is `image`). hoard-server 0.12.0 accepts PNG, WebP and GIF for mirror entries (the
+  mirror-formats change of S1; the NAS walk keeps its classifier). Other formats are never reported and never count.
+- **Per-entry refusals.** A report answer `state: "refused"` with a `reason` (`unsupported_type`, `invalid_path`,
+  `outside_root`, `reserved_prefix`) is the file's state (`refused`, shown with the reason) and the file is not reported
+  again until its size, mtime or fingerprint changes. Against a server that answers a whole batch `422` with
+  `details.index` (before that change), the app marks that entry `refused` (`invalid_request`) and sends the batch again
+  without it, so one bad file never blocks a folder.
+- **Where the code is.** `BackupPlan`, `BackupUploader`, `BackupEngine` (a pass: list, identify, report, removals,
+  uploads, report again) and `BackupWorker` live in `:core:server` `backup/`; the worker reaches the app through a
+  `BackupHost` (the application, like `GallerySyncHost`), and the engine reads the phone through a `BackupSource`
+  (`PhoneBackup` in `:native` `backup/`), so the whole pass runs on the JVM against a fake server in tests.
+- **`backup_files`** is keyed by (root, path relative to the volume), with the phone path, the `device_media` row (null
+  for a RAW or sidecar found by listing), the kind, size, mtime and capture time, its own `fingerprint`/`fp_size`/
+  `fp_modified` (a listed file has no index row), and `reported` (`fingerprint|size|mtime` last reported: a row is
+  reported again when it differs, which also re-reports a file after its upload). States: `waiting` (no fingerprint),
+  `queued`, `hashing`, `uploading`, `stored` (backed up), `nas` (already on the server), `verified`, `paused` (`wifi`,
+  `charging`), `failed` (`unreadable`, `server_error`, `server_full`, `too_large`; backed off from 1 minute to 6 hours),
+  `changed` (`checksum_mismatch`: identified and hashed again on the next run), `refused`. A killed run's `hashing` and
+  `uploading` rows go back to `queued`; the upload id and offset stay. `freed` is keyed by the phone path.
+- **Identity in the worker.** A file the index has not fingerprinted yet (new photos, a listed RAW or sidecar) is
+  fingerprinted by the run itself, newest first, in batches of 50 with yields and the stop check, paced at the hashing
+  throttle unless charging, and the result is written back to `device_media` (fingerprint, motion flag, and the SHA-256
+  of a file of at most 2 MiB), so the Gallery does not read it again.
+- **Rules as constraints.** The periodic and the "soon" runs carry the photo rules (unmetered or any network, charging
+  when asked, battery not low). Videos follow the photo rules plus "Videos only while charging"; when a run leaves
+  videos waiting for the charger it enqueues one run constrained on charging. "Back up now" is expedited with only a
+  network constraint (WorkManager refuses charging and battery constraints on expedited work) and the run applies the
+  rules file by file, so it still waits where they ask. The rules are checked again before every file (the network can
+  change mid-run).
+- **The debounced run** is a unique one-off 2 minutes after the index sees new, changed or removed media while a root
+  exists: a pending one starts its wait again; while one runs, one more is appended after it.
+- **Listing for RAWs and sidecars** walks the root's directories with `java.io.File` (All files access), skipping dot
+  names and `DeviceFolders.EXCLUDED`, inside the run only, yielding every 20 directories; `PathFs` is in `:core:smb`,
+  which `:core:server` does not depend on, and the walk needs no more than a directory listing.
+- **Complete listing** = the index's MediaStore scan at the start of the run succeeded, the volume is mounted
+  (`Environment.getExternalStorageState`) and the root folder exists, and the walk (when it ran) finished. A removal is
+  `moved` when its fingerprint is at a path the phone still has, else `deleted`; after the server answers, the row
+  leaves `backup_files` (the server keeps the entry).
+- **A root the server no longer knows** (`404`) or stopped (`409 stopped`) is made again with `POST` (a stopped root
+  resumes with its id; a new id takes the old rows); `409 covered` drops the local root. Turning a switch off stops the
+  root (`DELETE`) and forgets it here; offline, it is forgotten here and the server keeps it until a later change.
+- **Status per folder**: "backed up" counts `stored` and `verified`, "already on the server" counts `nas`; the bytes are
+  those of backed-up files over the folder's; the last complete pass is when a run ended without being stopped; the
+  server's `stats` of the root are kept with it for A2.
+- **Gallery badge**: only phone-only shots of backed-up folders that are not backed up yet get one (waiting, uploading,
+  waiting for a rule, failed); a backed-up shot shows as on the server (the existing badge) once the feed has its item.
+- Not in A1 (A2): "Reveal on this phone is not grouped with Hoard" in Settings › Backup.

@@ -94,9 +94,12 @@ class GalleryRepository(
         rows.associate { "${it.locationId}/${it.path}/${it.shotId}" to EntryDecision(it.rating, it.flag) }
     }
 
+    /** Phone files not backed up yet, by path (ADR 0024: the cells' backup badge). */
+    private val backupStates: Flow<Map<String, String>> = db.backup().observeOpenStates().map { rows -> rows.associate { it.absolute to it.state } }
+
     /** Every shot, newest first; null until first computed. */
-    val entries: StateFlow<List<GalleryEntry>?> = combine(db.items().observeRows(), deviceShots, serverFiles, serverDecisions, deviceDecisions) { server, shots, files, sd, dd ->
-        GalleryModel.entries(GalleryInput(server, shots, files, sd, dd))
+    val entries: StateFlow<List<GalleryEntry>?> = combine(db.items().observeRows(), deviceShots, serverFiles, serverDecisions, combine(deviceDecisions, backupStates) { d, b -> d to b }) { server, shots, files, sd, (dd, backup) ->
+        GalleryModel.entries(GalleryInput(server, shots, files, sd, dd, backup = backup))
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, null)
 
     /** Entry key → decision, for an open culling session ([dev.hfps.hoard.app.cull.CullStore.external]). */

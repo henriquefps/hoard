@@ -93,6 +93,12 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
     /** Called whenever new fingerprints were stored (the gallery re-matches device shots). */
     var onFingerprints: (() -> Unit)? = null
 
+    /** Called when a scan found new, changed or removed media (the phone backup's debounced run, ADR 0024). */
+    var onNewMedia: (() -> Unit)? = null
+
+    /** Absolute folders indexed beyond the defaults and the owner's: the phone backup's roots (ADR 0024). */
+    var extraFolders: (suspend () -> List<String>)? = null
+
     fun start() {
         if (observer != null) return
         observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -122,13 +128,17 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
         scan()
     }
 
-    /** Reads MediaStore and brings `device_media` to it; keeps fingerprints of unchanged files. */
-    suspend fun scan() = mutex.withLock {
-        if (!GalleryPermissions.canReadMedia(context)) return@withLock
+    /**
+     * Reads MediaStore and brings `device_media` to it; keeps fingerprints of unchanged files. True when MediaStore was
+     * read (a listing the phone backup may take as complete).
+     */
+    suspend fun scan(): Boolean = mutex.withLock {
+        if (!GalleryPermissions.canReadMedia(context)) return@withLock false
         _scanning.value = true
+        var ok = false
         try {
             withContext(Dispatchers.IO) {
-                val added = dao.folders().map { it.path }
+                val added = dao.folders().map { it.path } + (runCatching { extraFolders?.invoke() }.getOrNull().orEmpty())
                 val root = Environment.getExternalStorageDirectory().absolutePath
                 val existing = dao.all().associateBy { it.id }
                 val found = ArrayList<DeviceMediaEntity>()
@@ -140,6 +150,8 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
                 val gone = existing.keys.filter { it !in keep }
                 for (chunk in gone.chunked(500)) dao.delete(chunk)
                 Log.i(TAG, "device index: ${found.size} files, ${changed.size} new or changed, ${gone.size} gone")
+                ok = true
+                if (changed.isNotEmpty() || gone.isNotEmpty()) runCatching { onNewMedia?.invoke() }
             }
         } catch (e: SecurityException) {
             Log.w(TAG, "device index: no access to media ($e)")
@@ -147,6 +159,7 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
             _scanning.value = false
         }
         startFingerprints()
+        ok
     }
 
     private fun query(collection: Uri, video: Boolean, root: String, added: List<String>, existing: Map<Long, DeviceMediaEntity>, out: MutableList<DeviceMediaEntity>) {
@@ -205,6 +218,9 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
                     fpSize = if (same) old!!.fpSize else null,
                     fpModified = if (same) old!!.fpModified else null,
                     motion = same && old!!.motion,
+                    sha256 = if (same) old!!.sha256 else null,
+                    shaSize = if (same) old!!.shaSize else null,
+                    shaModified = if (same) old!!.shaModified else null,
                 )
             }
         }
@@ -228,7 +244,8 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
                         // Unreadable now (permission, removed): mark it so it is not retried until it changes.
                         dao.setFingerprint(row.id, UNREADABLE, row.size, row.modified, false)
                     } else {
-                        dao.setFingerprint(row.id, result.first, row.size, row.modified, result.second)
+                        // A file of at most 2 MiB gets its SHA-256 from the same read (ADR 0024 "Identity").
+                        dao.setIdentity(row.id, result.fingerprint, row.size, row.modified, result.motion, result.sha256)
                         stored++
                     }
                 }
@@ -239,15 +256,7 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
         }
     }
 
-    private fun fingerprintOf(file: File, row: DeviceMediaEntity): Pair<String, Boolean> {
-        val fp = Fingerprint.of(file)
-        val motion = !row.video && RandomAccessFile(file, "r").use { raf ->
-            val head = ByteArray(minOf(raf.length(), 128 * 1024L).toInt()).also { raf.readFully(it) }
-            val tail = ByteArray(minOf(raf.length(), 16L).toInt()).also { raf.seek(raf.length() - it.size); raf.readFully(it) }
-            MotionPhotos.isMotion(row.name, head, tail)
-        }
-        return fp to motion
-    }
+    private fun fingerprintOf(file: File, row: DeviceMediaEntity): Identity = identityOf(file, row.name, row.video)
 
     /** The content URI of a row (thumbnails, playback, sharing). */
     fun uriOf(row: DeviceMediaEntity): Uri = if (row.video) {
@@ -258,7 +267,21 @@ class DeviceIndexer(private val context: Context, private val dao: DeviceDao, pr
 
     @Volatile private var startedOnce = false
 
+    /** A file's `v1:` fingerprint, its SHA-256 when at most 2 MiB, and whether it is a motion photo. */
+    data class Identity(val fingerprint: String, val sha256: String?, val motion: Boolean)
+
     companion object {
+        /** The identity of a phone file (the index's, and the phone backup's when the index has not got to it yet). */
+        fun identityOf(file: File, name: String, video: Boolean): Identity {
+            val (fp, sha) = Fingerprint.withSha(file)
+            val motion = !video && RandomAccessFile(file, "r").use { raf ->
+                val head = ByteArray(minOf(raf.length(), 128 * 1024L).toInt()).also { raf.readFully(it) }
+                val tail = ByteArray(minOf(raf.length(), 16L).toInt()).also { raf.seek(raf.length() - it.size); raf.readFully(it) }
+                MotionPhotos.isMotion(name, head, tail)
+            }
+            return Identity(fp, sha, motion)
+        }
+
         const val TAG = "HoardGallery"
         private const val START_DELAY_MS = 15_000L
         private const val BATCH = 40

@@ -451,4 +451,114 @@
     </plurals>
     <string name="trash_server_section">No servidor de fotos</string>
     <string name="trash_server_hint">Enviada para a lixeira em outro dispositivo. Abra a pasta dela em Arquivos uma vez para restaurar ou esvaziar daqui.</string>
+    <!-- Backup do celular (ADR 0024, Hoard 2.4.0) -->
+    <string name="backup_title">Backup do celular</string>
+    <string name="backup_settings_off">Desligado: escolha as pastas do backup</string>
+    <plurals name="backup_settings_summary">
+        <item quantity="one">%1$s pasta · %2$s de %3$s com backup</item>
+        <item quantity="many">%1$s pastas · %2$s de %3$s com backup</item>
+        <item quantity="other">%1$s pastas · %2$s de %3$s com backup</item>
+    </plurals>
+    <string name="backup_unavailable_pair">Pareie com um servidor de fotos para fazer backup deste celular.</string>
+    <string name="backup_unavailable_old">Este servidor ainda não faz backup de celulares: atualize o hoard-server para 0.12.0 ou mais novo.</string>
+    <string name="backup_not_configured">O servidor ainda não tem pasta de backup: escolha uma na página de configuração dele.</string>
+    <string name="backup_offline">Não foi possível falar com o servidor agora. Tente mais tarde.</string>
+    <string name="backup_now">Fazer backup agora</string>
+    <string name="backup_now_started">Backup iniciado, dentro das regras</string>
+    <string name="backup_running_listing">Procurando fotos novas…</string>
+    <string name="backup_running_hashing">Preparando %1$s…</string>
+    <string name="backup_running_uploading">Enviando %1$s · %2$d%%</string>
+    <string name="backup_running_count">%1$s de %2$s arquivos nesta passada</string>
+    <string name="backup_folders">Pastas</string>
+    <string name="backup_folders_hint">As fotos e os vídeos das pastas que você ligar são copiados para o servidor, numa pasta própria deste celular. Arquivos apagados do celular continuam no backup.</string>
+    <string name="backup_folder_camera">Câmera</string>
+    <string name="backup_folder_screenshots">Capturas de tela</string>
+    <string name="backup_folder_whatsapp_images">Imagens do WhatsApp</string>
+    <string name="backup_folder_whatsapp_videos">Vídeos do WhatsApp</string>
+    <string name="backup_folder_sd">Cartão SD · %1$s</string>
+    <plurals name="backup_folder_off">
+        <item quantity="one">%1$s foto ou vídeo · %2$s · sem backup</item>
+        <item quantity="many">%1$s fotos e vídeos · %2$s · sem backup</item>
+        <item quantity="other">%1$s fotos e vídeos · %2$s · sem backup</item>
+    </plurals>
+    <plurals name="backup_status_done">
+        <item quantity="one">%1$s de %2$s com backup</item>
+        <item quantity="many">%1$s de %2$s com backup</item>
+        <item quantity="other">%1$s de %2$s com backup</item>
+    </plurals>
+    <plurals name="backup_status_server">
+        <item quantity="one">%1$s já no servidor</item>
+        <item quantity="many">%1$s já no servidor</item>
+        <item quantity="other">%1$s já no servidor</item>
+    </plurals>
+    <plurals name="backup_status_wifi">
+        <item quantity="one">%1$s esperando o Wi-Fi</item>
+        <item quantity="many">%1$s esperando o Wi-Fi</item>
+        <item quantity="other">%1$s esperando o Wi-Fi</item>
+    </plurals>
+    <plurals name="backup_status_charging">
+        <item quantity="one">%1$s esperando o carregador</item>
+        <item quantity="many">%1$s esperando o carregador</item>
+        <item quantity="other">%1$s esperando o carregador</item>
+    </plurals>
+    <plurals name="backup_status_queued">
+        <item quantity="one">%1$s a enviar</item>
+        <item quantity="many">%1$s a enviar</item>
+        <item quantity="other">%1$s a enviar</item>
+    </plurals>
+    <plurals name="backup_status_failed">
+        <item quantity="one">%1$s com falha</item>
+        <item quantity="many">%1$s com falha</item>
+        <item quantity="other">%1$s com falha</item>
+    </plurals>
+    <plurals name="backup_status_refused">
+        <item quantity="one">%1$s recusado pelo servidor</item>
+        <item quantity="many">%1$s recusados pelo servidor</item>
+        <item quantity="other">%1$s recusados pelo servidor</item>
+    </plurals>
+    <string name="backup_status_bytes">%1$s de %2$s</string>
+    <string name="backup_status_last_pass">Última passada completa %1$s</string>
+    <string name="backup_status_never">Ainda não verificada: a primeira passada espera as regras</string>
+    <string name="backup_add_folder">Adicionar uma pasta</string>
+    <string name="backup_add_folder_hint">Uma pasta do celular, como Download/Fotos</string>
+    <string name="backup_add_folder_field">Pasta</string>
+    <string name="backup_covered">Esta pasta está dentro de uma pasta que já tem backup.</string>
+    <string name="backup_add_failed">Não foi possível ligar o backup desta pasta (%1$s).</string>
+    <string name="backup_raw_hint">Arquivos RAW e sidecars não entram no backup: permita o acesso a todos os arquivos.</string>
+    <string name="backup_raw_allow">Permitir</string>
+    <string name="backup_raw_on">Arquivos RAW e sidecars XMP destas pastas também entram no backup.</string>
+    <string name="backup_rules">Regras</string>
+    <string name="backup_rule_unmetered">Só no Wi-Fi e em outras redes não limitadas</string>
+    <string name="backup_rule_charging">Só carregando</string>
+    <string name="backup_rule_videos">Vídeos só carregando</string>
+    <string name="backup_rule_battery">Nunca com a bateria fraca.</string>
+    <string name="backup_filter_all">Todos</string>
+    <string name="backup_filter_open">Sem backup</string>
+    <string name="backup_filter_done">Com backup</string>
+    <string name="backup_filter_problems">Problemas</string>
+    <string name="backup_files_empty">Nenhum arquivo aqui.</string>
+    <string name="backup_state_waiting">Esperando leitura</string>
+    <string name="backup_state_queued">Na fila</string>
+    <string name="backup_state_hashing">Preparando</string>
+    <string name="backup_state_uploading">Enviando · %1$d%%</string>
+    <string name="backup_state_stored">Com backup</string>
+    <string name="backup_state_nas">Já no servidor</string>
+    <string name="backup_state_verified">Com backup e verificado</string>
+    <string name="backup_state_paused_wifi">Esperando o Wi-Fi</string>
+    <string name="backup_state_paused_charging">Esperando o carregador</string>
+    <string name="backup_state_changed">Mudou durante o envio: enviado de novo</string>
+    <string name="backup_state_failed_unreadable">Falhou: não pode ser lido</string>
+    <string name="backup_state_failed_full">Falhou: o servidor está cheio</string>
+    <string name="backup_state_failed_server">Falhou: erro no servidor</string>
+    <string name="backup_state_failed_large">Falhou: grande demais para o servidor</string>
+    <string name="backup_state_refused">Recusado pelo servidor (%1$s)</string>
+    <string name="backup_refused_format">o formato</string>
+    <string name="backup_refused_path">o caminho</string>
+    <string name="backup_channel">Backup do celular</string>
+    <string name="backup_notification_title">Fazendo backup das fotos</string>
+    <string name="backup_notification_text">%1$s de %2$s · %3$s</string>
+    <string name="gallery_badge_backup_waiting">Esperando o backup</string>
+    <string name="gallery_badge_backup_uploading">Fazendo backup</string>
+    <string name="gallery_badge_backup_paused">O backup espera o Wi-Fi ou o carregador</string>
+    <string name="gallery_badge_backup_failed">O backup falhou</string>
 </resources>

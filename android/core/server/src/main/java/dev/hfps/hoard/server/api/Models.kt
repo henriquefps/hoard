@@ -55,6 +55,18 @@ data class ServerLimits(
     val maxPullLimit: Int = 500,
     val maxPushChanges: Int = 500,
     val maxLookup: Int = 1000,
+    /** The largest chunk a `PATCH /v1/uploads/{id}` takes (ADR 0013 "Blobs"). */
+    val chunkSize: Long? = null,
+    val maxBlobSize: Long? = null,
+)
+
+/** `GET /v1/server` `backup` (ADR 0024, hoard-server 0.12.0, with the `backup` feature). */
+@Serializable
+data class BackupLimits(
+    val maxRoots: Int = 64,
+    val maxReportEntries: Int = 1000,
+    val maxVerify: Int = 500,
+    val maxPath: Int = 1024,
 )
 
 @Serializable
@@ -75,10 +87,31 @@ data class ServerInfo(
     val features: List<String> = emptyList(),
     val limits: ServerLimits = ServerLimits(),
     val previews: PreviewsInfo? = null,
+    val backup: BackupLimits? = null,
 )
 
 @Serializable
-data class PhysicalDevice(val id: String, val name: String? = null, val devices: List<CandidateDevice> = emptyList())
+data class PhysicalDevice(
+    val id: String,
+    val name: String? = null,
+    val devices: List<CandidateDevice> = emptyList(),
+    /** The phone's backup roots (ADR 0024, hoard-server 0.12.0). */
+    val backup: PhysicalBackup? = null,
+)
+
+@Serializable
+data class PhysicalBackup(val roots: List<PhysicalBackupRoot> = emptyList())
+
+@Serializable
+data class PhysicalBackupRoot(
+    val id: String,
+    val volume: String,
+    val path: String,
+    val app: String? = null,
+    val active: Boolean = false,
+    val since: Long = 0,
+    val types: List<String> = emptyList(),
+)
 
 @Serializable
 data class DeviceView(
@@ -322,6 +355,133 @@ data class ErrorBody(val error: ErrorInfo? = null)
 @Serializable
 data class ErrorInfo(val code: String, val message: String? = null, val details: JsonElement? = null)
 
+// --- Phone backup (ADR 0024, hoard-server 0.12.0) -------------------------------------------------------------------
+
+@Serializable
+data class BackupRootStats(
+    val files: Int = 0,
+    val bytes: Long = 0,
+    val stored: Int = 0,
+    val nas: Int = 0,
+    val waiting: Int = 0,
+    val removedFromDevice: Int = 0,
+    val freed: Int = 0,
+    val verified: Int = 0,
+)
+
+@Serializable
+data class BackupRootDetails(val absorbed: List<String> = emptyList())
+
+/** A root (`GET`/`POST /v1/backup/roots`): a folder of a phone the server mirrors. */
+@Serializable
+data class BackupRoot(
+    val id: String,
+    val physicalDeviceId: String? = null,
+    val deviceName: String? = null,
+    val mine: Boolean = false,
+    val folder: String? = null,
+    /** `PRIMARY`/`primary` or the volume UUID, upper-case. */
+    val volume: String,
+    val path: String,
+    val createdBy: String? = null,
+    val app: String? = null,
+    val createdAt: Long = 0,
+    val types: List<String> = emptyList(),
+    val paused: Boolean = false,
+    val stopped: Boolean = false,
+    val active: Boolean = false,
+    val lastReportAt: Long? = null,
+    val stats: BackupRootStats = BackupRootStats(),
+    /** `POST` only: the roots inside the new one whose entries moved to it. */
+    val details: BackupRootDetails? = null,
+)
+
+@Serializable
+data class BackupRoots(val roots: List<BackupRoot> = emptyList())
+
+@Serializable
+data class BackupRootCreate(val volume: String, val path: String, val types: List<String>? = null)
+
+@Serializable
+data class BackupRootPatch(val paused: Boolean? = null, val types: List<String>? = null)
+
+@Serializable
+data class BackupReportEntry(val path: String, val fingerprint: String, val size: Long, val modifiedAt: Long, val sha256: String? = null)
+
+/** [reason]: `deleted`, `moved`, `freed`. */
+@Serializable
+data class BackupRemoval(val path: String, val reason: String)
+
+@Serializable
+data class BackupReport(val rootId: String, val entries: List<BackupReportEntry> = emptyList(), val removed: List<BackupRemoval> = emptyList())
+
+/**
+ * One entry's answer. [state]: `stored`, `nas`, `missing`, `in_progress`, `differs`, or `refused` with a [reason]
+ * (`unsupported_type`, `invalid_path`, `outside_root`, `reserved_prefix`; the mirror-formats amendment of 0.12.0).
+ * [verified]: `yes`, `pending`, `no`.
+ */
+@Serializable
+data class BackupReportResult(
+    val index: Int,
+    val path: String = "",
+    val state: String = "",
+    val itemId: String? = null,
+    val verified: String = "no",
+    val retryAfter: Long? = null,
+    val reason: String? = null,
+)
+
+/** [state]: `kept`, `moved`, `unknown`. */
+@Serializable
+data class BackupRemovalResult(val index: Int, val path: String = "", val state: String = "")
+
+@Serializable
+data class BackupReportResponse(val results: List<BackupReportResult> = emptyList(), val removed: List<BackupRemovalResult> = emptyList())
+
+@Serializable
+data class BackupVerifyEntry(val rootId: String, val path: String, val sha256: String, val size: Long)
+
+@Serializable
+data class BackupVerifyRequest(val entries: List<BackupVerifyEntry>)
+
+@Serializable
+data class BackupVerifyResult(
+    val index: Int,
+    val verified: String = "no",
+    val verifiedAt: Long? = null,
+    val retryAfter: Long? = null,
+    val reason: String? = null,
+    val namedByRecord: Boolean = false,
+)
+
+@Serializable
+data class BackupVerifyResponse(val results: List<BackupVerifyResult> = emptyList())
+
+/** `POST /v1/uploads` (ADR 0013 "Blobs"; [wait] and [claim] ADR 0024). Null fields are left out. */
+@Serializable
+data class UploadCreate(
+    val sha256: String,
+    val size: Long,
+    val kind: String = "original",
+    val fingerprint: String? = null,
+    val wait: Boolean? = null,
+    val claim: Boolean? = null,
+)
+
+/** [status]: `exists`, `created`, `resume`, `in_progress` (with [retryAfter]). */
+@Serializable
+data class UploadState(
+    val status: String,
+    val retryAfter: Long? = null,
+    val uploadId: String? = null,
+    val offset: Long = 0,
+    val chunkSize: Long? = null,
+    val expiresAt: Long? = null,
+)
+
+/** A chunk's answer: the server's offset, and whether the upload completed (`Upload-Complete: 1`). */
+data class ChunkResult(val offset: Long, val complete: Boolean)
+
 object Features {
     const val ITEMS = "items"
     const val PREVIEWS = "previews"
@@ -335,6 +495,8 @@ object Features {
      * `POST /v1/nas/walk`. Without it Hoard still trashes, but warns that the server will forget Reveal's edits.
      */
     const val TRASH = "trash"
+    /** hoard-server 0.12.0 (ADR 0024): the phone backup (roots, report, verify, `wait`/`claim` on uploads). */
+    const val BACKUP = "backup"
 }
 
 /** The `include` of the items feed Hoard asks for: one cursor for items and culling (ADR 0016 rule 3). */

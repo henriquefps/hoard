@@ -1,0 +1,30 @@
+-r--------    2 65532    65532        12991 Nov 16 16:15 ./sdk_gphone64_x86_64 (ad4693b9)/Pictures/Screenshots/Screenshot_20261105_140000.png
+-r--------    2 65532    65532          198 Nov 16 16:30 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/IMG_0001.xmp
+-r--------    2 65532    65532      3000024 Nov 16 16:30 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/IMG_0001.CR3
+-r--------    2 65532    65532       289384 Nov 16 16:30 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/VID_20261107_110000.mp4
+-r--------    2 65532    65532      1390404 Nov 16 16:28 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/PXL_20261107_100000.jpg
+-r--------    2 65532    65532      1405600 Nov 16 16:13 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/Renamed_20261102.jpg
+-r--------    2 65532    65532     31429669 Nov 16 16:19 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/PXL_20261106_090000_BIG2.jpg
+-r--------    2 65532    65532     38315295 Nov 16 16:16 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/PXL_20261105_130000_BIG.jpg
+-r--------    2 65532    65532      1401137 Nov 16 16:13 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/PXL_20261104_120000.jpg
+-r--------    2 65532    65532      1403500 Nov 16 16:13 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/PXL_20261103_110000.jpg
+-r--------    2 65532    65532        28523 Nov 16 16:13 ./sdk_gphone64_x86_64 (ad4693b9)/DCIM/Camera/VID_20261105_150000.mp4
+-rw-------    1 65532    65532         2389 Nov 16 16:31 ./sdk_gphone64_x86_64 (ad4693b9)/.hoard-mirror/manifest-fe63492c-2858-4baf-89a6-40bac5d2d4f1.tsv
+-rw-------    1 65532    65532          344 Nov 16 16:15 ./sdk_gphone64_x86_64 (ad4693b9)/.hoard-mirror/manifest-39950d7c-9d97-4544-a70d-e8c8b485ed5f.tsv
+# hoard-server phone backup manifest (ADR 0024). volume=primary root=Pictures/Screenshots
+# path	size	sha256	fingerprint	where	on_device	removed
+Pictures/Screenshots/Screenshot_20261105_140000.png	12991	98c656a219ed2af385b52a948c496051c4c841ff85e0ad98593bbbe69b335c5d	v1:b5592aa299ca2acf55519135e2853e3932e21c9010ea246ca1711abc2dedc602	blob	1	
+# hoard-server phone backup manifest (ADR 0024). volume=primary root=DCIM/Camera
+# path	size	sha256	fingerprint	where	on_device	removed
+DCIM/Camera/IMG_0001.CR3	3000024	c5f90bd62e636ca97980d4de3c1fc6739d238ee3d6ac906f2946bca681e87f4c	v1:c03d12df27663be0e9e62f984d6a42ac98256838b5e731289c67bf443952c5ca	blob	1	
+DCIM/Camera/IMG_0001.xmp	198	0e00cfc7a01ae4e185e5a8387f8c720e7383f4296706bfb49d330eb47924ca81	v1:3416f8622c94aca3670cca0c6efaae1cbeb89998add143c63f92a4ff8ea7f34f	blob	1	
+DCIM/Camera/PXL_20261101_090000.jpg	1403525	4848cf9c462709f881175bd2ac9092a33ddbb202e5f4db91e9605c310b6a042b	v1:27866c125162ee0580ac4df5a5507f05c7f241edbf99c3dc583f378c9cd547a1	nas:nas/Phone/PXL_20261101_090000.jpg	1	
+DCIM/Camera/PXL_20261102_100000.jpg	1405600	1103d16df42c8793cb5de583cdd7eda185fa0a0f302946ff60bcdc341591029c	v1:b8f245af7f87454c35f1a777b631b5cd36e90c68b4f20e904cd5377049249444	blob-unlinked	0	moved
+DCIM/Camera/PXL_20261103_110000.jpg	1403500	9db5d79f04f0633337af114f998566074ee8dc2b239542ffd1e1e1c0b1e88637	v1:7e81490ed22e4e7aebb27b672af4d2476e6bce32803988454dfd9bbd4ff3b1a3	blob	0	deleted
+DCIM/Camera/PXL_20261104_120000.jpg	1401137	dd2c22e98aa8423a0057d38cf2924d8e6d02779750e5f5b34df3316a8eb76822	v1:42560b15a8104e0022ad88300a5072d10e53eaee8ac783b62e83562cf9e08f82	blob	1	
+DCIM/Camera/PXL_20261105_130000_BIG.jpg	38315295	08be5c0e0f51893033137f3a269e9ed6225e2e43140a93a62b304324db9ddcdd	v1:f2e08621b3b8d8bc6b925d21046cc3b6fb90c7b6d875a54bd2f4b1353245706e	blob	1	
+DCIM/Camera/PXL_20261106_090000_BIG2.jpg	31429669	32ee402424aef773644be766ef5b72b57a60470128747a08684c519002b123ca	v1:18e7b3987fddef14a5318745e2e17b0d058ac8ef7940506ce7dc4d3234ad0f6a	blob	1	
+DCIM/Camera/PXL_20261107_100000.jpg	1390404	6ec5c3df4ff8f0dab5f2075a2b17380dbef2007e92ff581d468e0f4bbb3c03d3	v1:369dc79ba1cbfbbf969fa3283a894a16891e00ddf4ad3e60b3fe4249406ed764	blob	1	
+DCIM/Camera/Renamed_20261102.jpg	1405600	1103d16df42c8793cb5de583cdd7eda185fa0a0f302946ff60bcdc341591029c	v1:b8f245af7f87454c35f1a777b631b5cd36e90c68b4f20e904cd5377049249444	blob	1	
+DCIM/Camera/VID_20261105_150000.mp4	28523	4e6427e483fbf29ac7ff6b524c20062748d2367047242bfa4367feea74a5e463	v1:ee082443585b1e3932be4211d2c60fc982bf81e5964d149886d44f8e01c2e27a	blob	1	
+DCIM/Camera/VID_20261107_110000.mp4	289384	41c9d210e906f75924437c2611c1101d4e511ccd48e528d850d29cd6322d0dd2	v1:bd358a50a0732d25b8e1549b72d892079a3cd76a1ecad596bb157e7301178db3	blob	1	
