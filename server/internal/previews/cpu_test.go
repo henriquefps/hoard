@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -232,6 +233,37 @@ func TestCPUStillPNGWebPGIF(t *testing.T) {
 		}
 		res, dir := generate(t, c, Job{Job: JobImage, Source: Source{Role: media.RoleRendered, Format: ext}}, in)
 		checkImages(t, res, dir, 640, 480)
+	}
+}
+
+// TestCPUStillTransparentIsWhite: a fully transparent PNG gives a white preview (not black), in both JPEG files and
+// the full-resolution job.
+func TestCPUStillTransparentIsWhite(t *testing.T) {
+	c := testCPU(t, false)
+	in := filepath.Join(t.TempDir(), "clear.png")
+	if b, err := exec.Command(c.vips, "black", in, "64", "48", "--bands", "4").CombinedOutput(); err != nil { // all zero: transparent
+		t.Fatalf("vips black: %v %s", err, b)
+	}
+	for _, job := range []string{JobImage, JobFull} {
+		res, dir := generate(t, c, Job{Job: job, Source: Source{Role: media.RoleRendered, Format: "png"}}, in)
+		names := []string{FileScreen, FileThumb}
+		if job == JobFull {
+			names = []string{FileFull}
+		}
+		for _, n := range names {
+			if _, ok := res[n]; !ok {
+				t.Fatalf("%s: no %s", job, n)
+			}
+			avg := exec.Command(c.vips, "avg", filepath.Join(dir, n))
+			avg.Env = append(os.Environ(), "LC_ALL=C") // a decimal point, not the locale's comma
+			out, err := avg.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v, _ := strconv.ParseFloat(strings.TrimSpace(string(out)), 64); v < 250 {
+				t.Fatalf("%s %s: mean %v, want white", job, n, v)
+			}
+		}
 	}
 }
 

@@ -113,14 +113,16 @@ RUN export LD_LIBRARY_PATH=/opt/hoard/lib \
  && /opt/hoard/bin/ffmpeg -hide_banner -filters | grep -q tonemap \
  && /opt/hoard/bin/ffprobe -version | head -1
 # The stills a phone backup holds (ADR 0024: PNG screenshots, WebP, GIF) must make a thumbnail with this image's own
-# libvips, with the same untrusted-loader block the server sets: a 1x1 GIF, a PNG with alpha and a WebP.
-RUN export LD_LIBRARY_PATH=/opt/hoard/lib VIPS_BLOCK_UNTRUSTED=1 \
+# libvips, with the untrusted-loader block the server sets on the source: a 1x1 GIF, a PNG with alpha and a WebP; transparent pixels must come out white.
+RUN export LD_LIBRARY_PATH=/opt/hoard/lib \
  && v=/opt/hoard/bin/vips && d=$(mktemp -d) \
  && echo 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' | base64 -d > "$d/a.gif" \
  && $v black "$d/b.png" 8 8 --bands 4 && $v black "$d/c.webp" 8 8 \
  && for f in a.gif b.png c.webp; do \
-      $v thumbnail "$d/$f" "$d/$f.jpg" 4 --size down && test -s "$d/$f.jpg" || { echo "no thumbnail from $f" >&2; exit 1; }; \
+      VIPS_BLOCK_UNTRUSTED=1 $v thumbnail "$d/$f" "$d/$f.v" 4 --size down \
+        && $v copy "$d/$f.v" "$d/$f.jpg[background=255]" && test -s "$d/$f.jpg" || { echo "no thumbnail from $f" >&2; exit 1; }; \
     done \
+ && m=$(LC_ALL=C $v avg "$d/b.png.jpg") && [ "${m%%.*}" -ge 250 ] || { echo "a transparent PNG is not white: mean $m" >&2; exit 1; } \
  && rm -rf "$d"
 COPY --from=build /out/hoard-server /usr/local/bin/hoard-server
 # Owned by the image's user (65532), so fresh named volumes are writable. Bind mounts keep their host
