@@ -70,6 +70,9 @@ import dev.hfps.hoard.server.backup.BackupRules
 import dev.hfps.hoard.server.backup.BackupState
 import dev.hfps.hoard.server.backup.FolderStatus
 import dev.hfps.hoard.server.db.BackupFileEntity
+import dev.hfps.hoard.server.db.FreedTotal
+import dev.hfps.hoard.server.backup.FreeUpRules
+import dev.hfps.hoard.app.backup.PhoneFreeUp
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -87,11 +90,18 @@ data class BackupUi(
     val busy: Set<String> = emptySet(),
     /** Now, for "last complete pass 5 minutes ago" (fixed in goldens). */
     val now: Long = System.currentTimeMillis(),
+    /** Free up space is offered (Android 11+, ADR 0024 A3). */
+    val freeUpSupported: Boolean = false,
+    val freeUpRules: FreeUpRules = FreeUpRules(),
+    /** What free up has freed so far ("18.4 GB freed"). */
+    val freed: FreedTotal = FreedTotal(0, 0),
+    /** Reveal is installed here but not grouped with Hoard as this phone (ADR 0024 "When only one app is installed"). */
+    val revealNotGrouped: Boolean = false,
 )
 
 /** Settings › Backup bound to the app. */
 @Composable
-fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (String) -> Unit) {
+fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (String) -> Unit, onFreeUp: () -> Unit = {}) {
     val backup = container.backup
     val db = container.gallery.db
     val account by db.account().observe().collectAsState(initial = null)
@@ -113,6 +123,16 @@ fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (Str
         onPauseOrDispose {}
     }
     LaunchedEffect(Unit) { container.gallery.deviceIndex.scan() }
+    val freeUpRules by container.freeUp.observeRules.collectAsState(initial = FreeUpRules())
+    val freed by db.backup().observeFreedTotal().collectAsState(initial = FreedTotal(0, 0))
+    var revealNotGrouped by remember { mutableStateOf(false) }
+    LaunchedEffect(account?.serverId) {
+        if (account == null) return@LaunchedEffect
+        val installed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { container.reveal.isAvailable() }.getOrDefault(false) }
+        if (!installed) return@LaunchedEffect
+        val view = runCatching { container.gallery.sync.deviceView() }.getOrNull() ?: return@LaunchedEffect
+        revealNotGrouped = BackupFolders.revealNotGrouped(installed, view.physicalDevice?.devices.orEmpty(), System.currentTimeMillis())
+    }
     val a = account
     val availability = when {
         a == null -> BackupAvailability.NotPaired
@@ -136,7 +156,13 @@ fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (Str
         }
     }
     BackupContent(
-        ui = BackupUi(availability, folders, rules, allFiles, progress, busy),
+        ui = BackupUi(
+            availability, folders, rules, allFiles, progress, busy,
+            freeUpSupported = PhoneFreeUp.supported,
+            freeUpRules = freeUpRules,
+            freed = freed,
+            revealNotGrouped = revealNotGrouped,
+        ),
         onBack = onBack,
         onToggle = ::toggle,
         onOpenFolder = onOpenFolder,
@@ -147,6 +173,9 @@ fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (Str
             toaster.show(res.getString(R.string.backup_now_started))
         },
         onAllFiles = { openAllFilesAccess(context) },
+        onFreeUp = onFreeUp,
+        onFreeUpRules = { r -> scope.launch { container.freeUp.setRules(r) } },
+        onThisPhone = onBack,
     )
     if (adding) {
         var path by remember { mutableStateOf("") }
@@ -202,6 +231,9 @@ fun BackupContent(
     onRules: (BackupRules) -> Unit = {},
     onNow: () -> Unit = {},
     onAllFiles: () -> Unit = {},
+    onFreeUp: () -> Unit = {},
+    onFreeUpRules: (FreeUpRules) -> Unit = {},
+    onThisPhone: () -> Unit = {},
 ) {
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
@@ -221,6 +253,7 @@ fun BackupContent(
                     return@LazyColumn
                 }
                 item("summary") { Summary(ui, onNow) }
+                if (ui.revealNotGrouped) item("reveal") { RevealNotGrouped(onThisPhone) }
                 item("folders-head") {
                     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
                         Eyebrow(stringResource(R.string.backup_folders))
@@ -251,6 +284,7 @@ fun BackupContent(
                     }
                 }
                 item("rules") { Rules(ui.rules, onRules) }
+                if (ui.freeUpSupported && ui.folders.any { it.on }) item("freeup") { FreeUpSection(ui, onFreeUp, onFreeUpRules) }
             }
         }
     }
@@ -378,6 +412,47 @@ private fun Rules(rules: BackupRules, onRules: (BackupRules) -> Unit) {
     }
 }
 
+/** "Reveal on this phone is not grouped with Hoard" (ADR 0024: no delegation, both apps may upload), with a way to "This phone". */
+@Composable
+private fun RevealNotGrouped(onThisPhone: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).background(HfpsTheme.colors.card).padding(12.dp).testTag("backup-reveal-not-grouped"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(PhosphorRegular.Warning, null, Modifier.size(20.dp), tint = HfpsTheme.colors.warning)
+        Text(stringResource(R.string.backup_reveal_not_grouped), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.cardForeground, modifier = Modifier.weight(1f))
+        GhostButton(stringResource(R.string.server_this_phone), onThisPhone)
+    }
+}
+
+/** Settings › Backup › Free up space (ADR 0024 A3): open the preview, what was freed, and the two rules (owner's decision 3). */
+@Composable
+private fun FreeUpSection(ui: BackupUi, onFreeUp: () -> Unit, onRules: (FreeUpRules) -> Unit) {
+    val l = locale()
+    Column(Modifier.testTag("backup-freeup")) {
+        Eyebrow(stringResource(R.string.freeup_title), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
+        Column(Modifier.background(HfpsTheme.colors.card)) {
+            HfpsListRow(
+                title = stringResource(R.string.freeup_open),
+                subtitle = if (ui.freed.files > 0) {
+                    pluralStringResource(R.plurals.freeup_freed_so_far, ui.freed.files, bytes(ui.freed.bytes), formatNumber(ui.freed.files, l))
+                } else {
+                    stringResource(R.string.freeup_open_hint)
+                },
+                icon = PhosphorRegular.Broom,
+                onClick = onFreeUp,
+                modifier = Modifier.testTag("backup-freeup-open"),
+            )
+            HfpsRowDivider(Modifier.padding(start = 54.dp))
+            RuleRow(R.string.freeup_rule_recent, PhosphorRegular.CalendarBlank, ui.freeUpRules.keepRecent, "freeup-rule-recent") { onRules(ui.freeUpRules.copy(keepRecent = it)) }
+            HfpsRowDivider(Modifier.padding(start = 54.dp))
+            RuleRow(R.string.freeup_rule_favourites, PhosphorRegular.Star, ui.freeUpRules.keepFavourites, "freeup-rule-favourites") { onRules(ui.freeUpRules.copy(keepFavourites = it)) }
+        }
+        Text(stringResource(R.string.freeup_rules_hint), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(16.dp))
+    }
+}
+
 @Composable
 private fun RuleRow(title: Int, icon: ImageVector, on: Boolean, tag: String, onChange: (Boolean) -> Unit) {
     HfpsListRow(
@@ -500,9 +575,11 @@ fun BackupSettingsRow(container: AppContainer, onOpen: () -> Unit) {
     val db = container.gallery.db
     val folders by remember { combine(db.device().observeDirs(), db.backup().observeRoots(), db.backup().observeCounts()) { d, r, c -> BackupFolders.rows(d, r, c) } }.collectAsState(initial = emptyList())
     val on = folders.count { it.on }
+    val freed by remember { db.backup().observeFreedTotal() }.collectAsState(initial = FreedTotal(0, 0))
+    val summary = if (on == 0) stringResource(R.string.backup_settings_off) else summaryText(on, BackupFolders.total(folders))
     HfpsListRow(
         title = stringResource(R.string.backup_title),
-        subtitle = if (on == 0) stringResource(R.string.backup_settings_off) else summaryText(on, BackupFolders.total(folders)),
+        subtitle = if (freed.files > 0) summary + "\n" + pluralStringResource(R.plurals.freeup_freed_so_far, freed.files, bytes(freed.bytes), formatNumber(freed.files, locale())) else summary,
         icon = PhosphorRegular.UploadSimple,
         onClick = onOpen,
         modifier = Modifier.testTag("settings-backup"),

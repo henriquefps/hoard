@@ -607,4 +607,99 @@
     <string name="save_device_nothing">Estas fotos já estão neste celular: só fotos do servidor são salvas.</string>
     <string name="save_device_from_server">Servidor de fotos</string>
     <string name="save_device_failed">Não foi possível salvar: %1$s</string>
+    <!-- Free up space (ADR 0024 A3, Hoard 2.6.0) -->
+    <string name="backup_reveal_not_grouped">O Reveal deste celular não está agrupado com o Hoard: os dois apps podem fazer backup das mesmas pastas.</string>
+    <string name="freeup_title">Liberar espaço</string>
+    <string name="freeup_open">Liberar espaço neste celular</string>
+    <string name="freeup_open_hint">Apaga do celular o que o servidor tem e conferiu, dos mais antigos aos mais novos. Você vê tudo antes.</string>
+    <plurals name="freeup_freed_so_far">
+        <item quantity="one">%1$s liberados · %2$s arquivo</item>
+        <item quantity="many">%1$s liberados · %2$s de arquivos</item>
+        <item quantity="other">%1$s liberados · %2$s arquivos</item>
+    </plurals>
+    <string name="freeup_rule_recent">Manter no celular os últimos 30 dias</string>
+    <string name="freeup_rule_favourites">Manter os favoritos no celular</string>
+    <string name="freeup_rules_hint">As fotos liberadas continuam na Galeria vindas do servidor, e Salvar neste dispositivo as traz de volta.</string>
+    <string name="freeup_loading">Procurando o que o servidor tem…</string>
+    <string name="freeup_verifying">Conferindo no servidor…</string>
+    <string name="freeup_hashing">Lendo %1$s (%2$s de %3$s)…</string>
+    <string name="freeup_deleting">Esperando o Android apagar os arquivos…</string>
+    <string name="freeup_nothing_yet">Nada é apagado antes de o Android perguntar a você.</string>
+    <string name="freeup_unauthorized">A chave deste celular foi revogada no servidor: emparelhe de novo.</string>
+    <string name="freeup_retry">Tentar de novo</string>
+    <plurals name="freeup_photos">
+        <item quantity="one">%1$s foto</item>
+        <item quantity="many">%1$s de fotos</item>
+        <item quantity="other">%1$s fotos</item>
+    </plurals>
+    <plurals name="freeup_videos">
+        <item quantity="one">%1$s vídeo</item>
+        <item quantity="many">%1$s de vídeos</item>
+        <item quantity="other">%1$s vídeos</item>
+    </plurals>
+    <string name="freeup_photos_and_videos">%1$s e %2$s</string>
+    <string name="freeup_before">%1$s de antes de %2$s</string>
+    <string name="freeup_none">Nada para liberar agora.</string>
+    <string name="freeup_how">Logo antes de apagar, o servidor lê de novo a cópia dele de cada arquivo e confere se é igual. Depois o Android pede que você permita a exclusão.</string>
+    <string name="freeup_reveal_on">O Reveal deste celular ainda não foi atualizado para manter as fotos que o Hoard libera: as fotos que o Reveal conhece ficam no celular.</string>
+    <string name="freeup_reveal_stale">Abra o Reveal uma vez para que as edições dele cheguem ao servidor: até lá nada é liberado.</string>
+    <string name="freeup_reveal_ungrouped">O Reveal está instalado neste celular, mas não está agrupado com o Hoard no servidor: nada é liberado até você agrupá-los (Reveal › Ajustes › Sincronização › Este dispositivo).</string>
+    <string name="freeup_kept_intro">Ficam no celular: %1$s</string>
+    <plurals name="freeup_kept_recent">
+        <item quantity="one">%1$s dos últimos %2$d dias</item>
+        <item quantity="many">%1$s dos últimos %2$d dias</item>
+        <item quantity="other">%1$s dos últimos %2$d dias</item>
+    </plurals>
+    <plurals name="freeup_kept_favourites">
+        <item quantity="one">%1$s favorito</item>
+        <item quantity="many">%1$s de favoritos</item>
+        <item quantity="other">%1$s favoritos</item>
+    </plurals>
+    <plurals name="freeup_kept_culling">
+        <item quantity="one">%1$s com seleção que ainda não chegou ao servidor</item>
+        <item quantity="many">%1$s com seleção que ainda não chegou ao servidor</item>
+        <item quantity="other">%1$s com seleção que ainda não chegou ao servidor</item>
+    </plurals>
+    <plurals name="freeup_kept_not_backed_up">
+        <item quantity="one">%1$s ainda sem backup</item>
+        <item quantity="many">%1$s ainda sem backup</item>
+        <item quantity="other">%1$s ainda sem backup</item>
+    </plurals>
+    <plurals name="freeup_kept_no_media">
+        <item quantity="one">%1$s RAW ou sidecar sem foto</item>
+        <item quantity="many">%1$s de RAWs ou sidecars sem foto</item>
+        <item quantity="other">%1$s RAWs ou sidecars sem foto</item>
+    </plurals>
+    <string name="freeup_month_include">Liberar este mês</string>
+    <string name="freeup_month_leave_out">Manter este mês</string>
+    <string name="freeup_shot_goes">%1$s será liberada</string>
+    <string name="freeup_shot_stays">%1$s fica</string>
+    <string name="freeup_go">Liberar %1$s</string>
+    <string name="freeup_go_none">Nada escolhido</string>
+    <plurals name="freeup_done">
+        <item quantity="one">%1$s arquivo liberado · %2$s</item>
+        <item quantity="many">%1$s de arquivos liberados · %2$s</item>
+        <item quantity="other">%1$s arquivos liberados · %2$s</item>
+    </plurals>
+    <string name="freeup_done_none">Nada foi apagado.</string>
+    <string name="freeup_done_gallery">Elas continuam na Galeria, vindas do servidor.</string>
+    <string name="freeup_done_report_later">O servidor será avisado no próximo backup.</string>
+    <plurals name="freeup_declined">
+        <item quantity="one">%1$s foto fica: o Android não a apagou</item>
+        <item quantity="many">%1$s de fotos ficam: o Android não as apagou</item>
+        <item quantity="other">%1$s fotos ficam: o Android não as apagou</item>
+    </plurals>
+    <string name="freeup_kept_for_reveal">Mantidas para o Reveal: %1$s</string>
+    <string name="freeup_stayed">Ficaram no celular</string>
+    <string name="freeup_stayed_line">%1$s: %2$s</string>
+    <string name="freeup_reason_differs">A cópia do servidor não é igual</string>
+    <string name="freeup_reason_missing">O servidor não tem cópia</string>
+    <string name="freeup_reason_changed_on_nas">A cópia no NAS mudou</string>
+    <string name="freeup_reason_unavailable">O NAS não está acessível</string>
+    <string name="freeup_reason_changed">Mudou no celular depois do backup</string>
+    <string name="freeup_reason_unreadable">Não pode ser lido</string>
+    <string name="freeup_reason_pending">Ainda em conferência no servidor</string>
+    <string name="freeup_reason_reveal">Mantida para o Reveal</string>
+    <string name="freeup_reason_refused">Não aceito pelo servidor</string>
+    <string name="freeup_close">Concluir</string>
 </resources>

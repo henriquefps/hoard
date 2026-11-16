@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.6.0 (unreleased)
+
+Free up space on the phone: what the server holds and has just checked leaves the phone, oldest first, after you see it and Android asks you ([ADR 0024](docs/adr/0024-phone-backup.md), "Free up space"). Android 11 and later; needs hoard-server 0.12.0.
+
+- **Settings › Photo server › Phone backup › Free up space.** A preview of what would leave the phone, by month, with counts and the space each month frees ("6 photos from before Oct 17, 2026 · 4.1 MB"), each photo's thumbnail. Tap a photo, or a month, to keep it on the phone. Nothing is deleted without this screen.
+- **Only what the server has proven it has.** Just before deleting, Hoard reads every file again and makes its checksum from the bytes the phone has now, then asks the server to compare with its own copy, read again within the last day (hoard-server 0.12.1; with 0.12.0, files the server last read more than a day ago stay on the phone): only photos whose every file (a RAW + JPEG pair, a video, its sidecar) matched in the last 10 minutes go. Right before Android's dialog Hoard checks once more that each file is unchanged and that Android's entry still names that very file; a sidecar changed since (by culling or Reveal) is never deleted. While the server is still reading, the screen says "Checking on the server…"; a photo whose server copy differs, is missing or changed on the phone stays, with the reason.
+- **Android asks you.** The deletion goes through Android's own dialog ("Allow Hoard to delete these 1,000 photos?"), one per 1,000 files, also with All files access. Hoard then checks what Android really deleted and tells the server exactly that: if you deny a dialog, those photos stay. A shot's `.xmp` sidecar (and a RAW Android does not list) goes only after its photos did.
+- **What stays on the phone**: photos from the last 30 days and favourites (two settings, both on), photos whose culling has not reached the server yet (Hoard sends it first), and photos not backed up yet. The preview says how many of each.
+- **If Hoard is closed while Android's dialog is up**, what Android deleted is recorded as freed the next time Hoard starts.
+- **Reveal's edits are safe.** If Reveal is installed but not grouped with Hoard on the server, nothing is freed until you group them (Reveal › Settings › Sync › This device). While Reveal on this phone has not been updated to keep photos Hoard frees, every photo Reveal knows stays ("Kept for Reveal: 42"), and nothing is freed while Reveal has not been opened for 30 minutes ("Open Reveal once so its edits reach the server").
+- **After freeing**, the photos stay in the Gallery from the server, marked "Freed from the phone"; **Save to this device** brings them back. Settings shows how much was freed ("18.4 GB freed · 4,210 files"). The server keeps freed files pinned: no app can delete them, only the server's admin page.
+- On Android 10 and older, free up is not offered (the backup works as before).
+- Settings › Phone backup says when Reveal on this phone is not grouped with Hoard (both apps may then back up the same folders), with a way to **This phone**.
+
 ## 2.5.0 (2026-11-16)
 
 Phone backup to your photo server, and every device sees it ([ADR 0024](docs/adr/0024-phone-backup.md)). Needs hoard-server 0.12.0; with an older server Settings says so and nothing is sent.

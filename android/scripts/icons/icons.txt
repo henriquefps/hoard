@@ -128,3 +128,5 @@ image
 # Other devices see backups (ADR 0024 A2)
 device-mobile-slash
 sim-card
+# Free up space (ADR 0024 A3)
+broom

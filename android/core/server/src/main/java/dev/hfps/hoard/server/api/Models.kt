@@ -28,6 +28,10 @@ data class CandidateDevice(
     val platform: String? = null,
     val manufacturer: String? = null,
     val model: String? = null,
+    /** `physicalDevice.devices` only (hoard-server 0.10.0, ADR 0017 "Liveness"): Unix ms, null = never seen. */
+    val lastSeenAt: Long? = null,
+    /** `physicalDevice.devices` only (hoard-server 0.12.0): what the device declared (`culling`, `freed-adopt`). */
+    val features: List<String> = emptyList(),
 )
 
 /** ADR 0017: a physical device this installation may be (the server proposes, the user confirms). */
@@ -455,9 +459,22 @@ data class BackupReportResponse(val results: List<BackupReportResult> = emptyLis
 @Serializable
 data class BackupVerifyEntry(val rootId: String, val path: String, val sha256: String, val size: Long)
 
+/**
+ * [maxAge] (ms, hoard-server 0.12.1): a server re-hash older than this is not reused; the server queues a new one and
+ * answers `pending`. Older servers ignore it (the client then also checks `verifiedAt` against the server's clock).
+ */
 @Serializable
-data class BackupVerifyRequest(val entries: List<BackupVerifyEntry>)
+data class BackupVerifyRequest(val entries: List<BackupVerifyEntry>, val maxAge: Long? = null)
 
+/** A response with the server's clock (its `Date` header, Unix ms; null when absent). */
+data class Dated<T>(val value: T, val serverDate: Long?)
+
+/**
+ * One verify answer (ADR 0024 "`POST /v1/backup/verify`"): [verified] `yes` (with the server's [verifiedAt]),
+ * `pending` (with [retryAfter]) or `no` with a [reason] (`differs`, `missing`, `changed_on_nas`, `unavailable`,
+ * `not_found`); a refused entry (Amendment S1) is `no` with [state] `refused` and its reason. [namedByRecord]: a live
+ * Reveal photo or version record names the file's content (the free-up gate).
+ */
 @Serializable
 data class BackupVerifyResult(
     val index: Int,
@@ -466,6 +483,8 @@ data class BackupVerifyResult(
     val retryAfter: Long? = null,
     val reason: String? = null,
     val namedByRecord: Boolean = false,
+    val state: String? = null,
+    val detail: String? = null,
 )
 
 @Serializable

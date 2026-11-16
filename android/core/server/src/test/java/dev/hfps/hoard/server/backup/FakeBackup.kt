@@ -45,12 +45,41 @@ class FakeBackup(private val server: FakeServer) {
     var corruptNext = false
     var patches = 0
 
+    // --- Free up (ADR 0024 A3) ---
+    /** `POST /v1/backup/verify` bodies received. */
+    val verifies = ArrayList<List<String>>()
+    /** Paths answered `pending` this many more times. */
+    val pendingRounds = HashMap<String, Int>()
+    /** Paths whose server copy is damaged (`no`, `differs`). */
+    val damaged = HashSet<String>()
+    /** Paths refused on their own (`state: refused`). */
+    val refusedVerify = HashSet<String>()
+    /** Fingerprints a live Reveal record names (`namedByRecord`). */
+    val named = HashSet<String>()
+    /** `physicalDevice.devices` of `GET /v1/device` (JSON objects). */
+    val devices = ArrayList<String>()
+    /** The server's clock (its `Date` header on `GET /v1/device` and verify; null = no header). */
+    var serverNow: (() -> Long)? = { System.currentTimeMillis() }
+    /** Paths whose stored re-hash is this old (ms) on the server's clock (default: just made). */
+    val rehashAge = HashMap<String, Long>()
+    /** hoard-server 0.12.1: a re-hash older than the request's `maxAge` is made again (`pending` once). */
+    var honorMaxAge = true
+    /** `maxAge` of every verify request. */
+    val maxAges = ArrayList<Long?>()
+
     init {
         server.features = server.features + "backup"
         server.extra = { ex, path, _, body -> handle(ex, path, body) }
     }
 
     private fun json(ex: FakeServer.HttpExchange, status: Int, body: String) = server.send(ex, status, body).let { true }
+
+    private fun dated(ex: FakeServer.HttpExchange, body: String): Boolean {
+        val headers = HashMap(mapOf("Content-Type" to "application/json"))
+        serverNow?.let { headers["Date"] = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.Instant.ofEpochMilli(it()).atZone(java.time.ZoneOffset.UTC)) }
+        server.sendBytes(ex, 200, body.toByteArray(), headers)
+        return true
+    }
 
     private fun error(ex: FakeServer.HttpExchange, status: Int, code: String, details: String = "{}") =
         json(ex, status, """{"error":{"code":"$code","message":"$code","details":$details}}""")
@@ -97,6 +126,44 @@ class FakeBackup(private val server: FakeServer) {
                 o["types"]?.jsonArray?.let { a -> r.types = a.map { it.jsonPrimitive.content } }
                 o["paused"]?.jsonPrimitive?.content?.let { r.paused = it == "true" }
                 return json(ex, 200, rootJson(r))
+            }
+            path == "/v1/device" && method == "GET" -> {
+                val list = (listOf("""{"id":"dev-hoard","name":"Pixel 8","app":"hoard-debug","platform":"android","lastSeenAt":1,"features":["culling"]}""") + devices).joinToString(",")
+                return dated(ex, """{"deviceId":"dev-hoard","name":"Pixel 8","app":"hoard-debug","features":["culling"],"physicalDevice":{"id":"phys","name":"Pixel 8","devices":[$list],"backup":{"roots":[]}},"candidates":[]}""")
+            }
+            path == "/v1/backup/verify" -> {
+                val o = ServerJson.parseToJsonElement(text).jsonObject
+                val entries = o["entries"]!!.jsonArray.map { it.jsonObject }
+                verifies += entries.map { it["path"]!!.jsonPrimitive.content }
+                val maxAge = o["maxAge"]?.jsonPrimitive?.content?.toLongOrNull()
+                maxAges += maxAge
+                val clockNow = serverNow?.invoke() ?: System.currentTimeMillis()
+                val out = entries.mapIndexed { i, e ->
+                    val p = e["path"]!!.jsonPrimitive.content
+                    val rootId = e["rootId"]!!.jsonPrimitive.content
+                    if (rootId !in roots) return error(ex, 404, "not_found", """{"index":$i}""")
+                    val shaIn = e["sha256"]!!.jsonPrimitive.content
+                    val fp = this@FakeBackup.entries[p]
+                    val namedBy = fp != null && fp in named
+                    val pend = pendingRounds[p] ?: 0
+                    when {
+                        p in refusedVerify -> """{"index":$i,"verified":"no","state":"refused","reason":"invalid_path","detail":"x","namedByRecord":false}"""
+                        fp == null -> """{"index":$i,"verified":"no","reason":"not_found","namedByRecord":false}"""
+                        pend > 0 -> {
+                            pendingRounds[p] = pend - 1
+                            """{"index":$i,"verified":"pending","retryAfter":1,"namedByRecord":$namedBy}"""
+                        }
+                        p in damaged -> """{"index":$i,"verified":"no","reason":"differs","namedByRecord":$namedBy}"""
+                        honorMaxAge && maxAge != null && (rehashAge[p] ?: 0L) > maxAge -> {
+                            rehashAge[p] = 0L // queued: done by the next ask
+                            """{"index":$i,"verified":"pending","retryAfter":1,"namedByRecord":$namedBy}"""
+                        }
+                        fp in nas || store[fp] == shaIn -> """{"index":$i,"verified":"yes","verifiedAt":${clockNow - (rehashAge[p] ?: 0L)},"namedByRecord":$namedBy}"""
+                        fp in store -> """{"index":$i,"verified":"no","reason":"differs","namedByRecord":$namedBy}"""
+                        else -> """{"index":$i,"verified":"no","reason":"missing","namedByRecord":$namedBy}"""
+                    }
+                }
+                return dated(ex, out.joinToString(",", """{"results":[""", "]}"))
             }
             path == "/v1/backup/report" -> {
                 val report = ServerJson.decodeFromString(BackupReport.serializer(), text)

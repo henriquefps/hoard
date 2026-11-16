@@ -43,3 +43,6 @@ import kotlinx.serialization.Serializable
 
 /** A backed-up folder's files with their states. */
 @Serializable data class BackupFolderRoute(val rootId: String)
+
+/** Settings › Backup › Free up space (ADR 0024, Hoard 2.6.0). */
+@Serializable data object FreeUpRoute

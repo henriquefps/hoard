@@ -568,4 +568,89 @@
     <string name="save_device_nothing">These shots are on this phone already: only photos from the server are saved.</string>
     <string name="save_device_from_server">Photo server</string>
     <string name="save_device_failed">Could not save: %1$s</string>
+    <!-- Free up space (ADR 0024 A3, Hoard 2.6.0) -->
+    <string name="backup_reveal_not_grouped">Reveal on this phone is not grouped with Hoard: both apps may back up the same folders.</string>
+    <string name="freeup_title">Free up space</string>
+    <string name="freeup_open">Free up space on this phone</string>
+    <string name="freeup_open_hint">Delete from the phone what the server holds and has checked, oldest first. You see everything first.</string>
+    <plurals name="freeup_freed_so_far">
+        <item quantity="one">%1$s freed · %2$s file</item>
+        <item quantity="other">%1$s freed · %2$s files</item>
+    </plurals>
+    <string name="freeup_rule_recent">Keep the last 30 days on the phone</string>
+    <string name="freeup_rule_favourites">Keep favourites on the phone</string>
+    <string name="freeup_rules_hint">Freed photos stay in the Gallery from the server, and Save to this device brings them back.</string>
+    <string name="freeup_loading">Looking for what the server has…</string>
+    <string name="freeup_verifying">Checking on the server…</string>
+    <string name="freeup_hashing">Reading %1$s (%2$s of %3$s)…</string>
+    <string name="freeup_deleting">Waiting for Android to delete the files…</string>
+    <string name="freeup_nothing_yet">Nothing is deleted until Android asks you.</string>
+    <string name="freeup_unauthorized">This phone\'s key was revoked on the server: pair again.</string>
+    <string name="freeup_retry">Try again</string>
+    <plurals name="freeup_photos">
+        <item quantity="one">%1$s photo</item>
+        <item quantity="other">%1$s photos</item>
+    </plurals>
+    <plurals name="freeup_videos">
+        <item quantity="one">%1$s video</item>
+        <item quantity="other">%1$s videos</item>
+    </plurals>
+    <string name="freeup_photos_and_videos">%1$s and %2$s</string>
+    <string name="freeup_before">%1$s from before %2$s</string>
+    <string name="freeup_none">Nothing to free up now.</string>
+    <string name="freeup_how">Just before deleting, the server reads its copy of every file again and checks it is the same. Then Android asks you to allow the deletion.</string>
+    <string name="freeup_reveal_on">Reveal on this phone has not been updated to keep photos Hoard frees: photos Reveal knows stay on the phone.</string>
+    <string name="freeup_reveal_stale">Open Reveal once so its edits reach the server: until then nothing is freed.</string>
+    <string name="freeup_reveal_ungrouped">Reveal is installed on this phone but not grouped with Hoard on the server: nothing is freed until you group them (Reveal › Settings › Sync › This device).</string>
+    <string name="freeup_kept_intro">Staying on the phone: %1$s</string>
+    <plurals name="freeup_kept_recent">
+        <item quantity="one">%1$s from the last %2$d days</item>
+        <item quantity="other">%1$s from the last %2$d days</item>
+    </plurals>
+    <plurals name="freeup_kept_favourites">
+        <item quantity="one">%1$s favourite</item>
+        <item quantity="other">%1$s favourites</item>
+    </plurals>
+    <plurals name="freeup_kept_culling">
+        <item quantity="one">%1$s with culling not on the server yet</item>
+        <item quantity="other">%1$s with culling not on the server yet</item>
+    </plurals>
+    <plurals name="freeup_kept_not_backed_up">
+        <item quantity="one">%1$s not backed up yet</item>
+        <item quantity="other">%1$s not backed up yet</item>
+    </plurals>
+    <plurals name="freeup_kept_no_media">
+        <item quantity="one">%1$s RAW or sidecar without a photo</item>
+        <item quantity="other">%1$s RAWs or sidecars without a photo</item>
+    </plurals>
+    <string name="freeup_month_include">Free up this month</string>
+    <string name="freeup_month_leave_out">Keep this month</string>
+    <string name="freeup_shot_goes">%1$s will be freed</string>
+    <string name="freeup_shot_stays">%1$s stays</string>
+    <string name="freeup_go">Free up %1$s</string>
+    <string name="freeup_go_none">Nothing chosen</string>
+    <plurals name="freeup_done">
+        <item quantity="one">Freed %1$s file · %2$s</item>
+        <item quantity="other">Freed %1$s files · %2$s</item>
+    </plurals>
+    <string name="freeup_done_none">Nothing was deleted.</string>
+    <string name="freeup_done_gallery">They stay in the Gallery from the server.</string>
+    <string name="freeup_done_report_later">The server will be told at the next backup run.</string>
+    <plurals name="freeup_declined">
+        <item quantity="one">%1$s shot stays: Android did not delete it</item>
+        <item quantity="other">%1$s shots stay: Android did not delete them</item>
+    </plurals>
+    <string name="freeup_kept_for_reveal">Kept for Reveal: %1$s</string>
+    <string name="freeup_stayed">Stayed on the phone</string>
+    <string name="freeup_stayed_line">%1$s: %2$s</string>
+    <string name="freeup_reason_differs">The server\'s copy is not the same</string>
+    <string name="freeup_reason_missing">The server has no copy</string>
+    <string name="freeup_reason_changed_on_nas">The NAS copy changed</string>
+    <string name="freeup_reason_unavailable">The NAS cannot be reached</string>
+    <string name="freeup_reason_changed">Changed on the phone since its backup</string>
+    <string name="freeup_reason_unreadable">Cannot be read</string>
+    <string name="freeup_reason_pending">Still being checked on the server</string>
+    <string name="freeup_reason_reveal">Kept for Reveal</string>
+    <string name="freeup_reason_refused">Not taken by the server</string>
+    <string name="freeup_close">Done</string>
 </resources>

@@ -61,6 +61,9 @@ class ServerApi(
 
     fun device(): DeviceView = get("/v1/device", DeviceView.serializer())
 
+    /** `GET /v1/device` with the server's clock (its `Date` header, Unix ms; null when absent): free up's Reveal gate. */
+    fun deviceDated(): Dated<DeviceView> = request("GET", "/v1/device").use { Dated(ServerJson.decodeFromString(DeviceView.serializer(), it.readText()), it.date()) }
+
     fun patchDevice(patch: DevicePatch): DeviceView = send("PATCH", "/v1/device", patch, DevicePatch.serializer(), DeviceView.serializer())
 
     fun claim(physicalDeviceId: String?): DeviceView = send("POST", "/v1/device/claim", ClaimRequest(physicalDeviceId), ClaimRequest.serializer(), DeviceView.serializer())
@@ -124,8 +127,13 @@ class ServerApi(
     fun backupReport(report: BackupReport): BackupReportResponse =
         send("POST", "/v1/backup/report", report, BackupReport.serializer(), BackupReportResponse.serializer())
 
-    fun backupVerify(request: BackupVerifyRequest): BackupVerifyResponse =
-        send("POST", "/v1/backup/verify", request, BackupVerifyRequest.serializer(), BackupVerifyResponse.serializer())
+    fun backupVerify(request: BackupVerifyRequest): BackupVerifyResponse = backupVerifyDated(request).value
+
+    /** `POST /v1/backup/verify` with the server's clock (its `Date` header): how old each answer's re-hash is. */
+    fun backupVerifyDated(request: BackupVerifyRequest): Dated<BackupVerifyResponse> =
+        request("POST", "/v1/backup/verify", ServerJson.encodeToString(BackupVerifyRequest.serializer(), request)).use {
+            Dated(ServerJson.decodeFromString(BackupVerifyResponse.serializer(), it.readText()), it.date())
+        }
 
     // --- Chunked uploads (ADR 0013 "Blobs") --------------------------------------------------------------------------
 
@@ -306,6 +314,10 @@ class ServerApi(
 
     private class Response(val conn: HttpURLConnection, val stream: InputStream) : AutoCloseable {
         fun readText(): String = stream.readBytes().toString(Charsets.UTF_8)
+
+        /** The response's `Date` header (the server's clock), Unix ms; null when absent. */
+        fun date(): Long? = conn.getHeaderFieldDate("Date", -1L).takeIf { it > 0 }
+
         override fun close() {
             runCatching { stream.close() }
             conn.disconnect()

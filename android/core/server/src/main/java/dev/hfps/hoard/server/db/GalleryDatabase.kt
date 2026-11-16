@@ -583,4 +583,22 @@ interface BackupDao {
 
     @Query("SELECT COUNT(*) FROM freed")
     suspend fun freedCount(): Int
+
+    /** Every file of every folder (free up's candidates, ADR 0024 A3). */
+    @Query("SELECT * FROM backup_files")
+    suspend fun allFiles(): List<BackupFileEntity>
+
+    /** Free up's local history (ADR 0024 A3): what was freed, by phone path. */
+    @Upsert
+    suspend fun putFreed(rows: List<FreedEntity>)
+
+    @Query("SELECT * FROM freed")
+    suspend fun freed(): List<FreedEntity>
+
+    /** "18.4 GB freed" in Settings › Backup: bytes and files freed so far. */
+    @Query("SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM freed")
+    fun observeFreedTotal(): Flow<FreedTotal>
 }
+
+/** What free up has freed so far (Settings › Backup). */
+data class FreedTotal(val files: Int, val bytes: Long)

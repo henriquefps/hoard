@@ -23,8 +23,11 @@ class HoardApplication : Application(), GallerySyncHost, BackupHost {
     override suspend fun prefetchThumbs(stopped: () -> Boolean): Boolean = container.gallery.prefetchThumbs(stopped)
 
     /** The phone backup's runs (ADR 0024): only from its worker. */
-    override suspend fun runBackup(stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit): BackupRunResult =
-        container.backup.run(stopped, foreground)
+    override suspend fun runBackup(stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit): BackupRunResult {
+        // A free-up request left waiting for consent is settled first, so its files are reported `freed`, not `deleted`.
+        container.freeUp.settlePending()
+        return container.backup.run(stopped, foreground)
+    }
 
     override suspend fun backupRules(): BackupRules = container.backup.rules()
 

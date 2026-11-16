@@ -234,6 +234,30 @@ class GalleryRepository(
         }
     }
 
+    /**
+     * Of these phone shot keys (`<location>/<dir>/<stem>`), the ones whose culling has not reached the server (ADR 0024
+     * "Free up space": such shots stay on the phone): a decision on the phone whose shot has no server item yet or is
+     * still to hand over, or a server item with queued changes. Called after [syncNow].
+     */
+    suspend fun pendingCulling(keys: Set<String>): Set<String> = writes.withLock {
+        if (keys.isEmpty()) return@withLock emptySet()
+        val byKey = entries.value.orEmpty().mapNotNull { e -> e.device?.let { it.key to e } }.toMap()
+        val rows = cullDao.localDecisions().associateBy { "${it.locationId}/${it.path}/${it.shotId}" }
+        val sidecars = cullDao.localSidecarRows().associateBy { "${it.locationId}/${it.path}/${it.shotId}" }
+        val pushed = db.device().pushed().associateBy { it.shotKey }
+        val now = System.currentTimeMillis()
+        keys.filterTo(HashSet()) { key ->
+            val itemId = byKey[key]?.itemId
+            val row = rows[key]
+            val decided = row != null && (row.flag != null || row.rating > 0)
+            when {
+                itemId == null -> decided
+                Handover.step(itemId, row, sidecars[key], pushed[key], now)?.promotion != null -> true
+                else -> db.culling().pendingFor(itemId).isNotEmpty()
+            }
+        }
+    }
+
     // --- Server originals for hand-off links and the image core ---------------------------------------------------
 
     /** Whether the network now is unmetered (Wi-Fi, Ethernet): originals are kept while viewing only then. */
