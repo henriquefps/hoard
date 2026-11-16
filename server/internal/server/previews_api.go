@@ -50,7 +50,7 @@ func (s *Server) previewItem(w http.ResponseWriter, r *http.Request) (store.Item
 		return store.ItemRow{}, false
 	}
 	row, err := s.store.Item(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) || err == nil && row.Deleted {
+	if errors.Is(err, store.ErrNotFound) || err == nil && (row.Deleted || webTrashed(r, row)) {
 		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
 		return store.ItemRow{}, false
 	}

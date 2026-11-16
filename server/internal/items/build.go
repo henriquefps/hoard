@@ -8,7 +8,7 @@ import (
 
 // Source is one place an item's files were found: a NAS group or an uploaded original.
 type Source struct {
-	Type       string // nas | backup
+	Type       string // nas | backup | trash
 	FolderID   string
 	FolderName string
 	Members    []Member
@@ -19,7 +19,8 @@ type Location struct {
 	Source     string `json:"source"` // nas | backup
 	FolderID   string `json:"folderId,omitempty"`
 	FolderName string `json:"folderName,omitempty"`
-	Path       string `json:"path,omitempty"`       // nas: relative to the folder, '/'-separated
+	Path       string `json:"path,omitempty"`       // nas: relative to the folder, '/'-separated (in a trash: the original path)
+	Trash      string `json:"trash,omitempty"`      // nas, in a trash (ADR 0023): where the file is now, relative to the folder
 	ModifiedAt int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms
 	SHA256     string `json:"sha256,omitempty"`     // backup: the blob
 }
@@ -64,7 +65,8 @@ type Data struct {
 }
 
 // Build computes an item from its sources and the stored metadata of its files (ADR 0014 "Items"). ok is false when
-// no source has a file left (the item is then a tombstone).
+// no source has a file left (the item is then a tombstone). Files in a trash are locations like any other (with their
+// trash path, ADR 0023): the API leaves them out for clients that did not ask for the trash.
 func Build(main string, sources []Source, metas map[string]media.Meta) (Data, bool) {
 	files := map[string]*File{}
 	var earliest = map[string]Member{} // per fingerprint, the oldest location (for the mtime fallback)
@@ -79,8 +81,9 @@ func Build(main string, sources []Source, metas map[string]media.Meta) (Data, bo
 				f.Role = m.Role
 			}
 			loc := Location{Source: s.Type}
-			if s.Type == SourceNAS {
-				loc.FolderID, loc.FolderName, loc.Path, loc.ModifiedAt = s.FolderID, s.FolderName, m.Path, m.MTime/1e6
+			if s.Type == SourceNAS || s.Type == SourceTrash {
+				loc.Source = SourceNAS
+				loc.FolderID, loc.FolderName, loc.Path, loc.ModifiedAt, loc.Trash = s.FolderID, s.FolderName, m.Path, m.MTime/1e6, m.Trash
 				if f.Name == "" || m.Name < f.Name {
 					f.Name = m.Name
 				}
@@ -108,6 +111,9 @@ func Build(main string, sources []Source, metas map[string]media.Meta) (Data, bo
 			}
 			if a.Path != b.Path {
 				return a.Path < b.Path
+			}
+			if a.Trash != b.Trash {
+				return a.Trash < b.Trash // the live copy first
 			}
 			return a.SHA256 < b.SHA256
 		})
@@ -213,4 +219,25 @@ func fill(dst *string, v string) {
 	if *dst == "" {
 		*dst = v
 	}
+}
+
+// Live returns the item without its locations in a trash (ADR 0023) and without the member files left with none: what
+// a client that does not ask for the trash, and the web gallery, see.
+func (d Data) Live() Data {
+	files := make([]File, 0, len(d.Files))
+	for _, f := range d.Files {
+		locs := make([]Location, 0, len(f.Locations))
+		for _, l := range f.Locations {
+			if l.Trash == "" {
+				locs = append(locs, l)
+			}
+		}
+		if len(locs) == 0 {
+			continue
+		}
+		f.Locations = locs
+		files = append(files, f)
+	}
+	d.Files = files
+	return d
 }

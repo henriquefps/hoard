@@ -125,9 +125,9 @@ func (s *Store) ItemSources(ctx context.Context, source, folderID string) ([]Ite
 	return scanSources(rows)
 }
 
-// SourceFolders lists the folder ids that still have NAS sources.
+// SourceFolders lists the folder ids that still have NAS sources (or trash ones, ADR 0023).
 func (s *Store) SourceFolders(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT folder_id FROM item_sources WHERE source = 'nas'")
+	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT folder_id FROM item_sources WHERE source IN ('nas', 'trash')")
 	if err != nil {
 		return nil, err
 	}
@@ -198,11 +198,22 @@ type ItemFile struct {
 // JSON, e.g. {"replacedBy": …}). A state equal to the stored one writes nothing. It reports whether a revision was
 // used.
 func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte, files []ItemFile, tombstone []byte) (bool, error) {
+	return t.writeItem(id, mainFP, kind, sortTime, data, files, tombstone, false)
+}
+
+// WriteItemState stores an item's state, live or trashed (ADR 0023: every location in a trash). A trashed item keeps
+// the time it was first seen trashed; a live one has none.
+func (t *ItemTx) WriteItemState(id, mainFP, kind string, sortTime int64, data []byte, files []ItemFile, trashed bool) (bool, error) {
+	return t.writeItem(id, mainFP, kind, sortTime, data, files, nil, trashed)
+}
+
+func (t *ItemTx) writeItem(id, mainFP, kind string, sortTime int64, data []byte, files []ItemFile, tombstone []byte, trashed bool) (bool, error) {
 	var cur struct {
-		deleted bool
-		data    string
+		deleted   bool
+		data      string
+		trashedAt sql.NullInt64
 	}
-	err := t.tx.QueryRowContext(t.ctx, "SELECT deleted, data FROM items WHERE id = ?", id).Scan(&cur.deleted, &cur.data)
+	err := t.tx.QueryRowContext(t.ctx, "SELECT deleted, data, trashed_at FROM items WHERE id = ?", id).Scan(&cur.deleted, &cur.data, &cur.trashedAt)
 	exists := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
@@ -218,7 +229,7 @@ func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte,
 		if err != nil {
 			return false, err
 		}
-		if _, err := t.tx.ExecContext(t.ctx, "UPDATE items SET deleted = 1, rev = ?, data = ?, updated_at = ? WHERE id = ?", rev, string(tombstone), t.now, id); err != nil {
+		if _, err := t.tx.ExecContext(t.ctx, "UPDATE items SET deleted = 1, trashed_at = NULL, rev = ?, data = ?, updated_at = ? WHERE id = ?", rev, string(tombstone), t.now, id); err != nil {
 			return false, err
 		}
 		if _, err = t.tx.ExecContext(t.ctx, "DELETE FROM item_files WHERE item_id = ?", id); err != nil {
@@ -231,17 +242,24 @@ func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte,
 		// Its culling record is sent again, now naming the item that replaced it (ADR 0016 "Mapping a record").
 		return true, touchCulling(t.ctx, t.tx, id)
 	}
-	if exists && !cur.deleted && bytes.Equal([]byte(cur.data), data) {
+	if exists && !cur.deleted && bytes.Equal([]byte(cur.data), data) && cur.trashedAt.Valid == trashed {
 		return false, nil
 	}
 	rev, err := next(t.ctx, t.tx, "items")
 	if err != nil {
 		return false, err
 	}
-	if _, err := t.tx.ExecContext(t.ctx, `INSERT INTO items (id, main_fp, rev, deleted, kind, sort_time, data, created_at, updated_at)
-		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, deleted = 0, kind = excluded.kind,
-		sort_time = excluded.sort_time, data = excluded.data, updated_at = excluded.updated_at`,
-		id, mainFP, rev, kind, sortTime, string(data), t.now, t.now); err != nil {
+	var trashedAt any
+	if trashed {
+		trashedAt = t.now
+		if exists && !cur.deleted && cur.trashedAt.Valid {
+			trashedAt = cur.trashedAt.Int64
+		}
+	}
+	if _, err := t.tx.ExecContext(t.ctx, `INSERT INTO items (id, main_fp, rev, deleted, kind, sort_time, data, created_at, updated_at, trashed_at)
+		VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET rev = excluded.rev, deleted = 0, kind = excluded.kind,
+		sort_time = excluded.sort_time, data = excluded.data, updated_at = excluded.updated_at, trashed_at = excluded.trashed_at`,
+		id, mainFP, rev, kind, sortTime, string(data), t.now, t.now, trashedAt); err != nil {
 		return false, err
 	}
 	before, err := t.ItemFileFingerprints(id)
@@ -272,17 +290,41 @@ func (t *ItemTx) WriteItem(id, mainFP, kind string, sortTime int64, data []byte,
 }
 
 // LiveItemWithFile returns a live item, other than except, that has fp as a member and at least one source of the
-// given kind ("" = any): the item fp's file belongs to.
+// given kind ("" = any): the item fp's file belongs to. A trashed item is not live (ADR 0023): never an heir or a
+// replacement.
 func (t *ItemTx) LiveItemWithFile(fp, except, sourceKind string) (string, error) {
 	var id string
 	err := t.tx.QueryRowContext(t.ctx, `SELECT f.item_id FROM item_files f JOIN items i ON i.id = f.item_id
-		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0
+		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0 AND i.trashed_at IS NULL
 		AND (? = '' OR EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = f.item_id AND s.source = ?))
 		ORDER BY (i.main_fp = f.fingerprint) DESC, f.item_id LIMIT 1`, fp, except, sourceKind, sourceKind).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return id, err
+}
+
+// TrashedItemWithFile returns a trashed item, other than except, that has fp as a member (ADR 0023): the heir of the
+// culling of a trashed item whose main file was purged while another of its files is still in a trash.
+func (t *ItemTx) TrashedItemWithFile(fp, except string) (string, error) {
+	var id string
+	err := t.tx.QueryRowContext(t.ctx, `SELECT f.item_id FROM item_files f JOIN items i ON i.id = f.item_id
+		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0 AND i.trashed_at IS NOT NULL
+		ORDER BY (i.main_fp = f.fingerprint) DESC, f.item_id LIMIT 1`, fp, except).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// ItemTrashed reports whether an item is trashed (ADR 0023).
+func (t *ItemTx) ItemTrashed(id string) (bool, error) {
+	var trashed bool
+	err := t.tx.QueryRowContext(t.ctx, "SELECT deleted = 0 AND trashed_at IS NOT NULL FROM items WHERE id = ?", id).Scan(&trashed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return trashed, err
 }
 
 // --- reads for the API ---------------------------------------------------------------------------------------------
@@ -297,10 +339,14 @@ type ItemRow struct {
 	Data      []byte
 	CreatedAt int64
 	UpdatedAt int64
+	TrashedAt *int64 // trashed (ADR 0023): since when; nil for a live item or a tombstone
 	Edits     []byte // JSON array of the item's edits (ADR 0020), nil when it has none
 }
 
-const itemCols = "id, rev, deleted, kind, sort_time, data, created_at, updated_at"
+// Trashed reports whether the item is in a trash (ADR 0023).
+func (r ItemRow) Trashed() bool { return r.TrashedAt != nil && !r.Deleted }
+
+const itemCols = "id, rev, deleted, kind, sort_time, data, created_at, updated_at, trashed_at"
 
 func scanItems(rows *sql.Rows) ([]ItemRow, error) {
 	defer rows.Close()
@@ -308,7 +354,7 @@ func scanItems(rows *sql.Rows) ([]ItemRow, error) {
 	for rows.Next() {
 		var r ItemRow
 		var data string
-		if err := rows.Scan(&r.ID, &r.Rev, &r.Deleted, &r.Kind, &r.SortTime, &data, &r.CreatedAt, &r.UpdatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.Rev, &r.Deleted, &r.Kind, &r.SortTime, &data, &r.CreatedAt, &r.UpdatedAt, &r.TrashedAt); err != nil {
 			return nil, err
 		}
 		r.Data = []byte(data)
@@ -350,8 +396,9 @@ func (s *Store) Item(ctx context.Context, id string) (ItemRow, error) {
 	return out[0], s.attachEdits(ctx, out)
 }
 
-// ItemQuery filters live items (GET /v1/items).
+// ItemQuery filters live items (GET /v1/items), or trashed ones (ADR 0023).
 type ItemQuery struct {
+	Trashed  bool // list trashed items instead of live ones
 	Kinds    []string
 	From, To *int64 // sort time, [From, To)
 	FolderID string
@@ -367,9 +414,13 @@ type ItemKey struct {
 	ID       string
 }
 
-// QueryItems lists live items in sort-time order (then id).
+// QueryItems lists live (or trashed) items in sort-time order (then id).
 func (s *Store) QueryItems(ctx context.Context, q ItemQuery) ([]ItemRow, bool, error) {
-	where := []string{"deleted = 0"}
+	where := []string{"deleted = 0 AND trashed_at IS NULL"}
+	source := "nas"
+	if q.Trashed {
+		where[0], source = "deleted = 0 AND trashed_at IS NOT NULL", "trash"
+	}
 	var args []any
 	if len(q.Kinds) > 0 {
 		where = append(where, "kind IN ("+placeholders(len(q.Kinds))+")")
@@ -386,8 +437,8 @@ func (s *Store) QueryItems(ctx context.Context, q ItemQuery) ([]ItemRow, bool, e
 		args = append(args, *q.To)
 	}
 	if q.FolderID != "" {
-		cond := "EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = items.id AND s.source = 'nas' AND s.folder_id = ?"
-		args = append(args, q.FolderID)
+		cond := "EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = items.id AND s.source = ? AND s.folder_id = ?"
+		args = append(args, source, q.FolderID)
 		if q.Dir != "" {
 			cond += ` AND (s.dir = ? OR s.dir LIKE ? ESCAPE '\')`
 			args = append(args, q.Dir, likeEscape(q.Dir)+"/%")
@@ -426,7 +477,7 @@ func likeEscape(s string) string {
 	return r.Replace(s)
 }
 
-// ItemFilesByFingerprint returns the live items that have any of the fingerprints as a member.
+// ItemFilesByFingerprint returns the live (or trashed, ADR 0023) items that have any of the fingerprints as a member.
 func (s *Store) ItemFilesByFingerprint(ctx context.Context, fps []string) ([]ItemFile, error) {
 	var out []ItemFile
 	for start := 0; start < len(fps); start += 500 {
@@ -457,10 +508,10 @@ func (s *Store) ItemFilesByFingerprint(ctx context.Context, fps []string) ([]Ite
 	return out, nil
 }
 
-// ItemCount counts live items.
+// ItemCount counts live items (not trashed).
 func (s *Store) ItemCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM items WHERE deleted = 0").Scan(&n)
+	err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM items WHERE deleted = 0 AND trashed_at IS NULL").Scan(&n)
 	return n, err
 }
 
@@ -518,7 +569,7 @@ type PathMatch struct {
 // ItemsByPath resolves relative paths of one NAS folder to the live items that have the file as a member. The
 // file's fingerprint (nas_files) finds the item (item_files) among those the folder's own sources produced; an item
 // that is a tombstone with replacedBy is followed once to its live replacement. Paths that match no live item are
-// absent from the result.
+// absent from the result: files in a trash and trashed items too (ADR 0023).
 func (s *Store) ItemsByPath(ctx context.Context, folderID string, paths []string) ([]PathMatch, error) {
 	type row struct {
 		PathMatch
@@ -537,7 +588,7 @@ func (s *Store) ItemsByPath(ctx context.Context, folderID string, paths []string
 		//nolint:gosec // placeholders only; the paths are arguments
 		rows, err := s.db.QueryContext(ctx, `SELECT n.rel_path, n.size, n.mtime, n.fingerprint, f.item_id, f.role, i.deleted, i.data
 			FROM nas_files n JOIN item_files f ON f.fingerprint = n.fingerprint JOIN items i ON i.id = f.item_id
-			WHERE n.folder_id = ? AND n.removed = 0 AND n.rel_path IN (`+placeholders(len(chunk))+`)
+			WHERE n.folder_id = ? AND n.removed = 0 AND n.origin_path IS NULL AND i.trashed_at IS NULL AND n.rel_path IN (`+placeholders(len(chunk))+`)
 			AND EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = f.item_id AND s.source = 'nas' AND s.folder_id = n.folder_id)
 			ORDER BY n.rel_path, i.deleted, (i.main_fp = f.fingerprint) DESC, f.item_id`, args...)
 		if err != nil {
@@ -574,7 +625,7 @@ func (s *Store) ItemsByPath(ctx context.Context, folderID string, paths []string
 			}
 			var role sql.NullString
 			err := s.db.QueryRowContext(ctx, `SELECT f.role FROM items i LEFT JOIN item_files f ON f.item_id = i.id AND f.fingerprint = ?
-				WHERE i.id = ? AND i.deleted = 0`, r.fp, t.ReplacedBy).Scan(&role)
+				WHERE i.id = ? AND i.deleted = 0 AND i.trashed_at IS NULL`, r.fp, t.ReplacedBy).Scan(&role)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}

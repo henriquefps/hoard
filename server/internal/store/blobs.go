@@ -168,12 +168,13 @@ type Original struct {
 	ModTime     int64  // nas only (ns)
 }
 
-// LookupOriginal finds a file by fingerprint: an indexed NAS file first (no copy needed), then an uploaded original.
+// LookupOriginal finds a file by fingerprint: an indexed NAS file first (no copy needed; one in a trash too, live
+// copies first, ADR 0023), then an uploaded original.
 func (s *Store) LookupOriginal(ctx context.Context, fp string) (Original, error) {
 	o := Original{Fingerprint: fp, Source: "nas"}
 	err := s.db.QueryRowContext(ctx, `SELECT f.size, f.folder_id, d.path, f.rel_path, f.mtime FROM nas_files f
 		JOIN nas_folders d ON d.id = f.folder_id
-		WHERE f.fingerprint = ? AND f.removed = 0 AND d.enabled = 1 ORDER BY f.id LIMIT 1`, fp).
+		WHERE f.fingerprint = ? AND f.removed = 0 AND d.enabled = 1 ORDER BY f.origin_path IS NOT NULL, f.id LIMIT 1`, fp).
 		Scan(&o.Size, &o.FolderID, &o.FolderPath, &o.RelPath, &o.ModTime)
 	if err == nil {
 		return o, nil

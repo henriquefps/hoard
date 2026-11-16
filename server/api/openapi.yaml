@@ -505,6 +505,10 @@ paths:
     get:
       tags: [nas]
       summary: The files the server indexes on its NAS folders, as a feed
+      description: |
+        Photos only. Since 0.11.0 (ADR 0023) files in a `.hoard-trash` folder never appear: a file moved to a trash is
+        its original row with `removed: true` and `trashed: true`; a restore is `removed: false` at the same path with
+        the same fingerprint; a purge (the trash copy gone) sends the row again with `removed: true` and no `trashed`.
       parameters:
         - name: cursor
           in: query
@@ -532,6 +536,55 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/nas/walk:
+    post:
+      tags: [nas]
+      summary: "Walk these NAS folders soon (hoard-server 0.11.0, ADR 0023)"
+      description: |
+        Hoard asks for a walk after it moved files into or out of a folder's `.hoard-trash`, so the items follow
+        without waiting for the scheduled walk. Coalesced: a folder already queued is not queued again (one being
+        walked is queued once more). Server-wide budget, whoever asks: a requested walk of a folder starts at least
+        1 minute after the previous requested walk of it and 10 s after any walk of it; the answer is still `202`,
+        with `deferred` giving when such a folder's walk may start (more requests meanwhile change nothing). Per
+        device: a burst of 6 requests, then one per 10 s; beyond that `429 rate_limited` with `Retry-After`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folders]
+              properties:
+                folders:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { $ref: "#/components/schemas/Uuid" }
+      responses:
+        "202":
+          description: The folders are queued (each once)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [queued, deferred]
+                properties:
+                  queued:
+                    type: array
+                    items: { $ref: "#/components/schemas/Uuid" }
+                  deferred:
+                    type: object
+                    description: The queued folders whose walk waits for the budget, with when it may start (Unix ms); empty when none
+                    additionalProperties: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404":
+          description: "`not_found`: a folder the server does not index (unknown or removed); `details.folder` names it; nothing is queued"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/items/changes:
     get:
       tags: [items]
@@ -550,8 +603,12 @@ paths:
           schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
         - name: include
           in: query
-          description: "Comma-separated `items`, `culling` (ADR 0016; 0.7.0). Absent = `items`."
-          schema: { type: string, default: items, examples: ["items,culling", culling] }
+          description: |
+            Comma-separated `items`, `culling` (ADR 0016; 0.7.0) and `trash` (ADR 0023; 0.11.0). Absent = `items`;
+            `trash` alone = `items,trash`. Without `trash`, a trashed item is served as a tombstone and a live item
+            lists only its live locations (a member file with every location in a trash is left out); with it, a
+            trashed item is served whole with `deleted: false` and `trashed`, and locations in a trash carry `trash`.
+          schema: { type: string, default: items, examples: ["items,culling", culling, "items,culling,trash"] }
       responses:
         "200":
           description: A page of the items feed
@@ -582,8 +639,13 @@ paths:
       summary: Live items in capture-time order, filtered (ADR 0014; hoard-server 0.5.0)
       description: |
         A query, not a change feed: live items only, ordered by `sortTime` then `id`, paged with a keyset cursor
-        that is only valid with the same `order`. Repeat the same filters with each cursor.
+        that is only valid with the same `order`. Repeat the same filters with each cursor. Trashed items (ADR 0023)
+        are left out; `trashed=only` lists them instead, in the `include=trash` shape.
       parameters:
+        - name: trashed
+          in: query
+          description: "`only`: the trashed items instead of the live ones (0.11.0, ADR 0023); `folder` and `path` then match their original directory."
+          schema: { type: string, enum: [only] }
         - name: kind
           in: query
           description: Comma-separated kinds.
@@ -646,18 +708,26 @@ paths:
           in: path
           required: true
           schema: { $ref: "#/components/schemas/Uuid" }
+        - name: include
+          in: query
+          description: "`trash` (0.11.0, ADR 0023): a trashed item whole, with its locations in a trash; without it, a trashed item is a tombstone."
+          schema: { type: string, enum: [trash] }
       responses:
         "200":
           description: The item
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Item" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
   /v1/items/lookup:
     post:
       tags: [items]
       summary: The live items that have any of these fingerprints as a member file
+      description: |
+        Without `include: ["trash"]` (0.11.0, ADR 0023), the fingerprints of trashed items, and of member files whose
+        every location is in a trash, are in `missing`.
       requestBody:
         required: true
         content:
@@ -670,6 +740,10 @@ paths:
                   type: array
                   maxItems: 1000
                   items: { $ref: "#/components/schemas/Fingerprint" }
+                include:
+                  type: array
+                  description: "`trash` (0.11.0): trashed items match too, served whole"
+                  items: { type: string, enum: [trash] }
       responses:
         "200":
           description: Matches, the items they name (each once) and the fingerprints no item has
@@ -890,6 +964,9 @@ paths:
 
         Every change gives the item a new revision in the items feed (its `edits` array). Thumb and screen previews
         are made from the upload (`GET .../preview?edit=<versionId>`).
+
+        A trashed item (0.11.0, ADR 0023) answers `404 not_found`, as a tombstone; `GET` and `DELETE` of its edits
+        work, and its previews are kept.
       parameters:
         - $ref: "#/components/parameters/ItemId"
         - $ref: "#/components/parameters/VersionId"
@@ -1689,6 +1766,9 @@ components:
         size: { type: integer }
         modifiedAt: { type: integer }
         removed: { type: boolean }
+        trashed:
+          type: boolean
+          description: "0.11.0 (ADR 0023): with `removed: true`, the file moved to a trash (absent otherwise)"
     Counts:
       type: object
       properties:
@@ -1696,7 +1776,7 @@ components:
         photos: { type: integer }
         versions: { type: integer }
         blobs: { type: integer }
-        nasFiles: { type: integer }
+        nasFiles: { type: integer, description: "Live NAS photos; files in a trash are not counted (0.11.0)" }
         pendingUploads: { type: integer }
         items: { type: integer, description: "Live items (hoard-server 0.5.0)" }
     ServerInfo:
@@ -1714,8 +1794,9 @@ components:
           description: >-
             Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
             `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0), `edits` =
-            ADR 0020 (0.9.0, with previews). Clients ignore names they do not know.
-          items: { type: string, enum: [items, previews, culling, device-identity, edits] }
+            ADR 0020 (0.9.0, with previews), `items-by-path` = ADR 0014 (0.10.0), `trash` = ADR 0023 (0.11.0).
+            Clients ignore names they do not know.
+          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash] }
         edits:
           type: object
           description: Present with the edits feature (ADR 0020).
@@ -1804,7 +1885,10 @@ components:
         source: { type: string, enum: [nas, backup] }
         folderId: { $ref: "#/components/schemas/Uuid" }
         folderName: { type: string }
-        path: { type: string, description: "nas: relative to the folder, /-separated" }
+        path: { type: string, description: "nas: relative to the folder, /-separated (in a trash: the original path)" }
+        trash:
+          type: string
+          description: "nas, with include=trash only (0.11.0, ADR 0023): the file is in a trash, at this path relative to the folder (`<P>/.hoard-trash/<day>/<R>`)"
         modifiedAt: { type: integer, description: "nas: the file's mtime, Unix ms" }
         sha256: { type: string, description: "backup: the uploaded blob" }
     ItemFile:
@@ -1824,7 +1908,9 @@ components:
       required: [id, rev, deleted, createdAt, updatedAt]
       description: |
         One shot (ADR 0014). A tombstone (`deleted: true`) carries only `id`, `rev`, `deleted`, the timestamps and
-        `replacedBy` when another item took its main file over. Unknown fields are ignored by clients.
+        `replacedBy` when another item took its main file over. Unknown fields are ignored by clients. A trashed item
+        (0.11.0, ADR 0023: every file in a trash) is a tombstone without `replacedBy` to clients that did not ask
+        for the trash, and is served whole with `trashed` to those that did.
       properties:
         id: { $ref: "#/components/schemas/Uuid" }
         rev: { type: integer }
@@ -1832,6 +1918,12 @@ components:
         createdAt: { type: integer }
         updatedAt: { type: integer }
         replacedBy: { $ref: "#/components/schemas/Uuid" }
+        trashed:
+          type: object
+          required: [since]
+          description: "With include=trash only (0.11.0, ADR 0023): the item is in a trash"
+          properties:
+            since: { type: integer, description: "When the server first saw it trashed, Unix ms" }
         kind: { type: string, enum: [photo, pair, video, motion] }
         mainFingerprint: { $ref: "#/components/schemas/Fingerprint" }
         sortTime: { type: integer, description: "capture.utc, else the wall clock read as UTC, else 0" }

@@ -334,6 +334,48 @@ Henrique accepted this ADR with these answers to its open questions; where they 
    trashed: "Try again when the photo server is reachable".
 4. **Media management is asked in the first trash dialog** (once), and offered again in Settings › Trash.
 
+## Amendment (S1, hoard-server 0.11.0)
+
+Small decisions made while building phase S1, within the design above:
+
+1. **`item_sources.trash` is the source value `trash`**, not a column: trash groups are `item_sources` rows with
+   `source = 'trash'`, one per **trashed copy of a shot**: original directory + stem **within one day folder** (key
+   `<day folder>/<stem>`), so the table's unique key is unchanged. Each trash group is the item of its own main file,
+   like any group: it joins a live group, or another trashed copy, **only through the same main fingerprint**
+   (PR #57 review). So a different file that later takes a trashed shot's path (an export, a reused camera number)
+   is a new item and never takes the trashed one over, and the same path trashed on two days with different content
+   is two trashed items. A trashed item becomes a tombstone only when its main file leaves the trash. A file trashed
+   alone (the JPEG of a pair) is a trashed item of its own (by the ADR 0014 "Item id" rule; restored, it joins the
+   pair again, which takes its edits through `replacedBy`).
+2. **The second look keeps what it cannot read, everywhere**: a file under a folder the walk could not read, or whose
+   trash counterpart cannot be read, is kept as it is (point 7 for `.hoard-trash`). This also applies to ordinary
+   sub-folders, whose files a walk used to remove when the sub-folder was unreadable (a permission change would
+   tombstone their items and drop their edits).
+3. **No re-hash** reuses a fingerprint when the counterpart has the same size, mtime and media class: for a trash row,
+   its original's row (live or removed); for a file at an original path, its removed row when that row is marked as in
+   a trash, or a trash row whose origin it is.
+4. **`POST /v1/nas/walk`**: a request for a folder being walked queues it once more (the running walk may have read
+   the folder before Hoard's moves); a disabled (removed) folder is `404` like an unknown one; an empty list, more than
+   100 ids or a malformed id is `422 invalid_request`. The walk of a folder starts at least 10 s after its previous
+   walk started (scheduled walks count); see point 10 for the budget.
+5. **`include`**: `include=trash` alone on the items feed means `items,trash`; `GET /v1/items/{itemId}` accepts only
+   `include=trash` (`400 invalid_request` otherwise). `GET /v1/health` `counts.items` counts live items only.
+6. **Web gallery**: besides the library, the item routes (`/web/items/{itemId}` and its files) answer `404` for a
+   trashed item (a web Trash view is later).
+7. Inside a day folder, hidden names are skipped as everywhere else, and so is a file directly in `.hoard-trash`.
+8. **A trashed item is never an heir** (PR #57 review): it is not the `replacedBy` of a live item that goes, nor does it
+   take its culling. The one exception is a trashed item whose main file is purged while others of its files stay in
+   the trash: its culling goes to the trashed item of those files (same bytes), never to a live one.
+9. **The web gallery serves nothing in a trash** (PR #57 review): trashed items are absent from the library, item,
+   file, preview, edit and download routes under `/web/`, and a live item's members and locations that are only in a
+   trash are left out of everything the web derives from item data (files, downloads and their sizes, the library's
+   name, folder, directory and size, so its search and folder counts). `/v1` still serves a trashed item's previews
+   and edits (point "Edits").
+10. **`POST /v1/nas/walk` budget** (PR #57 review): requested walks are coalesced per folder and limited server-wide to
+    one per folder per minute (and 10 s after any walk of it), whoever asks; a request beyond that is still `202`, with
+    `"deferred": {"<folder id>": <ms>}` saying when the walk may start. Per device the route takes a burst of 6, then
+    one request per 10 s; beyond that `429 rate_limited` with `Retry-After`.
+
 ## Amendment (A1)
 
 Phase A1 (`HoardFs.move`, `hoard.db` v4, `TrashPlanner`, `TrashRunner` / `TrashService`, `TrashCleanupWorker`) follows

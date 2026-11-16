@@ -27,14 +27,18 @@ const (
 const (
 	SourceNAS    = "nas"
 	SourceBackup = "backup"
+	// SourceTrash is a group of files in a NAS folder's .hoard-trash (ADR 0023): grouped by their original path, served
+	// as NAS locations with a "trash" path.
+	SourceTrash = "trash"
 )
 
 // Member is one file of a source (a NAS group or an uploaded original), as stored with the source.
 type Member struct {
 	Fingerprint string `json:"fp"`
 	Role        string `json:"role"`
-	Name        string `json:"name,omitempty"` // NAS: the file name
-	Path        string `json:"path,omitempty"` // NAS: relative to the folder
+	Name        string `json:"name,omitempty"`  // NAS: the file name
+	Path        string `json:"path,omitempty"`  // NAS: relative to the folder (in a trash: the original path)
+	Trash       string `json:"trash,omitempty"` // in a trash (ADR 0023): where the file is, relative to the folder
 	Size        int64  `json:"size"`
 	MTime       int64  `json:"mtime"`            // NAS: modification time (ns); backup: upload time (ns)
 	SHA256      string `json:"sha256,omitempty"` // backup
@@ -46,15 +50,23 @@ type Seen struct {
 	Size        int64
 	MTime       int64
 	Fingerprint string // "" = not readable yet
+	// In a trash (ADR 0023): Origin is the path the file came from and TrashDir its day folder
+	// ("<P>/.hoard-trash/<yyyy-MM-dd(-n)>"); both "" for a live file.
+	Origin   string
+	TrashDir string
 }
 
 // Group is one shot in a folder: the files of a directory that share a stem (case-insensitive).
 type Group struct {
-	Dir     string // directory relative to the folder ("" = top)
-	Key     string // lower-case stem
+	Source  string // SourceNAS ("" too) or SourceTrash
+	Dir     string // directory relative to the folder ("" = top); in a trash, the original directory
+	Key     string // lower-case stem; in a trash, "<day folder>/<stem>": one group per trashed copy of a shot
 	Main    string // the main file's fingerprint
 	Members []Member
 }
+
+// Trash reports whether the group is files in a trash.
+func (g Group) Trash() bool { return g.Source == SourceTrash }
 
 // skippedDirs are NAS housekeeping folders whose files are never items (Synology thumbnails, recycle bins).
 var skippedDirs = map[string]bool{"@eadir": true, "#recycle": true, "#snapshot": true, "@recycle": true, "$recycle.bin": true}
@@ -94,21 +106,32 @@ func roleOrder(role string) int {
 // GroupFolder groups a folder's files into shots (ADR 0014 "Pairing"): same directory and case-insensitive stem;
 // RAW first (by name), then renderings (JPEG before HEIF, then name), videos, sidecars. The main file is the first
 // readable RAW, else rendering, else video. Hidden files and housekeeping folders are skipped; a group of sidecars
-// only, or with no readable still or video, is no item.
+// only, or with no readable still or video, is no item. Files in a trash (ADR 0023) group by their original directory
+// and stem within one day folder, as SourceTrash groups: each trashed copy of a shot is a group of its own, whose item
+// is its main file's like any group's (copies with the same main file are the same item, others never merge).
 func GroupFolder(files []Seen) []Group {
-	byKey := map[[2]string][]Member{}
+	byKey := map[[3]string][]Member{}
 	for _, f := range files {
-		name := path.Base(f.Path)
+		at := f.Path
+		if f.Origin != "" {
+			at = f.Origin
+		}
+		name := path.Base(at)
 		mediaClass, role := media.Classify(name)
-		if mediaClass == "" || skipped(f.Path) || f.Fingerprint == "" {
+		if mediaClass == "" || skipped(at) || f.Fingerprint == "" {
 			continue
 		}
-		dir := path.Dir(f.Path)
+		dir := path.Dir(at)
 		if dir == "." {
 			dir = ""
 		}
-		k := [2]string{dir, stemKey(name, role)}
-		byKey[k] = append(byKey[k], Member{Fingerprint: f.Fingerprint, Role: role, Name: name, Path: f.Path, Size: f.Size, MTime: f.MTime})
+		k := [3]string{"", dir, stemKey(name, role)}
+		m := Member{Fingerprint: f.Fingerprint, Role: role, Name: name, Path: at, Size: f.Size, MTime: f.MTime}
+		if f.Origin != "" {
+			k[0], k[2] = SourceTrash, f.TrashDir+"/"+k[2]
+			m.Trash = f.Path
+		}
+		byKey[k] = append(byKey[k], m)
 	}
 	out := make([]Group, 0, len(byKey))
 	for k, ms := range byKey {
@@ -122,14 +145,20 @@ func GroupFolder(files []Seen) []Group {
 					return ra < rb
 				}
 			}
-			return a.Name < b.Name
+			if a.Name != b.Name {
+				return a.Name < b.Name
+			}
+			return a.Trash < b.Trash
 		})
 		if ms[0].Role == media.RoleSidecar {
 			continue
 		}
-		out = append(out, Group{Dir: k[0], Key: k[1], Main: ms[0].Fingerprint, Members: ms})
+		out = append(out, Group{Source: k[0], Dir: k[1], Key: k[2], Main: ms[0].Fingerprint, Members: ms})
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
 		if out[i].Dir != out[j].Dir {
 			return out[i].Dir < out[j].Dir
 		}

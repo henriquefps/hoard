@@ -208,7 +208,7 @@ func (x *libraryIndex) applyFeed(ctx context.Context, head int64) error {
 }
 
 func (x *libraryIndex) applyItem(r store.ItemRow) {
-	if r.Deleted {
+	if r.Deleted || r.Trashed() { // trashed items are not in the library (ADR 0023)
 		if _, ok := x.rows[r.ID]; ok {
 			delete(x.rows, r.ID)
 			x.gen++
@@ -220,6 +220,7 @@ func (x *libraryIndex) applyItem(r store.ItemRow) {
 	if err := json.Unmarshal(r.Data, &d); err != nil {
 		return
 	}
+	d = d.Live() // sizes, folder and name from live files only (ADR 0023)
 	row := libRow{ID: r.ID, T: r.SortTime, K: r.Kind, W: d.Width, H: d.Height, Lens: d.Lens}
 	row.Cam = cameraName(d.Make, d.Model)
 	if d.Capture != nil && d.Capture.Local != "" {

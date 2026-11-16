@@ -18,14 +18,26 @@ import (
 // ("<server>:q<sortTime>.<id>.<order>").
 
 // itemJSON writes an item as served: id, rev, deleted, createdAt, updatedAt, its edits (ADR 0020) when it has any,
-// then the stored state (for a tombstone only replacedBy, when known).
-func itemJSON(buf *bytes.Buffer, r store.ItemRow) {
+// then the stored state (for a tombstone only replacedBy, when known). withTrash (ADR 0023, include=trash): a trashed
+// item is served whole with "trashed": {"since"} and locations in a trash keep their "trash" path; without it, a
+// trashed item is a tombstone and a live item lists only its live locations.
+func itemJSON(buf *bytes.Buffer, r store.ItemRow, withTrash bool) {
+	if r.Trashed() && !withTrash {
+		tombstoneJSON(buf, r)
+		return
+	}
 	fmt.Fprintf(buf, `{"id":"%s","rev":%d,"deleted":%t,"createdAt":%d,"updatedAt":%d`, r.ID, r.Rev, r.Deleted, r.CreatedAt, r.UpdatedAt)
+	if r.Trashed() {
+		fmt.Fprintf(buf, `,"trashed":{"since":%d}`, *r.TrashedAt)
+	}
 	if len(r.Edits) > 0 { // Reveal's edited previews (ADR 0020)
 		buf.WriteString(`,"edits":`)
 		buf.Write(r.Edits)
 	}
 	data := bytes.TrimSpace(r.Data)
+	if !withTrash && !r.Deleted {
+		data, _ = withoutTrash(data)
+	}
 	if len(data) > 2 && data[0] == '{' {
 		buf.WriteByte(',')
 		buf.Write(data[1:])
@@ -34,15 +46,16 @@ func itemJSON(buf *bytes.Buffer, r store.ItemRow) {
 	buf.WriteByte('}')
 }
 
-// writeItems answers {"items": [...], <extra fields>} without decoding the stored JSON.
-func writeItems(w http.ResponseWriter, rows []store.ItemRow, extra string) {
+// writeItems answers {"items": [...], <extra fields>} without decoding the stored JSON (but for live items with files
+// in a trash, served without them unless withTrash).
+func writeItems(w http.ResponseWriter, rows []store.ItemRow, extra string, withTrash bool) {
 	var buf bytes.Buffer
 	buf.WriteString(`{"items":[`)
 	for i, r := range rows {
 		if i > 0 {
 			buf.WriteByte(',')
 		}
-		itemJSON(&buf, r)
+		itemJSON(&buf, r, withTrash)
 	}
 	buf.WriteString("]")
 	buf.WriteString(extra)
@@ -71,12 +84,12 @@ func (s *Server) handleItemChanges(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusBadRequest, "invalid_request", "limit must be a positive integer.", nil)
 		return
 	}
-	withItems, withCulling, ok := feedInclude(r.URL.Query().Get("include"))
+	inc, ok := feedInclude(r.URL.Query().Get("include"))
 	if !ok {
-		fail(w, r, http.StatusBadRequest, "invalid_request", "include is a comma-separated list of items and culling.", nil)
+		fail(w, r, http.StatusBadRequest, "invalid_request", "include is a comma-separated list of items, culling and trash.", nil)
 		return
 	}
-	s.writeFeed(w, r, since, limit, withItems, withCulling)
+	s.writeFeed(w, r, since, limit, inc)
 }
 
 var itemKinds = map[string]bool{items.KindPhoto: true, items.KindPair: true, items.KindVideo: true, items.KindMotion: true}
@@ -106,6 +119,14 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 			}
 			*p.dst = &n
 		}
+	}
+	switch q.Get("trashed") { // ADR 0023: the trashed items instead of the live ones
+	case "":
+	case "only":
+		iq.Trashed = true
+	default:
+		bad("trashed is only.")
+		return
 	}
 	iq.FolderID = q.Get("folder")
 	if iq.FolderID != "" && !uuidPattern.MatchString(iq.FolderID) {
@@ -151,7 +172,7 @@ func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		next = jsonString(s.itemCursor(store.ItemKey{SortTime: last.SortTime, ID: last.ID}, iq.Desc))
 	}
-	writeItems(w, rows, fmt.Sprintf(`,"cursor":%s,"hasMore":%t`, next, more))
+	writeItems(w, rows, fmt.Sprintf(`,"cursor":%s,"hasMore":%t`, next, more), iq.Trashed)
 }
 
 func (s *Server) itemCursor(k store.ItemKey, desc bool) string {
@@ -187,6 +208,11 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
 		return
 	}
+	withTrash, ok := parseTrashInclude(r.URL.Query().Get("include"))
+	if !ok {
+		fail(w, r, http.StatusBadRequest, "invalid_request", "include is trash or absent.", nil)
+		return
+	}
 	row, err := s.store.Item(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
@@ -197,7 +223,7 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var buf bytes.Buffer
-	itemJSON(&buf, row)
+	itemJSON(&buf, row, withTrash)
 	buf.WriteByte('\n')
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -207,9 +233,18 @@ func (s *Server) handleItem(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleItemLookup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Fingerprints []string `json:"fingerprints"`
+		Include      []string `json:"include"` // ADR 0023: ["trash"] also matches trashed items and files in a trash
 	}
 	if !readJSON(w, r, &req) {
 		return
+	}
+	withTrash := false
+	for _, v := range req.Include {
+		if v != "trash" {
+			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "include lists trash or nothing.", nil)
+			return
+		}
+		withTrash = true
 	}
 	if len(req.Fingerprints) > maxLookup {
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", fmt.Sprintf("At most %d fingerprints per lookup.", maxLookup), nil)
@@ -228,20 +263,36 @@ func (s *Server) handleItemLookup(w http.ResponseWriter, r *http.Request) {
 	}
 	found := map[string]bool{}
 	var rows []store.ItemRow
-	seenItem := map[string]bool{}
+	loaded := map[string]*store.ItemRow{}
+	listed := map[string]bool{}
+	live := map[string]map[string]bool{} // item -> members with a live location
+	kept := matches[:0]
 	for _, m := range matches {
-		found[m.Fingerprint] = true
-		if seenItem[m.ItemID] {
+		row := loaded[m.ItemID]
+		if row == nil {
+			r2, err := s.store.Item(r.Context(), m.ItemID)
+			if err != nil {
+				s.internal(w, r, err)
+				return
+			}
+			row = &r2
+			loaded[m.ItemID] = row
+			if !withTrash {
+				live[m.ItemID] = liveFingerprints(r2.Data)
+			}
+		}
+		// Without the trash, a trashed item and a file only in a trash are missing (ADR 0023).
+		if !withTrash && (row.Trashed() || !live[m.ItemID][m.Fingerprint]) {
 			continue
 		}
-		seenItem[m.ItemID] = true
-		row, err := s.store.Item(r.Context(), m.ItemID)
-		if err != nil {
-			s.internal(w, r, err)
-			return
+		found[m.Fingerprint] = true
+		kept = append(kept, m)
+		if !listed[row.ID] {
+			listed[row.ID] = true
+			rows = append(rows, *row)
 		}
-		rows = append(rows, row)
 	}
+	matches = kept
 	var extra bytes.Buffer
 	extra.WriteString(`,"matches":[`)
 	for i, m := range matches {
@@ -265,7 +316,7 @@ func (s *Server) handleItemLookup(w http.ResponseWriter, r *http.Request) {
 		n++
 	}
 	extra.WriteString("]")
-	writeItems(w, rows, extra.String())
+	writeItems(w, rows, extra.String(), withTrash)
 }
 
 // cleanItemPath normalises a relative NAS path ("a//b/./c" becomes "a/b/c"); ok is false for an absolute path, a ".."

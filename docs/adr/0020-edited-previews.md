@@ -146,6 +146,9 @@ scanner (which follows the items feed) treats edit jobs like image jobs (`--prev
   **removed** with it; their files are swept (every 10 minutes, files no edit names and older than an hour). If the
   shot comes back (same item id), Reveal uploads again (client rule 6).
 - **Version moved** (a PUT on another item): moved, as above.
+- **Item trashed** (hoard-server 0.11.0, ADR 0023: every file in a `.hoard-trash`): not deleted. Its edits and their
+  previews stay (`GET` and `DELETE` work, a `PUT` is `404` as on a tombstone) and come back with a restore; they are
+  removed when the trash copies go (Empty), as for a deletion.
 
 ### Web gallery (ADR 0018)
 

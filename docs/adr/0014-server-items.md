@@ -172,6 +172,12 @@ fingerprint, new path, in the same walk or across folders) → same item id, new
 is hashed at its new path, its metadata is not read again); **deleted** → the location goes, the item becomes a
 **tombstone** when no location is left. Tombstones are kept forever.
 
+**Trash** (hoard-server 0.11.0, ADR 0023, which amends this section): a directory named exactly `.hoard-trash` is
+walked (other hidden names are still skipped); a file under `<P>/.hoard-trash/<yyyy-MM-dd(-n)>/<R>` is a trashed copy
+of `<P>/<R>`, takes its fingerprint without a re-hash when its size and mtime are the original's, and groups with the
+shot of its original directory and stem as a `trash` source. An item with only trash locations is **trashed**, not a
+tombstone; a file missing from a walk is looked at again (with its trash counterpart) before it is removed.
+
 ### Uploads
 
 Uploaded originals are items too: an original whose fingerprint is a member of a live NAS item joins it as a `backup`

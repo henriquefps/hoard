@@ -43,11 +43,49 @@ type Indexer struct {
 
 	trigger chan struct{}
 	backup  chan struct{}
+	folders chan struct{}
 	once    sync.Once
 	mu      sync.Mutex
 	running bool
 	last    Stats
 	warned  bool
+	// WalkGap is the shortest time between the start of a folder's last walk and a walk a device asked for
+	// (POST /v1/nas/walk, ADR 0023); 0 = FolderWalkGap.
+	WalkGap time.Duration
+	// RequestGap is the server-wide budget of requested walks: one per folder per RequestGap, whoever asks;
+	// 0 = FolderRequestGap. Requests beyond it are coalesced into the next walk the budget allows.
+	RequestGap time.Duration
+	lastAsked  map[string]time.Time // when a requested walk of each folder last started
+
+	queued    map[string]bool
+	lastStart map[string]time.Time
+	// beforeDir, when set (tests), runs as the walk enters each directory, before reading it.
+	beforeDir func(rel string)
+}
+
+// FolderWalkGap is the default WalkGap; FolderRequestGap the default RequestGap.
+const (
+	FolderWalkGap    = 10 * time.Second
+	FolderRequestGap = time.Minute
+)
+
+// dueAt is when a requested walk of a folder may start (the zero time: now). Called with ix.mu held.
+func (ix *Indexer) dueAt(id string) time.Time {
+	gap, budget := ix.WalkGap, ix.RequestGap
+	if gap <= 0 {
+		gap = FolderWalkGap
+	}
+	if budget <= 0 {
+		budget = FolderRequestGap
+	}
+	var at time.Time
+	if last, ok := ix.lastStart[id]; ok {
+		at = last.Add(gap)
+	}
+	if last, ok := ix.lastAsked[id]; ok && last.Add(budget).After(at) {
+		at = last.Add(budget)
+	}
+	return at
 }
 
 // Stats is what the last walk of a folder did (for logs, tests and the benchmark).
@@ -67,7 +105,97 @@ func (ix *Indexer) init() {
 	ix.once.Do(func() {
 		ix.trigger = make(chan struct{}, 1)
 		ix.backup = make(chan struct{}, 1)
+		ix.folders = make(chan struct{}, 1)
 	})
+}
+
+// RequestWalk queues a walk of each folder (ADR 0023, POST /v1/nas/walk), coalesced: a folder already queued is not
+// queued again (one running is queued once more, so the walk sees what changed after it started). A requested walk
+// starts at least WalkGap after the folder's last walk started and RequestGap after its last requested walk started
+// (the server-wide budget). It returns, per folder whose walk waits for that, when it may start.
+func (ix *Indexer) RequestWalk(ids []string) map[string]time.Time {
+	ix.init()
+	ix.mu.Lock()
+	if ix.queued == nil {
+		ix.queued = map[string]bool{}
+	}
+	now := time.Now()
+	deferred := map[string]time.Time{}
+	for _, id := range ids {
+		ix.queued[id] = true
+		if at := ix.dueAt(id); at.After(now) {
+			deferred[id] = at
+		}
+	}
+	ix.mu.Unlock()
+	ix.signalFolders()
+	return deferred
+}
+
+func (ix *Indexer) signalFolders() {
+	select {
+	case ix.folders <- struct{}{}:
+	default:
+	}
+}
+
+// Queued lists the folders waiting for a requested walk.
+func (ix *Indexer) Queued() []string {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	out := make([]string, 0, len(ix.queued))
+	for id := range ix.queued {
+		out = append(out, id)
+	}
+	return out
+}
+
+// walkQueued walks the requested folders that are due; the others are walked when their gap has passed.
+func (ix *Indexer) walkQueued(ctx context.Context) {
+	ix.mu.Lock()
+	now := time.Now()
+	var due []string
+	var wait time.Duration
+	if ix.lastAsked == nil {
+		ix.lastAsked = map[string]time.Time{}
+	}
+	for id := range ix.queued {
+		if at := ix.dueAt(id); at.After(now) {
+			if w := at.Sub(now); wait == 0 || w < wait {
+				wait = w
+			}
+			continue
+		}
+		due = append(due, id)
+		delete(ix.queued, id)
+		ix.lastAsked[id] = now
+	}
+	ix.mu.Unlock()
+	if wait > 0 {
+		time.AfterFunc(wait, ix.signalFolders)
+	}
+	if len(due) == 0 {
+		return
+	}
+	folders, err := ix.Store.NasFolders(ctx)
+	if err != nil {
+		ix.Log.Error("nas: list folders", "err", err)
+		return
+	}
+	want := map[string]bool{}
+	for _, id := range due {
+		want[id] = true
+	}
+	ix.setRunning(true)
+	defer ix.setRunning(false)
+	for _, f := range folders {
+		if !want[f.ID] || !f.Enabled || ctx.Err() != nil {
+			continue
+		}
+		if err := ix.Folder(ctx, f); err != nil && ctx.Err() == nil {
+			ix.Log.Warn("nas: folder not indexed", "folder", f.ID, "err", errorClass(err))
+		}
+	}
 }
 
 // Trigger asks for a walk soon (coalesced).
@@ -120,6 +248,9 @@ func (ix *Indexer) Run(ctx context.Context) {
 		case <-ix.trigger:
 		case <-ix.backup:
 			ix.Backup(ctx)
+			continue
+		case <-ix.folders:
+			ix.walkQueued(ctx)
 			continue
 		}
 		ix.All(ctx)
@@ -201,17 +332,34 @@ func errorClass(err error) string {
 	}
 }
 
+// NasState is a known file with its path.
+type NasState struct {
+	Path  string
+	State store.NasFileState
+}
+
+// under reports whether rel lies in one of dirs.
+func under(rel string, dirs []string) bool {
+	for _, d := range dirs {
+		if strings.HasPrefix(rel, d+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // errEmptyMount: the walk saw no media file while the index holds live files of the folder. A mount that is gone leaves
 // an empty, readable directory, so this is treated as unavailable: nothing is removed and no sidecar record is dropped.
 var errEmptyMount = errors.New("folder shows no files but the index holds some")
 
 type seen struct {
-	rel   string
-	size  int64
-	mtime int64
-	media string
-	hash  bool   // compute the fingerprint
-	fp    string // known fingerprint (meta only)
+	rel    string
+	size   int64
+	mtime  int64
+	media  string
+	hash   bool   // compute the fingerprint
+	fp     string // known fingerprint (meta only)
+	origin string // in a trash (ADR 0023): where the file came from
 }
 
 type result struct {
@@ -239,10 +387,17 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	defer root.Close()
 	_ = ix.Store.SetNasFolderState(ctx, f.ID, "indexing", nil, false)
 	start := time.Now()
+	ix.mu.Lock()
+	if ix.lastStart == nil {
+		ix.lastStart = map[string]time.Time{}
+	}
+	ix.lastStart[f.ID] = start
+	ix.mu.Unlock()
 	stats := Stats{}
 
 	var files []seen
-	complete := true // false when a sub-folder could not be read: nothing is concluded from what is missing
+	complete := true        // false when a sub-folder could not be read: nothing is concluded from what is missing
+	var unreadable []string // the folders that could not be read
 	walkErr := fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -252,13 +407,23 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 				return err
 			}
 			complete = false
+			unreadable = append(unreadable, p)
 			return fs.SkipDir // an unreadable sub-folder is skipped, never the reason to drop files
 		}
-		if p != "." && strings.HasPrefix(d.Name(), ".") {
+		if d.IsDir() && ix.beforeDir != nil {
+			ix.beforeDir(p)
+		}
+		if p != "." && (strings.HasPrefix(d.Name(), ".") || inTrash(path.Dir(p)) || d.IsDir()) {
+			enter, keep := walkDecision(p, d)
 			if d.IsDir() {
+				if enter {
+					return nil
+				}
 				return fs.SkipDir
 			}
-			return nil
+			if !keep {
+				return nil
+			}
 		}
 		if !d.Type().IsRegular() { // symbolic links and devices are never followed
 			return nil
@@ -272,19 +437,22 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			complete = false
 			return nil
 		}
-		files = append(files, seen{rel: p, size: info.Size(), mtime: info.ModTime().UnixNano(), media: mediaClass})
+		s := seen{rel: p, size: info.Size(), mtime: info.ModTime().UnixNano(), media: mediaClass}
+		if inTrash(p) {
+			s.origin, _ = trashOrigin(p)
+		}
+		files = append(files, s)
 		return nil
 	})
 	if walkErr != nil {
 		return fail("error", walkErr) // nothing is removed when the walk itself fails
 	}
-	stats.Files = len(files)
 
 	known, err := ix.Store.NasFileStates(ctx, f.ID)
 	if err != nil {
 		return fail("error", err)
 	}
-	if len(files) == 0 {
+	if len(files) == 0 { // files in a trash count (ADR 0023): a folder whose every shot is trashed is not empty
 		for _, k := range known {
 			if !k.Removed {
 				ix.Log.Warn("nas: folder shows no files but the index holds some, treated as unavailable (unmounted?); nothing removed", "folder", f.ID)
@@ -292,14 +460,140 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			}
 		}
 	}
+	present := make(map[string]bool, len(files))
+	trashOf := map[string]string{} // original path -> a trash row of it seen now
+	for _, s := range files {
+		present[s.rel] = true
+		if s.origin != "" && trashOf[s.origin] < s.rel {
+			trashOf[s.origin] = s.rel
+		}
+	}
+	// The second look (ADR 0023): a file missing from the listing whose counterpart (its trash copy, or a trash row's
+	// original) is missing too may have moved while the walk read the other end. It is looked at again, then its
+	// counterpart, then itself; only a file found at neither is removed. A file under a folder that could not be read,
+	// or whose counterpart cannot be read, is kept as it is.
+	look := newSecondLook(root)
+	keep := map[string]bool{}
+	add := func(s seen) {
+		if present[s.rel] {
+			return
+		}
+		present[s.rel] = true
+		files = append(files, s)
+		if s.origin != "" && trashOf[s.origin] < s.rel {
+			trashOf[s.origin] = s.rel
+		}
+	}
+	for rel, k := range known {
+		if k.Removed || present[rel] {
+			continue
+		}
+		if under(rel, unreadable) {
+			keep[rel] = true
+			continue
+		}
+		if k.Origin != "" { // a trash row: restored, purged or moving
+			if present[k.Origin] {
+				continue
+			}
+			if s, ok, kn := lookAgain(root, rel); ok || !kn {
+				if ok {
+					add(s)
+				} else {
+					keep[rel] = true
+				}
+				continue
+			}
+			if s, ok, kn := lookAgain(root, k.Origin); ok || !kn {
+				if ok {
+					add(s)
+				} else {
+					keep[rel] = true
+				}
+				continue
+			}
+			if s, ok, kn := lookAgain(root, rel); ok || !kn {
+				if ok {
+					add(s)
+				} else {
+					keep[rel] = true
+				}
+			}
+			continue
+		}
+		if trashOf[rel] != "" { // moved to a trash
+			continue
+		}
+		if s, ok, kn := lookAgain(root, rel); ok || !kn {
+			if ok {
+				add(s)
+			} else {
+				keep[rel] = true
+			}
+			continue
+		}
+		found, kn := look.inTrashNow(rel)
+		for _, s := range found {
+			add(s)
+		}
+		if len(found) > 0 {
+			continue
+		}
+		if !kn {
+			keep[rel] = true
+			continue
+		}
+		if s, ok, kn := lookAgain(root, rel); ok || !kn {
+			if ok {
+				add(s)
+			} else {
+				keep[rel] = true
+			}
+		}
+	}
+	stats.Files = len(files)
+
 	haveMeta, err := ix.Store.MetaFingerprints(ctx, media.MetaVersion)
 	if err != nil {
 		return fail("error", err)
 	}
+	// A file that moved into or out of a trash keeps its fingerprint when its size and mtime are its counterpart's (a
+	// rename keeps both, ADR 0023): no re-hash for trash moves and restores.
+	trashRows := map[string][]NasState{}
+	for rel, k := range known {
+		if k.Origin != "" {
+			trashRows[k.Origin] = append(trashRows[k.Origin], NasState{rel, k})
+		}
+	}
+	same := func(s seen, k store.NasFileState) bool {
+		return k.Fingerprint != "" && k.Size == s.size && k.MTime == s.mtime && k.Media == s.media
+	}
+	carried := func(s seen) string {
+		if s.origin != "" {
+			if k, ok := known[s.origin]; ok && same(s, k) {
+				return k.Fingerprint
+			}
+			return ""
+		}
+		if k, ok := known[s.rel]; ok && k.Removed && k.TrashPath != "" && same(s, k) {
+			return k.Fingerprint
+		}
+		for _, t := range trashRows[s.rel] {
+			if same(s, t.State) {
+				return t.State.Fingerprint
+			}
+		}
+		return ""
+	}
 	var todo []seen
-	present := make(map[string]bool, len(files))
+	var updates []store.NasFileUpdate
+	for rel, k := range known {
+		if !k.Removed && !present[rel] && !keep[rel] {
+			updates = append(updates, store.NasFileUpdate{RelPath: rel, Removed: true, Media: k.Media, TrashPath: trashOf[rel]})
+		}
+	}
+	stats.Removed = len(updates)
 	for _, s := range files {
-		present[s.rel] = true
 		k, ok := known[s.rel]
 		if ok && !k.Removed && k.Size == s.size && k.MTime == s.mtime && k.Fingerprint != "" && k.Media == s.media {
 			if !haveMeta[k.Fingerprint] { // unchanged file without metadata (a data directory from before items, new rules)
@@ -308,16 +602,17 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			}
 			continue
 		}
+		if fp := carried(s); fp != "" {
+			updates = append(updates, store.NasFileUpdate{RelPath: s.rel, Size: s.size, MTime: s.mtime, Fingerprint: fp, Media: s.media, Origin: s.origin})
+			if !haveMeta[fp] {
+				s.fp = fp
+				todo = append(todo, s)
+			}
+			continue
+		}
 		s.hash = true
 		todo = append(todo, s)
 	}
-	var updates []store.NasFileUpdate
-	for rel, k := range known {
-		if !k.Removed && !present[rel] {
-			updates = append(updates, store.NasFileUpdate{RelPath: rel, Removed: true, Media: k.Media})
-		}
-	}
-	stats.Removed = len(updates)
 	if err := ix.Store.ApplyNasUpdates(ctx, f.ID, updates); err != nil {
 		return fail("error", err)
 	}
@@ -399,10 +694,32 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 	if err != nil {
 		return fail("error", err)
 	}
+	// A removed original is "trashed" in the NAS feed while a trash row of it is there (ADR 0023): set when it moved to
+	// a trash, cleared when that trash row is purged.
+	inTrashNow := map[string]string{}
+	for rel, k := range states {
+		if k.Origin != "" && !k.Removed && inTrashNow[k.Origin] < rel {
+			inTrashNow[k.Origin] = rel
+		}
+	}
+	var marks []store.TrashMark
+	for rel, k := range states {
+		if k.Removed && k.Origin == "" && k.TrashPath != inTrashNow[rel] {
+			marks = append(marks, store.TrashMark{RelPath: rel, TrashPath: inTrashNow[rel]})
+		}
+	}
+	if err := ix.Store.MarkTrashed(ctx, f.ID, marks); err != nil {
+		return fail("error", err)
+	}
 	current := make([]items.Seen, 0, len(states))
 	for rel, k := range states {
 		if !k.Removed {
-			current = append(current, items.Seen{Path: rel, Size: k.Size, MTime: k.MTime, Fingerprint: k.Fingerprint})
+			is := items.Seen{Path: rel, Size: k.Size, MTime: k.MTime, Fingerprint: k.Fingerprint}
+			if k.Origin != "" {
+				is.Origin = k.Origin
+				is.TrashDir = trashDayDir(rel)
+			}
+			current = append(current, is)
 		}
 	}
 	groups := items.GroupFolder(current)
@@ -411,8 +728,25 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 		return fail("error", err)
 	}
 	stats.Sources, stats.Items = ist.Sources, ist.Items
-	// Culling from the folder's sidecars (ADR 0016): read only, and only the sidecars that changed.
-	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, groups, present, complete); err != nil {
+	// Culling from the folder's sidecars (ADR 0016): read only, and only the sidecars that changed. Sidecars in a
+	// trash are never read; one keeps its record under its original path while it is there (ADR 0023).
+	live := make([]items.Group, 0, len(groups))
+	for _, g := range groups {
+		if !g.Trash() {
+			live = append(live, g)
+		}
+	}
+	kept := make(map[string]bool, len(present)+len(inTrashNow))
+	for p := range present {
+		kept[p] = true
+	}
+	for p := range keep {
+		kept[p] = true
+	}
+	for origin := range inTrashNow {
+		kept[origin] = true
+	}
+	if stats.Culling, err = ix.importSidecars(ctx, root, f.ID, live, kept, complete); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -435,7 +769,7 @@ func (ix *Indexer) process(ctx context.Context, root *os.Root, s seen, needMeta 
 	file, err := root.Open(s.rel)
 	if err != nil {
 		if s.hash {
-			r.update = &store.NasFileUpdate{RelPath: s.rel, Size: s.size, MTime: s.mtime, Media: s.media}
+			r.update = &store.NasFileUpdate{RelPath: s.rel, Size: s.size, MTime: s.mtime, Media: s.media, Origin: s.origin}
 		}
 		return r
 	}
@@ -455,7 +789,7 @@ func (ix *Indexer) process(ctx context.Context, root *os.Root, s seen, needMeta 
 	}
 	r.fp = fp
 	if s.hash {
-		r.update = &store.NasFileUpdate{RelPath: s.rel, Size: s.size, MTime: s.mtime, Fingerprint: fp, Media: s.media}
+		r.update = &store.NasFileUpdate{RelPath: s.rel, Size: s.size, MTime: s.mtime, Fingerprint: fp, Media: s.media, Origin: s.origin}
 	}
 	return r
 }
