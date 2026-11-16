@@ -147,16 +147,30 @@ data class Gps(val lat: Double? = null, val lon: Double? = null, val alt: Double
 
 @Serializable
 data class FileLocation(
-    /** `nas`, `backup` (later: `device`). */
+    /** `nas`, `backup`, `mirror` (a phone's backup, ADR 0024). Unknown sources are ignored. */
     val source: String = "",
     val folderId: String? = null,
     val folderName: String? = null,
+    /** `nas`: relative to the folder; `mirror`: relative to the phone's volume (`DCIM/Camera/PXL_1.jpg`). */
     val path: String? = null,
     val modifiedAt: Long? = null,
     val sha256: String? = null,
     /** `nas` with `include=trash` (0.11.0, ADR 0023): the file is in a trash, at this folder-relative path. */
     val trash: String? = null,
-)
+    /** `mirror` (ADR 0024): the phone it is (or was) on, its name, the backup root and the volume (`primary`, a UUID). */
+    val physicalDeviceId: String? = null,
+    val deviceName: String? = null,
+    val rootId: String? = null,
+    val volume: String? = null,
+    /** `mirror`: false once the phone no longer has the file (absent = on the phone). */
+    val onDevice: Boolean? = null,
+    /** `mirror`, off the phone: `freed` or `deleted` (an unknown value means `deleted`). */
+    val gone: String? = null,
+) {
+    companion object {
+        const val SOURCE_MIRROR = "mirror"
+    }
+}
 
 @Serializable
 data class ItemFile(

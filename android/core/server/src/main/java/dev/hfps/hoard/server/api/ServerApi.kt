@@ -255,6 +255,35 @@ class ServerApi(
         }
     }
 
+    /**
+     * `GET /v1/originals/{fingerprint}` from [start] to the end (`Range: bytes=<start>-`), as a stream the caller closes
+     * (ADR 0024 A2: "Save to this device" through the transfer engine). A server that ignores the range (`200`) is
+     * skipped to [start]. Throws [ServerException] for an error answer (`404`: the server no longer holds it).
+     */
+    fun openOriginal(fingerprint: String, start: Long): InputStream {
+        val conn = open("GET", "/v1/originals/${enc(fingerprint)}", auth = true)
+        if (start > 0) conn.setRequestProperty("Range", "bytes=$start-")
+        val status = try {
+            conn.responseCode
+        } catch (e: IOException) {
+            conn.disconnect()
+            throw e
+        }
+        if (status != 206 && status != 200) {
+            val error = readError(conn, status)
+            conn.disconnect()
+            throw error
+        }
+        val input = conn.inputStream
+        if (status == 200 && start > 0) input.skipFully(start)
+        return object : java.io.FilterInputStream(input) {
+            override fun close() {
+                runCatching { super.close() }
+                conn.disconnect()
+            }
+        }
+    }
+
     /** `HEAD /v1/originals/{fingerprint}`: the size, or null when the server does not hold it. */
     fun originalSize(fingerprint: String): Long? {
         val conn = open("HEAD", "/v1/originals/${enc(fingerprint)}", auth = true)

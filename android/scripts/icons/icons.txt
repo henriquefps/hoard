@@ -125,3 +125,6 @@ camera
 magic-wand
 play-circle
 image
+# Other devices see backups (ADR 0024 A2)
+device-mobile-slash
+sim-card

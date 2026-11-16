@@ -11,6 +11,12 @@ import dev.hfps.hoard.server.sync.GallerySyncHost
 class HoardApplication : Application(), GallerySyncHost, BackupHost {
     val container: AppContainer by lazy { AppContainer(this) }
 
+    init {
+        // The transfer engine reads the photo server's originals ("Save to this device", ADR 0024 A2) through the app's
+        // client, also when WorkManager starts the process for a transfer.
+        dev.hfps.hoard.smb.transfer.TransferEndpoints.server = { endpoint -> container.serverSaves.open(endpoint) }
+    }
+
     /** The Gallery's background sync (ADR 0021): WorkManager runs it in this process. */
     override suspend fun syncGallery(): Boolean = container.gallery.syncNow()
 

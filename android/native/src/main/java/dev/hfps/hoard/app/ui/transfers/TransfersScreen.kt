@@ -200,6 +200,7 @@ private fun placeName(locationId: String, share: String, machines: List<MachineW
     locationId.startsWith(VOLUME_PREFIX) -> stringResource(R.string.t_locations_drive)
     locationId == TREE_LOCATION_ID -> stringResource(R.string.t_transfer_android_folder)
     locationId == INCOMING_LOCATION_ID -> stringResource(R.string.t_transfers_from_other_app)
+    locationId == dev.hfps.hoard.app.transfers.SERVER_LOCATION_ID -> stringResource(R.string.save_device_from_server)
     else -> (machines.firstOrNull { it.machine.id == locationId }?.machine?.name ?: stringResource(R.string.t_transfers_unknown_machine)) +
         if (share.isNotEmpty()) " / $share" else ""
 }

@@ -56,6 +56,9 @@ class GalleryViewModel(private val repo: GalleryRepository, context: Context, pr
     val lenses: StateFlow<List<Pair<String, Int>>> = repo.entries.map { dev.hfps.hoard.app.gallery.lenses(it.orEmpty()) }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val account: StateFlow<ServerAccountEntity?> = repo.account.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Gallery › Devices (ADR 0024 A2): every phone with a backup on the server. */
+    val devices: StateFlow<List<dev.hfps.hoard.app.gallery.BackupDevice>> = repo.devices
     val status: StateFlow<SyncStatus> = repo.sync.status
 
     /** Backends of open viewer sessions (they hold the Edited / Original choice). */
@@ -84,6 +87,9 @@ class GalleryViewModel(private val repo: GalleryRepository, context: Context, pr
     fun setFilter(f: GalleryFilter) = filter.update { f }
 
     fun setQuery(q: String) = filter.update { it.copy(query = q) }
+
+    /** Shows one phone's backup, a volume or a folder of it (Gallery › Devices), or everything again (null). */
+    fun setWhere(where: dev.hfps.hoard.app.gallery.Where?) = filter.update { it.copy(where = where) }
 
     fun refreshPermission() {
         val now = GalleryPermissions.canReadMedia(appContext)

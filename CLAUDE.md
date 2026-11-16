@@ -85,7 +85,10 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
 - **Phone backup** (ADR 0024, A1): `:core:server` `backup/` (`BackupPlan` pure, `BackupUploader`, `BackupEngine` over a
   `BackupSource`, `BackupWorker` with `BackupHost` = the application), `gallery.db` 4 (`backup_roots`, `backup_files`,
   `freed`); `:native` `backup/PhoneBackup.kt` and `ui/backup/`. Hashing and uploads only inside the worker. E2E:
-  `docs/testing/backup.md`.
+  `docs/testing/backup.md`. A2 (other devices see backups): `gallery.db` 5 (`server_item_mirrors`, the items' `mirror`
+  locations), `gallery/Devices.kt` (tree, "Where" filter, badge, own-files merge by place), "Save to this device" =
+  `ServerSaves` + `SaveToDevice` through `TransferService` with the read-only `ServerTransferFs` (`Endpoint.Server`,
+  `:core:smb`, opened by the app through `TransferEndpoints.server`). E2E: two debug ids in two Android users of one AVD.
 - **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017; Reveal's edited previews ADR 0020): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and

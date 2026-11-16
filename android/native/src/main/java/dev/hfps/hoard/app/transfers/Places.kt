@@ -16,6 +16,9 @@ const val INCOMING_LOCATION_ID = "incoming"
 /** MediaStore (`Pictures/Hoard/…`): the copies made for Reveal (ADR 0010); destination only. */
 const val MEDIASTORE_LOCATION_ID = "mediastore"
 
+/** hoard-server's originals (ADR 0024 A2, "Save to this device"): source only, the server id in [TransferPlace.share]. */
+const val SERVER_LOCATION_ID = "server"
+
 /** Location ids (ADR 0005): `device`, `vol-<uuid>`, or anything else is a machine id. */
 sealed interface LocationId {
     data object Device : LocationId
@@ -36,7 +39,8 @@ sealed interface LocationId {
 /** Machine ids are anything that is not a local or special location id. */
 fun isMachine(locationId: String) = !(
     locationId == DEVICE_LOCATION_ID || locationId.startsWith(VOLUME_PREFIX) ||
-        locationId == TREE_LOCATION_ID || locationId == INCOMING_LOCATION_ID || locationId == MEDIASTORE_LOCATION_ID
+        locationId == TREE_LOCATION_ID || locationId == INCOMING_LOCATION_ID || locationId == MEDIASTORE_LOCATION_ID ||
+        locationId == SERVER_LOCATION_ID
     )
 
 /**

@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.0 (unreleased)
+
+Other devices see backups ([ADR 0024](docs/adr/0024-phone-backup.md), phase A2). Needs hoard-server 0.12.0.
+
+- **Gallery › Devices** (the phone button in the Gallery's top bar): every phone with a backup on your server, this one first, each with its storage (internal storage, SD cards) and backed-up folders, how many photos each holds and how many were deleted from the phone. Tap a phone, a storage or a folder to show that part of its backup in the grid; the bar above the grid says where you are and **✕** shows everything again.
+- **Filters › Phone backups**: "Pixel 8 backup" (one chip per phone) shows only what that phone backed up.
+- **"Deleted from the phone"**: a backed-up photo the phone no longer has keeps its place in the Gallery with a badge (also in the viewer); the server keeps it.
+- Another phone's photos show from the server's previews: nothing is downloaded to browse them. Opening one at 100 % reads the original from the server by ranges, and keeps it only within the originals budget of Settings › Photo server.
+- **Save to this device** (in the viewer, and in the selection bar for several photos): copies whole shots from the server (RAW, JPEG, video and the `.xmp` sidecar when the server has one) into `Pictures/From <phone name>/`, or a folder you choose once (never Hoard's copies for Reveal in `Pictures/Hoard`). It is a normal transfer: progress, Cancel, retries after a dropped connection (resuming where it stopped) and the name-conflict choice are in Transfers. A saved photo shows once in the Gallery, as on the phone and on the server; if its folder is backed up, the next backup links it on the server without uploading it again.
+- This phone's own backed-up files show once even before Hoard has read them (matched by where they are on the phone).
+- Search finds photos by the phone they were backed up from.
+- Fixed: on Android 11 and later, files copied to the phone's storage (any copy, not only Save to this device) were seen by Android with size 0 and no date until the next media scan, which the Gallery and the backup read.
+
 ## 2.4.0 (unreleased)
 
 Phone backup ([ADR 0024](docs/adr/0024-phone-backup.md), phase A1). Needs hoard-server 0.12.0; with an older server Settings says so and nothing is sent.

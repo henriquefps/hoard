@@ -561,4 +561,50 @@
     <string name="gallery_badge_backup_uploading">Fazendo backup</string>
     <string name="gallery_badge_backup_paused">O backup espera o Wi-Fi ou o carregador</string>
     <string name="gallery_badge_backup_failed">O backup falhou</string>
+    <!-- Outros aparelhos veem os backups (ADR 0024 A2, Hoard 2.5.0) -->
+    <string name="gallery_devices">Aparelhos</string>
+    <string name="gallery_devices_empty">Nenhum celular tem backup no servidor ainda. Ligue em Configurações › Backup do celular.</string>
+    <string name="gallery_devices_this">Este celular</string>
+    <string name="gallery_devices_sd">Cartão SD %1$s</string>
+    <string name="gallery_devices_whole">O armazenamento inteiro</string>
+    <string name="gallery_devices_all">Tudo de %1$s</string>
+    <string name="gallery_devices_inactive">Sem backup nos últimos 7 dias</string>
+    <plurals name="gallery_devices_shots">
+        <item quantity="one">%1$s foto</item>
+        <item quantity="many">%1$s de fotos</item>
+        <item quantity="other">%1$s fotos</item>
+    </plurals>
+    <plurals name="gallery_devices_off">
+        <item quantity="one">%1$s apagada do celular</item>
+        <item quantity="many">%1$s de apagadas do celular</item>
+        <item quantity="other">%1$s apagadas do celular</item>
+    </plurals>
+    <string name="gallery_filter_backup">Backups de celulares</string>
+    <string name="gallery_where_any">Qualquer</string>
+    <string name="gallery_where_backup">Backup de %1$s</string>
+    <string name="gallery_where_clear">Mostrar todas as fotos</string>
+    <string name="gallery_badge_off_phone">Apagada do celular</string>
+    <string name="gallery_badge_freed">Liberada do celular</string>
+    <string name="save_device">Salvar neste aparelho</string>
+    <plurals name="save_device_shots">
+        <item quantity="one">%1$s foto do servidor de fotos, com todos os arquivos (RAW, JPEG, vídeo, sidecar).</item>
+        <item quantity="many">%1$s de fotos do servidor de fotos, cada uma com todos os arquivos (RAW, JPEG, vídeo, sidecar).</item>
+        <item quantity="other">%1$s fotos do servidor de fotos, cada uma com todos os arquivos (RAW, JPEG, vídeo, sidecar).</item>
+    </plurals>
+    <string name="save_device_folder">Pasta</string>
+    <string name="save_device_default_many">Pictures/From &lt;celular&gt;, uma pasta por celular</string>
+    <string name="save_device_change">Trocar a pasta</string>
+    <string name="save_device_reset">Usar a padrão</string>
+    <string name="save_device_action">Salvar</string>
+    <plurals name="save_device_started">
+        <item quantity="one">Salvando %1$s arquivo em %2$s</item>
+        <item quantity="many">Salvando %1$s de arquivos em %2$s</item>
+        <item quantity="other">Salvando %1$s arquivos em %2$s</item>
+    </plurals>
+    <string name="save_device_refused">As cópias do Hoard para o Reveal não podem ser o destino. Escolha outra pasta.</string>
+    <string name="save_device_all_files">Salvar nas pastas do celular precisa do acesso a todos os arquivos.</string>
+    <string name="save_device_allow">Permitir</string>
+    <string name="save_device_nothing">Estas fotos já estão neste celular: só fotos do servidor são salvas.</string>
+    <string name="save_device_from_server">Servidor de fotos</string>
+    <string name="save_device_failed">Não foi possível salvar: %1$s</string>
 </resources>

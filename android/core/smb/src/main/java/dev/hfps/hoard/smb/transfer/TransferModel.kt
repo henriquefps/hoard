@@ -71,6 +71,12 @@ sealed class Endpoint {
     data object MediaStore : Endpoint()
 
     /**
+     * hoard-server's originals (ADR 0024 A2, "Save to this device"): source only, read by range through
+     * `GET /v1/originals/{fingerprint}`; paths are `<fingerprint>/<file name>` ([ServerTransferFs]).
+     */
+    data class Server(val serverId: String) : Endpoint()
+
+    /**
      * Identity for "same place": a move between two paths of the same key is a rename, and a copy
      * inside the same SMB share may be done by the server.
      */
@@ -82,9 +88,10 @@ sealed class Endpoint {
             is Tree -> "tree:$uri"
             is Incoming -> "incoming:$shareId"
             MediaStore -> "mediastore"
+            is Server -> "server:$serverId"
         }
 
-    val isNetwork: Boolean get() = this is Smb
+    val isNetwork: Boolean get() = this is Smb || this is Server
 
     fun toJson(): JSONObject = when (this) {
         is Smb -> JSONObject().put("kind", "smb").put("machineId", machineId).put("share", share)
@@ -95,6 +102,7 @@ sealed class Endpoint {
         is Tree -> JSONObject().put("kind", "tree").put("uri", uri)
         is Incoming -> JSONObject().put("kind", "incoming").put("shareId", shareId)
         MediaStore -> JSONObject().put("kind", "mediastore")
+        is Server -> JSONObject().put("kind", "server").put("serverId", serverId)
     }
 
     companion object {
@@ -125,6 +133,7 @@ sealed class Endpoint {
                 "volume" -> Volume(dev.hfps.hoard.smb.location.Location.requireUuid(json.optString("uuid")))
                 "tree" -> Tree(json.optString("uri").takeIf { it.startsWith("content://") } ?: smbFail(ErrorCode.UNKNOWN, "location.uri must be a content:// tree"))
                 "mediastore" -> MediaStore
+                "server" -> Server(json.optString("serverId").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "location.serverId is required"))
                 "incoming" -> Incoming(json.optString("shareId").takeIf { it.isNotEmpty() } ?: smbFail(ErrorCode.UNKNOWN, "location.shareId is required"))
                 else -> smbFail(ErrorCode.UNKNOWN, "Unknown location kind: '$kind'")
             }

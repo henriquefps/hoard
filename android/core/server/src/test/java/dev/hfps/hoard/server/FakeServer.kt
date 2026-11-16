@@ -333,7 +333,7 @@ class FakeServer : AutoCloseable {
                 val bytes = originals[java.net.URLDecoder.decode(path.removePrefix("/v1/originals/"), "UTF-8")] ?: return send(ex, 404, """{"error":{"code":"not_found","message":"no"}}""")
                 val range = ex.requestHeaders.getFirst("Range")
                 if (range == null) return sendBytes(ex, 200, bytes, emptyMap())
-                val (a, b) = range.removePrefix("bytes=").split('-').map { it.toLong() }
+                val (a, b) = range.removePrefix("bytes=").split('-').let { it[0].toLong() to (it[1].toLongOrNull() ?: Long.MAX_VALUE) }
                 val end = minOf(b, bytes.size - 1L)
                 sendBytes(ex, 206, bytes.copyOfRange(a.toInt(), end.toInt() + 1), mapOf("Content-Range" to "bytes $a-$end/${bytes.size}"))
             }

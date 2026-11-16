@@ -142,6 +142,8 @@ class AppContainer(context: Context) {
     }
 
     /** The phone backup (ADR 0024): folders, rules, the worker's runs. */
+    /** "Save to this device" and the transfer engine's server endpoint (ADR 0024 A2). */
+    val serverSaves: dev.hfps.hoard.app.gallery.ServerSaves by lazy { dev.hfps.hoard.app.gallery.ServerSaves(gallery, { transfers }, settingsStore) }
     val backup: dev.hfps.hoard.app.backup.PhoneBackup by lazy { dev.hfps.hoard.app.backup.PhoneBackup(appContext, gallery, settingsStore, scope) }
 
     /** SMB folders mapped to the server's NAS folders (ADR 0022). */
@@ -159,6 +161,7 @@ class AppContainer(context: Context) {
         TREE_LOCATION_ID -> Endpoint.Tree(place.treeUri ?: smbFail(ErrorCode.UNKNOWN, "No folder"))
         INCOMING_LOCATION_ID -> Endpoint.Incoming(place.shareId ?: smbFail(ErrorCode.UNKNOWN, "No shared files"))
         MEDIASTORE_LOCATION_ID -> Endpoint.MediaStore
+        dev.hfps.hoard.app.transfers.SERVER_LOCATION_ID -> Endpoint.Server(place.share ?: smbFail(ErrorCode.UNKNOWN, "No server"))
         else -> when (val parsed = LocationId.parse(place.locationId)) {
             LocationId.Device -> Endpoint.Device
             is LocationId.Volume -> Endpoint.Volume(parsed.uuid)
@@ -209,6 +212,18 @@ class AppContainer(context: Context) {
         network = NetworkMonitor(appContext) { scope.launch { routes.recheckAll() } }.also { it.start() }
         backup.start()
         gallery.start()
+        // "Save to this device" (ADR 0024 A2): saved files reach the device index with their server fingerprint.
+        TransferManager.get(appContext).addListener { progress ->
+            runCatching {
+                serverSaves.onProgress(progress.job) { endpoint ->
+                    when (endpoint) {
+                        Endpoint.Device -> android.os.Environment.getExternalStorageDirectory().absolutePath
+                        is Endpoint.Volume -> volumeRegistry.find(endpoint.uuid)?.path?.absolutePath
+                        else -> null
+                    }
+                }
+            }
+        }
     }
 
     /** The app came back to the foreground: routes and transfers are checked again (Hoard 1's `resume`). */

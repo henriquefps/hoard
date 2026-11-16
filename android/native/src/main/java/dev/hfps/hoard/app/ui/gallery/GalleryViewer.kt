@@ -124,6 +124,8 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
     val drive = stringResource(R.string.t_locations_drive)
 
     LaunchedEffect(vm) { vm.setStack(false) }
+    var saving by remember { mutableStateOf<GalleryEntry?>(null) }
+    val paired = container.gallery.account.collectAsState(initial = null).value != null
 
     val ready = view.core.status == CullStatus.Ready && view.core.metadataDone
     if (!ready) {
@@ -166,6 +168,26 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
     val extras = ViewerExtras(
         topActions = { shot ->
             val entry = byKey[shot.id]
+            if (entry != null) {
+                // ADR 0024 A2: a backed-up shot its phone no longer has, and Save to this device for server shots.
+                if (dev.hfps.hoard.app.gallery.Mirrors.offPhone(entry.mirrors) != null) {
+                    androidx.compose.material3.Icon(
+                        dev.hfps.hoard.designsystem.icons.PhosphorRegular.DeviceMobileSlash,
+                        stringResource(R.string.gallery_badge_off_phone),
+                        Modifier.padding(horizontal = 8.dp).size(20.dp).testTag("gallery-viewer-off-phone"),
+                        tint = Color(0xFFFFC53D),
+                    )
+                }
+                if (entry.source == dev.hfps.hoard.app.gallery.Source.Server && paired) {
+                    dev.hfps.hoard.designsystem.components.HfpsIconButton(
+                        dev.hfps.hoard.designsystem.icons.PhosphorRegular.DownloadSimple,
+                        stringResource(R.string.save_device),
+                        { saving = entry },
+                        modifier = Modifier.testTag("gallery-viewer-save"),
+                        tint = Color.White,
+                    )
+                }
+            }
             if (entry != null && entry.edited && backend != null) {
                 val original = shot.id in backend.showOriginal
                 Text(
@@ -204,6 +226,7 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
         extras = extras,
     )
     reveal.Dialogs()
+    saving?.let { entry -> SaveToDeviceSheet(container, listOf(entry), onDismiss = { saving = null }) }
     playing?.let { entry -> VideoPlayer(container, entry, onClose = { playing = null }) }
 }
 

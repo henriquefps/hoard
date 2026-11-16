@@ -142,6 +142,17 @@ class TransferRunner(
 
     private fun scan() {
         synchronized(job) { job.items.clear() }
+        // "Save to this device" (ADR 0024 A2) names its folder (`Pictures/From Pixel 8`) before it exists: made here,
+        // parents included. Other jobs go into a folder the owner picked, which exists.
+        if (job.sources.any { it.endpoint is Endpoint.Server } && job.destPath.isNotEmpty()) {
+            var path = ""
+            for (segment in job.destPath.split('/')) {
+                path = TransferPaths.join(path, segment)
+                val existing = guarded { dest.call { stat(path) } }
+                if (existing == null) guarded { dest.call { mkdir(path) } }
+                else if (!existing.isDirectory) throw JobStop(HoardSmbException(ErrorCode.ALREADY_EXISTS, "$segment exists and is not a folder"))
+            }
+        }
         for ((index, source) in job.sources.withIndex()) {
             checkStopped()
             val sfs = fs(source.endpoint)

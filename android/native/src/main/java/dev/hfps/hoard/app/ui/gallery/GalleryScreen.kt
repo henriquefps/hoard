@@ -118,6 +118,8 @@ data class GalleryUi(
     val status: dev.hfps.hoard.server.sync.SyncStatus = dev.hfps.hoard.server.sync.SyncStatus(),
     val total: Int = layout?.entries?.size ?: 0,
     val dismissed: Set<String> = emptySet(),
+    /** Phones with a backup on the server (ADR 0024 A2): the Devices button shows when there is one. */
+    val devices: List<dev.hfps.hoard.app.gallery.BackupDevice> = emptyList(),
 )
 
 /** Tab 1 (ADR 0021): one grid of the phone's shots and the server's items, newest first. */
@@ -134,7 +136,10 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     val dismissed by vm.dismissed.collectAsStateWithLifecycle()
     val open by vm.open.collectAsStateWithLifecycle()
     val lastViewed by vm.lastViewed.collectAsStateWithLifecycle()
+    val devices by vm.devices.collectAsStateWithLifecycle()
     var filters by remember { mutableStateOf(false) }
+    var devicesOpen by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf<List<GalleryEntry>?>(null) }
     val grid = vm.grid
 
     // ADR 0023: the selection and Move to trash.
@@ -150,7 +155,7 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     val askMedia = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refreshPermission() }
 
     GalleryContent(
-        ui = GalleryUi(layout, filter, columns, permission, account, status, total, dismissed),
+        ui = GalleryUi(layout, filter, columns, permission, account, status, total, dismissed, devices),
         thumbs = container.gallery.thumbs,
         grid = grid,
         onOpenSettings = onOpenSettings,
@@ -170,7 +175,14 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
             val chosen = layout?.entries.orEmpty().filter { it.key in selection.keys }
             screenScope.launch { trashJob = dev.hfps.hoard.app.gallery.GalleryTrashJobs.prepare(container, chosen, phoneName, driveName) }
         },
+        onDevices = { devicesOpen = true },
+        onClearWhere = { vm.setWhere(null) },
+        onSaveToDevice = { saving = layout?.entries.orEmpty().filter { it.key in selection.keys } },
     )
+    if (devicesOpen) DevicesSheet(devices, filter.where, onPick = vm::setWhere, onDismiss = { devicesOpen = false })
+    saving?.let { chosen ->
+        SaveToDeviceSheet(container, chosen, onDismiss = { saving = null }, onSaved = { selection = dev.hfps.hoard.app.gallery.GallerySelection() })
+    }
     trashJob?.let { job ->
         val res = androidx.compose.ui.platform.LocalResources.current
         val leftOut = listOfNotNull(
@@ -259,6 +271,11 @@ fun GalleryContent(
     selection: dev.hfps.hoard.app.gallery.GallerySelection = dev.hfps.hoard.app.gallery.GallerySelection(),
     onSelection: (dev.hfps.hoard.app.gallery.GallerySelection) -> Unit = {},
     onMoveToTrash: () -> Unit = {},
+    /** Gallery › Devices (ADR 0024 A2). */
+    onDevices: () -> Unit = {},
+    onClearWhere: () -> Unit = {},
+    /** Save the selected server shots to this device (ADR 0024 A2). */
+    onSaveToDevice: (() -> Unit)? = null,
 ) {
     var searching by remember { mutableStateOf(ui.filter.query.isNotEmpty()) }
     var goTo by remember { mutableStateOf(false) }
@@ -272,6 +289,7 @@ fun GalleryContent(
                     onClear = { onSelection(dev.hfps.hoard.app.gallery.GallerySelection()) },
                     onSelectAll = { onSelection(selection.all(ui.layout?.entries.orEmpty().map { it.key })) },
                     onMoveToTrash = onMoveToTrash,
+                    onSaveToDevice = onSaveToDevice?.takeIf { ui.account != null },
                 )
             } else if (searching) {
                 SearchBar(filter.query, onQuery = onQuery, onClose = {
@@ -281,6 +299,7 @@ fun GalleryContent(
             } else {
                 HfpsTopBar(title = stringResource(R.string.gallery_title)) {
                     HfpsIconButton(PhosphorRegular.MagnifyingGlass, stringResource(R.string.gallery_search), { searching = true }, modifier = Modifier.testTag("gallery-search"))
+                    if (ui.devices.isNotEmpty() || ui.filter.where != null) HfpsIconButton(PhosphorRegular.DeviceMobile, stringResource(R.string.gallery_devices), onDevices, active = ui.filter.where != null, modifier = Modifier.testTag("gallery-devices-open"))
                     if ((ui.layout?.marks?.size ?: 0) > 1) HfpsIconButton(PhosphorRegular.CalendarBlank, stringResource(R.string.gallery_goto), { goTo = true }, modifier = Modifier.testTag("gallery-goto-open"))
                     Box {
                         HfpsIconButton(if (filter.active) PhosphorFill.Funnel else PhosphorRegular.Funnel, stringResource(R.string.gallery_filters), onFilters, active = filter.active, modifier = Modifier.testTag("gallery-filters"))
@@ -301,6 +320,7 @@ fun GalleryContent(
     ) {
         Column(Modifier.fillMaxSize()) {
             Banner(ui.account, ui.status, ui.dismissed, onPair = onPair, onSettings = onOpenSettings, onDismiss = onDismiss)
+            ui.filter.where?.let { WhereBar(it, onClearWhere) }
             val current = ui.layout
             when {
                 current == null -> Box(Modifier.fillMaxSize()) {
@@ -330,6 +350,7 @@ fun GalleryContent(
                         scroller = scroller,
                         selection = selection,
                         onSelection = onSelection,
+                        wherePhone = ui.filter.where?.physicalId,
                     )
                 }
             }
@@ -341,13 +362,14 @@ fun GalleryContent(
 
 /** The top bar while selecting (ADR 0023): the count, Select all (the filtered list), Move to trash. */
 @Composable
-private fun SelectionBar(count: Int, onClear: () -> Unit, onSelectAll: () -> Unit, onMoveToTrash: () -> Unit) {
+private fun SelectionBar(count: Int, onClear: () -> Unit, onSelectAll: () -> Unit, onMoveToTrash: () -> Unit, onSaveToDevice: (() -> Unit)? = null) {
     HfpsTopBar(
         title = androidx.compose.ui.res.pluralStringResource(R.plurals.gallery_selected, count, count.toString()),
         onBack = onClear,
         backContentDescription = stringResource(R.string.gallery_selection_clear),
     ) {
         HfpsIconButton(PhosphorRegular.CheckSquare, stringResource(R.string.gallery_select_all), onSelectAll, modifier = Modifier.testTag("gallery-select-all"))
+        if (onSaveToDevice != null) HfpsIconButton(PhosphorRegular.DownloadSimple, stringResource(R.string.save_device), onSaveToDevice, modifier = Modifier.testTag("gallery-save-device"))
         HfpsIconButton(PhosphorRegular.Trash, stringResource(R.string.gallery_move_to_trash), onMoveToTrash, modifier = Modifier.testTag("gallery-move-to-trash"))
     }
 }
@@ -426,6 +448,8 @@ fun GalleryGrid(
     scroller: FastScrollerState = rememberFastScrollerState(),
     selection: dev.hfps.hoard.app.gallery.GallerySelection = dev.hfps.hoard.app.gallery.GallerySelection(),
     onSelection: (dev.hfps.hoard.app.gallery.GallerySelection) -> Unit = {},
+    /** The phone whose backup the grid shows (ADR 0024 A2): the "Deleted from the phone" badge is about it. */
+    wherePhone: String? = null,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -512,6 +536,7 @@ fun GalleryGrid(
                         texts = texts,
                         selected = key in selection.keys,
                         onLongPress = { onSelection(selection.toggle(key)) },
+                        offPhone = dev.hfps.hoard.app.gallery.Mirrors.offPhone(cell.entry.mirrors, wherePhone),
                     )
                 }
             }
@@ -586,6 +611,7 @@ fun durationText(ms: Long): String {
 class CellTexts(
     val device: String, val server: String, val both: String, val motion: String, val raw: String, val edited: String, val picked: String, val rejected: String,
     val backupWaiting: String = "", val backupUploading: String = "", val backupPaused: String = "", val backupFailed: String = "",
+    val offPhone: String = "", val freed: String = "",
 )
 
 @Composable
@@ -595,6 +621,7 @@ fun rememberCellTexts() = CellTexts(
     stringResource(R.string.gallery_badge_picked), stringResource(R.string.gallery_badge_rejected),
     stringResource(R.string.gallery_badge_backup_waiting), stringResource(R.string.gallery_badge_backup_uploading),
     stringResource(R.string.gallery_badge_backup_paused), stringResource(R.string.gallery_badge_backup_failed),
+    stringResource(R.string.gallery_badge_off_phone), stringResource(R.string.gallery_badge_freed),
 )
 
 @Composable
@@ -608,6 +635,8 @@ fun GalleryCell(
     texts: CellTexts = rememberCellTexts(),
     selected: Boolean = false,
     onLongPress: (() -> Unit)? = null,
+    /** A backed-up shot no longer on its phone (ADR 0024 A2). */
+    offPhone: dev.hfps.hoard.app.gallery.OffPhone? = null,
 ) {
     val image: ImageBitmap? by produceState(thumbs.peek(entry, px), thumbs.key(entry, px)) {
         if (value == null) value = thumbs.load(entry, px)
@@ -655,6 +684,12 @@ fun GalleryCell(
                 dev.hfps.hoard.app.gallery.BackupBadge.Uploading -> Badge(PhosphorRegular.UploadSimple, texts.backupUploading, tag = "badge-backup-uploading")
                 dev.hfps.hoard.app.gallery.BackupBadge.Paused -> Badge(PhosphorRegular.ClockCounterClockwise, texts.backupPaused, tint = Color(0xFFCBD5E1), tag = "badge-backup-paused")
                 dev.hfps.hoard.app.gallery.BackupBadge.Failed -> Badge(PhosphorRegular.WarningCircle, texts.backupFailed, tint = Color(0xFFFFC53D), tag = "badge-backup-failed")
+            }
+            // A phone's backed-up shot the phone no longer has (ADR 0024 A2): kept on the server.
+            when (offPhone) {
+                null -> Unit
+                dev.hfps.hoard.app.gallery.OffPhone.Deleted -> Badge(PhosphorRegular.DeviceMobileSlash, texts.offPhone, tint = Color(0xFFFFC53D), tag = "badge-off-phone")
+                dev.hfps.hoard.app.gallery.OffPhone.Freed -> Badge(PhosphorRegular.DeviceMobileSlash, texts.freed, tag = "badge-freed")
             }
         }
         Row(Modifier.align(Alignment.TopEnd)) {
