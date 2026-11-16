@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,6 +58,7 @@ val PERMANENT_OFFER: Set<TrashRefusal> = setOf(
     TrashRefusal.MOVE_UNSUPPORTED,
     TrashRefusal.ALREADY_IN_TRASH,
     TrashRefusal.PHONE_TRASH_UNAVAILABLE,
+    TrashRefusal.FOLDER_NOT_TRASHABLE,
 )
 
 fun reasonText(reason: TrashRefusal): Int = when (reason) {
@@ -70,6 +72,8 @@ fun reasonText(reason: TrashRefusal): Int = when (reason) {
     TrashRefusal.NOT_FOUND -> R.string.trash_reason_not_found
     TrashRefusal.UNKNOWN_PLACE -> R.string.trash_reason_unknown_place
     TrashRefusal.PHONE_TRASH_UNAVAILABLE -> R.string.trash_reason_phone
+    TrashRefusal.DECLINED -> R.string.trash_reason_declined
+    TrashRefusal.FOLDER_NOT_TRASHABLE -> R.string.trash_reason_folder
     TrashRefusal.FAILED -> R.string.trash_reason_failed
 }
 
@@ -113,6 +117,17 @@ fun MoveToTrashDialog(
     val progress by container.trash.progress.collectAsState()
     val autoDays by container.appSettings.trashAutoEmptyDays.collectAsState(initial = dev.hfps.hoard.app.data.AppSettings.TRASH_AUTO_EMPTY_DEFAULT)
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // ADR 0023 (the owner's decision 4): the first phone trash dialog offers Media management once.
+    var askMedia by remember { mutableStateOf(false) }
+    LaunchedEffect(request) {
+        if (request.location.kind == dev.hfps.hoard.app.files.LocationKind.Device && mediaManagementOf(context) == MediaManagement.NotAllowed &&
+            !container.appSettings.trashMediaAskedNow()
+        ) {
+            askMedia = true
+            container.appSettings.setTrashMediaAsked()
+        }
+    }
     LaunchedEffect(request) {
         step = try {
             val plan = container.trash.prepareFolder(request.location, request.folder, request.paths, wholeShots = shots)
@@ -199,6 +214,7 @@ fun MoveToTrashDialog(
                 dismiss = { TextButton(onDismiss) { Text(stringResource(if (count == 0) R.string.t_common_close else R.string.t_common_cancel), color = HfpsTheme.colors.foreground) } },
             ) {
                 TrashConfirmBody(plan, trashWhere(request.location, plan), autoDays)
+                if (askMedia) MediaManagementAsk { dev.hfps.hoard.app.ui.trash.openMediaManagement(context) }
             }
         }
         Step.Running -> HoardDialog(
@@ -242,6 +258,15 @@ fun MoveToTrashDialog(
                 PermanentDeleteBody(s.units, placeOf(request.location), request.location.kind == dev.hfps.hoard.app.files.LocationKind.Device, s.reason, shots)
             }
         }
+    }
+}
+
+/** The one-time offer of Media management in the first phone trash dialog. */
+@Composable
+fun MediaManagementAsk(onAllow: () -> Unit) {
+    Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.trash_media_ask), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        dev.hfps.hoard.designsystem.components.SecondaryButton(stringResource(R.string.trash_media_allow), onAllow, modifier = Modifier.testTag("trash-media-allow"))
     }
 }
 
@@ -315,6 +340,13 @@ fun PermanentDeleteBody(units: List<TrashUnit>, place: String, phone: Boolean, r
                 color = HfpsTheme.colors.mutedForeground,
             )
             Text(stringResource(R.string.trash_permanent_reason, stringResource(reasonText(reason))), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        } else if (units.any { u -> u.files.any { it.isDirectory } }) {
+            // A folder's size is not known without walking it: its count and place only.
+            Text(
+                pluralStringResource(R.plurals.trash_permanent_folders, units.size, formatNumber(units.size, locale()), place, stringResource(reasonText(reason))),
+                style = HfpsTheme.typography.body,
+                color = HfpsTheme.colors.mutedForeground,
+            )
         } else {
             Text(
                 pluralStringResource(R.plurals.trash_permanent_files, files, formatNumber(files, locale()), bytes(bytes), place, stringResource(reasonText(reason))),

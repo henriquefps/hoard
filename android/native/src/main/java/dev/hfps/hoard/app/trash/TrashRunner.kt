@@ -263,7 +263,8 @@ class TrashRunner(
         val rolledBack = ArrayList<TrashEntryEntity>()
         val dropped = ArrayList<TrashEntryEntity>()
         val unreachable = ArrayList<TrashPlace>()
-        for ((place, rows) in index.unsettled().groupBy { TrashPlace(it.locationId, it.share) }) {
+        // Rows of the phone's MediaStore trash are settled by its backend (they have a URI, no trash path).
+        for ((place, rows) in index.unsettled().filter { it.mediaUri == null }.groupBy { TrashPlace(it.locationId, it.share) }) {
             val fs = fsFor(place)
             if (fs == null) {
                 unreachable += place

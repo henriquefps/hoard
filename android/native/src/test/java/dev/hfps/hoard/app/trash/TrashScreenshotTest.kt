@@ -118,4 +118,42 @@ class TrashScreenshotTest {
             dev.hfps.hoard.app.ui.trash.EmptyUnreachableNote(unreachable)
         }
     }
+
+    // --- Phase A3: the phone's MediaStore trash ---
+
+    private val phoneRows = listOf("IMG_0001.JPG", "IMG_0001.xmp", "IMG_0002.JPG").map { name ->
+        TrashSamples.row(TrashPlace("device"), "", "", "DCIM/Camera/$name", if (name.endsWith("xmp")) 2_000 else 3_400_000).copy(
+            trashedPath = "",
+            mediaUri = "content://media/external_primary/images/media/1",
+            trashedAt = java.time.LocalDate.of(2026, 11, 14).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli(),
+            expiresAt = java.time.LocalDate.of(2026, 12, 14).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli(),
+        )
+    }
+
+    private fun phoneUi() = TrashUi(
+        TrashGroups.of(phoneRows + TrashSamples.rows, emptySet(), { if (it.locationId == "device") "Internal storage" else TrashSamples.label(it) }, ZoneOffset.UTC),
+        loaded = true,
+    )
+
+    @Test fun trashPhonePhoneLight() = shoot("trash_phone_entries_phone_light") { TrashContent(phoneUi(), onBack = {}) }
+
+    @Test fun trashMediaAskPhoneLight() = shoot("trash_media_ask_phone_light") {
+        Card {
+            val files = listOf(TrashFile("DCIM/Camera/IMG_0001.JPG", 6_084, 1), TrashFile("DCIM/Camera/IMG_0001.xmp", 38, 1))
+            val p = TrashPlanner.plan(TrashPlace("device"), TrashPlanner.units("DCIM/Camera", files, listOf("DCIM/Camera/IMG_0001.JPG"), wholeShots = false), RootChoice.Root(""), false)
+            TrashConfirmBody(p, "Internal storage", 30)
+            dev.hfps.hoard.app.ui.trash.MediaManagementAsk {}
+        }
+    }
+
+    @Test fun trashPermanentFolderPhoneLight() = shoot("trash_permanent_folder_phone_light") {
+        val folder = TrashPlanner.units("DCIM", listOf(TrashFile("DCIM/OldStuff", 0, 1, isDirectory = true)), listOf("DCIM/OldStuff"))
+        Card { dev.hfps.hoard.app.ui.trash.PermanentDeleteBody(folder, "Internal storage", phone = true, reason = TrashRefusal.FOLDER_NOT_TRASHABLE, shots = false) }
+    }
+
+    @Test fun trashSettingsMediaAllowedPhoneDark() = shoot("trash_settings_media_allowed_phone_dark", dark = true) {
+        Box(Modifier.fillMaxSize().background(HfpsTheme.colors.background)) {
+            Column { TrashSettingsContent(30, onDays = {}, onOpenTrash = {}, media = dev.hfps.hoard.app.ui.trash.MediaManagement.Allowed) }
+        }
+    }
 }

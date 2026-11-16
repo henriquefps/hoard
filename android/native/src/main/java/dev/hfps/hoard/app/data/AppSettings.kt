@@ -120,6 +120,11 @@ class AppSettings(private val store: SettingsStore) {
         store.putJson(TRASH_AUTO_EMPTY, days.toString())
     }
 
+    /** The first phone trash dialog offered Media management (asked once, ADR 0023 owner's decision 4). */
+    suspend fun trashMediaAskedNow(): Boolean = bool(store.getJson(TRASH_MEDIA_ASKED)) == true
+
+    suspend fun setTrashMediaAsked() = store.putJson(TRASH_MEDIA_ASKED, "true")
+
     suspend fun setStorageIntroSeen(value: Boolean) = store.putJson(STORAGE_INTRO_SEEN, value.toString())
     suspend fun setRevealStreamNoteSeen(value: Boolean) = store.putJson(REVEAL_STREAM_NOTE_SEEN, value.toString())
 
@@ -139,6 +144,7 @@ class AppSettings(private val store: SettingsStore) {
         const val CULL_EYES = "cullEyesSensitivity"
         const val CULL_BURST_GAP = "cullBurstGapMs"
         const val TRASH_AUTO_EMPTY = "trashAutoEmptyDays"
+        const val TRASH_MEDIA_ASKED = "trashMediaManagementAsked"
 
         /** The auto-empty choices of Settings › Trash: 7, 30 or 90 days, or 0 = off (ADR 0023). */
         val TRASH_AUTO_EMPTY_DAYS = listOf(7, 30, 90, 0)

@@ -483,6 +483,32 @@ Phase A2 (the screens) follows the decision with these deviations:
     trash. Empty trash counts only the places that answered the last refresh and says how many files it leaves on the
     others.
 
+## Amendment (A3)
+
+Phase A3 (the phone's MediaStore trash, `MediaStoreTrashBackend` over `MediaStoreOps`) follows the decision with these
+findings and deviations (emulator API 36, docs/testing/trash.md):
+
+1. **All files access allows a direct `IS_TRASHED` update** (and untrash and delete) of rows Hoard does not own, with
+   no consent. While it is granted (the phone's Files tab needs it anyway) Hoard changes rows directly; the consent
+   requests (`createTrashRequest`, `createDeleteRequest`, at most 500 URIs each, whole shots per request) serve when
+   it is not, and Media management skips their dialog. Rows Hoard owns (its `Pictures/Hoard/` copies) are always
+   changed directly.
+2. **Consent requests take media rows only** ("All requested items must be Media items"): sidecars and other plain
+   `MediaStore.Files` rows are always changed directly, so without All files access a shot's sidecar cannot follow
+   (the shot is reported half-moved, never split silently). A file without a row is scanned first.
+3. **A phone folder cannot go to Android's trash** (it takes files): refused `FOLDER_NOT_TRASHABLE`, with the
+   permanent-delete offer (Keep is the default).
+4. **Rows are read back by id from `MediaStore.Files`** after each step (a typed collection has no `MEDIA_TYPE`), and
+   settled by what they say: a declined consent (`DECLINED`) leaves no row. Refresh and start-up recovery forget rows
+   Android purged (its 30 days) or the user restored elsewhere, and update `expires_at` (`DATE_EXPIRES`), which the
+   Trash screen shows ("Android deletes them on …"). The 30 days are Android's: Hoard's auto-empty does not touch the
+   phone's trash.
+5. **Media management** is offered once, in the first phone trash dialog (`trashMediaManagementAsked`), and in
+   Settings › Trash (its state, and Allow / Change opening Android's screen). `MANAGE_MEDIA` is declared in the
+   manifest.
+6. **Below Android 11** the phone keeps the folder trash (`.hoard-trash` with `.nomedia`); not run on an API 29 image
+   (none on the build host).
+
 ## Alternatives considered
 
 - **Tombstones keep their edits (B)**: see "Server": blind to the trash, previews lost, the empty-mount guard keeps

@@ -20,6 +20,10 @@ Hoard 2.3.0 (unreleased), branch `trash-a2-screens` on `main` 9144acc (A1, PR #5
 | `trash_permanent_files_phone_light.png` | The permanent-delete offer of a Files delete on the phone (before A3): exactly the 2 selected JPEGs, their size and place, never the DNG of the same shot |
 | `trash_permanent_shots_phone_dark.png` | The offer in culling (a read-only trash root): shots, files, size and place, and why |
 | `trash_shorten_phone_light.png` | Settings › Trash, a shorter period: files and size it would delete now, other devices' included |
+| `trash_phone_entries_phone_light.png` | Phase A3: a phone group (Internal storage › DCIM/Camera) with "Android deletes them on …" (`DATE_EXPIRES`) |
+| `trash_media_ask_phone_light.png` | Phase A3: the first phone trash dialog, with the one-time Media management offer |
+| `trash_permanent_folder_phone_light.png` | Phase A3: a phone folder (Android's trash takes files only): the permanent-delete offer |
+| `trash_settings_media_allowed_phone_dark.png` | Phase A3: Settings › Trash with Media management allowed (`trash_settings_phone_*`: Robolectric's Android has none, "Needs Android 12 or later") |
 | `trash_empty_confirm_phone_light.png` | Empty trash with a drive not reachable: only the reachable files counted, the rest named |
 
 The dialogs are captured as their body on a card (an `AlertDialog` opens its own window, which a root capture does not
@@ -70,3 +74,42 @@ throwing smbj's exception) covers it.
 **Not run here**: a photo server (mapped folders, `POST /v1/nas/walk`, the old-server warning on a real server: needs
 hoard-server 0.11.0, phase A4's run), the phone's MediaStore trash (A3), the notification's Cancel button (Cancel in
 the dialog is the same call; covered by `cancelStopsBetweenUnits`).
+
+## Phase A3: the phone's MediaStore trash (emulator, API 36)
+
+Emulator `hoard-burst` (API 36, `-memory 3072 -no-window`), the debug build (`dev.hfps.hoard`), All files access
+granted. Synthetic coloured JPEGs (never real photos) pushed with `adb push` to `/sdcard/DCIM/Camera/` (rows owned by
+`com.android.shell`, so not Hoard's), plus `IMG_0001.xmp` and a folder `DCIM/OldStuff/`. The consent path was forced in
+the debug build with the flag file `/sdcard/Android/data/dev.hfps.hoard/files/trash-force-consent` (`tryDirect` off);
+Media management was switched with `adb shell appops set dev.hfps.hoard MANAGE_MEDIA allow|deny|default`. Everything
+pushed, the flag and the appops were removed afterwards and the emulator stopped.
+
+**The ADR's open question, answered**: with **All files access**, a direct `IS_TRASHED` update of rows Hoard does not
+own **is allowed** (no consent, no `RecoverableSecurityException`): `IMG_0001.JPG` and `IMG_0003.JPG` went to Android's
+trash (`.trashed-<expiry>-<name>` on disk) without any dialog. So with All files access (which the phone's Files tab
+needs anyway) Hoard trashes, restores and deletes directly; the consent requests serve when it is not granted.
+Second finding: Android's consent requests take **media rows only** ("All requested items must be Media items" for a
+sidecar's `MediaStore.Files` URI), so sidecars are always changed directly (All files access allows it).
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Files › Internal storage › DCIM › Camera, `IMG_0001.JPG` › Delete (the first phone trash) | "Move 1 item to the trash? 2 files (6 KB)…" (the photo and its `.xmp`, its last member) and the one-time "Allow Media management" offer | [`p01`](trash/phone/p01-confirm-ask.png) |
+| Move to trash (All files access, nothing forced) | Both files trashed directly, no consent; the offer did not come back in later dialogs | — |
+| Consent forced, `IMG_0004.JPG` › Delete › Move to trash | Android: "Allow Hoard debug to move this photo to trash?"; **Deny**: refused `DECLINED`, the file stays, no row; again, **Allow**: trashed | [`p03`](trash/phone/p03-consent.png) |
+| `MANAGE_MEDIA` allowed, consent forced, `IMG_0005.JPG` | The request is approved with no dialog (`consent TRASH 1: true`) | — |
+| Files › Trash | Internal storage › DCIM/Camera with "Android deletes them on Dec 16, 2026" (30 days, `DATE_EXPIRES`) | [`p05`](trash/phone/p05-trash.png) |
+| A new `IMG_0005.JPG` pushed, Media management denied, DCIM/Camera › Restore | `IMG_0005.JPG` refused ("A file is already at DCIM/Camera/IMG_0005.JPG"); Android: "Allow Hoard debug to move 2 photos out of trash?" › Allow: `IMG_0003.JPG`, `IMG_0004.JPG` back, the sidecars restored directly | [`p06`](trash/phone/p06-restore-consent.png) |
+| DCIM/Camera › Delete permanently | "Delete 1 file permanently? 1 file (5.9 KB)…"; then Android: "Allow Hoard debug to delete this photo?" › Allow: deleted; the newer `IMG_0005.JPG` untouched | [`p07`](trash/phone/p07-delete-confirm.png), [`p08`](trash/phone/p08-delete-consent.png) |
+| DCIM › `OldStuff` (a folder) › Delete | "Delete 1 item permanently? 1 item with folders in Internal storage cannot go to the trash: Android's trash takes files, not folders."; **Keep** is the default; Keep: nothing deleted | [`p09`](trash/phone/p09-folder-offer.png) |
+| `IMG_0003.JPG` trashed again, its `.trashed-…` file removed outside Hoard (`adb shell rm`), Trash › Refresh | The row is forgotten (the item is gone) | — |
+| Settings › Trash › Media management › Allow | Android's "Allow app to manage media" screen; switched on and back: "Allowed: Android does not ask…", **Change** | [`p10`](trash/phone/p10-settings.png), [`p11`](trash/phone/p11-system-mm.png) |
+
+**Found and fixed on the way**: reading a trashed photo back by its `images` URI with `MEDIA_TYPE` in the projection
+threw (the typed collections have no such column), so every photo looked "not trashed" and the run reported a half
+shot; rows are now read by id from `MediaStore.Files`. A sidecar in a consent request made Android refuse the whole
+request; sidecars now never go in one.
+
+**Not run here**: an **API 29** image (the folder trash below Android 11: `.hoard-trash` with `.nomedia`, the same code
+as a USB drive): only an API 36 system image is installed on this host. Not run: a request of more than 500 items
+(`MediaStoreTrashTest` covers the batching), a phone that never had All files access.
+

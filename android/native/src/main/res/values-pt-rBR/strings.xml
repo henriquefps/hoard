@@ -318,6 +318,7 @@
     <string name="trash_reason_phone">a lixeira do próprio celular vem em uma versão futura</string>
     <string name="trash_reason_unknown_place">o Hoard não sabe onde fica a lixeira no servidor de fotos; abra a pasta em Arquivos uma vez e tente de novo</string>
     <string name="trash_rejects_read_only">Mover descartadas para a lixeira (pasta somente leitura)</string>
+    <string name="trash_reason_declined">a confirmação do Android foi recusada</string>
     <string name="trash_reason_failed">não foi possível mover</string>
     <string name="trash_running">Movendo para a lixeira…</string>
     <plurals name="trash_permanent_title">
@@ -387,7 +388,6 @@
     <string name="trash_settings_never">Nunca</string>
     <string name="trash_settings_open">Abrir a lixeira</string>
     <string name="trash_settings_media">Gerenciamento de mídia</string>
-    <string name="trash_settings_media_hint">Permite que o Hoard mova fotos do celular para a lixeira do Android sem perguntar toda vez. Chega com a lixeira do celular em uma versão futura.</string>
     <plurals name="trash_rejects_menu">
         <item quantity="one">Mover %1$s descartada para a lixeira…</item>
         <item quantity="many">Mover %1$s descartadas para a lixeira…</item>
@@ -418,4 +418,17 @@
     <string name="trash_shorten_apply">Apagar e aplicar</string>
     <string name="trash_checking">Verificando a lixeira…</string>
     <string name="trash_permanent_reason">Elas não podem ir para a lixeira: %1$s.</string>
+    <string name="trash_media_ask">O Android pede confirmação toda vez que o Hoard move fotos do celular para a lixeira dele. Permita o Gerenciamento de mídia e ele para de perguntar.</string>
+    <string name="trash_media_allow">Permitir</string>
+    <string name="trash_settings_media_allowed">Permitido: o Android não pergunta antes de cada envio para a lixeira, restauração ou exclusão.</string>
+    <string name="trash_settings_media_not_allowed">Não permitido: o Android pede confirmação toda vez que o Hoard move fotos do celular para a lixeira dele.</string>
+    <string name="trash_settings_media_unsupported">Precisa do Android 12 ou mais recente.</string>
+    <string name="trash_settings_media_change">Alterar</string>
+    <string name="trash_expires">O Android os apaga em %1$s</string>
+    <string name="trash_reason_folder">a lixeira do Android aceita arquivos, não pastas</string>
+    <plurals name="trash_permanent_folders">
+        <item quantity="one">%1$s item com pastas em %2$s não pode ir para a lixeira: %3$s.</item>
+        <item quantity="many">%1$s itens com pastas em %2$s não podem ir para a lixeira: %3$s.</item>
+        <item quantity="other">%1$s itens com pastas em %2$s não podem ir para a lixeira: %3$s.</item>
+    </plurals>
 </resources>

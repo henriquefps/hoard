@@ -70,8 +70,14 @@ enum class TrashRefusal {
      */
     UNKNOWN_PLACE,
 
-    /** The phone's MediaStore trash (Android 11+) comes with phase A3. */
+    /** The phone's MediaStore trash is not available (kept for older rows; Android 11+ has it since phase A3). */
     PHONE_TRASH_UNAVAILABLE,
+
+    /** The user declined Android's consent dialog (the phone's trash). */
+    DECLINED,
+
+    /** A folder on the phone: Android's trash takes files, not folders. */
+    FOLDER_NOT_TRASHABLE,
 
     /** Anything else (its error code goes with it). */
     FAILED,

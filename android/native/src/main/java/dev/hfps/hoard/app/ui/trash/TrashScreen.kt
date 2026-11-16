@@ -330,6 +330,10 @@ private fun FolderRow(folder: TrashFolderGroup, onRestore: (List<TrashEntryEntit
                 style = HfpsTheme.typography.ui,
                 color = HfpsTheme.colors.mutedForeground,
             )
+            folder.expiresAt?.let { at ->
+                val date = java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+                Text(stringResource(R.string.trash_expires, date.format(DAY_FORMAT.withLocale(locale()))), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+            }
         }
         GroupMenu(stringResource(R.string.t_locations_actions_for, folder.folder.ifEmpty { folder.placeLabel }), folder.reachable, { onRestore(folder.rows) }) {
             onDelete(folder.rows)
