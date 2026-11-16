@@ -20,7 +20,7 @@ recorded here in the same cycle.
 | **Deployed server** (cachyos-fps) | Upgrades and restarts, each one with the owner's OK. | Hoard orchestrator |
 
 **Decided 2026-11-15 (owner):** no automatic XMP writes; hand-off by server reference, MediaStore URI or local copy.
-This ships in Hoard 2.2.0 and Reveal 0.9.0. Contracts 8, 11 and 12 below describe the earlier behaviour until those ship.
+Shipped in Hoard 2.2.x and Reveal 0.9.0 (installed 2026-11-15). Where contracts 8, 11 and 12 below describe URI streaming, persistable grants or automatic sidecars, that is the earlier behaviour, kept only for links handed out before.
 
 ## Contracts
 
@@ -103,7 +103,7 @@ server:
 | 0.8.99-rc1 (W3/C, untagged, versionCode 89900) | 2.0.2 | 0.9.0 | **Installed** on the owner's phone and tablet (2026-11-15, night). Cold start with the real library: no appfuse mounts, no watchdog block. Server-held hand-offs adopted as Server photos. No server references yet (versionCode < 90000). |
 | 0.9.0 (W3/C, W3/D, W3/H; versionCode 90000) | 2.0.2 → 2.2.0 | 0.9.0 → 0.10.1 | **All merged**: Reveal main 663ff97, signed untagged candidate built. Hoard 2.2.0 main b9dcbcf. Release pair test with the owner, after the server-v0.10.1 tag and deploy. |
 | ≥ 0.9.0 | 2.1.0 (Gallery: server client, culling sync, server-reference sender for Gallery items, edited thumbnails) | ≥ 0.9.0 | Merged (main 7ff51df, not released). The server client reaches a plain-HTTP LAN/Tailscale server through a loopback relay (ADR 0021). SMB files still go as URIs. |
-| 0.9.0 (+ W4: XMP export only, media-URI hand-offs) | 2.2.1 (SMB path mapping, local-copy hand-off, XMP export only, first-read rule; ADR 0022) | 0.10.1 (items by path, empty sidecar imports skipped, first-read rule, empty-walk guard) | All merged; server 0.10.1 **deployed** (2026-11-15). Hoard 2.2.1 + Reveal 0.9.0 (signed, untagged) **installed on the tablet** (2026-11-15). App tags pending. |
+| 0.9.0 (+ W4: XMP export only, media-URI hand-offs) | 2.2.1 (SMB path mapping, local-copy hand-off, XMP export only, first-read rule; ADR 0022) | 0.10.1 (items by path, empty sidecar imports skipped, first-read rule, empty-walk guard) | All merged; server 0.10.1 **deployed** (Tailscale only, tunnel removed). **Hoard 2.2.2 + Reveal 0.9.0 (candidate 3, W5 edit sync + recovery)** installed and accepted on both devices (2026-11-15): edits, culling and new edits sync both ways; the 4 recovered versions are re-pushed with no conflict copies; devices grouped by phone. App tags pending the owner's go. |
 
 ## Testing a release pair
 
