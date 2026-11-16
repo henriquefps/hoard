@@ -1,5 +1,7 @@
 # Hoard 2.0.0: the native app replaces Hoard 1 (ADR 0019, "The swap")
 
+> **Rule for emulator runs against a test Samba container** (since 2026-11-16): type the container's address (`10.0.2.2:<port>`) by hand in the machine form and never accept or tap a machine Hoard discovers. Discovery runs on the build host's LAN and finds the owner's machines; a discovered entry fills the form with one of them (it did in the trash run, [trash.md](trash.md)). Check the saved address before the first connection.
+
 - **Date**: 2026-11-15
 - **Host**: cachyos-fps (Linux, OpenJDK 21, Android SDK in `~/Android/Sdk`), Gradle `-Xmx3g`, `--max-workers=4`
 - **Device**: Android emulator `Pixel_API_36` (API 36, x86_64, 1080×2400), `-memory 3072 -no-window`; every `adb` call

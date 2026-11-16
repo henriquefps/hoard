@@ -137,10 +137,10 @@ class TrashService(private val container: AppContainer) {
      * needed: the same two reads as opening the folder); refusals up front (inside a trash already, the server
      * unreachable for an unknown folder, the phone's MediaStore trash before A3).
      */
-    suspend fun prepare(location: BrowseLocation, folder: String, listing: List<SmbEntry>, selected: Collection<String>): TrashPlan {
+    suspend fun prepare(location: BrowseLocation, folder: String, listing: List<SmbEntry>, selected: Collection<String>, wholeShots: Boolean = true): TrashPlan {
         val place = TrashPlace(location.id, if (location.isSmb) location.share.orEmpty() else "")
         val files = listing.map { TrashFile(it.path, it.size, IsoTime.parse(it.modifiedAt), it.isDirectory) }
-        val units = TrashPlanner.units(folder, files, selected)
+        val units = TrashPlanner.units(folder, files, selected, wholeShots)
         val account = runCatching { container.gallery.db.account().get() }.getOrNull()
         val serverHasTrash = account?.has(Features.TRASH) == true
         if (backend(TrashKind.of(location.id)) == null) {
@@ -247,9 +247,9 @@ class TrashService(private val container: AppContainer) {
     }
 
     /** [prepare] on a fresh listing of [folder] (the dialog's plan is never made from a stale one). */
-    suspend fun prepareFolder(location: BrowseLocation, folder: String, selected: Collection<String>): TrashPlan {
+    suspend fun prepareFolder(location: BrowseLocation, folder: String, selected: Collection<String>, wholeShots: Boolean = true): TrashPlan {
         val listing = container.files.run(location) { fs, cancel -> fs.list(folder, cancel) }.entries
-        return prepare(location, folder, listing, selected)
+        return prepare(location, folder, listing, selected, wholeShots)
     }
 
     private val _active = MutableStateFlow(false)

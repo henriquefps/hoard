@@ -190,8 +190,13 @@ object TrashPlanner {
      * - a sidecar whose shot is selected goes with it; alone, it is a plain file;
      * - anything else (a document, a folder) is a plain item, moved as it is.
      * Units come in the listing's order of their first selected file; nothing is listed twice.
+     *
+     * [wholeShots] false is a delete in Files (ADR 0023 "Amendment (A2)", the sidecar rule): only the selected media
+     * files go, never the shot's other files, and its sidecars go only when the selection removes the last media
+     * member of that stem in the folder (a sidecar stays with the member that stays). Culling passes true: a reject is
+     * the whole shot.
      */
-    fun units(folder: String, listing: List<TrashFile>, selected: Collection<String>): List<TrashUnit> {
+    fun units(folder: String, listing: List<TrashFile>, selected: Collection<String>, wholeShots: Boolean = true): List<TrashUnit> {
         val folderPath = SharePaths.normalize(folder)
         val wanted = selected.map { lower(SharePaths.normalize(it)) }.toHashSet()
         val inFolder = listing.filter { SharePaths.parent(it.path).equals(folderPath, ignoreCase = true) }
@@ -206,12 +211,14 @@ object TrashPlanner {
             val stem = lower(ImageFormats.stem(file.name))
             if (shotOf.containsKey(stem)) continue
             val members = byStem[stem].orEmpty()
+            val moving = if (wholeShots) members else members.filter { lower(it.path) in wanted }
+            val lastMember = moving.size == members.size
             val sidecarNames = SidecarNames.candidates(stem, members.map { it.name }).toHashSet()
             val unit = TrashUnit(
                 key = shotKey(folderPath, stem),
                 folder = folderPath,
-                files = orderMembers(members),
-                sidecars = sidecars.filter { lower(it.name) in sidecarNames },
+                files = orderMembers(moving),
+                sidecars = if (lastMember) sidecars.filter { lower(it.name) in sidecarNames } else emptyList(),
                 isShot = true,
             )
             shotOf[stem] = unit

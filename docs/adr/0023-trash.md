@@ -460,6 +460,12 @@ Phase A2 (the screens) follows the decision with these deviations:
 6. **Media management** is a placeholder in Settings › Trash until A3.
 7. **Errors of `SmbFs`** are mapped per call inside the trash (`MappedHoardFs`): found on the emulator, where smbj's
    own "not found" made every Files delete refuse (docs/testing/trash.md).
+8. **The sidecar rule of a delete in Files** (the coordinator's decision, 2026-11-16): a delete in Files moves only the
+   selected files, never the shot's other files, and takes the shot's sidecars (`X.xmp`, `X.JPG.xmp`, `.X.xmp`) only
+   when it removes the **last** media member of that stem in that folder. Deleting `DSC00001.JPG` with no
+   `DSC00001.ARW` / HEIF / video left takes `DSC00001.xmp` and `DSC00001.JPG.xmp` too; with the RAW still there, every
+   sidecar stays with it. A sidecar the user selected explicitly goes as a plain file. Culling's "Move rejects to
+   trash" still moves the whole shot (a reject is the shot). `TrashPlanner.units(…, wholeShots = false)`.
 
 ## Alternatives considered
 

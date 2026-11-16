@@ -1,5 +1,7 @@
 # Trash, phase A2: screens and end-to-end run (ADR 0023)
 
+> **Rule for emulator runs against a test Samba container** (since 2026-11-16): type the container's address (`10.0.2.2:<port>`) by hand in the machine form and never accept or tap a machine Hoard discovers. Discovery runs on the build host's LAN and finds the owner's machines; a discovered entry fills the form with one of them (it did in the trash run, below). Check the saved address before the first connection.
+
 Hoard 2.3.0 (unreleased), branch `trash-a2-screens` on `main` 9144acc (A1, PR #58). Run on cachyos-fps on 2026-11-16.
 
 ## Goldens (Roborazzi)
@@ -35,7 +37,9 @@ docker build -t hoard-trash-samba docs/testing/trash/samba
 docker run -d --rm --name hoard-trash-samba --memory 256m --cpus 1 -p 127.0.0.1:14470:445 hoard-trash-samba
 ```
 
-The machine is `10.0.2.2:14470`, user `hoard`, password `hoardpass`. Nothing was paired (no photo server): every
+The machine is `10.0.2.2:14470`, user `hoard`, password `hoardpass`, typed by hand (see the rule above). In this run
+the machine form had been filled from discovery first (the owner's Mac's name and LAN address); the address was
+replaced before saving and the saved machine held only `10.0.2.2:14470`, but that is exactly what the rule prevents. Nothing was paired (no photo server): every
 folder is case 4, the trash at the share root. The app was driven with `adb shell input` and `uiautomator dump`; the
 share was checked with `docker exec … find`. The container and its image were removed afterwards.
 

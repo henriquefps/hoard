@@ -218,4 +218,42 @@ class TrashPlannerTest {
         assertThat(TrashPlanner.smbRoot("Imagens/2023/a.jpg", state)).isEqualTo(RootChoice.Refused(TrashRefusal.UNKNOWN_PLACE))
         assertThat((TrashPlanner.smbRoot("Imagens/2024/Trip/a.jpg", state) as RootChoice.Root).path).isEqualTo("Imagens/2024")
     }
+
+    // --- The sidecar rule of a delete in Files (Amendment A2) ---
+
+    private val shoot = listOf(
+        f("S/DSC1.ARW", 40), f("S/DSC1.JPG", 20), f("S/DSC1.xmp", 1), f("S/DSC1.JPG.xmp", 1), f("S/.DSC1.xmp", 1),
+        f("S/DSC2.JPG", 20), f("S/DSC2.xmp", 1), f("S/DSC2.JPG.xmp", 1),
+    )
+
+    @Test
+    fun `a Files delete of the last member takes its sidecars`() {
+        val unit = TrashPlanner.units("S", shoot, listOf("S/DSC2.JPG"), wholeShots = false).single()
+        assertThat(unit.files.map { it.name }).containsExactly("DSC2.JPG")
+        assertThat(unit.sidecars.map { it.name }).containsExactly("DSC2.xmp", "DSC2.JPG.xmp")
+    }
+
+    @Test
+    fun `a Files delete leaves the sidecars and the other files with the member that stays`() {
+        val unit = TrashPlanner.units("S", shoot, listOf("S/DSC1.JPG"), wholeShots = false).single()
+        // The RAW stays, so every sidecar of the shot stays with it; the RAW never goes along.
+        assertThat(unit.files.map { it.name }).containsExactly("DSC1.JPG")
+        assertThat(unit.sidecars).isEmpty()
+        assertThat(unit.key).isEqualTo("s/dsc1")
+    }
+
+    @Test
+    fun `a Files selection holding every member takes the sidecars once`() {
+        val units = TrashPlanner.units("S", shoot, listOf("S/DSC1.JPG", "S/DSC1.ARW", "S/DSC2.JPG", "S/DSC1.xmp"), wholeShots = false)
+        assertThat(units.map { it.key }).containsExactly("s/dsc1", "s/dsc2").inOrder()
+        val dsc1 = units.first()
+        assertThat(dsc1.files.map { it.name }).containsExactly("DSC1.ARW", "DSC1.JPG").inOrder()
+        assertThat(dsc1.sidecars.map { it.name }).containsExactly("DSC1.xmp", "DSC1.JPG.xmp", ".DSC1.xmp")
+        // A selected sidecar of a shot whose member stays is a plain file the user chose.
+        val partial = TrashPlanner.units("S", shoot, listOf("S/DSC1.JPG", "S/DSC1.xmp"), wholeShots = false)
+        assertThat(partial.map { it.files.single().name to it.isShot }).containsExactly("DSC1.JPG" to true, "DSC1.xmp" to false).inOrder()
+        // Culling (whole shots) is unchanged: the RAW and every sidecar go.
+        val culled = TrashPlanner.units("S", shoot, listOf("S/DSC1.JPG")).single()
+        assertThat(culled.all.map { it.name }).containsExactly("DSC1.ARW", "DSC1.JPG", "DSC1.xmp", "DSC1.JPG.xmp", ".DSC1.xmp")
+    }
 }

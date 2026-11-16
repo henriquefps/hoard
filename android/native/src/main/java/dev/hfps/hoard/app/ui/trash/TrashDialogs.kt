@@ -103,6 +103,7 @@ fun MoveToTrashDialog(
     request: TrashRequest,
     onDismiss: () -> Unit,
     onDone: (TrashDone) -> Unit,
+    /** Culling (true): whole shots. Files (false): the selected files, sidecars only with a shot's last member. */
     shots: Boolean = true,
 ) {
     val res = LocalResources.current
@@ -114,7 +115,7 @@ fun MoveToTrashDialog(
 
     LaunchedEffect(request) {
         step = try {
-            val plan = container.trash.prepareFolder(request.location, request.folder, request.paths)
+            val plan = container.trash.prepareFolder(request.location, request.folder, request.paths, wholeShots = shots)
             val offer = plan.refused.filter { it.reason in PERMANENT_OFFER }
             if (plan.units.isEmpty() && offer.isNotEmpty()) Step.Offer(offer.map { it.unit }, offer.first().reason, emptyList()) else Step.Confirm(plan)
         } catch (e: CancellationException) {

@@ -38,7 +38,9 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   install's databases, opt-in with `-e hoardFirstLaunch true`). Never `connectedAndroidTest` on an install with data:
   it uninstalls the app.
 - End-to-end testing against a real Samba: `docs/testing/samba/` and `docs/testing/xmp-sidecars/samba/` (containers),
-  `docs/testing/tools/proxy.mjs` (a killable throttled TCP proxy); drive the app with `adb shell input` and
+  `docs/testing/tools/proxy.mjs` (a killable throttled TCP proxy). In the machine form type the container's address
+  (`10.0.2.2:<port>`) by hand; never accept or tap a discovered machine (discovery on the build host sees the LAN, the
+  owner's machines included), and check the saved address before connecting. Drive the app with `adb shell input` and
   `uiautomator dump`, screenshots with `adb exec-out screencap -p`.
 - Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/core/image/src/main/cpp`): see
   `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
