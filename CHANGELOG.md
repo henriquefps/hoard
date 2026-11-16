@@ -28,7 +28,7 @@ Phone backup to your photo server, and every device sees it ([ADR 0024](docs/adr
 
 ### Fixed
 
-- Fixed: on Android 11 and later, files copied to the phone's storage (any copy, not only Save to this device) were seen by Android with size 0 and no date until the next media scan, which the Gallery and the backup read.
+- On Android 11 and later, files copied to the phone's storage (any copy, not only Save to this device) were seen by Android with size 0 and no date until the next media scan, which the Gallery and the backup read.
 
 ## 2.3.0 (2026-11-16)
 
