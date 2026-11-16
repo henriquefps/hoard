@@ -9,7 +9,7 @@
 - **Amends, when accepted**: ADR 0013 (additions under `/v1`, written there as "Phone backup (hoard-server 0.12.0)" in
   the server PR), ADR 0014 (a third item source, `mirror`), ADR 0017 (a physical device with a backup is kept;
   `physicalDevice.backup` in `GET /v1/device`), ADR 0021 (`gallery.db` version 4).
-- **After**: ADR 0023 (trash; Hoard 2.4.0 and hoard-server 0.11.0, which take server schema 9, `gallery.db` 3 and
+- **After**: ADR 0023 (trash; Hoard 2.3.0 and hoard-server 0.11.0, which take server schema 9, `gallery.db` 3 and
   `hoard.db` 4). Free up space is not the trash (see "Free up space"); how the two meet: "With ADR 0023's trash".
 
 ## Context
