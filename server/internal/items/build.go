@@ -6,23 +6,36 @@ import (
 	"github.com/henriquefps/hoard/server/internal/media"
 )
 
-// Source is one place an item's files were found: a NAS group or an uploaded original.
+// Source is one place an item's files were found: a NAS group, an uploaded original or a phone backup's group.
 type Source struct {
-	Type       string // nas | backup | trash
+	Type       string // nas | backup | trash | mirror
 	FolderID   string
 	FolderName string
 	Members    []Member
+	Names      map[string]string // mirror: NAS folder names (for the nas location of a NAS reference)
 }
 
 // Location is where one copy of a file lives.
 type Location struct {
-	Source     string `json:"source"` // nas | backup
+	Source     string `json:"source"` // nas | backup | mirror (ADR 0024)
 	FolderID   string `json:"folderId,omitempty"`
 	FolderName string `json:"folderName,omitempty"`
-	Path       string `json:"path,omitempty"`       // nas: relative to the folder, '/'-separated (in a trash: the original path)
-	Trash      string `json:"trash,omitempty"`      // nas, in a trash (ADR 0023): where the file is now, relative to the folder
-	ModifiedAt int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms
-	SHA256     string `json:"sha256,omitempty"`     // backup: the blob
+	// mirror (ADR 0024): the phone it is (or was) on and its root; Path is then the path on the phone's volume.
+	PhysicalDeviceID string `json:"physicalDeviceId,omitempty"`
+	DeviceName       string `json:"deviceName,omitempty"`
+	RootID           string `json:"rootId,omitempty"`
+	Volume           string `json:"volume,omitempty"`
+	Path             string `json:"path,omitempty"`       // nas: relative to the folder, '/'-separated (in a trash: the original path)
+	Trash            string `json:"trash,omitempty"`      // nas, in a trash (ADR 0023): where the file is now, relative to the folder
+	ModifiedAt       int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms; mirror: the phone's
+	OnDevice         *bool  `json:"onDevice,omitempty"`   // mirror: false once the phone no longer has the file
+	Gone             string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted
+	SHA256           string `json:"sha256,omitempty"`     // backup: the blob
+}
+
+func sameLocation(a, b Location) bool {
+	return a.Source == b.Source && a.FolderID == b.FolderID && a.Path == b.Path && a.Trash == b.Trash && a.SHA256 == b.SHA256 &&
+		a.RootID == b.RootID && a.Volume == b.Volume && a.PhysicalDeviceID == b.PhysicalDeviceID
 }
 
 // File is one member file of an item.
@@ -81,16 +94,41 @@ func Build(main string, sources []Source, metas map[string]media.Meta) (Data, bo
 				f.Role = m.Role
 			}
 			loc := Location{Source: s.Type}
-			if s.Type == SourceNAS || s.Type == SourceTrash {
+			var extra []Location
+			switch {
+			case s.Type == SourceNAS || s.Type == SourceTrash:
 				loc.Source = SourceNAS
 				loc.FolderID, loc.FolderName, loc.Path, loc.ModifiedAt, loc.Trash = s.FolderID, s.FolderName, m.Path, m.MTime/1e6, m.Trash
 				if f.Name == "" || m.Name < f.Name {
 					f.Name = m.Name
 				}
-			} else {
+			case s.Type == SourceMirror && m.Mirror != nil:
+				// The phone's location, next to the backup or nas location that holds the bytes (ADR 0024).
+				mr := m.Mirror
+				on := mr.OnDevice
+				loc.PhysicalDeviceID, loc.DeviceName, loc.RootID, loc.Volume = mr.PhysicalID, mr.DeviceName, mr.RootID, mr.Volume
+				loc.Path, loc.ModifiedAt, loc.OnDevice, loc.Gone = m.Path, m.MTime/1e6, &on, mr.Gone
+				if f.Name == "" || m.Name < f.Name {
+					f.Name = m.Name
+				}
+				if m.SHA256 != "" {
+					extra = append(extra, Location{Source: SourceBackup, SHA256: m.SHA256})
+				} else if mr.NasPath != "" {
+					extra = append(extra, Location{Source: SourceNAS, FolderID: mr.NasFolderID, FolderName: s.Names[mr.NasFolderID],
+						Path: mr.NasPath, ModifiedAt: mr.NasMTime / 1e6})
+				}
+			default:
 				loc.SHA256 = m.SHA256
 			}
-			f.Locations = append(f.Locations, loc)
+			for _, l := range append([]Location{loc}, extra...) {
+				dup := false
+				for _, have := range f.Locations {
+					dup = dup || sameLocation(have, l)
+				}
+				if !dup {
+					f.Locations = append(f.Locations, l)
+				}
+			}
 			if e, ok := earliest[m.Fingerprint]; !ok || m.MTime < e.MTime {
 				earliest[m.Fingerprint] = m
 			}
@@ -104,10 +142,16 @@ func Build(main string, sources []Source, metas map[string]media.Meta) (Data, bo
 		sort.Slice(f.Locations, func(i, j int) bool {
 			a, b := f.Locations[i], f.Locations[j]
 			if a.Source != b.Source {
-				return a.Source > b.Source // nas before backup
+				return a.Source > b.Source // nas, then mirror, then backup
 			}
 			if a.FolderID != b.FolderID {
 				return a.FolderID < b.FolderID
+			}
+			if a.RootID != b.RootID {
+				return a.RootID < b.RootID
+			}
+			if a.Volume != b.Volume {
+				return a.Volume < b.Volume
 			}
 			if a.Path != b.Path {
 				return a.Path < b.Path

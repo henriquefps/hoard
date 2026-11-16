@@ -4,6 +4,7 @@
 package blobstore
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -206,6 +207,45 @@ func (s *Store) Remove(sha string) error {
 		return nil
 	}
 	return err
+}
+
+// Ingest stores size bytes from r as an original blob without an upload (ADR 0024: the server's own copy of a NAS
+// file, disk to disk). The bytes are hashed as they are written; check (may be nil) sees the SHA-256 and may refuse
+// it; then Complete reads the stored file again and checks its SHA-256 and fingerprint fp before it moves it into
+// place, so a returned sha256 is the hash of the bytes on disk. A blob already in the store is kept as it is.
+func (s *Store) Ingest(r io.Reader, size int64, fp string, check func(sha string) error) (string, error) {
+	var b [16]byte
+	if _, err := io.ReadFull(rand.Reader, b[:]); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	h := sha256.New()
+	n, err := s.WriteChunk(id, 0, io.TeeReader(r, h), size)
+	if err == nil && n != size {
+		err = fmt.Errorf("read %d bytes, want %d", n, size)
+	}
+	if err != nil {
+		_ = s.Abort(id)
+		return "", err
+	}
+	sha := hex.EncodeToString(h.Sum(nil))
+	if check != nil {
+		if err := check(sha); err != nil {
+			_ = s.Abort(id)
+			return "", err
+		}
+	}
+	if s.Has(sha) {
+		_ = s.Abort(id)
+		return sha, nil
+	}
+	if err := s.Complete(id, sha, size, fp); err != nil {
+		_ = s.Abort(id)
+		return "", err
+	}
+	return sha, nil
 }
 
 // HasAnyBlob reports whether the folder holds blobs (the backup root is then fixed).

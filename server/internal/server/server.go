@@ -22,6 +22,7 @@ import (
 	"github.com/henriquefps/hoard/server/internal/auth"
 	"github.com/henriquefps/hoard/server/internal/blobstore"
 	"github.com/henriquefps/hoard/server/internal/media"
+	"github.com/henriquefps/hoard/server/internal/mirror"
 	"github.com/henriquefps/hoard/server/internal/mounts"
 	"github.com/henriquefps/hoard/server/internal/nas"
 	"github.com/henriquefps/hoard/server/internal/previews"
@@ -90,6 +91,8 @@ type Config struct {
 	// tailnet address in X-Forwarded-For and no other proxy's header (ADR 0018 "HTTPS with tailscale serve").
 	TrustTailscaleServe bool
 	TailscaleServePeers []netip.Addr
+	// MirrorLinker replaces the phone backup's hard-link call (tests: an injected EXDEV); nil = os.Root.Link.
+	MirrorLinker mirror.Linker
 }
 
 // Server holds the state behind the handlers.
@@ -105,6 +108,9 @@ type Server struct {
 
 	blobMu sync.RWMutex
 	blobs  *blobstore.Store // nil until a backup root is chosen
+	tree   *mirror.Tree     // the phone backup's tree in the same backup root (ADR 0024)
+
+	backup backupState // phone backup jobs (ADR 0024)
 
 	deviceLimit  *ratelimit.Limiter
 	previewLimit *ratelimit.Limiter
@@ -136,7 +142,7 @@ type ErrorEvent struct {
 // New prepares the server: ids, mount roots, backup root and the first-run setup code.
 func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 	s := &Server{
-		cfg: cfg, store: st, log: cfg.Logger,
+		cfg: cfg, store: st, log: cfg.Logger, backup: backupState{linker: cfg.MirrorLinker},
 		deviceLimit: ratelimit.New(30, 120), previewLimit: ratelimit.New(previewRate, previewBurst),
 		anonLimit: ratelimit.New(10.0/60, 10), walkLimit: ratelimit.New(walkRate, walkBurst),
 		loginLimit: ratelimit.New(5.0/60, 5),
@@ -152,6 +158,7 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		return nil, err
 	}
 	s.serverID = id
+	s.backupInit()
 	if _, err := st.EnsureSetting(ctx, settingServerName, "Hoard server"); err != nil {
 		return nil, err
 	}
@@ -182,7 +189,7 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		s.log.Warn("first run: open the setup page from your network and enter this one-time setup code", "setupCode", s.setupCode)
 	}
 	s.indexer = &nas.Indexer{Store: st, Roots: s.roots, Log: s.log, Interval: cfg.NasInterval,
-		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob}
+		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob, AfterWalk: s.checkNasReferences}
 	if !s.indexer.Prober.Available() {
 		s.log.Warn("ffprobe not found: videos are indexed, their metadata is read once it is installed")
 	}
@@ -238,6 +245,7 @@ func (s *Server) openSource(ctx context.Context, fp string) (*os.File, error) {
 // Run starts the background work (NAS indexing, sweeping) until ctx ends.
 func (s *Server) Run(ctx context.Context) {
 	go s.indexer.Run(ctx)
+	go s.runBackup(ctx)
 	if s.prev != nil {
 		s.log.Info("previews", "config", s.prev.String(), "dir", s.prev.Dir())
 		s.prev.Run(ctx)
@@ -247,6 +255,7 @@ func (s *Server) Run(ctx context.Context) {
 		defer t.Stop()
 		for {
 			s.sweep(ctx)
+			s.settleMoves(ctx)
 			s.sweepWeb(ctx)
 			s.sweepEdits(ctx)
 			select {
@@ -301,6 +310,13 @@ func (s *Server) blobStore() *blobstore.Store {
 	return s.blobs
 }
 
+// mirrorTree is the phone backup's tree (nil until a backup root is chosen).
+func (s *Server) mirrorTree() *mirror.Tree {
+	s.blobMu.RLock()
+	defer s.blobMu.RUnlock()
+	return s.tree
+}
+
 // setBackupRoot validates and opens a backup root inside the mount roots and stores it.
 func (s *Server) setBackupRoot(ctx context.Context, p string) error {
 	real, err := s.roots.Resolve(p)
@@ -314,12 +330,23 @@ func (s *Server) setBackupRoot(ctx context.Context, p string) error {
 	if err != nil {
 		return err
 	}
+	tree, err := mirror.OpenTree(real, blobstore.Dir)
+	if err != nil {
+		bs.Close()
+		return err
+	}
+	if s.backup.linker != nil {
+		tree.Link = s.backup.linker
+	}
 	s.blobMu.Lock()
-	old := s.blobs
-	s.blobs = bs
+	old, oldTree := s.blobs, s.tree
+	s.blobs, s.tree = bs, tree
 	s.blobMu.Unlock()
 	if old != nil {
 		old.Close()
+	}
+	if oldTree != nil {
+		oldTree.Close()
 	}
 	if err := s.store.SetSetting(ctx, settingBackupRoot, real); err != nil {
 		return err

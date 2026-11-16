@@ -41,6 +41,7 @@ type physicalView struct {
 	ID      string          `json:"id"`
 	Name    string          `json:"name"`
 	Devices []physicalEntry `json:"devices"`
+	Backup  *backupView     `json:"backup,omitempty"` // hoard-server 0.12.0 (ADR 0024): the phone's backup roots
 }
 
 type candidate struct {
@@ -158,6 +159,10 @@ func (s *Server) writeDeviceView(w http.ResponseWriter, r *http.Request, id stri
 		s.internal(w, r, err)
 		return
 	}
+	if v.PhysicalDevice.Backup, err = s.physicalBackup(r, v.PhysicalDevice.ID); err != nil {
+		s.internal(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, v)
 }
 
@@ -262,7 +267,10 @@ func readPhysicalTarget(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 // moveDevice applies a claim or an admin move and reports errors; ok when the device moved (or stayed).
 func (s *Server) moveDevice(w http.ResponseWriter, r *http.Request, deviceID, to string) bool {
-	_, err := s.store.MoveDevice(r.Context(), deviceID, to)
+	_, mv, err := s.store.MoveDeviceMirror(r.Context(), deviceID, to)
+	if err == nil && mv != nil {
+		s.applyMirrorMove(context.WithoutCancel(r.Context()), mv) // ADR 0024: its phone backup moved with it
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, r, http.StatusNotFound, "not_found", "No such physical device.", nil)
