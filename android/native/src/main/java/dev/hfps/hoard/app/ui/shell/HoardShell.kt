@@ -266,7 +266,7 @@ fun HoardShell(container: AppContainer) {
                                     onThemeMode = settings::setThemeMode,
                                     onPalette = settings::setPalette,
                                     onOpenLicences = { navController.navigate(LicencesRoute) },
-                                    server = { dev.hfps.hoard.app.ui.server.ServerSettingsSection(container, onPair = { navController.navigate(PairRoute) }) },
+                                    server = { dev.hfps.hoard.app.ui.server.ServerSettingsSection(container, onPair = { navController.navigate(PairRoute) }, onBackup = { navController.navigate(BackupRoute) }) },
                                     files = { FilesSettingsSection() },
                                     culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
                                     trash = { dev.hfps.hoard.app.ui.trash.TrashSettingsSection(container, onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } }) },
@@ -279,6 +279,13 @@ fun HoardShell(container: AppContainer) {
                             }
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
                             composable<TrashRoute> { dev.hfps.hoard.app.ui.trash.TrashScreen(container, onBack = { navController.popBackStack() }) }
+                            composable<BackupRoute> {
+                                dev.hfps.hoard.app.ui.backup.BackupScreen(container, onBack = { navController.popBackStack() }, onOpenFolder = { navController.navigate(BackupFolderRoute(it)) })
+                            }
+                            composable<BackupFolderRoute> { entry ->
+                                val route = entry.toRoute<BackupFolderRoute>()
+                                dev.hfps.hoard.app.ui.backup.BackupFolderScreen(container, route.rootId, onBack = { navController.popBackStack() })
+                            }
                         }
                     }
                     if (inFilesTab) ClipboardBar(container, onTransfers = { openTransfers() })

@@ -67,7 +67,7 @@ private val CACHE_CHOICES = listOf(256L, 1024L, 4096L)
  * folders, unpair.
  */
 @Composable
-fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit) {
+fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup: () -> Unit = {}) {
     val repo = container.gallery
     val account by repo.account.collectAsState(initial = null)
     val status by repo.sync.status.collectAsState()
@@ -146,6 +146,9 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit) {
             subtitle = if (group.isEmpty()) stringResource(R.string.server_this_phone_alone) else stringResource(R.string.server_this_phone_group, group.joinToString { it.app ?: it.name ?: "?" }),
             icon = PhosphorRegular.DeviceMobile,
         )
+        HfpsRowDivider(Modifier.padding(start = 54.dp))
+        // The phone backup (ADR 0024): its summary, opening Settings › Backup.
+        dev.hfps.hoard.app.ui.backup.BackupSettingsRow(container, onBackup)
         HfpsRowDivider(Modifier.padding(start = 54.dp))
         HfpsListRow(
             title = stringResource(R.string.server_cache),

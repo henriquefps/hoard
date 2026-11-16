@@ -28,6 +28,21 @@ object Fingerprint {
         }
     }
 
+    /**
+     * The fingerprint and, for a file of at most 2 MiB (which the fingerprint reads whole), its SHA-256 from the same
+     * read (ADR 0024 "Identity": no extra I/O). The SHA-256 is null for a larger file.
+     */
+    fun withSha(file: File): Pair<String, String?> = RandomAccessFile(file, "r").use { raf ->
+        val size = raf.length()
+        val content = if (size <= 2 * CHUNK) MessageDigest.getInstance("SHA-256") else null
+        val fp = of(size) { position, buffer, length ->
+            raf.seek(position)
+            raf.readFully(buffer, 0, length)
+            content?.update(buffer, 0, length)
+        }
+        fp to content?.digest()?.toHex()
+    }
+
     fun of(bytes: ByteArray): String = of(bytes.size.toLong()) { position, buffer, length -> System.arraycopy(bytes, position.toInt(), buffer, 0, length) }
 
     /** [read] fills `buffer[0, length)` with the bytes at `position`. */

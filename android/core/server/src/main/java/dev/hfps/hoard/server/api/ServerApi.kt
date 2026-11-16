@@ -17,7 +17,14 @@ class ServerException(
     val retryAfterSeconds: Long? = null,
     /** `details.reason` when the server gave one (`preview_unavailable`, `conflict`). */
     val reason: String? = null,
+    /** The error's whole `details` (`index`, `field`, `rootId`, `offset`, `uploadId`), when it had one. */
+    val details: kotlinx.serialization.json.JsonObject? = null,
 ) : IOException("$status $code: $message") {
+    /** A number of [details] (`index`, `offset`). */
+    fun detailLong(name: String): Long? = (details?.get(name) as? kotlinx.serialization.json.JsonPrimitive)?.content?.toLongOrNull()
+
+    fun detailString(name: String): String? = (details?.get(name) as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+
     /** The key was refused (revoked, unknown): the app is no longer paired. */
     val unauthorized: Boolean get() = status == 401 && code == "unauthorized"
 }
@@ -97,6 +104,83 @@ class ServerApi(
     /** `/v1/items/{id}/preview` (or `poster`) path with its query; [edit] = `primary` or a version id (ADR 0020). */
     fun previewPath(itemId: String, size: String, format: String, v: String? = null, edit: String? = null, kind: String = "preview"): String =
         "/v1/items/${enc(itemId)}/$kind?size=$size&format=$format" + (v?.let { "&v=${enc(it)}" } ?: "") + (edit?.let { "&edit=${enc(it)}" } ?: "")
+
+    // --- Phone backup (ADR 0024, hoard-server 0.12.0, feature `backup`) ---------------------------------------------
+
+    fun backupRoots(): BackupRoots = get("/v1/backup/roots", BackupRoots.serializer())
+
+    /** `201` new, `200` existing (resumed); `409` reason `covered` (`details.rootId`); `503 storage_not_configured`. */
+    fun createBackupRoot(request: BackupRootCreate): BackupRoot =
+        send("POST", "/v1/backup/roots", request, BackupRootCreate.serializer(), BackupRoot.serializer())
+
+    fun patchBackupRoot(rootId: String, patch: BackupRootPatch): BackupRoot =
+        send("PATCH", "/v1/backup/roots/${enc(rootId)}", patch, BackupRootPatch.serializer(), BackupRoot.serializer())
+
+    /** Stops a root (`DELETE`): no new entries; the server keeps its mirror. */
+    fun stopBackupRoot(rootId: String) {
+        request("DELETE", "/v1/backup/roots/${enc(rootId)}").use { it.readText() }
+    }
+
+    fun backupReport(report: BackupReport): BackupReportResponse =
+        send("POST", "/v1/backup/report", report, BackupReport.serializer(), BackupReportResponse.serializer())
+
+    fun backupVerify(request: BackupVerifyRequest): BackupVerifyResponse =
+        send("POST", "/v1/backup/verify", request, BackupVerifyRequest.serializer(), BackupVerifyResponse.serializer())
+
+    // --- Chunked uploads (ADR 0013 "Blobs") --------------------------------------------------------------------------
+
+    fun createUpload(request: UploadCreate): UploadState =
+        send("POST", "/v1/uploads", request, UploadCreate.serializer(), UploadState.serializer())
+
+    /** `HEAD /v1/uploads/{id}`: the server's offset, or null when it does not know the upload (expired, done). */
+    fun uploadOffset(uploadId: String): Long? {
+        val conn = open("HEAD", "/v1/uploads/${enc(uploadId)}", auth = true)
+        try {
+            val status = conn.responseCode
+            if (status == 404) return null
+            if (status !in 200..299) throw readError(conn, status)
+            return conn.getHeaderField("Upload-Offset")?.toLongOrNull()
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /**
+     * `PATCH /v1/uploads/{id}`: [length] bytes at [offset], written by [write]. The server's new offset and whether the
+     * upload completed; a refusal (`offset_mismatch` with `details.offset`, `checksum_mismatch`, an interrupted chunk)
+     * is a [ServerException].
+     */
+    fun patchUpload(uploadId: String, offset: Long, length: Int, write: (java.io.OutputStream) -> Unit): ChunkResult {
+        val conn = open("PATCH", "/v1/uploads/${enc(uploadId)}", auth = true)
+        try {
+            conn.doOutput = true
+            conn.setFixedLengthStreamingMode(length.toLong())
+            conn.setRequestProperty("Content-Type", "application/offset+octet-stream")
+            conn.setRequestProperty("Upload-Offset", offset.toString())
+            conn.readTimeout = maxOf(readTimeoutMs, 120_000)
+            conn.outputStream.use(write)
+            val status = conn.responseCode
+            if (status !in 200..299) throw readError(conn, status)
+            runCatching { conn.inputStream.close() }
+            return ChunkResult(
+                offset = conn.getHeaderField("Upload-Offset")?.toLongOrNull() ?: (offset + length),
+                complete = conn.getHeaderField("Upload-Complete") == "1",
+            )
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Abandons an upload (`DELETE /v1/uploads/{id}`); an unknown one is fine. */
+    fun deleteUpload(uploadId: String) {
+        val conn = open("DELETE", "/v1/uploads/${enc(uploadId)}", auth = true)
+        try {
+            val status = conn.responseCode
+            if (status != 404 && status !in 200..299) throw readError(conn, status)
+        } finally {
+            conn.disconnect()
+        }
+    }
 
     /** Where requests go: [baseUrl], or the loopback relay for a plain-HTTP LAN / Tailscale server ([LanRelay]). */
     private fun target(): String = dev.hfps.hoard.server.net.LanRelay.route(baseUrl)
@@ -233,8 +317,9 @@ class ServerApi(
         val text = runCatching { (conn.errorStream ?: conn.inputStream)?.use { it.readBytes().toString(Charsets.UTF_8) } }.getOrNull().orEmpty()
         val info = runCatching { ServerJson.decodeFromString(ErrorBody.serializer(), text).error }.getOrNull()
         val retry = conn.getHeaderField("Retry-After")?.toLongOrNull()
-        val reason = runCatching { (info?.details as? kotlinx.serialization.json.JsonObject)?.get("reason")?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } }.getOrNull()
-        return ServerException(status, info?.code ?: "http_$status", info?.message ?: text.take(200), retry, reason)
+        val details = info?.details as? kotlinx.serialization.json.JsonObject
+        val reason = runCatching { details?.get("reason")?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } }.getOrNull()
+        return ServerException(status, info?.code ?: "http_$status", info?.message ?: text.take(200), retry, reason, details)
     }
 
     private fun reasonOf(error: ServerException): String? = error.reason

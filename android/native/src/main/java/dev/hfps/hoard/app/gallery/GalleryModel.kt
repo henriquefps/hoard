@@ -122,6 +122,8 @@ data class GalleryEntry(
     val search: String,
     /** The camera's wall clock (`2024-05-03T10:20:06.250`) when the server knows it. */
     val captureLocal: String? = null,
+    /** A phone-only shot in a backed-up folder that is not backed up yet (ADR 0024: the Gallery's badge). */
+    val backup: BackupBadge? = null,
 ) {
     val isVideo: Boolean get() = kind == Kind.Video
     val edited: Boolean get() = editPrimary != null
@@ -137,7 +139,26 @@ data class GalleryInput(
     /** Device shot key → local decision (Hoard's `cull_decisions`). */
     val deviceDecisions: Map<String, EntryDecision>,
     val zone: ZoneId = ZoneId.systemDefault(),
+    /** Phone path → backup state of files not backed up yet (`backup_files`, ADR 0024). */
+    val backup: Map<String, String> = emptyMap(),
 )
+
+/** A phone shot's backup as its cell shows it (backed-up shots show as on the server instead). */
+enum class BackupBadge { Waiting, Uploading, Paused, Failed;
+
+    companion object {
+        /** The shot's files' states → the one that matters most: failed, uploading, paused, waiting. */
+        fun of(states: List<String>): BackupBadge? {
+            if (states.isEmpty()) return null
+            return when {
+                states.any { it == "failed" || it == "refused" } -> Failed
+                states.any { it == "uploading" || it == "hashing" } -> Uploading
+                states.any { it == "paused" } -> Paused
+                else -> Waiting
+            }
+        }
+    }
+}
 
 object GalleryModel {
     fun entries(input: GalleryInput): List<GalleryEntry> {
@@ -207,6 +228,7 @@ object GalleryModel {
                 mainFingerprint = main.fingerprint,
                 decision = input.deviceDecisions[shot.key] ?: EntryDecision(),
                 search = (shot.files.joinToString(" ") { it.media.name } + " " + shot.dir).lowercase(),
+                backup = if (input.backup.isEmpty()) null else BackupBadge.of(shot.files.mapNotNull { input.backup[it.media.path] }),
             )
         }
         out.sortWith(compareByDescending<GalleryEntry> { it.time }.thenBy { it.key })

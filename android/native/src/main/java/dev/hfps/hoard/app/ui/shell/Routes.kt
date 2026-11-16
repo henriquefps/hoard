@@ -37,3 +37,9 @@ import kotlinx.serialization.Serializable
 
 /** The trash (ADR 0023): from Files, the Gallery and Settings. */
 @Serializable data object TrashRoute
+
+/** Settings › Backup (ADR 0024). */
+@Serializable data object BackupRoute
+
+/** A backed-up folder's files with their states. */
+@Serializable data class BackupFolderRoute(val rootId: String)

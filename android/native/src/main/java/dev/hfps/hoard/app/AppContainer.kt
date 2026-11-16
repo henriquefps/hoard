@@ -141,6 +141,9 @@ class AppContainer(context: Context) {
         dev.hfps.hoard.app.gallery.GalleryRepository(appContext, database.cull(), scope, BuildConfig.VERSION_NAME, BuildConfig.DEBUG).also { it.settings = settingsStore }
     }
 
+    /** The phone backup (ADR 0024): folders, rules, the worker's runs. */
+    val backup: dev.hfps.hoard.app.backup.PhoneBackup by lazy { dev.hfps.hoard.app.backup.PhoneBackup(appContext, gallery, settingsStore, scope) }
+
     /** SMB folders mapped to the server's NAS folders (ADR 0022). */
     val serverLinks: dev.hfps.hoard.app.files.ServerLinks by lazy { dev.hfps.hoard.app.files.ServerLinks(this) }
 
@@ -204,6 +207,7 @@ class AppContainer(context: Context) {
         scope.launch { runCatching { trash.resume() } }
         runCatching { dev.hfps.hoard.app.trash.TrashCleanupWorker.schedule(appContext) }
         network = NetworkMonitor(appContext) { scope.launch { routes.recheckAll() } }.also { it.start() }
+        backup.start()
         gallery.start()
     }
 

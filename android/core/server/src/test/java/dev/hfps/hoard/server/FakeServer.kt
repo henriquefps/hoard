@@ -78,6 +78,12 @@ class FakeServer : AutoCloseable {
     val walkDeferred = HashMap<String, Long>()
     /** The `include` of the last feed page asked for. */
     @Volatile var lastInclude: String? = null
+    /** `limits.chunkSize` of `GET /v1/server`. */
+    var chunkSize = 8L shl 20
+    /** `backup.maxReportEntries` of `GET /v1/server`. */
+    var maxReportEntries = 1000
+    /** Extra routes (the phone backup's fake, ADR 0024): true when handled. Gets the raw body. */
+    @Volatile var extra: ((ex: HttpExchange, path: String, query: Map<String, String>, body: ByteArray) -> Boolean)? = null
 
     init {
         Thread {
@@ -188,15 +194,17 @@ class FakeServer : AutoCloseable {
     private fun handle(ex: HttpExchange) {
         val path = ex.requestURI.rawPath.let { java.net.URLDecoder.decode(it, "UTF-8") }
         val query = ex.requestURI.rawQuery.orEmpty().split('&').filter { it.contains('=') }.associate { it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), "UTF-8") }
-        val body = ex.requestBody.readBytes().toString(Charsets.UTF_8)
+        val raw = ex.requestBody.readBytes()
+        val body = raw.toString(Charsets.UTF_8)
         if (path == "/v1/pair") {
             val token = ServerJson.parseToJsonElement(body).jsonObject["token"]!!.jsonPrimitive.content
             if (token != "good") return send(ex, 401, """{"error":{"code":"invalid_pairing_token","message":"no"}}""")
             return send(ex, 201, """{"deviceId":"$deviceId","apiKey":"$key","serverId":"$serverId","serverName":"Fake","physicalDeviceId":"$deviceId","candidates":$candidates}""")
         }
         if (ex.requestHeaders.getFirst("Authorization") != "Bearer $key") return send(ex, 401, """{"error":{"code":"unauthorized","message":"no"}}""")
+        if (extra?.invoke(ex, path, query, raw) == true) return
         when {
-            path == "/v1/server" -> send(ex, 200, """{"serverId":"$serverId","serverName":"Fake","version":"0.9.0","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500}}""")
+            path == "/v1/server" -> send(ex, 200, """{"serverId":"$serverId","serverName":"Fake","version":"0.9.0","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500,"chunkSize":$chunkSize},"backup":{"maxRoots":64,"maxReportEntries":$maxReportEntries,"maxVerify":500,"maxPath":1024}}""")
             path == "/v1/device" && ex.requestMethod == "PATCH" && deviceFailures > 0 -> {
                 deviceFailures--
                 send(ex, 503, """{"error":{"code":"unavailable","message":"busy"}}""")
@@ -349,9 +357,9 @@ class FakeServer : AutoCloseable {
         return CullingRecord(id, cullingRev[id] ?: 0, prints, replacedBy, fields["rating"], fields["flag"], fields["label"])
     }
 
-    private fun send(ex: HttpExchange, status: Int, json: String) = sendBytes(ex, status, json.toByteArray(), mapOf("Content-Type" to "application/json"))
+    fun send(ex: HttpExchange, status: Int, json: String) = sendBytes(ex, status, json.toByteArray(), mapOf("Content-Type" to "application/json"))
 
-    private fun sendBytes(ex: HttpExchange, status: Int, bytes: ByteArray, headers: Map<String, String>) {
+    fun sendBytes(ex: HttpExchange, status: Int, bytes: ByteArray, headers: Map<String, String>) {
         headers.forEach { (k, v) -> ex.responseHeaders.add(k, v) }
         ex.sendResponseHeaders(status, if (bytes.isEmpty()) -1 else bytes.size.toLong())
         if (bytes.isNotEmpty()) ex.responseBody.write(bytes)

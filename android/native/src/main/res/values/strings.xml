@@ -425,4 +425,105 @@
     </plurals>
     <string name="trash_server_section">On the photo server</string>
     <string name="trash_server_hint">Trashed on another device. Open its folder in Files once to restore it or empty it from here.</string>
+    <!-- Phone backup (ADR 0024, Hoard 2.4.0) -->
+    <string name="backup_title">Phone backup</string>
+    <string name="backup_settings_off">Off: choose the folders to back up</string>
+    <plurals name="backup_settings_summary">
+        <item quantity="one">%1$s folder · %2$s of %3$s backed up</item>
+        <item quantity="other">%1$s folders · %2$s of %3$s backed up</item>
+    </plurals>
+    <string name="backup_unavailable_pair">Pair with a photo server to back up this phone.</string>
+    <string name="backup_unavailable_old">This server does not back up phones yet: update hoard-server to 0.12.0 or later.</string>
+    <string name="backup_not_configured">The server has no backup folder yet: choose one on its setup page.</string>
+    <string name="backup_offline">The server cannot be reached now. Try again later.</string>
+    <string name="backup_now">Back up now</string>
+    <string name="backup_now_started">Backing up within the rules</string>
+    <string name="backup_running_listing">Looking for new photos…</string>
+    <string name="backup_running_hashing">Preparing %1$s…</string>
+    <string name="backup_running_uploading">Uploading %1$s · %2$d%%</string>
+    <string name="backup_running_count">%1$s of %2$s files this pass</string>
+    <string name="backup_folders">Folders</string>
+    <string name="backup_folders_hint">Photos and videos of the folders you turn on are copied to the server, into a folder of its own for this phone. Files you delete from the phone stay in the backup.</string>
+    <string name="backup_folder_camera">Camera</string>
+    <string name="backup_folder_screenshots">Screenshots</string>
+    <string name="backup_folder_whatsapp_images">WhatsApp images</string>
+    <string name="backup_folder_whatsapp_videos">WhatsApp videos</string>
+    <string name="backup_folder_sd">SD card · %1$s</string>
+    <plurals name="backup_folder_off">
+        <item quantity="one">%1$s photo or video · %2$s · not backed up</item>
+        <item quantity="other">%1$s photos and videos · %2$s · not backed up</item>
+    </plurals>
+    <plurals name="backup_status_done">
+        <item quantity="one">%1$s of %2$s backed up</item>
+        <item quantity="other">%1$s of %2$s backed up</item>
+    </plurals>
+    <plurals name="backup_status_server">
+        <item quantity="one">%1$s already on the server</item>
+        <item quantity="other">%1$s already on the server</item>
+    </plurals>
+    <plurals name="backup_status_wifi">
+        <item quantity="one">%1$s waiting for Wi-Fi</item>
+        <item quantity="other">%1$s waiting for Wi-Fi</item>
+    </plurals>
+    <plurals name="backup_status_charging">
+        <item quantity="one">%1$s waiting for charging</item>
+        <item quantity="other">%1$s waiting for charging</item>
+    </plurals>
+    <plurals name="backup_status_queued">
+        <item quantity="one">%1$s to back up</item>
+        <item quantity="other">%1$s to back up</item>
+    </plurals>
+    <plurals name="backup_status_failed">
+        <item quantity="one">%1$s failed</item>
+        <item quantity="other">%1$s failed</item>
+    </plurals>
+    <plurals name="backup_status_refused">
+        <item quantity="one">%1$s not taken by the server</item>
+        <item quantity="other">%1$s not taken by the server</item>
+    </plurals>
+    <string name="backup_status_bytes">%1$s of %2$s</string>
+    <string name="backup_status_last_pass">Last complete pass %1$s</string>
+    <string name="backup_status_never">Not checked yet: the first pass waits for the rules</string>
+    <string name="backup_add_folder">Add a folder</string>
+    <string name="backup_add_folder_hint">A folder of the phone, like Download/Photos</string>
+    <string name="backup_add_folder_field">Folder</string>
+    <string name="backup_covered">This folder is inside a folder that is already backed up.</string>
+    <string name="backup_add_failed">The backup of this folder could not be turned on (%1$s).</string>
+    <string name="backup_raw_hint">RAW files and sidecars are not backed up: allow All files access.</string>
+    <string name="backup_raw_allow">Allow</string>
+    <string name="backup_raw_on">RAW files and XMP sidecars of these folders are backed up too.</string>
+    <string name="backup_rules">Rules</string>
+    <string name="backup_rule_unmetered">Only on Wi-Fi and other unmetered networks</string>
+    <string name="backup_rule_charging">Only while charging</string>
+    <string name="backup_rule_videos">Videos only while charging</string>
+    <string name="backup_rule_battery">Never while the battery is low.</string>
+    <string name="backup_filter_all">All</string>
+    <string name="backup_filter_open">Not backed up</string>
+    <string name="backup_filter_done">Backed up</string>
+    <string name="backup_filter_problems">Problems</string>
+    <string name="backup_files_empty">No files here.</string>
+    <string name="backup_state_waiting">Waiting to be read</string>
+    <string name="backup_state_queued">Queued</string>
+    <string name="backup_state_hashing">Preparing</string>
+    <string name="backup_state_uploading">Uploading · %1$d%%</string>
+    <string name="backup_state_stored">Backed up</string>
+    <string name="backup_state_nas">Already on the server</string>
+    <string name="backup_state_verified">Backed up and verified</string>
+    <string name="backup_state_paused_wifi">Waiting for Wi-Fi</string>
+    <string name="backup_state_paused_charging">Waiting for charging</string>
+    <string name="backup_state_changed">Changed while uploading: sent again</string>
+    <string name="backup_state_failed_unreadable">Failed: cannot be read</string>
+    <string name="backup_state_failed_full">Failed: the server is full</string>
+    <string name="backup_state_failed_server">Failed: server error</string>
+    <string name="backup_state_failed_large">Failed: too large for the server</string>
+    <string name="backup_state_refused">Not taken by the server (%1$s)</string>
+    <string name="backup_refused_format">its format</string>
+    <string name="backup_refused_path">its path</string>
+    <string name="backup_channel">Phone backup</string>
+    <string name="backup_notification_title">Backing up photos</string>
+    <string name="backup_notification_text">%1$s of %2$s · %3$s</string>
+    <string name="gallery_badge_backup_waiting">Waiting for backup</string>
+    <string name="gallery_badge_backup_uploading">Backing up</string>
+    <string name="gallery_badge_backup_paused">Backup waits for Wi-Fi or charging</string>
+    <string name="gallery_badge_backup_failed">Backup failed</string>
 </resources>

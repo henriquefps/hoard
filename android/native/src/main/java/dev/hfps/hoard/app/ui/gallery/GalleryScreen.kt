@@ -583,13 +583,18 @@ fun durationText(ms: Long): String {
 }
 
 /** The cells' fixed texts, resolved once per grid. */
-class CellTexts(val device: String, val server: String, val both: String, val motion: String, val raw: String, val edited: String, val picked: String, val rejected: String)
+class CellTexts(
+    val device: String, val server: String, val both: String, val motion: String, val raw: String, val edited: String, val picked: String, val rejected: String,
+    val backupWaiting: String = "", val backupUploading: String = "", val backupPaused: String = "", val backupFailed: String = "",
+)
 
 @Composable
 fun rememberCellTexts() = CellTexts(
     stringResource(R.string.gallery_badge_device), stringResource(R.string.gallery_badge_server), stringResource(R.string.gallery_badge_both),
     stringResource(R.string.gallery_badge_motion), stringResource(R.string.gallery_badge_raw), stringResource(R.string.gallery_badge_edited),
     stringResource(R.string.gallery_badge_picked), stringResource(R.string.gallery_badge_rejected),
+    stringResource(R.string.gallery_badge_backup_waiting), stringResource(R.string.gallery_badge_backup_uploading),
+    stringResource(R.string.gallery_badge_backup_paused), stringResource(R.string.gallery_badge_backup_failed),
 )
 
 @Composable
@@ -642,6 +647,14 @@ fun GalleryCell(
                 Source.Device -> Badge(PhosphorRegular.DeviceMobile, texts.device, tag = "badge-device")
                 Source.Server -> Badge(PhosphorRegular.Cloud, texts.server, tag = "badge-server")
                 Source.Both -> Badge(PhosphorFill.CloudCheck, texts.both, tag = "badge-both")
+            }
+            // A phone shot in a backed-up folder, not on the server yet (ADR 0024).
+            when (entry.backup) {
+                null -> Unit
+                dev.hfps.hoard.app.gallery.BackupBadge.Waiting -> Badge(PhosphorRegular.UploadSimple, texts.backupWaiting, tint = Color(0xFFCBD5E1), tag = "badge-backup-waiting")
+                dev.hfps.hoard.app.gallery.BackupBadge.Uploading -> Badge(PhosphorRegular.UploadSimple, texts.backupUploading, tag = "badge-backup-uploading")
+                dev.hfps.hoard.app.gallery.BackupBadge.Paused -> Badge(PhosphorRegular.ClockCounterClockwise, texts.backupPaused, tint = Color(0xFFCBD5E1), tag = "badge-backup-paused")
+                dev.hfps.hoard.app.gallery.BackupBadge.Failed -> Badge(PhosphorRegular.WarningCircle, texts.backupFailed, tint = Color(0xFFFFC53D), tag = "badge-backup-failed")
             }
         }
         Row(Modifier.align(Alignment.TopEnd)) {
