@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewModelScope
 import dev.hfps.hoard.app.AppContainer
 import dev.hfps.hoard.app.R
 import dev.hfps.hoard.app.cull.BURST_GAPS_MS
@@ -45,7 +46,9 @@ import dev.hfps.hoard.app.cull.Sensitivity
 import dev.hfps.hoard.app.cull.copyTargetPath
 import dev.hfps.hoard.app.cull.files
 import dev.hfps.hoard.app.cull.planCopy
-import dev.hfps.hoard.app.cull.planDeleteRejects
+import dev.hfps.hoard.app.cull.planTrashRejects
+import dev.hfps.hoard.app.ui.trash.MoveToTrashDialog
+import dev.hfps.hoard.app.ui.trash.TrashRequest
 import dev.hfps.hoard.app.data.CullSettings
 import dev.hfps.hoard.app.files.BrowseLocation
 import dev.hfps.hoard.app.files.FileService
@@ -365,63 +368,24 @@ private suspend fun destinationLocation(container: AppContainer, place: Transfer
     return FileService.resolve(place.locationId, place.share, machines, volumes, "", "")
 }
 
-// --- Delete rejects -----------------------------------------------------------------------------------------------
+// --- Move rejects to trash (ADR 0023) ---------------------------------------------------------------------------
 
 /**
- * Deletes every file of every rejected shot after a confirmation that says how many, how much and where, and that it
- * is permanent (shares and drives have no trash). Stops at the first refusal and says why.
+ * "Move rejects to trash": every file of every rejected shot and its sidecars go to the location's trash after a
+ * confirmation that says how many, how much and where ([MoveToTrashDialog]); "Delete permanently" is offered only for
+ * shots the trash cannot take. Trashed shots leave the grid but keep their decision rows (a restored shot opens with
+ * its decision); shots deleted permanently are forgotten, as before.
  */
 @Composable
-fun DeleteRejectsDialog(vm: CullViewModel, view: CullView, location: BrowseLocation, onDismiss: () -> Unit) {
-    val res = androidx.compose.ui.platform.LocalResources.current
-    val toaster = LocalToaster.current
-    val plan = remember(view.core.shots, view.core.decisions) { planDeleteRejects(view.core.shots, view.core.decisions) }
-    val loc = locale()
-    val where = when (location.kind) {
-        LocationKind.Smb -> stringResource(R.string.t_cull_delete_where_smb, location.name)
-        LocationKind.Volume -> stringResource(R.string.t_cull_delete_where_drive, location.name)
-        LocationKind.Device -> stringResource(R.string.t_cull_delete_where_phone)
-    }
-    ConfirmDialog(
-        title = pluralStringResource(R.plurals.t_cull_delete_title, plan.shots.size, plan.shots.size.toString()),
-        confirmLabel = pluralStringResource(R.plurals.t_cull_delete_confirm, plan.files.size, plan.files.size.toString()),
-        destructive = true,
-        onDismiss = onDismiss,
-        body = pluralStringResource(R.plurals.t_cull_delete_body, plan.files.size, formatNumber(plan.shots.size, loc), formatNumber(plan.files.size, loc), bytes(plan.bytes), where),
-        onConfirm = {
-            val deleted = HashSet<String>()
-            var error: Throwable? = null
-            for (file in plan.files) {
-                try {
-                    vm.deleteFile(file.path)
-                    deleted += file.path
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    if (errorCodeOf(e) == ErrorCode.NOT_FOUND) {
-                        deleted += file.path
-                        continue
-                    }
-                    error = e
-                    break
-                }
-            }
-            // A shot is gone when every one of its files is (a pair half-deleted stays, with what is left).
-            val gone = plan.shots.filter { id -> view.byId[id]?.files?.all { it.path in deleted } == true }
-            vm.removeShots(gone)
-            if (error != null) {
-                val code = errorCodeOf(error)
-                toaster.show(
-                    (if (code == ErrorCode.ACCESS_DENIED) res.getString(R.string.t_cull_delete_refused) else res.getString(errorTitle(code))) + "\n" +
-                        res.getQuantityString(R.plurals.t_cull_delete_partial, gone.size, gone.size.toString()),
-                    long = true,
-                )
-            } else {
-                toaster.show(res.getQuantityString(R.plurals.t_cull_delete_done, gone.size, gone.size.toString()))
-            }
-        },
-    ) {
-        Spacer(Modifier.height(8.dp))
-        Text(stringResource(R.string.t_cull_delete_permanent), style = HfpsTheme.typography.uiMedium, color = HfpsTheme.colors.destructive)
-    }
+fun TrashRejectsDialog(container: AppContainer, vm: CullViewModel, view: CullView, location: BrowseLocation, onDismiss: () -> Unit) {
+    val plan = remember(view.core.shots, view.core.decisions) { planTrashRejects(view.core.shots, view.core.decisions) }
+    val request = remember(plan) { TrashRequest(location, vm.key.path, plan.paths) }
+    MoveToTrashDialog(container, request, onDismiss = onDismiss, onDone = { done ->
+        val ids = { units: List<dev.hfps.hoard.app.trash.TrashUnit> -> units.mapNotNull { it.stem }.filter { it in plan.shots } }
+        // The view model's scope: the dialog leaves the composition right after.
+        vm.viewModelScope.launch {
+            vm.hideShots(ids(done.trashed))
+            vm.removeShots(ids(done.deleted))
+        }
+    })
 }

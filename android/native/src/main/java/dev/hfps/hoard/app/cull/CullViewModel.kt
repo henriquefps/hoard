@@ -415,6 +415,22 @@ class CullViewModel(
     /** Compare's ADR 0006 focus score for a shot the analysis has not reached ([CullBackend.focusScore]). */
     suspend fun focusScore(shotId: String): Double? = backend.focusScore(shotId)
 
+    /**
+     * Shots moved to the trash (ADR 0023): dropped from the list, their decision rows kept (a restored shot opens with
+     * its decision; Empty forgets them).
+     */
+    suspend fun hideShots(shotIds: List<String>) {
+        if (shotIds.isEmpty()) return
+        val gone = shotIds.toSet()
+        core.update { c ->
+            c.copy(
+                shots = c.shots.filter { it.id !in gone },
+                undo = c.undo.filter { change -> change.shotIds.none { it in gone } },
+            )
+        }
+        serial { store.touchSession(shotCount = core.value.shots.size) }
+    }
+
     /** Shots that no longer exist (deleted rejects): dropped from the list and from the database. */
     suspend fun removeShots(shotIds: List<String>) {
         if (shotIds.isEmpty()) return

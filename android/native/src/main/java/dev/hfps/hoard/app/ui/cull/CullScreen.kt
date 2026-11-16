@@ -359,7 +359,7 @@ fun CullFolderScreen(
     when (dialog) {
         CullDialog.Settings -> AssistSettingsSheet(container, onDismiss = { dialog = null })
         CullDialog.Copy -> CopyPicksDialog(container, vm, view, location, onDismiss = { dialog = null }, onTransfers = onTransfers)
-        CullDialog.Delete -> DeleteRejectsDialog(vm, view, location, onDismiss = { dialog = null })
+        CullDialog.Delete -> TrashRejectsDialog(container, vm, view, location, onDismiss = { dialog = null })
         null -> Unit
     }
     reveal.Dialogs()
@@ -397,11 +397,10 @@ private fun FinishMenu(view: CullView, revealAvailable: Boolean, onCopy: () -> U
             }
             MenuItem(stringResource(R.string.xmp_export_decided), PhosphorRegular.FileText, { open = false; onExportXmp() }, enabled = p.decided > 0)
             MenuItem(
-                if (view.readOnly) stringResource(R.string.t_cull_delete_read_only) else pluralStringResource(R.plurals.t_cull_delete_menu, p.rejected, p.rejected.toString()),
+                if (view.readOnly) stringResource(R.string.trash_rejects_read_only) else pluralStringResource(R.plurals.trash_rejects_menu, p.rejected, p.rejected.toString()),
                 PhosphorRegular.Trash,
                 { open = false; onDelete() },
                 enabled = p.rejected > 0 && !view.readOnly,
-                destructive = true,
             )
         }
     }

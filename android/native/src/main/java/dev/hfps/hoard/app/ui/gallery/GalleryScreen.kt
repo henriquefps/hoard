@@ -120,7 +120,7 @@ data class GalleryUi(
 
 /** Tab 1 (ADR 0021): one grid of the phone's shots and the server's items, newest first. */
 @Composable
-fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: () -> Unit) {
+fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: () -> Unit, onOpenTrash: (() -> Unit)? = null) {
     val vm: GalleryViewModel = viewModel(factory = GalleryViewModelFactory(container))
     val layout by vm.layout.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
@@ -143,6 +143,7 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
         thumbs = container.gallery.thumbs,
         grid = grid,
         onOpenSettings = onOpenSettings,
+        onOpenTrash = onOpenTrash,
         onPair = onPair,
         onAskPermission = { askMedia.launch(GalleryPermissions.permissions()) },
         onQuery = vm::setQuery,
@@ -207,6 +208,8 @@ fun GalleryContent(
     thumbs: ThumbSource,
     grid: LazyGridState = rememberLazyGridState(),
     onOpenSettings: () -> Unit = {},
+    /** The trash (ADR 0023); no button when null. */
+    onOpenTrash: (() -> Unit)? = null,
     onPair: () -> Unit = {},
     onAskPermission: () -> Unit = {},
     onQuery: (String) -> Unit = {},
@@ -244,6 +247,7 @@ fun GalleryContent(
                             )
                         }
                     }
+                    if (onOpenTrash != null) HfpsIconButton(PhosphorRegular.Trash, stringResource(R.string.trash_title), onOpenTrash, modifier = Modifier.testTag("gallery-trash"))
                     HfpsIconButton(PhosphorRegular.Gear, stringResource(R.string.action_settings), onOpenSettings)
                 }
             }

@@ -3,6 +3,8 @@ package dev.hfps.hoard.app.trash
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -27,6 +29,12 @@ class TrashCleanupWorker(context: Context, params: WorkerParameters) : Coroutine
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<TrashCleanupWorker>(1, TimeUnit.DAYS).build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+        }
+
+        /** One run now (the setting changed: a shorter limit applies at once, not at the next daily run). */
+        fun now(context: Context) {
+            val request = OneTimeWorkRequestBuilder<TrashCleanupWorker>().build()
+            WorkManager.getInstance(context).enqueueUniqueWork("$NAME-now", ExistingWorkPolicy.REPLACE, request)
         }
     }
 }

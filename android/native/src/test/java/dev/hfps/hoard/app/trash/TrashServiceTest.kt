@@ -426,4 +426,16 @@ class TrashServiceTest {
         assertThat(walk.incomplete).isEmpty()
         assertThat(TrashService.DirWalk.of(nas, listOf("Missing")).incomplete).containsExactly("Missing")
     }
+
+    @Test
+    fun smbjsOwnNotFoundIsAFreePathNotARefusal() = runBlocking<Unit> {
+        // SmbFs throws smbj's exceptions (FileService maps them only around a whole block): found on the emulator.
+        nas.rawErrors = true
+        shot(1)
+        val report = runner().trash(plan(share, "Imagens/2024/Trip", listOf("Imagens/2024/Trip/DSC1.JPG")))
+        assertThat(report.trashed).hasSize(1)
+        assertThat(trashFiles()).hasSize(3)
+        assertThat(runner().restore(rows()).single()).isInstanceOf(RestoreOutcome.Restored::class.java)
+        assertThat(runner().scan(TrashRunner.Root(share, ""))).isEmpty()
+    }
 }

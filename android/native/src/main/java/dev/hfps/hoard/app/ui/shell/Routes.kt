@@ -34,3 +34,6 @@ import kotlinx.serialization.Serializable
 
 /** Settings › Photo server › Pair (ADR 0021). */
 @Serializable data object PairRoute
+
+/** The trash (ADR 0023): from Files, the Gallery and Settings. */
+@Serializable data object TrashRoute

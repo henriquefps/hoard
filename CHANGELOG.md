@@ -6,6 +6,12 @@
   - Restore puts each file back exactly where it was and refuses (never renames) when another file took its place; Empty deletes for good; the trash empties itself after 30 days by default (7, 30, 90 days or off).
   - If Hoard is stopped in the middle, it finishes or undoes the interrupted shot the next time it starts, so a shot is never left half in the trash.
   - The phone's own trash (Android 11 and later) and the Gallery come in later phases.
+- **Move rejects to trash** ([ADR 0023](docs/adr/0023-trash.md), phase A2). Culling's "Delete rejects" is now **Move rejects to trash**: every file of each rejected shot, with its `.xmp`, goes to the trash after a confirmation that says how many files, how much and where. A trashed shot keeps its pick or reject, so it comes back with it.
+  - **Deleting in Files moves to the trash too**, whole shots with their sidecars. Only what cannot go to the trash (a read-only share root, a share that spans two disks, storage that cannot move files) is offered for permanent delete, with the old warning.
+  - **Trash** (the trash button in Files and the Gallery, and Settings › Trash): your trashed files by day and folder, with sizes. **Restore** puts them back exactly where they were and tells you when another file took a place. **Delete permanently** and **Empty trash** ask first and show how much space they free. A share or drive that is not connected shows greyed.
+  - **Settings › Trash**: empty the trash automatically after 7, 30 (the default) or 90 days, or never. A new setting applies at once.
+  - Moving many files shows a notification with the progress and Cancel.
+  - With a photo server older than 0.11.0, the dialog warns that the server will forget Reveal's edits of the trashed photos until it is updated.
 
 ## 2.2.2 (2026-11-15)
 

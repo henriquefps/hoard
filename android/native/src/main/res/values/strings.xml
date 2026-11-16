@@ -275,4 +275,108 @@
     <string name="reveal_ready_body_titled">%1$s: the photos were copied. Tap to open them in Reveal.</string>
     <string name="reveal_ready_dialog_body">The photos were copied while Hoard was in the background. Open them in Reveal now?</string>
     <string name="reveal_ready_open">Open in Reveal</string>
+    <!-- Trash (ADR 0023) -->
+    <string name="trash_title">Trash</string>
+    <string name="trash_channel">Trash</string>
+    <string name="trash_notification_title">Moving to the trash</string>
+    <string name="trash_notification_progress">%1$d of %2$d files</string>
+    <string name="trash_preparing">Getting ready…</string>
+    <plurals name="trash_confirm_title_shots">
+        <item quantity="one">Move %1$s shot to the trash?</item>
+        <item quantity="other">Move %1$s shots to the trash?</item>
+    </plurals>
+    <plurals name="trash_confirm_title_items">
+        <item quantity="one">Move %1$s item to the trash?</item>
+        <item quantity="other">Move %1$s items to the trash?</item>
+    </plurals>
+    <plurals name="trash_confirm_body">
+        <item quantity="one">%1$s file (%2$s) goes to the trash in %3$s. You can restore it from Trash until the trash is emptied.</item>
+        <item quantity="other">%1$s files (%2$s) go to the trash in %3$s. You can restore them from Trash until the trash is emptied.</item>
+    </plurals>
+    <string name="trash_confirm_action">Move to trash</string>
+    <string name="trash_old_server_warning">This photo server is older than 0.11.0: it will forget Reveal\'s edits of these photos until you update it.</string>
+    <plurals name="trash_refused_count">
+        <item quantity="one">%1$s cannot go to the trash: %2$s.</item>
+        <item quantity="other">%1$s cannot go to the trash: %2$s.</item>
+    </plurals>
+    <string name="trash_reason_already_in_trash">it is already in a trash</string>
+    <string name="trash_reason_contains_trash">the folder holds the trash itself</string>
+    <string name="trash_reason_server_unreachable">Hoard needs the photo server to place the trash. Try again when the photo server is reachable</string>
+    <string name="trash_reason_root_not_writable">the place for the trash is read-only</string>
+    <string name="trash_reason_not_same_device">the share spans two disks, so the files cannot be moved there</string>
+    <string name="trash_reason_move_unsupported">this storage cannot move files</string>
+    <string name="trash_reason_unreachable">the location is not reachable</string>
+    <string name="trash_reason_not_found">the files are gone</string>
+    <string name="trash_reason_phone">the phone\'s own trash comes in a later version</string>
+    <string name="trash_reason_unknown_place">Hoard cannot tell where its trash belongs on the photo server; open the folder in Files once, then try again</string>
+    <string name="trash_rejects_read_only">Move rejects to trash (read-only folder)</string>
+    <string name="trash_reason_failed">it could not be moved</string>
+    <string name="trash_running">Moving to the trash…</string>
+    <plurals name="trash_permanent_title">
+        <item quantity="one">Delete %1$s item permanently?</item>
+        <item quantity="other">Delete %1$s items permanently?</item>
+    </plurals>
+    <plurals name="trash_permanent_body">
+        <item quantity="one">%1$s item cannot go to the trash (%2$s). Delete it permanently instead? This cannot be undone.</item>
+        <item quantity="other">%1$s items cannot go to the trash (%2$s). Delete them permanently instead? This cannot be undone.</item>
+    </plurals>
+    <string name="trash_delete_permanently">Delete permanently</string>
+    <string name="trash_keep">Keep</string>
+    <plurals name="trash_moved">
+        <item quantity="one">%1$s moved to the trash</item>
+        <item quantity="other">%1$s moved to the trash</item>
+    </plurals>
+    <plurals name="trash_partial">
+        <item quantity="one">%1$s was only partly moved; what moved is in the trash</item>
+        <item quantity="other">%1$s were only partly moved; what moved is in the trash</item>
+    </plurals>
+    <plurals name="trash_deleted_permanently">
+        <item quantity="one">%1$s deleted permanently</item>
+        <item quantity="other">%1$s deleted permanently</item>
+    </plurals>
+    <string name="trash_cancelled">Stopped. What moved is in the trash.</string>
+    <string name="trash_empty_state_title">The trash is empty</string>
+    <string name="trash_empty_state_body">Rejects you move to the trash wait here until you empty it.</string>
+    <string name="trash_empty_action">Empty trash</string>
+    <string name="trash_refresh">Refresh</string>
+    <plurals name="trash_group_summary">
+        <item quantity="one">%1$s file · %2$s</item>
+        <item quantity="other">%1$s files · %2$s</item>
+    </plurals>
+    <string name="trash_not_reachable">Not reachable</string>
+    <string name="trash_restore">Restore</string>
+    <string name="trash_empty_confirm_title">Empty the trash?</string>
+    <plurals name="trash_delete_confirm_body">
+        <item quantity="one">%1$s file (%2$s) will be deleted for good. This cannot be undone.</item>
+        <item quantity="other">%1$s files (%2$s) will be deleted for good. This cannot be undone.</item>
+    </plurals>
+    <plurals name="trash_delete_group_title">
+        <item quantity="one">Delete %1$s file permanently?</item>
+        <item quantity="other">Delete %1$s files permanently?</item>
+    </plurals>
+    <plurals name="trash_restored">
+        <item quantity="one">%1$s file restored</item>
+        <item quantity="other">%1$s files restored</item>
+    </plurals>
+    <plurals name="trash_purged">
+        <item quantity="one">%1$s file deleted for good</item>
+        <item quantity="other">%1$s files deleted for good</item>
+    </plurals>
+    <string name="trash_restore_conflict_title">Could not restore</string>
+    <string name="trash_restore_conflict_body">A file is already at %1$s. Move it away, then restore again.</string>
+    <string name="trash_restore_failed">Some files could not be restored.</string>
+    <string name="trash_auto_note">The trash empties itself after %1$d days (Settings › Trash).</string>
+    <string name="trash_auto_off">The trash is not emptied automatically (Settings › Trash).</string>
+    <string name="trash_day_undated">Undated</string>
+    <string name="trash_settings_auto">Empty the trash automatically</string>
+    <string name="trash_settings_auto_hint">Days in the trash are deleted after this, on every share and drive Hoard can reach.</string>
+    <string name="trash_settings_days">After %1$d days</string>
+    <string name="trash_settings_never">Never</string>
+    <string name="trash_settings_open">Open the trash</string>
+    <string name="trash_settings_media">Media management</string>
+    <string name="trash_settings_media_hint">Lets Hoard move phone photos to Android\'s trash without asking each time. Comes with the phone trash in a later version.</string>
+    <plurals name="trash_rejects_menu">
+        <item quantity="one">Move %1$s reject to trash…</item>
+        <item quantity="other">Move %1$s rejects to trash…</item>
+    </plurals>
 </resources>

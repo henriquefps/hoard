@@ -107,11 +107,20 @@ data class ResumeReport(
  */
 class TrashRunner(
     private val index: TrashIndex,
-    private val fsFor: suspend (TrashPlace) -> TrashFs?,
+    fsFor: suspend (TrashPlace) -> TrashFs?,
     private val now: () -> Long = System::currentTimeMillis,
     private val today: () -> LocalDate = LocalDate::now,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
+    /** Every place's file system with its failures mapped to contract codes ([MappedHoardFs]). */
+    private val fsFor: suspend (TrashPlace) -> TrashFs? = { place ->
+        fsFor(place)?.let { raw ->
+            object : TrashFs {
+                override suspend fun <T> use(block: (HoardFs) -> T): T = raw.use { hoard -> block(MappedHoardFs(hoard)) }
+            }
+        }
+    }
+
     /** Runs [plan]. [cancelled] is checked between units; [progress] after each file. */
     suspend fun trash(plan: TrashPlan, cancelled: () -> Boolean = { false }, progress: (TrashProgress) -> Unit = {}): TrashReport {
         val place = plan.place

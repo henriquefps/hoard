@@ -136,6 +136,12 @@
             android:exported="false"
             android:theme="@style/Theme.Hoard.WebViewer" />
 
+        <!-- The trash (ADR 0023): the foreground notification of a long run, with Cancel. -->
+        <service
+            android:name="dev.hfps.hoard.app.trash.TrashRunService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Transfers: WorkManager's foreground service runs as a dataSync service. -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"

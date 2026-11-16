@@ -18,6 +18,7 @@ import dev.hfps.hoard.smb.SmbEntry
 import dev.hfps.hoard.smb.location.HoardFs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -149,7 +150,7 @@ class TrashService(private val container: AppContainer) {
         // inside) and, on a share, the mapping when the folder on screen has no photos of its own.
         val dirs = units.flatMap { u -> u.files.filter { it.isDirectory }.map { it.path } }
         val walk = try {
-            if (dirs.isEmpty()) DirWalk.EMPTY else container.files.run(location) { fs, cancel -> DirWalk.of(fs, dirs) { cancel.check() } }
+            if (dirs.isEmpty()) DirWalk.EMPTY else container.files.run(location) { fs, cancel -> DirWalk.of(MappedHoardFs(fs), dirs) { cancel.check() } }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -245,6 +246,58 @@ class TrashService(private val container: AppContainer) {
         }
     }
 
+    /** [prepare] on a fresh listing of [folder] (the dialog's plan is never made from a stale one). */
+    suspend fun prepareFolder(location: BrowseLocation, folder: String, selected: Collection<String>): TrashPlan {
+        val listing = container.files.run(location) { fs, cancel -> fs.list(folder, cancel) }.entries
+        return prepare(location, folder, listing, selected)
+    }
+
+    private val _active = MutableStateFlow(false)
+
+    /** A run is going (the foreground notification follows it). */
+    val active: StateFlow<Boolean> = _active.asStateFlow()
+
+    /**
+     * Starts [plan] in the process scope (leaving the screen does not stop it), with the foreground notification when
+     * it moves more than [NOTIFY_FILES] files; the result arrives on the returned [Deferred].
+     */
+    fun start(plan: TrashPlan): kotlinx.coroutines.Deferred<TrashReport> {
+        _active.value = true
+        if (plan.files > NOTIFY_FILES) TrashRunService.start(container.appContext)
+        return container.scope.async {
+            try {
+                run(plan)
+            } finally {
+                _active.value = false
+            }
+        }
+    }
+
+    /**
+     * The permanent delete the dialog offers for units the trash refused (ADR 0023 "When the trash is not possible"):
+     * every file of each unit (folders recursively). Returns the units that went entirely.
+     */
+    suspend fun deletePermanently(location: BrowseLocation, units: List<TrashUnit>): List<TrashUnit> {
+        val gone = ArrayList<TrashUnit>()
+        for (unit in units) {
+            val ok = unit.all.all { f ->
+                try {
+                    container.files.run(location) { fs, cancel -> fs.delete(f.path, f.isDirectory, cancel) }
+                    true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: dev.hfps.hoard.smb.HoardSmbException) {
+                    e.code == dev.hfps.hoard.smb.ErrorCode.NOT_FOUND
+                } catch (e: Throwable) {
+                    false
+                }
+            }
+            if (ok) gone += unit
+        }
+        if (location.isSmb) units.map { it.folder }.distinct().forEach { container.serverLinks.invalidate(location, it) }
+        return gone
+    }
+
     /** Asks the running [run] to stop after the unit it is moving (a unit is never left half-moved by Cancel). */
     fun cancel() = cancelRequested.set(true)
 
@@ -268,6 +321,8 @@ class TrashService(private val container: AppContainer) {
                 requestWalk(touched.mapNotNull { it.serverFolderId })
             }
             Log.i(TAG, "trash ${plan.place.locationId}: ${report.trashed.size} trashed, ${report.refused.size} refused, ${report.partial.size} partial, ${report.cancelled.size} cancelled")
+            for (r in report.refused) Log.i(TAG, "refused ${r.unit.key}: ${r.reason} ${r.code ?: ""} ${r.message.orEmpty()}")
+            for (p in report.partial) Log.i(TAG, "partial ${p.unit.key}: ${p.reason} ${p.message.orEmpty()}")
             report
         } finally {
             _progress.value = null
@@ -370,17 +425,30 @@ class TrashService(private val container: AppContainer) {
         return purged
     }
 
-    /** Lists every known root's `.hoard-trash` (the Trash screen's refresh): rows for what another device trashed. */
-    suspend fun refresh(): List<TrashEntryEntity> = running.withLock {
-        refreshRoots()
-        dao.all()
-    }
+    /**
+     * Lists every known root's `.hoard-trash` (the Trash screen's refresh): rows for what another device trashed.
+     * Returns the places that could not be reached (their rows show greyed, "Not reachable").
+     */
+    suspend fun refresh(): Set<TrashPlace> = running.withLock { refreshRoots() }
 
-    private suspend fun refreshRoots() {
+    /** The roots, as the Trash screen lists them. */
+    fun observeRoots() = dao.observeRoots()
+
+    private suspend fun refreshRoots(): Set<TrashPlace> {
+        val unreachable = HashSet<TrashPlace>()
         for (root in roots()) {
             if (TrashKind.of(root.place.locationId) != TrashKind.FOLDER) continue
-            runCatching { runner.scan(root) }.onFailure { if (it is CancellationException) throw it }
+            if (root.place in unreachable) continue
+            if (fsFor(root.place) == null) {
+                unreachable += root.place
+                continue
+            }
+            runCatching { runner.scan(root) }.onFailure {
+                if (it is CancellationException) throw it
+                unreachable += root.place
+            }
         }
+        return unreachable
     }
 
     /** Every root Hoard trashed into or found, and those of rows not recorded as roots. */
@@ -454,5 +522,8 @@ class TrashService(private val container: AppContainer) {
 
         /** Settings key: the newest trash time this device wrote (outlives Empty; auto-empty's clock guard). */
         const val NEWEST_TRASHED = "trashNewestTrashedAt"
+
+        /** Runs that move more files than this show the foreground notification. */
+        const val NOTIFY_FILES = 20
     }
 }

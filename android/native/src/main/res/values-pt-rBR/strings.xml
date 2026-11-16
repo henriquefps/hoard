@@ -279,4 +279,123 @@
     <string name="reveal_ready_body_titled">%1$s: as fotos foram copiadas. Toque para abri-las no Reveal.</string>
     <string name="reveal_ready_dialog_body">As fotos foram copiadas enquanto o Hoard estava em segundo plano. Abrir no Reveal agora?</string>
     <string name="reveal_ready_open">Abrir no Reveal</string>
+    <!-- Lixeira (ADR 0023) -->
+    <string name="trash_title">Lixeira</string>
+    <string name="trash_channel">Lixeira</string>
+    <string name="trash_notification_title">Movendo para a lixeira</string>
+    <string name="trash_notification_progress">%1$d de %2$d arquivos</string>
+    <string name="trash_preparing">Preparando…</string>
+    <plurals name="trash_confirm_title_shots">
+        <item quantity="one">Mover %1$s foto para a lixeira?</item>
+        <item quantity="many">Mover %1$s fotos para a lixeira?</item>
+        <item quantity="other">Mover %1$s fotos para a lixeira?</item>
+    </plurals>
+    <plurals name="trash_confirm_title_items">
+        <item quantity="one">Mover %1$s item para a lixeira?</item>
+        <item quantity="many">Mover %1$s itens para a lixeira?</item>
+        <item quantity="other">Mover %1$s itens para a lixeira?</item>
+    </plurals>
+    <plurals name="trash_confirm_body">
+        <item quantity="one">%1$s arquivo (%2$s) vai para a lixeira em %3$s. Dá para restaurá-lo pela Lixeira até ela ser esvaziada.</item>
+        <item quantity="many">%1$s arquivos (%2$s) vão para a lixeira em %3$s. Dá para restaurá-los pela Lixeira até ela ser esvaziada.</item>
+        <item quantity="other">%1$s arquivos (%2$s) vão para a lixeira em %3$s. Dá para restaurá-los pela Lixeira até ela ser esvaziada.</item>
+    </plurals>
+    <string name="trash_confirm_action">Mover para a lixeira</string>
+    <string name="trash_old_server_warning">Este servidor de fotos é anterior à 0.11.0: ele vai esquecer as edições do Reveal destas fotos até você atualizá-lo.</string>
+    <plurals name="trash_refused_count">
+        <item quantity="one">%1$s não pode ir para a lixeira: %2$s.</item>
+        <item quantity="many">%1$s não podem ir para a lixeira: %2$s.</item>
+        <item quantity="other">%1$s não podem ir para a lixeira: %2$s.</item>
+    </plurals>
+    <string name="trash_reason_already_in_trash">já está em uma lixeira</string>
+    <string name="trash_reason_contains_trash">a pasta contém a própria lixeira</string>
+    <string name="trash_reason_server_unreachable">o Hoard precisa do servidor de fotos para colocar a lixeira. Tente de novo quando o servidor de fotos estiver acessível</string>
+    <string name="trash_reason_root_not_writable">o lugar da lixeira é somente leitura</string>
+    <string name="trash_reason_not_same_device">o compartilhamento ocupa dois discos, então os arquivos não podem ser movidos para lá</string>
+    <string name="trash_reason_move_unsupported">este armazenamento não consegue mover arquivos</string>
+    <string name="trash_reason_unreachable">o local não está acessível</string>
+    <string name="trash_reason_not_found">os arquivos não existem mais</string>
+    <string name="trash_reason_phone">a lixeira do próprio celular vem em uma versão futura</string>
+    <string name="trash_reason_unknown_place">o Hoard não sabe onde fica a lixeira no servidor de fotos; abra a pasta em Arquivos uma vez e tente de novo</string>
+    <string name="trash_rejects_read_only">Mover descartadas para a lixeira (pasta somente leitura)</string>
+    <string name="trash_reason_failed">não foi possível mover</string>
+    <string name="trash_running">Movendo para a lixeira…</string>
+    <plurals name="trash_permanent_title">
+        <item quantity="one">Apagar %1$s item definitivamente?</item>
+        <item quantity="many">Apagar %1$s itens definitivamente?</item>
+        <item quantity="other">Apagar %1$s itens definitivamente?</item>
+    </plurals>
+    <plurals name="trash_permanent_body">
+        <item quantity="one">%1$s item não pode ir para a lixeira (%2$s). Apagá-lo definitivamente? Não dá para desfazer.</item>
+        <item quantity="many">%1$s itens não podem ir para a lixeira (%2$s). Apagá-los definitivamente? Não dá para desfazer.</item>
+        <item quantity="other">%1$s itens não podem ir para a lixeira (%2$s). Apagá-los definitivamente? Não dá para desfazer.</item>
+    </plurals>
+    <string name="trash_delete_permanently">Apagar definitivamente</string>
+    <string name="trash_keep">Manter</string>
+    <plurals name="trash_moved">
+        <item quantity="one">%1$s movido para a lixeira</item>
+        <item quantity="many">%1$s movidos para a lixeira</item>
+        <item quantity="other">%1$s movidos para a lixeira</item>
+    </plurals>
+    <plurals name="trash_partial">
+        <item quantity="one">%1$s foi movido só em parte; o que foi movido está na lixeira</item>
+        <item quantity="many">%1$s foram movidos só em parte; o que foi movido está na lixeira</item>
+        <item quantity="other">%1$s foram movidos só em parte; o que foi movido está na lixeira</item>
+    </plurals>
+    <plurals name="trash_deleted_permanently">
+        <item quantity="one">%1$s apagado definitivamente</item>
+        <item quantity="many">%1$s apagados definitivamente</item>
+        <item quantity="other">%1$s apagados definitivamente</item>
+    </plurals>
+    <string name="trash_cancelled">Interrompido. O que foi movido está na lixeira.</string>
+    <string name="trash_empty_state_title">A lixeira está vazia</string>
+    <string name="trash_empty_state_body">As descartadas que você move para a lixeira ficam aqui até você esvaziá-la.</string>
+    <string name="trash_empty_action">Esvaziar lixeira</string>
+    <string name="trash_refresh">Atualizar</string>
+    <plurals name="trash_group_summary">
+        <item quantity="one">%1$s arquivo · %2$s</item>
+        <item quantity="many">%1$s arquivos · %2$s</item>
+        <item quantity="other">%1$s arquivos · %2$s</item>
+    </plurals>
+    <string name="trash_not_reachable">Inacessível</string>
+    <string name="trash_restore">Restaurar</string>
+    <string name="trash_empty_confirm_title">Esvaziar a lixeira?</string>
+    <plurals name="trash_delete_confirm_body">
+        <item quantity="one">%1$s arquivo (%2$s) será apagado de vez. Não dá para desfazer.</item>
+        <item quantity="many">%1$s arquivos (%2$s) serão apagados de vez. Não dá para desfazer.</item>
+        <item quantity="other">%1$s arquivos (%2$s) serão apagados de vez. Não dá para desfazer.</item>
+    </plurals>
+    <plurals name="trash_delete_group_title">
+        <item quantity="one">Apagar %1$s arquivo definitivamente?</item>
+        <item quantity="many">Apagar %1$s arquivos definitivamente?</item>
+        <item quantity="other">Apagar %1$s arquivos definitivamente?</item>
+    </plurals>
+    <plurals name="trash_restored">
+        <item quantity="one">%1$s arquivo restaurado</item>
+        <item quantity="many">%1$s arquivos restaurados</item>
+        <item quantity="other">%1$s arquivos restaurados</item>
+    </plurals>
+    <plurals name="trash_purged">
+        <item quantity="one">%1$s arquivo apagado de vez</item>
+        <item quantity="many">%1$s arquivos apagados de vez</item>
+        <item quantity="other">%1$s arquivos apagados de vez</item>
+    </plurals>
+    <string name="trash_restore_conflict_title">Não foi possível restaurar</string>
+    <string name="trash_restore_conflict_body">Já existe um arquivo em %1$s. Tire-o de lá e restaure de novo.</string>
+    <string name="trash_restore_failed">Alguns arquivos não puderam ser restaurados.</string>
+    <string name="trash_auto_note">A lixeira se esvazia sozinha depois de %1$d dias (Configurações › Lixeira).</string>
+    <string name="trash_auto_off">A lixeira não é esvaziada automaticamente (Configurações › Lixeira).</string>
+    <string name="trash_day_undated">Sem data</string>
+    <string name="trash_settings_auto">Esvaziar a lixeira automaticamente</string>
+    <string name="trash_settings_auto_hint">Os dias na lixeira são apagados depois disso, em todo compartilhamento e drive que o Hoard alcançar.</string>
+    <string name="trash_settings_days">Depois de %1$d dias</string>
+    <string name="trash_settings_never">Nunca</string>
+    <string name="trash_settings_open">Abrir a lixeira</string>
+    <string name="trash_settings_media">Gerenciamento de mídia</string>
+    <string name="trash_settings_media_hint">Permite que o Hoard mova fotos do celular para a lixeira do Android sem perguntar toda vez. Chega com a lixeira do celular em uma versão futura.</string>
+    <plurals name="trash_rejects_menu">
+        <item quantity="one">Mover %1$s descartada para a lixeira…</item>
+        <item quantity="many">Mover %1$s descartadas para a lixeira…</item>
+        <item quantity="other">Mover %1$s descartadas para a lixeira…</item>
+    </plurals>
 </resources>

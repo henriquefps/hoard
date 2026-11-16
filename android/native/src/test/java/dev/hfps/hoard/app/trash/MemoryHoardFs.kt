@@ -63,7 +63,15 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
 
     fun filesUnder(path: String): List<String> = nodes.keys.filter { (it == path || it.startsWith("$path/")) && !nodes[it]!!.isDirectory }.sorted()
 
-    private fun missing(path: String): Nothing = throw HoardSmbException(ErrorCode.NOT_FOUND, "$path does not exist")
+    /** Throw smbj's own exception for a missing path, as `SmbFs` does (`STATUS_OBJECT_NAME_NOT_FOUND`). */
+    var rawErrors = false
+
+    private fun missing(path: String): Nothing {
+        if (rawErrors) {
+            throw com.hierynomus.mssmb2.SMBApiException(0xC0000034L, com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_CREATE, null)
+        }
+        throw HoardSmbException(ErrorCode.NOT_FOUND, "$path does not exist")
+    }
 
     private fun entry(path: String, node: Node) =
         SmbEntry(SharePaths.name(path), path, node.isDirectory, node.size, IsoTime.format(node.modified), SharePaths.name(path).startsWith("."))

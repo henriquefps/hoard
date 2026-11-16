@@ -441,6 +441,26 @@ the decision above with these small, justified deviations:
     refused `UNREACHABLE` at once); auto-empty waits for start-up recovery, which it runs itself when the worker comes
     first.
 
+## Amendment (A2)
+
+Phase A2 (the screens) follows the decision with these deviations:
+
+1. **The entry points are buttons**: Files and the Gallery have no overflow menu, so the Trash is a button in their top
+   bars (Files: next to Transfers; Gallery: next to Settings), plus Settings › Trash › "Open the trash".
+2. **The Trash screen acts on groups**: Restore and Delete permanently work on a folder of a day, or on a whole day;
+   Empty trash on everything (after listing every reachable root). No per-shot selection and no thumbnails yet (the
+   rows are folders, the counts and sizes are per group). Restore and Empty still work on whole shots (A1 item 14).
+3. **Changing the auto-empty setting runs auto-empty at once** (a one-off `TrashCleanupWorker`), so a shorter limit
+   applies now, not at the next daily run.
+4. **The foreground notification** (`TrashRunService`, `dataSync`) shows for runs of more than 20 files; it follows
+   the run, which lives in the process scope, with Cancel (after the shot being moved).
+5. **The permanent-delete offer** is made for the refusals that permanent delete solves: a read-only trash root,
+   `NOT_SAME_DEVICE`, a provider that cannot move, already in a trash, and the phone until A3. Not for an unreachable
+   server or location (try again) or a folder holding a trash (never deleted that way).
+6. **Media management** is a placeholder in Settings › Trash until A3.
+7. **Errors of `SmbFs`** are mapped per call inside the trash (`MappedHoardFs`): found on the emulator, where smbj's
+   own "not found" made every Files delete refuse (docs/testing/trash.md).
+
 ## Alternatives considered
 
 - **Tombstones keep their edits (B)**: see "Server": blind to the trash, previews lost, the empty-mount guard keeps

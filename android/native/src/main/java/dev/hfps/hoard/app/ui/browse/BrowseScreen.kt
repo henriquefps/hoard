@@ -489,24 +489,22 @@ fun BrowseScreen(viewModel: BrowseViewModel, state: BrowseUiState, actions: File
             onSubmit = { name -> viewModel.rename(d.entry, name)?.let { res.getString(errorTitle(it)) } },
         )
         is BrowseDialog.Delete -> {
-            val one = d.entries.singleOrNull()
-            val folders = d.entries.count { it.isDirectory }
-            ConfirmDialog(
-                title = if (one != null) stringResource(R.string.t_browse_delete_one, one.name)
-                else pluralStringResource(R.plurals.t_browse_delete_many, d.entries.size, d.entries.size.toString()),
-                body = if (folders > 0) pluralStringResource(R.plurals.t_browse_delete_folder_body, folders, folders.toString())
-                else stringResource(R.string.t_browse_delete_body),
-                confirmLabel = stringResource(R.string.t_common_delete),
-                destructive = true,
-                onDismiss = { dialog = null },
-                onConfirm = {
-                    val failed = viewModel.delete(d.entries)
-                    toaster.show(
-                        if (failed > 0) res.getQuantityString(R.plurals.t_browse_delete_failed, failed, failed.toString())
-                        else res.getQuantityString(R.plurals.t_browse_deleted, d.entries.size, d.entries.size.toString()),
-                    )
-                },
-            )
+            // The owner's decision 1 (ADR 0023): a plain delete in Files moves to the trash (whole shots with their
+            // sidecars); permanent delete is offered only for what the trash cannot take.
+            val loc = location
+            if (loc != null) {
+                val container = (context.applicationContext as dev.hfps.hoard.app.HoardApplication).container
+                val request = remember(d) { dev.hfps.hoard.app.ui.trash.TrashRequest(loc, viewModel.path, d.entries.map { it.path }) }
+                dev.hfps.hoard.app.ui.trash.MoveToTrashDialog(
+                    container,
+                    request,
+                    onDismiss = { dialog = null },
+                    onDone = { viewModel.afterTrash() },
+                    shots = false,
+                )
+            } else {
+                dialog = null
+            }
         }
         is BrowseDialog.TransferTo -> {
             val loc = location

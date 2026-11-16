@@ -315,17 +315,13 @@ class BrowseViewModel(
         load(quiet = true)
     }
 
-    /** Deletes each entry (folders recursively); returns how many failed. */
-    suspend fun delete(entries: List<SmbEntry>): Int {
-        var failed = 0
-        for (entry in entries) {
-            if (write { loc -> files.run(loc) { fs, cancel -> fs.delete(entry.path, entry.isDirectory, cancel) } } != null) failed++
-        }
+    /** Files left this folder (moved to the trash, or deleted): the selection goes, the listing is read again. */
+    fun afterTrash() {
         location.value?.let { container.serverLinks.invalidate(it, path) }
         clearSelection()
         load(quiet = true)
-        return failed
     }
+
 
     /** Pins the folder on screen, or unpins it. Returns true when it is now a favourite. */
     suspend fun toggleFavorite(label: String): Boolean {
