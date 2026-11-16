@@ -316,10 +316,6 @@
         <item quantity="one">Delete %1$s item permanently?</item>
         <item quantity="other">Delete %1$s items permanently?</item>
     </plurals>
-    <plurals name="trash_permanent_body">
-        <item quantity="one">%1$s item cannot go to the trash (%2$s). Delete it permanently instead? This cannot be undone.</item>
-        <item quantity="other">%1$s items cannot go to the trash (%2$s). Delete them permanently instead? This cannot be undone.</item>
-    </plurals>
     <string name="trash_delete_permanently">Delete permanently</string>
     <string name="trash_keep">Keep</string>
     <plurals name="trash_moved">
@@ -379,4 +375,25 @@
         <item quantity="one">Move %1$s reject to trash…</item>
         <item quantity="other">Move %1$s rejects to trash…</item>
     </plurals>
+    <plurals name="trash_permanent_files">
+        <item quantity="one">%1$s file (%2$s) in %3$s cannot go to the trash: %4$s.</item>
+        <item quantity="other">%1$s files (%2$s) in %3$s cannot go to the trash: %4$s.</item>
+    </plurals>
+    <plurals name="trash_permanent_title_shots">
+        <item quantity="one">Delete %1$s shot permanently?</item>
+        <item quantity="other">Delete %1$s shots permanently?</item>
+    </plurals>
+    <plurals name="trash_empty_unreachable_note">
+        <item quantity="one">%1$s file on a place that is not reachable now is not included.</item>
+        <item quantity="other">%1$s files on places that are not reachable now are not included.</item>
+    </plurals>
+    <string name="trash_shorten_title">Empty part of the trash now?</string>
+    <plurals name="trash_shorten_body">
+        <item quantity="one">With this setting, %1$s file (%2$s) older than %3$d days is deleted for good now. This cannot be undone.</item>
+        <item quantity="other">With this setting, %1$s files (%2$s) older than %3$d days are deleted for good now. This cannot be undone.</item>
+    </plurals>
+    <string name="trash_shorten_others">This includes what other devices put in the trash.</string>
+    <string name="trash_shorten_apply">Delete and apply</string>
+    <string name="trash_checking">Checking the trash…</string>
+    <string name="trash_permanent_reason">They cannot go to the trash: %1$s.</string>
 </resources>

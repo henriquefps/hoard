@@ -433,7 +433,10 @@ class TrashRunner(
     data class Root(val place: TrashPlace, val path: String, val serverFolderId: String? = null)
 
     /** What auto-empty did in one root. */
-    data class Expired(val root: Root, val dayFolders: List<String>, val purged: List<TrashEntryEntity>)
+    data class Expired(val root: Root, val dayFolders: List<String>, val purged: List<TrashEntryEntity>, val files: Int = 0, val bytes: Long = 0) {
+        /** Another device's day folders are in it (rows found by listing, or no row at all). */
+        val othersIncluded: Boolean get() = dayFolders.any { day -> purged.none { it.dayFolder == day && it.runId != SCAN_RUN } }
+    }
 
     /**
      * Auto-empty (ADR 0023): in every reachable root, the day folders older than [days] days are deleted (including
@@ -446,7 +449,7 @@ class TrashRunner(
      *   was trashed before the limit. A clock that jumped ahead, or a day folder named by a clock that was behind,
      *   purges nothing.
      */
-    suspend fun autoEmpty(roots: List<Root>, days: Int, notBefore: Long = 0, trustedNow: () -> Long? = { null }): List<Expired> {
+    suspend fun autoEmpty(roots: List<Root>, days: Int, notBefore: Long = 0, trustedNow: () -> Long? = { null }, dryRun: Boolean = false): List<Expired> {
         if (days <= 0) return emptyList()
         val phoneNow = now()
         if (phoneNow < notBefore) return emptyList()
@@ -459,6 +462,8 @@ class TrashRunner(
                 val rows = index.inRoot(root.place, root.path)
                 val byDay = rows.groupBy { it.dayFolder }
                 var nowMs = phoneNow
+                var files = 0
+                var bytes = 0L
                 val expired = fs.use { hoard ->
                     val entries = try {
                         hoard.list(dir).entries
@@ -476,12 +481,21 @@ class TrashRunner(
                         val mtime = dev.hfps.hoard.smb.IsoTime.parse(folders.getValue(day).modifiedAt)
                         val own = byDay[day].orEmpty().filter { it.runId != SCAN_RUN }
                         if (mtime != null) mtime <= limitMs else own.isNotEmpty() && own.all { it.trashedAt <= limitMs }
-                    }.onEach { day -> deleteIfExists(hoard, requireTrashPath(root.path, SharePaths.join(dir, day))) }
+                    }.onEach { day ->
+                        val path = requireTrashPath(root.path, SharePaths.join(dir, day))
+                        walk(hoard, path).forEach { f ->
+                            files++
+                            bytes += f.size
+                        }
+                        if (!dryRun) deleteIfExists(hoard, path)
+                    }
                 }
                 val purged = rows.filter { it.dayFolder in expired }
-                if (purged.isNotEmpty()) index.delete(purged.map { it.id })
-                index.touchRoot(root.place, root.path, root.serverFolderId, nowMs)
-                if (expired.isNotEmpty()) out += Expired(root, expired, purged)
+                if (!dryRun) {
+                    if (purged.isNotEmpty()) index.delete(purged.map { it.id })
+                    index.touchRoot(root.place, root.path, root.serverFolderId, nowMs)
+                }
+                if (expired.isNotEmpty()) out += Expired(root, expired, purged, files, bytes)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

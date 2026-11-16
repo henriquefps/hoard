@@ -9,7 +9,8 @@
 - **Move rejects to trash** ([ADR 0023](docs/adr/0023-trash.md), phase A2). Culling's "Delete rejects" is now **Move rejects to trash**: every file of each rejected shot, with its `.xmp`, goes to the trash after a confirmation that says how many files, how much and where. A trashed shot keeps its pick or reject, so it comes back with it.
   - **Deleting in Files moves to the trash too**: the files you chose, and a photo's `.xmp` only when nothing else of that photo stays in the folder (delete the JPEG of a RAW + JPEG pair and the `.xmp` stays with the RAW). Only what cannot go to the trash (a read-only share root, a share that spans two disks, storage that cannot move files) is offered for permanent delete, with the old warning.
   - **Trash** (the trash button in Files and the Gallery, and Settings › Trash): your trashed files by day and folder, with sizes. **Restore** puts them back exactly where they were and tells you when another file took a place. **Delete permanently** and **Empty trash** ask first and show how much space they free. A share or drive that is not connected shows greyed.
-  - **Settings › Trash**: empty the trash automatically after 7, 30 (the default) or 90 days, or never. A new setting applies at once.
+  - **Settings › Trash**: empty the trash automatically after 7, 30 (the default) or 90 days, or never. A shorter period first shows how many files and how much it would delete now, and applies only when you confirm.
+  - When the trash cannot take something (a read-only share root, the phone until its own trash arrives), Hoard offers to delete exactly the files you chose, with their count, size and place; **Keep** is the default.
   - Moving many files shows a notification with the progress and Cancel.
   - With a photo server older than 0.11.0, the dialog warns that the server will forget Reveal's edits of the trashed photos until it is updated.
 

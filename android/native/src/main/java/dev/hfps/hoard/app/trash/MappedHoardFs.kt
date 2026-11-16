@@ -14,12 +14,28 @@ import kotlin.coroutines.cancellation.CancellationException
 class MappedHoardFs(private val fs: HoardFs) : HoardFs {
     private inline fun <T> mapped(block: () -> T): T = try {
         block()
-    } catch (e: HoardSmbException) {
-        throw e
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        throw SmbErrors.map(e)
+        throw trashError(e)
+    }
+
+    companion object {
+        /**
+         * NT statuses that say the session or the share went away (`USER_SESSION_DELETED`, `NETWORK_SESSION_EXPIRED`,
+         * `NETWORK_NAME_DELETED`, `BAD_NETWORK_NAME`). `SmbErrors` maps them to `NOT_FOUND` for Files (the share list
+         * is read again); in the trash a "not found" listing would forget a whole root's rows, so they are
+         * `UNREACHABLE` here: the root shows as not reachable and nothing is forgotten.
+         */
+        private val GONE = setOf(0xC0000203L, 0xC000035CL, 0xC00000C9L, 0xC00000CCL)
+
+        fun trashError(e: Throwable): HoardSmbException {
+            val gone = generateSequence(e) { it.cause }.take(12).any { c ->
+                c is com.hierynomus.mssmb2.SMBApiException && (c.statusCode and 0xFFFFFFFFL) in GONE
+            }
+            val mapped = e as? HoardSmbException ?: SmbErrors.map(e)
+            return if (gone) HoardSmbException(dev.hfps.hoard.smb.ErrorCode.UNREACHABLE, mapped.message ?: "share gone", e) else mapped
+        }
     }
 
     override fun list(path: String, cancellation: Cancellation) = mapped { fs.list(path, cancellation) }

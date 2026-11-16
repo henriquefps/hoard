@@ -82,6 +82,10 @@ data class TrashUi(
 ) {
     val files: Int get() = days.sumOf { it.files }
     val bytes: Long get() = days.sumOf { it.bytes }
+
+    /** What Empty trash can delete now: the places that answered the last refresh. */
+    val reachableFiles: Int get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.files } }
+    val reachableBytes: Long get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.bytes } }
 }
 
 class TrashViewModel(private val container: AppContainer, private val phoneName: String, private val driveName: String) : ViewModel() {
@@ -186,7 +190,7 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
         )
         TrashDialog.Empty -> ConfirmDialog(
             title = stringResource(R.string.trash_empty_confirm_title),
-            body = pluralStringResource(R.plurals.trash_delete_confirm_body, ui.files, formatNumber(ui.files, locale()), bytes(ui.bytes)),
+            body = pluralStringResource(R.plurals.trash_delete_confirm_body, ui.reachableFiles, formatNumber(ui.reachableFiles, locale()), bytes(ui.reachableBytes)),
             confirmLabel = stringResource(R.string.trash_empty_action),
             destructive = true,
             onDismiss = { dialog = null },
@@ -194,6 +198,7 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
                 val n = vm.emptyAll()
                 toaster.show(res.getQuantityString(R.plurals.trash_purged, n, n.toString()))
             },
+            extra = { EmptyUnreachableNote(ui) },
         )
         is TrashDialog.Conflict -> HoardDialog(
             title = stringResource(R.string.trash_restore_conflict_title),
@@ -203,6 +208,20 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             Text(stringResource(R.string.trash_restore_conflict_body, d.path), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground)
         }
         null -> Unit
+    }
+}
+
+/** Empty trash leaves the places that are not reachable now: said in its confirmation (review of PR #59). */
+@Composable
+fun EmptyUnreachableNote(ui: TrashUi) {
+    val away = ui.files - ui.reachableFiles
+    if (away > 0) {
+        Text(
+            pluralStringResource(R.plurals.trash_empty_unreachable_note, away, formatNumber(away, locale())),
+            style = HfpsTheme.typography.ui,
+            color = HfpsTheme.colors.mutedForeground,
+            modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }
 
@@ -225,7 +244,7 @@ fun TrashContent(
                     PhosphorRegular.Trash,
                     stringResource(R.string.trash_empty_action),
                     onEmpty,
-                    enabled = ui.files > 0,
+                    enabled = ui.reachableFiles > 0,
                     tint = HfpsTheme.colors.destructive,
                     modifier = Modifier.testTag("trash-empty"),
                 )

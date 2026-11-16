@@ -38,7 +38,11 @@ class MemoryHoardFs : dev.hfps.hoard.smb.location.HoardFs {
     /** After this many moves the share is gone (`UNREACHABLE` for every call). */
     var dropAfterMoves: Int? = null
 
+    /** The SMB session is gone: every call throws smbj's `STATUS_USER_SESSION_DELETED` (which `SmbErrors` calls NOT_FOUND). */
+    var sessionGone = false
+
     private fun reachable() {
+        if (sessionGone) throw com.hierynomus.mssmb2.SMBApiException(0xC0000203L, com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_QUERY_DIRECTORY, null)
         val drop = dropAfterMoves
         if (drop != null && moves >= drop) throw HoardSmbException(ErrorCode.UNREACHABLE, "connection reset")
     }

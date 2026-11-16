@@ -438,4 +438,45 @@ class TrashServiceTest {
         assertThat(runner().restore(rows()).single()).isInstanceOf(RestoreOutcome.Restored::class.java)
         assertThat(runner().scan(TrashRunner.Root(share, ""))).isEmpty()
     }
+
+    // --- Review of PR #59 ---
+
+    @Test
+    fun aSessionThatWentAwayIsUnreachableNeverAnEmptyTrash() = runBlocking<Unit> {
+        nas.file("Trip/a.jpg")
+        runner().trash(plan(share, "Trip", listOf("Trip/a.jpg")))
+        nas.sessionGone = true
+        // A refresh fails (the root shows as not reachable) instead of reading "no .hoard-trash" and forgetting rows.
+        assertThrows(dev.hfps.hoard.smb.HoardSmbException::class.java) { runBlocking { runner().scan(TrashRunner.Root(share, "")) } }
+        assertThat(rows()).hasSize(1)
+        val e = MappedHoardFs.trashError(com.hierynomus.mssmb2.SMBApiException(0xC00000CCL, com.hierynomus.mssmb2.SMB2MessageCommandCode.SMB2_TREE_CONNECT, null))
+        assertThat(e.code).isEqualTo(dev.hfps.hoard.smb.ErrorCode.UNREACHABLE)
+        // A new trash refuses as unreachable and stops the batch.
+        nas.sessionGone = false
+        nas.file("Trip/b.jpg")
+        nas.file("Trip/c.jpg")
+        nas.sessionGone = true
+        val report = runner().trash(TrashPlanner.plan(share, TrashPlanner.units("Trip", listOf(TrashFile("Trip/b.jpg", 10, 1), TrashFile("Trip/c.jpg", 10, 1)), listOf("Trip/b.jpg", "Trip/c.jpg")), RootChoice.Root(""), true))
+        assertThat(report.refused.map { it.reason }).containsExactly(TrashRefusal.UNREACHABLE, TrashRefusal.UNREACHABLE)
+    }
+
+    @Test
+    fun autoEmptyDryRunCountsAndDeletesNothing() = runBlocking<Unit> {
+        nas.file("Trip/a.jpg", size = 100)
+        day(LocalDate.of(2026, 10, 1))
+        runner().trash(plan(share, "Trip", listOf("Trip/a.jpg")))
+        nas.file(".hoard-trash/2026-10-02/Other/b.jpg", size = 50)
+        day(LocalDate.of(2026, 11, 15))
+        val preview = runner().autoEmpty(listOf(TrashRunner.Root(share, "")), 30, dryRun = true)
+        assertThat(preview.single().dayFolders).containsExactly("2026-10-01", "2026-10-02")
+        assertThat(preview.single().files).isEqualTo(2)
+        assertThat(preview.single().bytes).isEqualTo(150L)
+        // 2026-10-02 is another device's (no row of this device).
+        assertThat(preview.single().othersIncluded).isTrue()
+        assertThat(trashFiles()).hasSize(2)
+        assertThat(rows()).hasSize(1)
+        // The real run deletes what the preview counted.
+        assertThat(runner().autoEmpty(listOf(TrashRunner.Root(share, "")), 30).single().files).isEqualTo(2)
+        assertThat(trashFiles()).isEmpty()
+    }
 }

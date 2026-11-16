@@ -325,11 +325,6 @@
         <item quantity="many">Apagar %1$s itens definitivamente?</item>
         <item quantity="other">Apagar %1$s itens definitivamente?</item>
     </plurals>
-    <plurals name="trash_permanent_body">
-        <item quantity="one">%1$s item não pode ir para a lixeira (%2$s). Apagá-lo definitivamente? Não dá para desfazer.</item>
-        <item quantity="many">%1$s itens não podem ir para a lixeira (%2$s). Apagá-los definitivamente? Não dá para desfazer.</item>
-        <item quantity="other">%1$s itens não podem ir para a lixeira (%2$s). Apagá-los definitivamente? Não dá para desfazer.</item>
-    </plurals>
     <string name="trash_delete_permanently">Apagar definitivamente</string>
     <string name="trash_keep">Manter</string>
     <plurals name="trash_moved">
@@ -398,4 +393,29 @@
         <item quantity="many">Mover %1$s descartadas para a lixeira…</item>
         <item quantity="other">Mover %1$s descartadas para a lixeira…</item>
     </plurals>
+    <plurals name="trash_permanent_files">
+        <item quantity="one">%1$s arquivo (%2$s) em %3$s não pode ir para a lixeira: %4$s.</item>
+        <item quantity="many">%1$s arquivos (%2$s) em %3$s não podem ir para a lixeira: %4$s.</item>
+        <item quantity="other">%1$s arquivos (%2$s) em %3$s não podem ir para a lixeira: %4$s.</item>
+    </plurals>
+    <plurals name="trash_permanent_title_shots">
+        <item quantity="one">Apagar %1$s foto definitivamente?</item>
+        <item quantity="many">Apagar %1$s fotos definitivamente?</item>
+        <item quantity="other">Apagar %1$s fotos definitivamente?</item>
+    </plurals>
+    <plurals name="trash_empty_unreachable_note">
+        <item quantity="one">%1$s arquivo em um local inacessível agora não está incluído.</item>
+        <item quantity="many">%1$s arquivos em locais inacessíveis agora não estão incluídos.</item>
+        <item quantity="other">%1$s arquivos em locais inacessíveis agora não estão incluídos.</item>
+    </plurals>
+    <string name="trash_shorten_title">Esvaziar parte da lixeira agora?</string>
+    <plurals name="trash_shorten_body">
+        <item quantity="one">Com esta opção, %1$s arquivo (%2$s) com mais de %3$d dias é apagado de vez agora. Não dá para desfazer.</item>
+        <item quantity="many">Com esta opção, %1$s arquivos (%2$s) com mais de %3$d dias são apagados de vez agora. Não dá para desfazer.</item>
+        <item quantity="other">Com esta opção, %1$s arquivos (%2$s) com mais de %3$d dias são apagados de vez agora. Não dá para desfazer.</item>
+    </plurals>
+    <string name="trash_shorten_others">Isso inclui o que outros dispositivos colocaram na lixeira.</string>
+    <string name="trash_shorten_apply">Apagar e aplicar</string>
+    <string name="trash_checking">Verificando a lixeira…</string>
+    <string name="trash_permanent_reason">Elas não podem ir para a lixeira: %1$s.</string>
 </resources>

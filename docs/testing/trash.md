@@ -17,6 +17,10 @@ Hoard 2.3.0 (unreleased), branch `trash-a2-screens` on `main` 9144acc (A1, PR #5
 | `trash_confirm_phone_light.png`, `trash_confirm_phone_dark.png` | The confirmation's body: files, size, where; auto-empty note; the old-server warning; a refusal (case 5) |
 | `trash_progress_phone_light.png` | The progress of a run |
 | `trash_settings_phone_light.png`, `trash_settings_phone_dark.png` | Settings › Trash: Open the trash, auto-empty 7 / 30 / 90 days / never, Media management (comes with A3) |
+| `trash_permanent_files_phone_light.png` | The permanent-delete offer of a Files delete on the phone (before A3): exactly the 2 selected JPEGs, their size and place, never the DNG of the same shot |
+| `trash_permanent_shots_phone_dark.png` | The offer in culling (a read-only trash root): shots, files, size and place, and why |
+| `trash_shorten_phone_light.png` | Settings › Trash, a shorter period: files and size it would delete now, other devices' included |
+| `trash_empty_confirm_phone_light.png` | Empty trash with a drive not reachable: only the reachable files counted, the rest named |
 
 The dialogs are captured as their body on a card (an `AlertDialog` opens its own window, which a root capture does not
 include). `verifyRoborazziDebug` passes for every golden of `:native`; the Files and Gallery goldens are unchanged (the

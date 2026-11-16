@@ -210,12 +210,19 @@ fun MoveToTrashDialog(
             TrashProgressBody(progress)
         }
         is Step.Offer -> {
-            val count = s.units.size
             var busy by remember { mutableStateOf(false) }
+            val count = s.units.size
             HoardDialog(
-                title = pluralStringResource(R.plurals.trash_permanent_title, count, formatNumber(count, locale())),
+                title = if (shots) pluralStringResource(R.plurals.trash_permanent_title_shots, count, formatNumber(count, locale()))
+                else pluralStringResource(R.plurals.trash_permanent_title, count, formatNumber(count, locale())),
                 onDismiss = { if (!busy) finish(s.trashed, emptyList()) },
+                // Keep is the default (the confirm slot); deleting for good is the other choice, never the default.
                 confirm = {
+                    TextButton({ finish(s.trashed, emptyList()) }, enabled = !busy, modifier = Modifier.testTag("trash-keep")) {
+                        Text(stringResource(R.string.trash_keep), color = HfpsTheme.colors.primary, style = HfpsTheme.typography.ui.copy(fontWeight = FontWeight.SemiBold))
+                    }
+                },
+                dismiss = {
                     TextButton(
                         {
                             busy = true
@@ -226,17 +233,13 @@ fun MoveToTrashDialog(
                             }
                         },
                         enabled = !busy,
+                        modifier = Modifier.testTag("trash-delete-permanently"),
                     ) {
-                        Text(stringResource(R.string.trash_delete_permanently), color = HfpsTheme.colors.destructive, style = HfpsTheme.typography.ui.copy(fontWeight = FontWeight.SemiBold))
+                        Text(stringResource(R.string.trash_delete_permanently), color = HfpsTheme.colors.destructive)
                     }
                 },
-                dismiss = { TextButton({ finish(s.trashed, emptyList()) }, enabled = !busy) { Text(stringResource(R.string.trash_keep), color = HfpsTheme.colors.foreground) } },
             ) {
-                Text(
-                    pluralStringResource(R.plurals.trash_permanent_body, count, formatNumber(count, locale()), stringResource(reasonText(s.reason))),
-                    style = HfpsTheme.typography.body,
-                    color = HfpsTheme.colors.mutedForeground,
-                )
+                PermanentDeleteBody(s.units, placeOf(request.location), request.location.kind == dev.hfps.hoard.app.files.LocationKind.Device, s.reason, shots)
             }
         }
     }
@@ -287,6 +290,39 @@ fun TrashProgressBody(progress: TrashProgress?) {
         } else {
             LinearProgressIndicator(Modifier.fillMaxWidth(), color = HfpsTheme.colors.primary, trackColor = HfpsTheme.colors.muted)
         }
+    }
+}
+
+/** The place of a location for the dialogs: `machine › share`, the drive's or the phone's name. */
+fun placeOf(location: BrowseLocation): String =
+    listOfNotNull(location.name, location.share?.takeIf { location.isSmb }).joinToString(" › ")
+
+/**
+ * The permanent delete's body (review of PR #59): exactly the files that go (the selection, sidecars only with a shot's
+ * last member; culling: the whole reject shots, with the shot count as before), their size and place, why the trash
+ * cannot take them, and that it is permanent.
+ */
+@Composable
+fun PermanentDeleteBody(units: List<TrashUnit>, place: String, phone: Boolean, reason: TrashRefusal, shots: Boolean) {
+    val files = units.sumOf { it.all.size }
+    val bytes = units.sumOf { it.bytes }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (shots) {
+            val where = if (phone) stringResource(R.string.t_cull_delete_where_phone) else stringResource(R.string.t_cull_delete_where_smb, place)
+            Text(
+                pluralStringResource(R.plurals.t_cull_delete_body, files, formatNumber(units.size, locale()), formatNumber(files, locale()), bytes(bytes), where),
+                style = HfpsTheme.typography.body,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+            Text(stringResource(R.string.trash_permanent_reason, stringResource(reasonText(reason))), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        } else {
+            Text(
+                pluralStringResource(R.plurals.trash_permanent_files, files, formatNumber(files, locale()), bytes(bytes), place, stringResource(reasonText(reason))),
+                style = HfpsTheme.typography.body,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+        }
+        Text(stringResource(R.string.t_cull_delete_permanent), style = HfpsTheme.typography.uiMedium, color = HfpsTheme.colors.destructive)
     }
 }
 

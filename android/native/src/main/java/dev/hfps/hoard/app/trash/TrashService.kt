@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -252,6 +253,13 @@ class TrashService(private val container: AppContainer) {
         return prepare(location, folder, listing, selected, wholeShots)
     }
 
+    private val _changes = MutableStateFlow(0)
+
+    /** Bumped after every run, restore, Empty and auto-empty: open folders and culling grids refresh from it. */
+    val changes: StateFlow<Int> = _changes.asStateFlow()
+
+    private fun changed() = _changes.update { it + 1 }
+
     private val _active = MutableStateFlow(false)
 
     /** A run is going (the foreground notification follows it). */
@@ -295,6 +303,7 @@ class TrashService(private val container: AppContainer) {
             if (ok) gone += unit
         }
         if (location.isSmb) units.map { it.folder }.distinct().forEach { container.serverLinks.invalidate(location, it) }
+        changed()
         return gone
     }
 
@@ -326,6 +335,7 @@ class TrashService(private val container: AppContainer) {
             report
         } finally {
             _progress.value = null
+            changed()
         }
     }
 
@@ -387,6 +397,7 @@ class TrashService(private val container: AppContainer) {
             back.groupBy { TrashPlace(it.locationId, it.share) }.forEach { (place, r) -> invalidate(place, r) }
             requestWalk(back.mapNotNull { it.serverFolderId })
         }
+        changed()
         out
     }
 
@@ -422,6 +433,7 @@ class TrashService(private val container: AppContainer) {
             purged += backend(kind)?.empty(inKind) { cancelRequested.get() } ?: continue
         }
         afterPurge(purged)
+        changed()
         return purged
     }
 
@@ -467,6 +479,20 @@ class TrashService(private val container: AppContainer) {
         return running.withLock { autoEmptyLocked() }
     }
 
+    /** What auto-empty would delete now with [days] (Settings asks before a shorter period applies). Deletes nothing. */
+    data class AutoEmptyPreview(val files: Int, val bytes: Long, val places: Int, val othersIncluded: Boolean) {
+        val empty: Boolean get() = files == 0
+    }
+
+    suspend fun previewAutoEmpty(days: Int): AutoEmptyPreview {
+        ensureRecovered()
+        return running.withLock {
+            val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
+            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true)
+            AutoEmptyPreview(expired.sumOf { it.files }, expired.sumOf { it.bytes }, expired.map { it.root.place }.distinct().size, expired.any { it.othersIncluded })
+        }
+    }
+
     private suspend fun autoEmptyLocked(): Int {
         val days = container.appSettings.trashAutoEmptyDaysNow()
         if (days <= 0) return 0
@@ -475,6 +501,7 @@ class TrashService(private val container: AppContainer) {
         val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime)
         afterPurge(expired.flatMap { it.purged })
         requestWalk(expired.mapNotNull { it.root.serverFolderId })
+        if (expired.isNotEmpty()) changed()
         return expired.sumOf { it.dayFolders.size }
     }
 

@@ -85,4 +85,37 @@ class TrashScreenshotTest {
     @Test fun trashSettingsPhoneDark() = shoot("trash_settings_phone_dark", dark = true) {
         Box(Modifier.fillMaxSize().background(HfpsTheme.colors.background)) { Column { TrashSettingsContent(0, onDays = {}, onOpenTrash = {}) } }
     }
+
+    // --- Review of PR #59: the changed dialogs ---
+
+    private fun phoneUnits() = TrashPlanner.units(
+        "DCIM/Camera",
+        listOf(TrashFile("DCIM/Camera/IMG_1.JPG", 3_400_000, 1), TrashFile("DCIM/Camera/IMG_1.DNG", 24_000_000, 1), TrashFile("DCIM/Camera/IMG_2.JPG", 3_100_000, 1)),
+        listOf("DCIM/Camera/IMG_1.JPG", "DCIM/Camera/IMG_2.JPG"),
+        wholeShots = false,
+    )
+
+    @Test fun trashPermanentFilesPhoneLight() = shoot("trash_permanent_files_phone_light") {
+        Card { dev.hfps.hoard.app.ui.trash.PermanentDeleteBody(phoneUnits(), "Phone", phone = true, reason = TrashRefusal.PHONE_TRASH_UNAVAILABLE, shots = false) }
+    }
+
+    @Test fun trashPermanentShotsPhoneDark() = shoot("trash_permanent_shots_phone_dark", dark = true) {
+        Card { dev.hfps.hoard.app.ui.trash.PermanentDeleteBody(plan.units.map { it.unit }, "NAS › rootro", phone = false, reason = TrashRefusal.ROOT_NOT_WRITABLE, shots = true) }
+    }
+
+    @Test fun trashShortenPhoneLight() = shoot("trash_shorten_phone_light") {
+        Card { dev.hfps.hoard.app.ui.trash.ShortenBody(7, dev.hfps.hoard.app.trash.TrashService.AutoEmptyPreview(126, 1_240_000_000, 2, othersIncluded = true)) }
+    }
+
+    @Test fun trashEmptyConfirmPhoneLight() = shoot("trash_empty_confirm_phone_light") {
+        val unreachable = ui(setOf(TrashSamples.usb))
+        Card {
+            androidx.compose.material3.Text(
+                androidx.compose.ui.res.pluralStringResource(dev.hfps.hoard.app.R.plurals.trash_delete_confirm_body, unreachable.reachableFiles, unreachable.reachableFiles.toString(), dev.hfps.hoard.app.ui.common.bytes(unreachable.reachableBytes)),
+                style = HfpsTheme.typography.body,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+            dev.hfps.hoard.app.ui.trash.EmptyUnreachableNote(unreachable)
+        }
+    }
 }
