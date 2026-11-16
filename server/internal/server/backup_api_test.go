@@ -806,11 +806,7 @@ func TestBackupMirrorItems(t *testing.T) {
 
 	list := func(q string) []map[string]any {
 		t.Helper()
-		var out []map[string]any
-		for _, it := range page(t, hs, reveal.key, "/v1/items?limit=50&folder="+root+q).Items {
-			out = append(out, it)
-		}
-		return out
+		return page(t, hs, reveal.key, "/v1/items?limit=50&folder="+root+q).Items
 	}
 	all := list("")
 	if len(all) != 3 {

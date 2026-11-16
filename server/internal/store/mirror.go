@@ -1419,11 +1419,10 @@ func moveMirror(ctx context.Context, tx *sql.Tx, from, to string, now int64) (*M
 	// Paths both phones hold: the newer modified_at wins, the other becomes a previous version (or, the same content,
 	// simply leaves the path).
 	type clash struct {
-		a, b         int64
-		am, bm       int64
-		afp, bfp     string
-		aSHA, bSHA   string
-		aKeep, bKeep bool
+		a, b       int64
+		am, bm     int64
+		afp, bfp   string
+		aSHA, bSHA string
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT a.id, a.modified_at, a.fingerprint, coalesce(a.sha256, ''), b.id, b.modified_at, b.fingerprint, coalesce(b.sha256, '')
 		FROM mirror_entries a JOIN mirror_entries b ON b.physical_id = ? AND b.volume = a.volume AND b.path = a.path

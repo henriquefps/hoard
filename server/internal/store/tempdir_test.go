@@ -16,6 +16,9 @@ import (
 // pins the setting that removes the need and runs the migration with a broken TMPDIR; the real thing, a read-only
 // container, is checked with the image: HOARD_SCHEMA8_OUT=/path/db.sqlite go test ./internal/store -run NeedNoTempDir
 // writes the schema 8 database, and `docker run --read-only -v <dir>:/data <image>` must start on it.
+//
+// 0.12.0: the database goes back to schema 8 from 10, so 0010_mirror.sql (new tables and indexes, the original_claims
+// backfill from a join of originals and blobs, two nas_files columns) runs under the same conditions.
 func TestMigrationsNeedNoTempDir(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db.sqlite")
@@ -30,8 +33,26 @@ INSERT INTO items (id, main_fp, rev, deleted, kind, sort_time, data, created_at,
 SELECT 'id-' || i, 'fp-' || i || '-' || hex(randomblob(8)), i, 0, 'photo', abs(random()) % 1000000000, hex(randomblob(48)), 0, 0 FROM n`); err != nil {
 		t.Fatal(err)
 	}
-	// Put the database back to schema 8 (the indexes of 0003, none of 0009's columns).
+	// Uploaded originals for 0010's claims backfill (the join of originals and blobs), in random hash order.
+	if _, err := s.db.ExecContext(ctx, `
+WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 20000)
+INSERT INTO blobs (sha256, size, kind, created_at, device_id)
+SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NULL ELSE 'dev-' || (i % 7) END FROM n`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO originals (fingerprint, sha256) SELECT 'v1:' || lower(hex(randomblob(32))), sha256 FROM blobs`); err != nil {
+		t.Fatal(err)
+	}
+	// Put the database back to schema 8 (the indexes of 0003, none of 0009's or 0010's tables and columns).
 	for _, q := range []string{
+		"DROP TABLE mirror_entries",
+		"DROP TABLE mirror_roots",
+		"DROP TABLE mirror_devices",
+		"DROP TABLE original_claims",
+		"DROP TABLE upload_unclaimed",
+		"DROP TABLE blob_verifications",
+		"ALTER TABLE nas_files DROP COLUMN sha256",
+		"ALTER TABLE nas_files DROP COLUMN sha_mtime",
 		"DROP INDEX nas_files_origin",
 		"ALTER TABLE nas_files DROP COLUMN origin_path",
 		"ALTER TABLE nas_files DROP COLUMN trash_path",
@@ -64,8 +85,13 @@ SELECT 'id-' || i, 'fp-' || i || '-' || hex(randomblob(8)), i, 0, 'photo', abs(r
 		t.Fatalf("migrating with no temp directory: %v", err)
 	}
 	defer s.Close()
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 9 {
+	if v, err := s.SchemaVersion(ctx); err != nil || v != 10 {
 		t.Fatalf("schema %d %v", v, err)
+	}
+	var claims, unowned int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(device_id = ''), 0) FROM original_claims").Scan(&claims, &unowned); err != nil ||
+		claims != 20000 || unowned == 0 {
+		t.Fatalf("claims backfilled %d (%d without a device) %v", claims, unowned, err)
 	}
 	var mode int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA temp_store").Scan(&mode); err != nil || mode != 2 {

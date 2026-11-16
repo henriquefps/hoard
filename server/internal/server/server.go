@@ -346,7 +346,7 @@ func (s *Server) setBackupRoot(ctx context.Context, p string) error {
 		old.Close()
 	}
 	if oldTree != nil {
-		oldTree.Close()
+		_ = oldTree.Close()
 	}
 	if err := s.store.SetSetting(ctx, settingBackupRoot, real); err != nil {
 		return err

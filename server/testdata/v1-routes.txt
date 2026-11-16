@@ -17,3 +17,10 @@ DELETE /v1/uploads/{id}
 GET /v1/nas/files
 # Added since, frozen the same way (ADR 0023, hoard-server 0.11.0):
 POST /v1/nas/walk
+# Added since, frozen the same way (ADR 0024, hoard-server 0.12.0):
+GET /v1/backup/roots
+POST /v1/backup/roots
+PATCH /v1/backup/roots/{rootId}
+DELETE /v1/backup/roots/{rootId}
+POST /v1/backup/report
+POST /v1/backup/verify

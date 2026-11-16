@@ -30,6 +30,8 @@ tags:
   - name: culling
   - name: edits
   - name: devices
+  - name: backup
+    description: Phone backup (ADR 0024, hoard-server 0.12.0).
   - name: web
     description: The web gallery's API (ADR 0018), outside /v1.
 paths:
@@ -267,7 +269,10 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: "`conflict`, `details.reason` = `referenced`: a live photo record still names it"
+          description: >-
+            `conflict`, `details.reason` = `referenced`: a live photo record still names it; or (0.12.0, ADR 0024)
+            `mirror`: a phone backup entry (current, deleted or freed) names the file. Nothing is deleted; the calling
+            device's claim on it is released, so the bytes go when the backup no longer needs them.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -330,9 +335,24 @@ paths:
                 fingerprint:
                   description: Required for an original, absent for a preview.
                   $ref: "#/components/schemas/Fingerprint"
+                wait:
+                  type: boolean
+                  default: false
+                  description: >-
+                    hoard-server 0.12.0 (ADR 0024). When another device has an unfinished upload of the same sha256 that
+                    received a chunk (or was made) in the last 10 minutes, answer `200 {"status": "in_progress",
+                    "retryAfter": 300}` with `Retry-After` instead of starting a second, parallel upload. A stalled
+                    upload blocks nobody. Without it nothing changes.
+                claim:
+                  type: boolean
+                  default: true
+                  description: >-
+                    hoard-server 0.12.0 (ADR 0024 "Ownership"). `false`: the upload is for the phone backup only and adds
+                    no device claim on the original (Hoard's backup sends it); absent or `true`: the device claims it
+                    (Reveal), as every upload did before.
       responses:
         "200":
-          description: "`exists` (nothing to send) or `resume` (an unfinished upload of this device)"
+          description: "`exists` (nothing to send), `resume` (an unfinished upload of this device) or, with `wait`, `in_progress` (0.12.0)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/UploadState" }
@@ -660,11 +680,15 @@ paths:
           schema: { type: integer }
         - name: folder
           in: query
-          description: A NAS folder id (`folderId` of a location).
+          description: >-
+            A NAS folder id (`folderId` of a location) or (0.12.0, ADR 0024) a phone backup root id (`rootId` of a
+            mirror location): then the items with a mirror location under the root, including locations with
+            `onDevice: false`; this is also the lookup by mirror location (match `volume` and `path`, confirm with the
+            file's `size` and the location's `modifiedAt`).
           schema: { $ref: "#/components/schemas/Uuid" }
         - name: path
           in: query
-          description: With `folder`, a directory relative to it ('/'-separated, no leading or trailing '/'); its sub-directories are included.
+          description: With `folder`, a directory relative to it (to the root for a backup root; '/'-separated, no leading or trailing '/'); its sub-directories are included.
           schema: { type: string }
         - name: order
           in: query
@@ -1549,6 +1573,254 @@ paths:
         "200": { description: application/zip }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /v1/backup/roots:
+    get:
+      tags: [backup]
+      summary: "Every phone backup root of every physical device, stopped ones included (hoard-server 0.12.0, ADR 0024)"
+      responses:
+        "200":
+          description: The roots
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roots]
+                properties:
+                  roots: { type: array, items: { $ref: "#/components/schemas/BackupRoot" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [backup]
+      summary: "Start mirroring a folder of the caller's phone (0.12.0, ADR 0024)"
+      description: >-
+        `201` with the root; `200` when it exists (a stopped or paused root is resumed; `types`, when sent, replace
+        its types). A path inside a root of this phone that is not stopped: `409 conflict`, reason `covered`; a path
+        containing roots absorbs them (`details.absorbed`). The phone's folder under the backup root is made with its
+        first root. Paths: relative, '/'-separated, NFC, at most 1024 bytes, segments at most 255 bytes; refused when
+        absolute, with "." or ".." segments, a segment starting with ".", a backslash, NUL or control character
+        ("a//b" is "a/b").
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [volume, path]
+              properties:
+                volume: { type: string, description: "`primary` or `^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$|^[0-9a-f-]{36}$` (stored upper-case)" }
+                path: { type: string, description: "Relative to the volume; \"\" = the whole volume" }
+                types: { $ref: "#/components/schemas/BackupTypes", description: "Default [image, video]" }
+      responses:
+        "200":
+          description: The existing root (resumed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupRoot" }
+        "201":
+          description: A new root
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupRoot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: "`conflict`, `details.reason` = `covered` (with `details.rootId`): the folder is inside another root of this phone"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503":
+          description: "`storage_not_configured`: no backup folder chosen on the server"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/backup/roots/{rootId}:
+    parameters:
+      - name: rootId
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/Uuid" }
+    patch:
+      tags: [backup]
+      summary: "Pause or resume a root of this phone, or change its types (0.12.0)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paused: { type: boolean }
+                types: { $ref: "#/components/schemas/BackupTypes" }
+      responses:
+        "200":
+          description: The root
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BackupRoot" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: "`not_found`: unknown, or a root of another physical device (never 403)" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+    delete:
+      tags: [backup]
+      summary: "Stop a root (0.12.0): no new entries; the mirror, its files and its items stay"
+      description: Deleting backed-up content is the admin page's alone; no device key can.
+      responses:
+        "200":
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: stopped }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: "`not_found`: unknown, or a root of another physical device" }
+  /v1/backup/report:
+    post:
+      tags: [backup]
+      summary: "What the phone has in one root, in batches (0.12.0, ADR 0024)"
+      description: >-
+        Idempotent; the order of batches does not matter. Paths are relative to the volume and inside the root.
+        Entries are applied first, then removals: a new path whose content was deleted at another path of the phone is
+        a move; a removal whose content is at another current path is `moved`. A file deleted from the phone is kept
+        (forever); a file rewritten in place keeps its earlier content as a previous version. Report a removal only when
+        the listing of the root was complete; the server never infers a deletion from silence. A malformed entry or
+        removal is `422 invalid_request` with `details.index` and `details.field` (`entries` | `removed`), and nothing
+        is applied.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rootId]
+              properties:
+                rootId: { $ref: "#/components/schemas/Uuid" }
+                entries:
+                  type: array
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [path, fingerprint, size, modifiedAt]
+                    properties:
+                      path: { type: string, description: "A photo, video or sidecar (ADR 0014 extensions)" }
+                      fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+                      size: { type: integer, minimum: 1 }
+                      modifiedAt: { type: integer, format: int64, description: "The phone's mtime, Unix ms" }
+                      sha256: { $ref: "#/components/schemas/Sha256", description: "Optional; send it when known" }
+                removed:
+                  type: array
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [path, reason]
+                    properties:
+                      path: { type: string }
+                      reason: { type: string, enum: [deleted, moved, freed], description: "`freed` only after a free-up deletion the owner confirmed" }
+      responses:
+        "200":
+          description: Per entry and per removal
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results, removed]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [index, path, state, verified]
+                      properties:
+                        index: { type: integer }
+                        path: { type: string }
+                        state:
+                          type: string
+                          enum: [stored, nas, missing, in_progress, differs]
+                          description: >-
+                            `stored`: the bytes are in the store (and linked); `nas`: an indexed NAS file has them;
+                            `missing`: upload it; `in_progress`: another device's upload of it is running (`retryAfter`);
+                            `differs`: the server has this fingerprint with another SHA-256: upload it, both are kept.
+                        itemId: { $ref: "#/components/schemas/Uuid", description: "The live item holding the file, once made" }
+                        verified: { type: string, enum: ["yes", pending, "no"] }
+                        retryAfter: { type: integer }
+                  removed:
+                    type: array
+                    items:
+                      type: object
+                      required: [index, path, state]
+                      properties:
+                        index: { type: integer }
+                        path: { type: string }
+                        state: { type: string, enum: [kept, moved, unknown] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: "`not_found`: unknown root, or a root of another physical device" }
+        "409":
+          description: "`conflict`, `details.reason` = `stopped`: the root is stopped"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503":
+          description: "`storage_not_configured`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/backup/verify:
+    post:
+      tags: [backup]
+      summary: "Is the server's copy of each file byte-identical to the phone's, proven now? (0.12.0, free up)"
+      description: >-
+        The server compares the phone's sha256 with its own re-hash of its copy (not the database's belief), kept for
+        30 days per content; re-hashes run in a bounded background queue, `pending` until done. An entry whose only copy
+        is on the NAS is first copied into the store (server-side, checked by SHA-256) while the server setting "Keep a
+        copy of NAS files a phone no longer has" is on (the default); with it off, the NAS file is hashed where it is,
+        only while its size and mtime still match the index. Every result carries `namedByRecord`: a live Reveal photo
+        record names the entry's fingerprint, or a live version record names it as `data.photoFingerprint`. A root of
+        another physical device is `404` with `details.index`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entries]
+              properties:
+                entries:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items:
+                    type: object
+                    required: [rootId, path, sha256, size]
+                    properties:
+                      rootId: { $ref: "#/components/schemas/Uuid" }
+                      path: { type: string }
+                      sha256: { $ref: "#/components/schemas/Sha256" }
+                      size: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Per entry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [index, verified, namedByRecord]
+                      properties:
+                        index: { type: integer }
+                        verified: { type: string, enum: ["yes", pending, "no"] }
+                        verifiedAt: { type: integer, format: int64 }
+                        retryAfter: { type: integer }
+                        reason: { type: string, enum: [differs, missing, changed_on_nas, unavailable, not_found] }
+                        namedByRecord: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { description: "`not_found`: a root that is unknown or another physical device's (`details.index`)" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 components:
   securitySchemes:
     deviceKey:
@@ -1743,11 +2015,52 @@ components:
         rev: { type: integer, description: The record's current rev after this change }
         winner: { type: string, enum: [incoming, server] }
         copyId: { $ref: "#/components/schemas/Uuid" }
+    BackupTypes:
+      type: array
+      description: "The kinds of files the phone backs up from a root (ADR 0024): image, video, raw, sidecar. A file of another kind is not covered."
+      items: { type: string, enum: [image, video, raw, sidecar] }
+    BackupRoot:
+      type: object
+      required: [id, physicalDeviceId, deviceName, mine, folder, volume, path, createdBy, app, createdAt, types, paused, stopped, active, lastReportAt, stats]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        physicalDeviceId: { $ref: "#/components/schemas/Uuid" }
+        deviceName: { type: string }
+        mine: { type: boolean, description: "The root belongs to the caller's physical device" }
+        folder: { type: string, description: "The phone's folder under the backup root" }
+        volume: { type: string, description: "`primary` or the volume UUID, upper-case" }
+        path: { type: string, description: "Relative to the volume, '/'-separated; \"\" = the whole volume" }
+        createdBy: { $ref: "#/components/schemas/Uuid" }
+        app: { type: [string, "null"] }
+        createdAt: { type: integer, format: int64 }
+        types: { $ref: "#/components/schemas/BackupTypes" }
+        paused: { type: boolean }
+        stopped: { type: boolean }
+        active: { type: boolean, description: "Not paused, not stopped, and a live device of that phone reported (or made the root) in the last 7 days" }
+        lastReportAt: { type: [integer, "null"], format: int64 }
+        stats:
+          type: object
+          description: "Every path the root holds (current, deleted from the phone, freed)"
+          properties:
+            files: { type: integer }
+            bytes: { type: integer, format: int64 }
+            stored: { type: integer }
+            nas: { type: integer }
+            waiting: { type: integer }
+            removedFromDevice: { type: integer }
+            freed: { type: integer }
+            verified: { type: integer }
+        details:
+          type: object
+          description: "POST only: `absorbed`, the roots inside the new one whose entries moved to it"
+          properties:
+            absorbed: { type: array, items: { $ref: "#/components/schemas/Uuid" } }
     UploadState:
       type: object
       required: [status]
       properties:
-        status: { type: string, enum: [exists, created, resume] }
+        status: { type: string, enum: [exists, created, resume, in_progress] }
+        retryAfter: { type: integer, description: "in_progress (0.12.0): seconds before asking again" }
         uploadId: { $ref: "#/components/schemas/Uuid" }
         offset: { type: integer }
         chunkSize: { type: integer }
@@ -1794,9 +2107,17 @@ components:
           description: >-
             Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
             `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0), `edits` =
-            ADR 0020 (0.9.0, with previews), `items-by-path` = ADR 0014 (0.10.0), `trash` = ADR 0023 (0.11.0).
-            Clients ignore names they do not know.
-          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash] }
+            ADR 0020 (0.9.0, with previews), `items-by-path` = ADR 0014 (0.10.0), `trash` = ADR 0023 (0.11.0), `backup`
+            = ADR 0024 (0.12.0). Clients ignore names they do not know.
+          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash, backup] }
+        backup:
+          type: object
+          description: The phone backup's limits (ADR 0024, 0.12.0; with the backup feature).
+          properties:
+            maxRoots: { type: integer, description: "Roots per phone that are not stopped (64)" }
+            maxReportEntries: { type: integer, description: "Entries, and removals, per report (1000)" }
+            maxVerify: { type: integer, description: "Entries per verify (500)" }
+            maxPath: { type: integer, description: "Bytes of a phone path (1024)" }
         edits:
           type: object
           description: Present with the edits feature (ADR 0020).
@@ -1881,15 +2202,26 @@ components:
     ItemLocation:
       type: object
       required: [source]
+      description: >-
+        Clients ignore sources they do not know. A `mirror` location (0.12.0, ADR 0024) always sits next to the `backup`
+        or `nas` location that holds the file's bytes.
       properties:
-        source: { type: string, enum: [nas, backup] }
+        source: { type: string, enum: [nas, backup, mirror] }
         folderId: { $ref: "#/components/schemas/Uuid" }
         folderName: { type: string }
-        path: { type: string, description: "nas: relative to the folder, /-separated (in a trash: the original path)" }
+        physicalDeviceId: { $ref: "#/components/schemas/Uuid", description: "mirror: the phone" }
+        deviceName: { type: string, description: "mirror: the phone's name" }
+        rootId: { $ref: "#/components/schemas/Uuid", description: "mirror: the backup root (GET /v1/items?folder=<rootId>)" }
+        volume: { type: string, description: "mirror: `primary` or the volume UUID (upper-case)" }
+        onDevice: { type: boolean, description: "mirror: false once the phone no longer has the file" }
+        gone:
+          type: string
+          description: "mirror, with onDevice false: `freed` (Hoard's free up deleted it after verification) or `deleted` (deleted, trashed, or rewritten in place). Unknown values mean `deleted`."
+        path: { type: string, description: "nas: relative to the folder, /-separated (in a trash: the original path); mirror: relative to the phone's volume" }
         trash:
           type: string
           description: "nas, with include=trash only (0.11.0, ADR 0023): the file is in a trash, at this path relative to the folder (`<P>/.hoard-trash/<day>/<R>`)"
-        modifiedAt: { type: integer, description: "nas: the file's mtime, Unix ms" }
+        modifiedAt: { type: integer, description: "nas: the file's mtime; mirror: the phone's; Unix ms" }
         sha256: { type: string, description: "backup: the uploaded blob" }
     ItemFile:
       type: object
@@ -2097,6 +2429,27 @@ components:
                     required: [lastSeenAt]
                     properties:
                       lastSeenAt: { type: [integer, "null"], format: int64, description: "Unix ms; null: never seen" }
+            backup:
+              type: object
+              description: >-
+                hoard-server 0.12.0 (ADR 0024), with the backup feature: the folders this phone backs up (`roots: []`
+                when none), for Reveal's delegation. A Reveal folder inside an `active` root, a file of a kind in its
+                `types`, is covered.
+              required: [roots]
+              properties:
+                roots:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, volume, path, app, active, since, types]
+                    properties:
+                      id: { $ref: "#/components/schemas/Uuid" }
+                      volume: { type: string }
+                      path: { type: string }
+                      app: { type: [string, "null"], description: "The app of the device that made the root" }
+                      active: { type: boolean, description: "Not paused or stopped, and a live device of this phone reported in the last 7 days" }
+                      since: { type: integer, format: int64, description: "When the root was made, Unix ms" }
+                      types: { $ref: "#/components/schemas/BackupTypes" }
         candidates:
           type: array
           items: { $ref: "#/components/schemas/Candidate" }
