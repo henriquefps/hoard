@@ -215,6 +215,12 @@ rejects stay live in every gallery. With A the trashed files are files the walk 
    folder, the guard fires and the items stay trashed (not purged) until the folder shows files again: hidden
    everywhere, only their edits kept longer. Accepted, as the guard's existing trade-off.
 7. An unreadable `.hoard-trash` (permissions) keeps its rows as they were (nothing purged from what was not read).
+8. **Sidecars in the trash are never imported**: `importSidecars` (`nas/culling.go`) and `store.ImportSidecars` skip
+   trash rows, so a trashed `.xmp` changes no culling. Its first-read state (`culling_sidecars`, ADR 0016 step 2b)
+   **carries over with the origin path**, like the fingerprint: the row stays keyed by the original path while the
+   sidecar is in the trash (not dropped as "file gone"), and on restore the sidecar is read against it. Its size and
+   mtime are unchanged by the renames, so nothing is read again and a restore is never a first read. The row is
+   dropped only at purge, with the trash row.
 
 The server never writes the NAS (its mount stays read-only, ADR 0013); every move is Hoard's over SMB.
 
