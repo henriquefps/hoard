@@ -53,7 +53,7 @@ backup; storage counted once.
 | Deletes, moves, renames on the phone | Kept: the mirror is a backup, not a sync. A deleted file stays (marked "deleted from the phone"); a move or rename moves the entry (no duplicate, no upload); a file rewritten in place keeps its previous content as a previous version. |
 | Items | A third item source, `mirror`, grouped by the ADR 0014 pairing rule; items gain `mirror` locations. The tablet's Gallery and the web gallery show the phone's folders from them. |
 | Identity | `v1:` fingerprint to match (already computed lazily by `DeviceIndexer`); full SHA-256 only for files that must be uploaded and for free-up verification; files ≤ 2 MiB get it in the fingerprint's own read. |
-| Reveal | **Server-side unification plus delegation**: the shared store makes a second upload of the same bytes impossible (`exists`), and Reveal stops uploading from folders Hoard mirrors (after a 24 h grace for edited photos). Reveal's existing blobs stay as they are and are linked into the mirror when Hoard's report names them. |
+| Reveal | **Server-side unification plus delegation**: the shared store makes a second upload of the same bytes impossible (`exists`), and Reveal stops uploading from folders Hoard mirrors (each covered candidate after a 24 h grace, then uploaded if still missing). Reveal's existing blobs stay as they are and are linked into the mirror when Hoard's report names them. |
 | Ownership | Computed, not counted: bytes are kept while a mirror entry, a device claim (an app's own upload), a live photo record or a preview names them. `DELETE /v1/originals` is refused (`409`, reason `mirror`) while a mirror entry names the file. |
 | Free up space | Permanent deletion through `MediaStore.createDeleteRequest` (one system consent per batch), Android 11+; only shots whose every file the server has re-hashed and matched; not the system trash, not `IS_TRASHED`, not Hoard's trash. |
 | Security | A device writes only its own physical device's mirror (other roots answer `404`); no device key can delete backed-up content (only the admin page can); revoking a key stops its uploads and leaves its mirror. |
@@ -193,16 +193,26 @@ Additive only: no existing table changes meaning; `originals`, `blobs`, `uploads
   ```json
   {"source": "mirror", "physicalDeviceId": "a0e4…", "deviceName": "Pixel 8", "rootId": "…",
    "volume": "primary", "path": "DCIM/Camera/PXL_20261101_101500.jpg", "modifiedAt": 1730455000000,
-   "onDevice": true}
+   "onDevice": false, "gone": "freed"}
   ```
 
   next to the `backup` (`sha256`) or `nas` location that holds the bytes. `onDevice: false` means the phone no longer
-  has it (deleted or freed). Clients ignore unknown sources (Hoard's models default every field; Reveal's
+  has it, and `gone` says why: `"freed"` (Hoard's free up deleted it after verification) or `"deleted"` (it left the
+  phone otherwise: deleted, trashed, or rewritten in place, whose previous content keeps the path's location as
+  `"deleted"`). `gone` is absent while the file is on the phone; clients treat an unknown value as `"deleted"`. A path
+  the phone moved away from has no location (the content's location is its new path). Clients ignore unknown sources (Hoard's models default every field; Reveal's
   `ItemLocationRecord` keeps `source` as a string and only looks for `nas`).
 - Report writes are applied with the items they touch in transactions of 500 sources, as the walk does; a phone's first
   report of 20k files makes about as many item revisions as a first NAS walk.
 - `GET /v1/items?folder=<rootId>&path=<dir>` accepts a root id where it took a NAS folder id (a root id was a `400`
-  before), `path` relative to the root. The web gallery's Folders show a **Devices** section (device › volume › root
+  before), `path` relative to the root, sub-directories included. It returns every live item with a mirror location
+  under that directory, **including locations with `onDevice: false`** (deleted and freed files stay members, above),
+  so it is also **the lookup by mirror location**: an app that knows a phone file only by its path (Reveal, before it
+  fingerprinted the file) finds its item by the location whose `volume` and `path` equal the file's, **confirmed by
+  `size` (the file's) and `modifiedAt` (the location's)**; no match, or a size or time that differs, is no match. A
+  whole folder is one paged query (as `GET /v1/items?folder=&path=` for NAS folders, ADR 0022); no new route.
+  `POST /v1/items/lookup` with path keys was the alternative: it would add a second lookup shape for what a folder
+  query already answers in pages, and adoption works per folder anyway. The web gallery's Folders show a **Devices** section (device › volume › root
   path), its filters gain "Where: phone backups" and a "Deleted from the phone" badge (ADR 0018 amendment in the S2 PR).
 
 ## Identity: fingerprint vs SHA-256
@@ -250,15 +260,19 @@ Every root of every physical device (the tablet browses the phone's), stopped on
 {"roots": [{"id": "…", "physicalDeviceId": "a0e4…", "deviceName": "Pixel 8", "mine": true,
             "folder": "Pixel 8 (a0e4c1d2)", "volume": "primary", "path": "DCIM/Camera",
             "createdBy": "5c1d…", "app": "hoard", "createdAt": 1731600000000,
+            "types": ["image", "video", "raw", "sidecar"],
             "paused": false, "stopped": false, "active": true, "lastReportAt": 1731686400000,
             "stats": {"files": 12034, "bytes": 52428800000, "stored": 11050, "nas": 950, "waiting": 34,
                       "removedFromDevice": 812, "freed": 0, "verified": 0}}]}
 ```
 
 `active` = not paused, not stopped, and a report from a live device of that physical device in the last 7 days.
-`mine` = the root belongs to the caller's physical device.
+`mine` = the root belongs to the caller's physical device. Each root also has **`types`**: the kinds of files the
+phone backs up from it, a subset of `image` (stills MediaStore lists: JPEG, HEIF, PNG, the RAWs Android recognises),
+`video`, `raw` (every RAW extension of ADR 0014, CR3 included, found by listing the folder) and `sidecar` (`.xmp`).
+A file whose kind is not in `types` is **not covered** by the root.
 
-### `POST /v1/backup/roots` `{"volume", "path"}`
+### `POST /v1/backup/roots` `{"volume", "path", "types"?}`
 
 Starts mirroring a folder of the caller's phone. `201` with the root; `200` with it when it exists (a stopped or
 paused root is resumed). A path inside an existing root of this phone: `409 conflict`, `details: {"reason": "covered",
@@ -266,9 +280,9 @@ paused root is resumed). A path inside an existing root of this phone: `409 conf
 `details.absorbed`). More than `maxRoots`: `422 invalid_request`. No backup root configured: `503
 storage_not_configured`. The first root of a physical device creates its `mirror_devices` row and folder.
 
-### `PATCH /v1/backup/roots/{rootId}` `{"paused": bool}` and `DELETE /v1/backup/roots/{rootId}`
+### `PATCH /v1/backup/roots/{rootId}` `{"paused"?: bool, "types"?: [...]}` and `DELETE /v1/backup/roots/{rootId}`
 
-Pause and resume (`200` with the root). `DELETE` **stops** the root (`200 {"status": "stopped"}`): no new entries; the
+Pause and resume, and change `types` (`{"types": [...]}`; `200` with the root). `DELETE` **stops** the root (`200 {"status": "stopped"}`): no new entries; the
 mirror, its files and its items stay. Deleting backed-up content is the admin page's alone ("Security").
 
 ### `POST /v1/backup/report`
@@ -334,6 +348,10 @@ For free up: is the server's copy of each file byte-identical to the phone's, pr
   background queue (one file at a time, low priority, as the previews); `pending` until done.
 - `reason`: `differs`, `missing` (the server has no copy: blob gone, entry `none`), `changed_on_nas`, `unavailable`
   (share offline), `not_found` (no such entry).
+- Every result also carries **`namedByRecord`** (boolean, computed at the time of the call): a live Reveal `photo`
+  record names the entry's fingerprint (its `fingerprint` or any `files[].fingerprint`: ownership rule 3,
+  `originalNamed`), or a live `version` record names it as `data.photoFingerprint` (Reveal W5). Hoard's free up uses it
+  (below).
 - **NAS-only content and free up**: by default the server makes its own copy before answering `yes` for an entry whose
   only copy is on the NAS: it copies the NAS file into the store (server-side, local disk to disk, no phone upload),
   checks its SHA-256 and links it (`store` becomes `blob`), so a phone file is never freed onto a share the server
@@ -347,7 +365,8 @@ For Reveal's delegation (and Hoard's settings), the device view adds the caller'
 ```json
 "physicalDevice": {"id": "a0e4…", "name": "Pixel 8", "devices": […],
   "backup": {"roots": [{"id": "…", "volume": "primary", "path": "DCIM/Camera", "app": "hoard",
-                        "active": true, "since": 1731600000000}]}}
+                        "active": true, "since": 1731600000000,
+                        "types": ["image", "video", "raw", "sidecar"]}]}}
 ```
 
 Absent when the server has no `backup` feature; `roots: []` when the phone has none. `since` = the root's creation.
@@ -428,10 +447,16 @@ contents only its entries name), "shared" (blob contents also named by another p
 - **Covered**: a Reveal source folder is covered when its volume and path are inside an `active` root of its physical
   device (`volume` equal without case; `path` equal or a prefix at a `/`). Reveal maps its SAF tree document id
   (`primary:DCIM/Camera` → `primary`, `DCIM/Camera`).
-- **Covered folders**: Reveal does not upload their originals (its per-folder backup switch shows "Backed up by Hoard",
-  read-only). **Edited photos** of a covered folder: Reveal waits; if the original is still missing on the server 24
-  hours after the edit (Hoard paused, waiting for Wi-Fi), Reveal may upload it as today. The store makes that harmless:
-  Hoard's next report finds `stored`, and `wait` keeps two uploads from running at once.
+- **Covered files**: a file of a covered folder whose kind is in the root's `types`. Reveal maps covered folders only
+  for `ExternalStorageProvider` trees (`com.android.externalstorage.documents`); any other tree (a USB drive, a cloud
+  provider, hand-offs) is never covered.
+- **Covered does not mean never uploaded.** Reveal does not upload covered candidates at once (its per-folder backup
+  switch shows "Backed up by Hoard", read-only). **Every** Reveal candidate of a covered folder (a folder photo with the
+  backup on, an edited photo, and every file of the shot: the RAW of an edited pair, a sidecar) gets a **24-hour
+  grace** from when it became a candidate; after it, Reveal looks it up again (`POST /v1/fingerprints/lookup`) and
+  uploads what is still missing, with `wait: true`. Files whose kind is not in the root's `types` are not covered and
+  go at once, as today. The store makes a late upload harmless: Hoard's next report finds `stored`, and `wait` keeps
+  two uploads from running at once.
 - **Not covered** (other folders, hand-offs per "Photos opened from other apps", a phone where Hoard has no root):
   Reveal keeps its own rules unchanged ("Originals over Wi-Fi only", per-folder backup, edited originals).
 - **Reveal's blobs already on the server stay where they are.** They are already in the one store; when Hoard first
@@ -451,25 +476,32 @@ contents only its entries name), "shared" (blob contents also named by another p
 
 ### For Reveal's orchestrator: what Reveal changes (Reveal 0.10.0, needs hoard-server 0.12.0, feature `backup`)
 
-1. Read `physicalDevice.backup.roots` from `GET /v1/device` when `features` has `"backup"` (refreshed with the
-   periodic sync); map each source's tree document id to `volume` + `path`; mark covered sources.
-2. `backupCandidates`: skip photos of covered sources, except edited photos whose original is still missing 24 hours
-   after the edit (`photos.has_edit`, the version's `edited_at`).
+1. Read `physicalDevice.backup.roots` (with `types`) from `GET /v1/device` when `features` has `"backup"` (refreshed
+   with the periodic sync); map each `ExternalStorageProvider` source's tree document id to `volume` + `path`; mark
+   covered sources.
+2. `backupCandidates`: a candidate whose file is covered (its kind in the root's `types`) waits 24 hours from when it
+   became a candidate, then is looked up again and uploaded if still missing (`wait: true`); uncovered files go as
+   today.
 3. Settings › Sync: a covered folder shows "Backed up by Hoard" instead of its switch; "Originals over Wi-Fi only" is
    described as applying to what Reveal still uploads.
 4. `POST /v1/uploads` with `"wait": true`; on `status: "in_progress"` leave the upload queued and retry after
    `retryAfter` (no failure count). `claim` stays absent (Reveal's uploads keep claiming).
 5. `DELETE /v1/originals`: treat `409` reason `mirror` as done (drop the queued delete at once; the photo is backed up
-   by the phone's mirror, so `on_server` stays true).
-6. A **folder photo whose file vanished from the phone while the server holds it** (Hoard freed it) is adopted by the
-   Server source in place, like W3/C's `adoptHandoffs`: same uuid, versions, edits, history and culling; files take the
-   server's document ids. Never forgotten because its file left the folder. Then declare
+   by the phone's mirror, so `on_server` stays true), and tell the owner the file stays in the phone's backup.
+6. A **folder photo whose file vanished from the phone while the server holds it** is adopted by the Server source in
+   place, like W3/C's `adoptHandoffs`: same uuid, versions, edits, history and culling; files take the server's
+   document ids. It is found by fingerprint when Reveal has one, else by its mirror location (`GET /v1/items?folder=
+   <rootId>&path=<dir>`, matching `volume` + `path`, confirmed by size and `modifiedAt`). It adopts photos whose
+   location says `gone: "freed"` always, and `gone: "deleted"` only when the photo carries a Reveal edit (the owner
+   deleted it on purpose otherwise). Never forgotten because Hoard freed its file. Then declare
    `PATCH /v1/device {"features": ["freed-adopt"]}`. Until a live Reveal on the phone has declared it, Hoard leaves
-   out of free up every shot whose item has Reveal edits (ADR 0020 `edits`) and warns in the preview.
+   out of free up every shot whose fingerprint a live Reveal `photo` or `version` record names (`namedByRecord` in
+   `POST /v1/backup/verify`), and frees nothing while that Reveal has not been seen for 30 minutes ("Free up space").
 7. Tolerate `source: "mirror"` locations on items (already true: `ItemLocationRecord` keeps the string; the
    `nas`/`backup` choice in `SyncServerItems` is unaffected because a mirror location always sits next to one of them).
-8. Tests: a fake server with `backup` (covered/uncovered sources, the 24 h rule, `in_progress`, `409 mirror`), and the
-   adoption of a freed folder photo with edits.
+8. Tests: a fake server with `backup` (covered/uncovered sources and `types`, the 24 h grace for every candidate,
+   `in_progress`, `409 mirror`), and adoption: a freed photo with and without a fingerprint (by mirror location, size
+   and time), a deleted one with an edit (adopted) and without (not).
 
 Nothing in Reveal 0.9.0 breaks against hoard-server 0.12.0: every addition is optional, `TestRevealProtocolContract`
 keeps replaying Reveal's `SyncApi` unchanged, and `server/testdata/v1-routes.txt` only grows.
@@ -494,8 +526,15 @@ keeps replaying Reveal's `SyncApi` unchanged, and `server/testdata/v1-routes.txt
   (`ServerFs`, a `TransferFs` over `GET /v1/originals/{fingerprint}` by range), so its progress, retries and
   conflicts are the engine's.
 - `DeviceIndexer` indexes the backup roots too (a root implies its folder is in `device_folders`); hidden names and
-  `DeviceFolders.EXCLUDED` (Hoard's copies for Reveal) are never backed up. Photos and videos only: the MediaStore
-  image and video collections, as today. Files the system trash holds (`IS_TRASHED`) are absent for MediaStore's
+  `DeviceFolders.EXCLUDED` (Hoard's copies for Reveal) are never backed up. Photos and videos only, but **not only
+  what MediaStore lists**: MediaStore's image collection refuses some RAWs (CR3 among them) and never lists sidecars,
+  and files in `Download/` or under `Android/media` may be missing from it. So a root is read two ways: the MediaStore
+  image and video collections, as today, and, **with All files access**, a listing of the root's directories (in
+  `BackupWorker`, paced, never at start-up; through `PathFs`) that adds every file with an ADR 0014 extension
+  MediaStore did not list: RAWs (`raw`) and `.xmp` sidecars (`sidecar`), which then group with their shot by stem as
+  on the server. A root's `types` says what the phone actually covers: `image`, `video`, plus `raw` and `sidecar` only
+  while Hoard has All files access (Hoard updates them with `PATCH` when that access is granted or revoked). Without it,
+  Settings › Backup says "RAW files and sidecars are not backed up: allow All files access". Files the system trash holds (`IS_TRASHED`) are absent for MediaStore's
   default queries and count as removed.
 
 ### Settings › Backup
@@ -537,8 +576,17 @@ that device's own mirror on its next report, without an upload.
 
 - **Candidates**: phone shots in backed-up roots, oldest first (`taken`), every file of the shot (a pair, a motion
   photo's still) with `store` `blob` or `nas` and its phone file unchanged since hashed. Left out: shots taken in the
-  last 30 days (setting), favourites (`IS_FAVORITE`), shots with pending culling changes (pushed first), and, until
-  the phone's Reveal declares `freed-adopt`, shots whose item has Reveal edits.
+  last 30 days (setting), favourites (`IS_FAVORITE`), shots with pending culling changes (pushed first), and the
+  Reveal gate below.
+- **The Reveal gate** (data loss otherwise: Reveal 0.9.x and older delete a folder photo, with its versions, when its
+  file leaves the folder). While a **live Reveal on this phone** (ADR 0017 "Liveness": listed in
+  `physicalDevice.devices`, seen in the last 90 days) has not declared `freed-adopt`, free up leaves out **every shot
+  any of whose files has `namedByRecord: true`** in the verification just before the deletion, not only shots with
+  ADR 0020 edits (an edit's preview goes up only on Wi-Fi after a 60 s settle, so `edits` misses fresh ones; the photo
+  and version records go up within seconds on any network). And it frees nothing at all while that Reveal was last
+  seen more than 30 minutes ago (an edit made offline has not reached the server yet): the preview says "Open Reveal
+  once so its edits reach the server". With no Reveal on the phone, or one that declared `freed-adopt`, the gate is
+  off. The preview names the shots the gate kept ("Kept for Reveal: 42").
 - **Preview**: a screen listing what goes, by month, with counts and the bytes freed ("2,340 photos and 112 videos
   from before 15 Oct 2026 · 18.4 GB"), each shot's thumbnail, and per-shot exclusion. Nothing is deleted without it.
 - **Verification just before**: the phone re-stats every file (hashing again what changed), then
@@ -598,11 +646,11 @@ Each phase is one PR with its tests, shippable alone.
 
 | Phase | PR | Contents | Tests |
 | --- | --- | --- | --- |
-| S1 | hoard-server 0.12.0 | Schema 10; roots, report, verify, `wait`/`claim` on uploads, `409 mirror`, `physicalDevice.backup`; hard links with fallback and `0400`; manifests; `mirror` item source and `SyncBackup` joining mirror items; `GET /v1/items?folder=<rootId>`; admin page: per phone backup, purge, storage accounting, "Keep a copy of NAS files a phone no longer has"; ADR 0013 section, `openapi.yaml`, `v1-routes.txt`. | Go: path validation and traversal on every input; a root of another phone `404`; link, `EXDEV` fallback (an injected linker), no copy; move, rename, rewrite, delete, restore; waiting entries linked on another device's upload; `wait` with a live and a stalled upload; verify with a corrupted blob and a changed NAS file; ownership (Reveal delete vs mirror, purge vs claim/record); revoke and claim/merge; `TestRevealProtocolContract` and `TestOpensRevealSyncDataDir` unchanged; `TestUpgradesHoardServer040DataDir`; the end-to-end test extended with a phone report, an interrupted upload and a verify. |
+| S1 | hoard-server 0.12.0 | Schema 10; roots, report, verify, `wait`/`claim` on uploads, `409 mirror`, `physicalDevice.backup`; hard links with fallback and `0400`; manifests; `mirror` item source and `SyncBackup` joining mirror items; `GET /v1/items?folder=<rootId>`; admin page: per phone backup, purge, storage accounting, "Keep a copy of NAS files a phone no longer has"; ADR 0013 section, `openapi.yaml`, `v1-routes.txt`. | Go: path validation and traversal on every input; a root of another phone `404`; link, `EXDEV` fallback (an injected linker), no copy; move, rename, rewrite, delete, restore; waiting entries linked on another device's upload; `wait` with a live and a stalled upload; verify with a corrupted blob and a changed NAS file, `namedByRecord` from photo records and version `photoFingerprint`; `GET /v1/items?folder=<rootId>` returning `onDevice: false` locations with `gone` (`freed`, `deleted`); `types` on roots; ownership (Reveal delete vs mirror, purge vs claim/record); revoke and claim/merge; `TestRevealProtocolContract` and `TestOpensRevealSyncDataDir` unchanged; `TestUpgradesHoardServer040DataDir`; the end-to-end test extended with a phone report, an interrupted upload and a verify. |
 | S2 | hoard-server 0.12.x | Web gallery: Devices in Folders, "Where" filter, "Deleted from the phone" badge, strings in `en` and `pt-BR`. | `bun run lint/typecheck/test/e2e` with a synthetic phone mirror. |
 | A1 | Hoard 2.4.0 | `gallery.db` 4; `BackupPlan`, `BackupUploader`, `BackupWorker`; Settings › Backup with status per folder and file; Gallery badges. | JVM: `BackupPlan`, `FreeUpPlan` later, the uploader against a fake server (resume, `in_progress`, checksum, 401), migration 3 → 4, Roborazzi goldens of the screen. Emulator against a local hoard-server container (`docs/testing/backup.md`): synthetic photos in `DCIM/Camera`, a NAS duplicate referenced not uploaded, the process killed mid-upload and resumed, a rename on the phone moved on the server, unmetered/charging rules. |
 | A2 | Hoard 2.5.0 | Devices view, filter and badge; `ServerFs` and "Save to this device" through `TransferService`. | JVM: `ServerFs` in `TransferRunnerTest` style; emulator: two debug ids (`-Phoard.native.debugSuffix`) as phone and tablet. |
-| A3 | Hoard 2.6.0 | Free up space: candidates, preview, verify, `createDeleteRequest`, report `freed`. | JVM: `FreeUpPlan` (exclusions, whole shots, staleness); emulator: free synthetic files, refuse a partial consent, a corrupted server copy not freed. |
+| A3 | Hoard 2.6.0 | Free up space: candidates, preview, verify, `createDeleteRequest`, report `freed`. | JVM: `FreeUpPlan` (exclusions, whole shots, staleness; the Reveal gate: a shot named by a live Reveal photo or version record is kept while the phone's live Reveal has not declared `freed-adopt`, also with no ADR 0020 edits; a stale Reveal frees nothing; the gate is off with no Reveal or with `freed-adopt`); emulator: free synthetic files, refuse a partial consent, a corrupted server copy not freed. |
 | R1 | Reveal 0.10.0 | "For Reveal's orchestrator" above. | Reveal's own. |
 
 S1 ships alone (nothing calls it until A1; Reveal 0.9.0 keeps working). A1 needs S1. R1 needs S1 and is independent
@@ -628,7 +676,7 @@ of A1–A3 except item 6, which must ship before A3 frees Reveal-edited shots (A
 3. Free up's defaults: keep the last 30 days on the phone, and keep favourites?
 4. Which folders are on by default after pairing: none (proposed: the owner picks), or Camera and Screenshots?
 5. Device folders directly under the backup root (proposed, as decided), or under one `phones/` folder?
-6. Reveal's grace window for edited photos in covered folders: 24 hours?
+6. Reveal's grace window for covered candidates: 24 hours?
 7. A partner's phone on the same server sees every backup (today's model): acceptable, or should backups be readable
    only by the same physical device and the admin?
 8. Videos: same network rule as photos, or "videos only while charging"?
