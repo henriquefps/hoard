@@ -441,6 +441,48 @@ the decision above with these small, justified deviations:
     refused `UNREACHABLE` at once); auto-empty waits for start-up recovery, which it runs itself when the worker comes
     first.
 
+## Amendment (A2)
+
+Phase A2 (the screens) follows the decision with these deviations:
+
+1. **The entry points are buttons**: Files and the Gallery have no overflow menu, so the Trash is a button in their top
+   bars (Files: next to Transfers; Gallery: next to Settings), plus Settings › Trash › "Open the trash".
+2. **The Trash screen acts on groups**: Restore and Delete permanently work on a folder of a day, or on a whole day;
+   Empty trash on everything (after listing every reachable root). No per-shot selection and no thumbnails yet (the
+   rows are folders, the counts and sizes are per group). Restore and Empty still work on whole shots (A1 item 14).
+3. **Changing the auto-empty setting runs auto-empty at once** (a one-off `TrashCleanupWorker`), so a shorter limit
+   applies now, not at the next daily run.
+4. **The foreground notification** (`TrashRunService`, `dataSync`) shows for runs of more than 20 files; it follows
+   the run, which lives in the process scope, with Cancel (after the shot being moved).
+5. **The permanent-delete offer** is made for the refusals that permanent delete solves: a read-only trash root,
+   `NOT_SAME_DEVICE`, a provider that cannot move, already in a trash, and the phone until A3. Not for an unreachable
+   server or location (try again) or a folder holding a trash (never deleted that way).
+6. **Media management** is a placeholder in Settings › Trash until A3.
+7. **Errors of `SmbFs`** are mapped per call inside the trash (`MappedHoardFs`): found on the emulator, where smbj's
+   own "not found" made every Files delete refuse (docs/testing/trash.md).
+8. **The sidecar rule of a delete in Files** (the coordinator's decision, 2026-11-16): a delete in Files moves only the
+   selected files, never the shot's other files, and takes the shot's sidecars (`X.xmp`, `X.JPG.xmp`, `.X.xmp`) only
+   when it removes the **last** media member of that stem in that folder. Deleting `DSC00001.JPG` with no
+   `DSC00001.ARW` / HEIF / video left takes `DSC00001.xmp` and `DSC00001.JPG.xmp` too; with the RAW still there, every
+   sidecar stays with it. A sidecar the user selected explicitly goes as a plain file. Culling's "Move rejects to
+   trash" still moves the whole shot (a reject is the shot). `TrashPlanner.units(…, wholeShots = false)`.
+9. **Permanent delete acts on exactly what the user chose** (review of PR #59): the offer deletes the units of the
+   plan, so in Files the selected files plus sidecars under item 8 (never the shot's other files: on the phone before
+   A3 every Files delete is refused and goes straight to the offer), and in culling the reject shots. Its confirmation
+   shows the file count, size and place (culling: also the shot count, Hoard 1's wording) and why the trash refused;
+   **Keep** is the default button, "Delete permanently" the other.
+10. **A shorter auto-empty period asks first**: off → on, or fewer days, computes what auto-empty would delete now (a
+    dry run on every reachable root, counting files and bytes, and whether other devices' day folders are included)
+    and applies only after a confirmation; Cancel leaves the setting and the trash as they were. A longer period
+    applies at once (it deletes nothing more).
+11. **A session or share that went away is unreachable, never an empty trash**: `USER_SESSION_DELETED`,
+    `NETWORK_SESSION_EXPIRED`, `NETWORK_NAME_DELETED` and `BAD_NETWORK_NAME` (which Files reads as `NOT_FOUND`) are
+    `UNREACHABLE` in the trash (`MappedHoardFs`): a refresh marks the root not reachable and forgets no row.
+12. **Screens follow the trash after their dialog is gone**: `TrashService.changes` makes an open Files folder read
+    itself again after any run, restore or Empty; an open culling grid hides the shots whose every file is in the
+    trash. Empty trash counts only the places that answered the last refresh and says how many files it leaves on the
+    others.
+
 ## Alternatives considered
 
 - **Tombstones keep their edits (B)**: see "Server": blind to the trash, previews lost, the empty-mount guard keeps

@@ -98,6 +98,8 @@ fun FilesScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
     actions: FilesActions = FilesActions(),
+    /** The trash (ADR 0023); no button when null. */
+    onOpenTrash: (() -> Unit)? = null,
 ) {
     HfpsScaffold(
         modifier = modifier,
@@ -105,6 +107,7 @@ fun FilesScreen(
         topBar = {
             HfpsTopBar(title = stringResource(R.string.files_title)) {
                 TransfersButton(state.transfers, actions.transfers)
+                if (onOpenTrash != null) HfpsIconButton(PhosphorRegular.Trash, stringResource(R.string.trash_title), onOpenTrash)
                 HfpsIconButton(PhosphorRegular.Gear, stringResource(R.string.action_settings), onOpenSettings)
             }
         },

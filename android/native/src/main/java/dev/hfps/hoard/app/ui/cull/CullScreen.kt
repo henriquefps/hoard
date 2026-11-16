@@ -199,6 +199,20 @@ fun CullFolderScreen(
     onTransfers: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
+    // Shots of this folder moved to the trash leave the grid, also when the run ended after its dialog was left.
+    LaunchedEffect(vm, location) {
+        val share = if (location.isSmb) location.share.orEmpty() else ""
+        container.trash.hidden.collect { rows ->
+            val trashed = rows.filter {
+                it.state == dev.hfps.hoard.data.TrashStates.TRASHED && it.locationId == location.id && it.share.equals(share, ignoreCase = true) &&
+                    dev.hfps.hoard.server.paths.SharePaths.parent(it.originalPath).equals(vm.key.path, ignoreCase = true)
+            }.map { it.originalPath.lowercase() }.toHashSet()
+            if (trashed.isEmpty()) return@collect
+            // Only shots whose every file is in the trash (a Files delete of a JPEG leaves its RAW's shot here).
+            val gone = vm.view.value.core.shots.filter { shot -> shot.files.isNotEmpty() && shot.files.all { it.path.lowercase() in trashed } }.map { it.id }
+            if (gone.isNotEmpty()) vm.hideShots(gone)
+        }
+    }
     val view by vm.view.collectAsStateWithLifecycle()
     val serverShots by vm.serverShots.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -359,7 +373,7 @@ fun CullFolderScreen(
     when (dialog) {
         CullDialog.Settings -> AssistSettingsSheet(container, onDismiss = { dialog = null })
         CullDialog.Copy -> CopyPicksDialog(container, vm, view, location, onDismiss = { dialog = null }, onTransfers = onTransfers)
-        CullDialog.Delete -> DeleteRejectsDialog(vm, view, location, onDismiss = { dialog = null })
+        CullDialog.Delete -> TrashRejectsDialog(container, vm, view, location, onDismiss = { dialog = null })
         null -> Unit
     }
     reveal.Dialogs()
@@ -397,11 +411,10 @@ private fun FinishMenu(view: CullView, revealAvailable: Boolean, onCopy: () -> U
             }
             MenuItem(stringResource(R.string.xmp_export_decided), PhosphorRegular.FileText, { open = false; onExportXmp() }, enabled = p.decided > 0)
             MenuItem(
-                if (view.readOnly) stringResource(R.string.t_cull_delete_read_only) else pluralStringResource(R.plurals.t_cull_delete_menu, p.rejected, p.rejected.toString()),
+                if (view.readOnly) stringResource(R.string.trash_rejects_read_only) else pluralStringResource(R.plurals.trash_rejects_menu, p.rejected, p.rejected.toString()),
                 PhosphorRegular.Trash,
                 { open = false; onDelete() },
                 enabled = p.rejected > 0 && !view.readOnly,
-                destructive = true,
             )
         }
     }

@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -190,6 +191,10 @@ class BrowseViewModel(
         viewModelScope.launch {
             location.filterNotNull().map { it.machine?.machine?.id to it.volume?.state }.distinctUntilChanged().collect { load() }
         }
+        // A trash run, restore or Empty finished (maybe after its dialog was left): read the folder again.
+        viewModelScope.launch {
+            container.trash.changes.drop(1).collect { load(quiet = true) }
+        }
         // Files landing here (or leaving with a move) show up without a manual refresh.
         viewModelScope.launch {
             container.transfers.transfers
@@ -315,17 +320,13 @@ class BrowseViewModel(
         load(quiet = true)
     }
 
-    /** Deletes each entry (folders recursively); returns how many failed. */
-    suspend fun delete(entries: List<SmbEntry>): Int {
-        var failed = 0
-        for (entry in entries) {
-            if (write { loc -> files.run(loc) { fs, cancel -> fs.delete(entry.path, entry.isDirectory, cancel) } } != null) failed++
-        }
+    /** Files left this folder (moved to the trash, or deleted): the selection goes, the listing is read again. */
+    fun afterTrash() {
         location.value?.let { container.serverLinks.invalidate(it, path) }
         clearSelection()
         load(quiet = true)
-        return failed
     }
+
 
     /** Pins the folder on screen, or unpins it. Returns true when it is now a favourite. */
     suspend fun toggleFavorite(label: String): Boolean {

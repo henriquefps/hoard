@@ -1,5 +1,7 @@
 # Persistable "Edit in Reveal" hand-offs (1.10.0): end-to-end run
 
+> **Rule for emulator runs against a test Samba container** (since 2026-11-16): type the container's address (`10.0.2.2:<port>`) by hand in the machine form and never accept or tap a machine Hoard discovers. Discovery runs on the build host's LAN and finds the owner's machines; a discovered entry fills the form with one of them (it did in the trash run, [trash.md](trash.md)). Check the saved address before the first connection.
+
 - **Date**: 2026-11-12
 - **Build**: Hoard debug APK 1.10.0 (versionCode 18). Reveal 0.5.1 (`15d1d18`) built in a temporary clone (the
   reveal repo was not modified): its debug APK (`dev.hfps.reveal.debug`), and, because Reveal's `release` variant does

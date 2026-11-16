@@ -48,6 +48,8 @@ fun SettingsScreen(
     files: (@Composable () -> Unit)? = null,
     /** Culling's settings (assist sensitivities, burst gap, sidecars). */
     culling: (@Composable () -> Unit)? = null,
+    /** Settings › Trash (ADR 0023). */
+    trash: (@Composable () -> Unit)? = null,
     /** The in-app language (null = the system's), and its setter; the section shows when [onLanguage] is given. */
     language: String? = null,
     onLanguage: ((String?) -> Unit)? = null,
@@ -94,6 +96,7 @@ fun SettingsScreen(
                     HfpsRowDivider(Modifier.padding(top = 8.dp))
                 }
                 files?.invoke()
+                trash?.invoke()
                 if (culling != null) {
                     Section(R.string.t_settings_culling)
                     Text(

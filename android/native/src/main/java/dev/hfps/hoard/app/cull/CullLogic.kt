@@ -224,6 +224,17 @@ fun planDeleteRejects(order: List<Shot>, decisions: Decisions): DeletePlan {
     return DeletePlan(files, shots, files.sumOf { it.size })
 }
 
+/**
+ * "Move rejects to trash" (ADR 0023): the rejected shots and the paths of their files. The trash adds what the folder's
+ * listing holds next to them (sidecars, a Live Photo's video) and computes each file's trash path.
+ */
+data class TrashRejectsPlan(val shots: List<String>, val paths: List<String>, val bytes: Long)
+
+fun planTrashRejects(order: List<Shot>, decisions: Decisions): TrashRejectsPlan {
+    val plan = planDeleteRejects(order, decisions)
+    return TrashRejectsPlan(plan.shots, plan.files.map { it.path }, plan.bytes)
+}
+
 // --- Prefetch -------------------------------------------------------------------------------------------------------
 
 data class PrefetchSlice(val shotIds: List<String>, val current: Int)

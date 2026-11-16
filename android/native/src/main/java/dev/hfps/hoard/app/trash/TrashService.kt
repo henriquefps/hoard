@@ -18,11 +18,13 @@ import dev.hfps.hoard.smb.SmbEntry
 import dev.hfps.hoard.smb.location.HoardFs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -136,10 +138,10 @@ class TrashService(private val container: AppContainer) {
      * needed: the same two reads as opening the folder); refusals up front (inside a trash already, the server
      * unreachable for an unknown folder, the phone's MediaStore trash before A3).
      */
-    suspend fun prepare(location: BrowseLocation, folder: String, listing: List<SmbEntry>, selected: Collection<String>): TrashPlan {
+    suspend fun prepare(location: BrowseLocation, folder: String, listing: List<SmbEntry>, selected: Collection<String>, wholeShots: Boolean = true): TrashPlan {
         val place = TrashPlace(location.id, if (location.isSmb) location.share.orEmpty() else "")
         val files = listing.map { TrashFile(it.path, it.size, IsoTime.parse(it.modifiedAt), it.isDirectory) }
-        val units = TrashPlanner.units(folder, files, selected)
+        val units = TrashPlanner.units(folder, files, selected, wholeShots)
         val account = runCatching { container.gallery.db.account().get() }.getOrNull()
         val serverHasTrash = account?.has(Features.TRASH) == true
         if (backend(TrashKind.of(location.id)) == null) {
@@ -149,7 +151,7 @@ class TrashService(private val container: AppContainer) {
         // inside) and, on a share, the mapping when the folder on screen has no photos of its own.
         val dirs = units.flatMap { u -> u.files.filter { it.isDirectory }.map { it.path } }
         val walk = try {
-            if (dirs.isEmpty()) DirWalk.EMPTY else container.files.run(location) { fs, cancel -> DirWalk.of(fs, dirs) { cancel.check() } }
+            if (dirs.isEmpty()) DirWalk.EMPTY else container.files.run(location) { fs, cancel -> DirWalk.of(MappedHoardFs(fs), dirs) { cancel.check() } }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -245,6 +247,66 @@ class TrashService(private val container: AppContainer) {
         }
     }
 
+    /** [prepare] on a fresh listing of [folder] (the dialog's plan is never made from a stale one). */
+    suspend fun prepareFolder(location: BrowseLocation, folder: String, selected: Collection<String>, wholeShots: Boolean = true): TrashPlan {
+        val listing = container.files.run(location) { fs, cancel -> fs.list(folder, cancel) }.entries
+        return prepare(location, folder, listing, selected, wholeShots)
+    }
+
+    private val _changes = MutableStateFlow(0)
+
+    /** Bumped after every run, restore, Empty and auto-empty: open folders and culling grids refresh from it. */
+    val changes: StateFlow<Int> = _changes.asStateFlow()
+
+    private fun changed() = _changes.update { it + 1 }
+
+    private val _active = MutableStateFlow(false)
+
+    /** A run is going (the foreground notification follows it). */
+    val active: StateFlow<Boolean> = _active.asStateFlow()
+
+    /**
+     * Starts [plan] in the process scope (leaving the screen does not stop it), with the foreground notification when
+     * it moves more than [NOTIFY_FILES] files; the result arrives on the returned [Deferred].
+     */
+    fun start(plan: TrashPlan): kotlinx.coroutines.Deferred<TrashReport> {
+        _active.value = true
+        if (plan.files > NOTIFY_FILES) TrashRunService.start(container.appContext)
+        return container.scope.async {
+            try {
+                run(plan)
+            } finally {
+                _active.value = false
+            }
+        }
+    }
+
+    /**
+     * The permanent delete the dialog offers for units the trash refused (ADR 0023 "When the trash is not possible"):
+     * every file of each unit (folders recursively). Returns the units that went entirely.
+     */
+    suspend fun deletePermanently(location: BrowseLocation, units: List<TrashUnit>): List<TrashUnit> {
+        val gone = ArrayList<TrashUnit>()
+        for (unit in units) {
+            val ok = unit.all.all { f ->
+                try {
+                    container.files.run(location) { fs, cancel -> fs.delete(f.path, f.isDirectory, cancel) }
+                    true
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: dev.hfps.hoard.smb.HoardSmbException) {
+                    e.code == dev.hfps.hoard.smb.ErrorCode.NOT_FOUND
+                } catch (e: Throwable) {
+                    false
+                }
+            }
+            if (ok) gone += unit
+        }
+        if (location.isSmb) units.map { it.folder }.distinct().forEach { container.serverLinks.invalidate(location, it) }
+        changed()
+        return gone
+    }
+
     /** Asks the running [run] to stop after the unit it is moving (a unit is never left half-moved by Cancel). */
     fun cancel() = cancelRequested.set(true)
 
@@ -268,9 +330,12 @@ class TrashService(private val container: AppContainer) {
                 requestWalk(touched.mapNotNull { it.serverFolderId })
             }
             Log.i(TAG, "trash ${plan.place.locationId}: ${report.trashed.size} trashed, ${report.refused.size} refused, ${report.partial.size} partial, ${report.cancelled.size} cancelled")
+            for (r in report.refused) Log.i(TAG, "refused ${r.unit.key}: ${r.reason} ${r.code ?: ""} ${r.message.orEmpty()}")
+            for (p in report.partial) Log.i(TAG, "partial ${p.unit.key}: ${p.reason} ${p.message.orEmpty()}")
             report
         } finally {
             _progress.value = null
+            changed()
         }
     }
 
@@ -332,6 +397,7 @@ class TrashService(private val container: AppContainer) {
             back.groupBy { TrashPlace(it.locationId, it.share) }.forEach { (place, r) -> invalidate(place, r) }
             requestWalk(back.mapNotNull { it.serverFolderId })
         }
+        changed()
         out
     }
 
@@ -367,20 +433,34 @@ class TrashService(private val container: AppContainer) {
             purged += backend(kind)?.empty(inKind) { cancelRequested.get() } ?: continue
         }
         afterPurge(purged)
+        changed()
         return purged
     }
 
-    /** Lists every known root's `.hoard-trash` (the Trash screen's refresh): rows for what another device trashed. */
-    suspend fun refresh(): List<TrashEntryEntity> = running.withLock {
-        refreshRoots()
-        dao.all()
-    }
+    /**
+     * Lists every known root's `.hoard-trash` (the Trash screen's refresh): rows for what another device trashed.
+     * Returns the places that could not be reached (their rows show greyed, "Not reachable").
+     */
+    suspend fun refresh(): Set<TrashPlace> = running.withLock { refreshRoots() }
 
-    private suspend fun refreshRoots() {
+    /** The roots, as the Trash screen lists them. */
+    fun observeRoots() = dao.observeRoots()
+
+    private suspend fun refreshRoots(): Set<TrashPlace> {
+        val unreachable = HashSet<TrashPlace>()
         for (root in roots()) {
             if (TrashKind.of(root.place.locationId) != TrashKind.FOLDER) continue
-            runCatching { runner.scan(root) }.onFailure { if (it is CancellationException) throw it }
+            if (root.place in unreachable) continue
+            if (fsFor(root.place) == null) {
+                unreachable += root.place
+                continue
+            }
+            runCatching { runner.scan(root) }.onFailure {
+                if (it is CancellationException) throw it
+                unreachable += root.place
+            }
         }
+        return unreachable
     }
 
     /** Every root Hoard trashed into or found, and those of rows not recorded as roots. */
@@ -399,6 +479,20 @@ class TrashService(private val container: AppContainer) {
         return running.withLock { autoEmptyLocked() }
     }
 
+    /** What auto-empty would delete now with [days] (Settings asks before a shorter period applies). Deletes nothing. */
+    data class AutoEmptyPreview(val files: Int, val bytes: Long, val places: Int, val othersIncluded: Boolean) {
+        val empty: Boolean get() = files == 0
+    }
+
+    suspend fun previewAutoEmpty(days: Int): AutoEmptyPreview {
+        ensureRecovered()
+        return running.withLock {
+            val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
+            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true)
+            AutoEmptyPreview(expired.sumOf { it.files }, expired.sumOf { it.bytes }, expired.map { it.root.place }.distinct().size, expired.any { it.othersIncluded })
+        }
+    }
+
     private suspend fun autoEmptyLocked(): Int {
         val days = container.appSettings.trashAutoEmptyDaysNow()
         if (days <= 0) return 0
@@ -407,6 +501,7 @@ class TrashService(private val container: AppContainer) {
         val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime)
         afterPurge(expired.flatMap { it.purged })
         requestWalk(expired.mapNotNull { it.root.serverFolderId })
+        if (expired.isNotEmpty()) changed()
         return expired.sumOf { it.dayFolders.size }
     }
 
@@ -454,5 +549,8 @@ class TrashService(private val container: AppContainer) {
 
         /** Settings key: the newest trash time this device wrote (outlives Empty; auto-empty's clock guard). */
         const val NEWEST_TRASHED = "trashNewestTrashedAt"
+
+        /** Runs that move more files than this show the foreground notification. */
+        const val NOTIFY_FILES = 20
     }
 }

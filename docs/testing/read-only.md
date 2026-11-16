@@ -1,5 +1,7 @@
 # Read-only shares and folders (1.2.0, macOS fix in 1.2.1)
 
+> **Rule for emulator runs against a test Samba container** (since 2026-11-16): type the container's address (`10.0.2.2:<port>`) by hand in the machine form and never accept or tap a machine Hoard discovers. Discovery runs on the build host's LAN and finds the owner's machines; a discovered entry fills the form with one of them (it did in the trash run, [trash.md](trash.md)). Check the saved address before the first connection.
+
 Owner feedback: most Samba shares on cachyos-fps are `read only = yes` (e.g. `raiz`), and nothing
 in the app said so until creating a folder or file failed. 1.2.0 shows a quiet **Read-only** badge
 on such shares and folders and disables (does not hide) the write actions there.

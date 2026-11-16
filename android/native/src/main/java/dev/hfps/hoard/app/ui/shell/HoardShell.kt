@@ -177,7 +177,7 @@ fun HoardShell(container: AppContainer) {
                             popEnterTransition = { fadeIn(HfpsMotion.standard()) },
                             popExitTransition = { fadeOut(HfpsMotion.fast()) },
                         ) {
-                            composable<GalleryRoute> { dev.hfps.hoard.app.ui.gallery.GalleryScreen(container, onOpenSettings = { navController.navigate(SettingsRoute) }, onPair = { navController.navigate(PairRoute) }) }
+                            composable<GalleryRoute> { dev.hfps.hoard.app.ui.gallery.GalleryScreen(container, onOpenSettings = { navController.navigate(SettingsRoute) }, onPair = { navController.navigate(PairRoute) }, onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } }) }
                             composable<PairRoute> { dev.hfps.hoard.app.ui.server.PairScreen(container, onBack = { navController.popBackStack() }) }
                             composable<FilesRoute> {
                                 FilesTab(container, files, navController, ::openLocation, ::openTransfers)
@@ -269,6 +269,7 @@ fun HoardShell(container: AppContainer) {
                                     server = { dev.hfps.hoard.app.ui.server.ServerSettingsSection(container, onPair = { navController.navigate(PairRoute) }) },
                                     files = { FilesSettingsSection() },
                                     culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
+                                    trash = { dev.hfps.hoard.app.ui.trash.TrashSettingsSection(container, onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } }) },
                                     language = remember { dev.hfps.hoard.app.data.AppLanguage.current(context) },
                                     onLanguage = { tag ->
                                         scope.launch { container.settingsStore.putString("language", tag ?: "") }
@@ -277,6 +278,7 @@ fun HoardShell(container: AppContainer) {
                                 )
                             }
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
+                            composable<TrashRoute> { dev.hfps.hoard.app.ui.trash.TrashScreen(container, onBack = { navController.popBackStack() }) }
                         }
                     }
                     if (inFilesTab) ClipboardBar(container, onTransfers = { openTransfers() })
@@ -369,6 +371,7 @@ private fun FilesTab(
     FilesScreen(
         state = state,
         onOpenSettings = { navController.navigate(SettingsRoute) },
+        onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } },
         actions = FilesActions(
             openLocation = openLocation,
             addMachine = { navController.navigate(MachineFormRoute()) },
