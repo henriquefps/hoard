@@ -995,3 +995,131 @@ func TestDeviceDeclaresFreedAdopt(t *testing.T) {
 		t.Fatalf("devices[] features %v", got)
 	}
 }
+
+func TestVerifyAgeClamp(t *testing.T) {
+	ms := func(d time.Duration) *int64 { v := d.Milliseconds(); return &v }
+	neg, huge := int64(-5), int64(1)<<62
+	for _, c := range []struct {
+		in   *int64
+		want time.Duration
+	}{
+		{nil, verifyValidFor},
+		{ms(0), time.Hour},
+		{ms(time.Millisecond), time.Hour},
+		{&neg, time.Hour},
+		{ms(59 * time.Minute), time.Hour},
+		{ms(time.Hour), time.Hour},
+		{ms(36 * time.Hour), 36 * time.Hour},
+		{ms(90 * 24 * time.Hour), verifyValidFor},
+		{&huge, verifyValidFor},
+	} {
+		if got := verifyAge(c.in); got != c.want {
+			t.Fatalf("verifyAge(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBackupVerifyMaxAge (0.12.1): a client can demand a newer re-hash than the stored one. A stale one is queued
+// again and answered pending; a young one answers at once; without maxAge the 30 days stand; the minimum is clamped.
+func TestBackupVerifyMaxAge(t *testing.T) {
+	hs := newHarness(t, true)
+	pixel := hs.phone("Pixel 8", "hoard")
+	root := hs.addRoot(pixel, "primary", "DCIM", 201)["id"].(string)
+	blob, nas := shot(1), shot(2)
+	uploadFor(t, hs, pixel.key, blob, false)
+	if err := os.WriteFile(filepath.Join(hs.nas, "n.jpg"), nas, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, hs.do("POST", "/admin/api/nas", map[string]any{"path": hs.nas}, adminHeaders()), 201, "")
+	expect(t, hs.do("PUT", "/admin/api/backup/settings", map[string]any{"keepNasCopies": false}, adminHeaders()), 200, "")
+	hs.walkAll()
+	hs.report(pixel, root, []map[string]any{fileEntry("DCIM/b.jpg", blob, true), fileEntry("DCIM/n.jpg", nas, true)}, nil)
+	t.Cleanup(func() { hs.st.Now = time.Now })
+
+	ask := func(maxAge any, entries ...map[string]any) []map[string]any {
+		t.Helper()
+		body := map[string]any{"entries": entries}
+		if maxAge != nil {
+			body["maxAge"] = maxAge
+		}
+		w := hs.do("POST", "/v1/backup/verify", body, bearer(pixel.key))
+		expect(t, w, 200, "")
+		var out []map[string]any
+		for _, r := range decode(t, w)["results"].([]any) {
+			out = append(out, r.(map[string]any))
+		}
+		return out
+	}
+	v := func(p string, data []byte) map[string]any {
+		return map[string]any{"rootId": root, "path": p, "sha256": sum(data), "size": len(data)}
+	}
+	vb, vn := v("DCIM/b.jpg", blob), v("DCIM/n.jpg", nas)
+	hour := time.Hour.Milliseconds()
+	at := func(r map[string]any) int64 { return int64(r["verifiedAt"].(float64)) }
+	start := time.Now()
+	clock := func(d time.Duration) { hs.st.Now = func() time.Time { return start.Add(d) } }
+
+	// A first re-hash exists, now.
+	ask(nil, vb, vn)
+	hs.drain()
+	first := ask(nil, vb, vn)
+	if first[0]["verified"] != "yes" || first[1]["verified"] != "yes" {
+		t.Fatalf("%v", first)
+	}
+
+	// Younger than maxAge: yes at once, the same verifiedAt.
+	clock(2 * time.Hour)
+	if r := ask(3*hour, vb, vn); r[0]["verified"] != "yes" || r[1]["verified"] != "yes" || at(r[0]) != at(first[0]) {
+		t.Fatalf("young: %v", r)
+	}
+	// No maxAge: the 30 days stand.
+	if r := ask(nil, vb, vn); r[0]["verified"] != "yes" || at(r[0]) != at(first[0]) || at(r[1]) != at(first[1]) {
+		t.Fatalf("no maxAge: %v", r)
+	}
+	// Clamp: 1 ms is an hour, so a 30 minute old re-hash is good and a 2 hour old one is not.
+	clock(30 * time.Minute)
+	if r := ask(1, vb); r[0]["verified"] != "yes" {
+		t.Fatalf("clamp, young: %v", r)
+	}
+	clock(2 * time.Hour)
+	if r := ask(1, vb); r[0]["verified"] != "pending" {
+		t.Fatalf("clamp, old: %v", r)
+	}
+	hs.drain()
+	// Older than maxAge: pending (blob and NAS), then yes with a new verifiedAt.
+	clock(5 * time.Hour)
+	r := ask(2*hour, vb, vn)
+	if r[0]["verified"] != "pending" || r[0]["retryAfter"] == nil || r[1]["verified"] != "pending" || r[1]["retryAfter"] == nil {
+		t.Fatalf("stale: %v", r)
+	}
+	hs.drain()
+	r = ask(2*hour, vb, vn)
+	if r[0]["verified"] != "yes" || r[1]["verified"] != "yes" || at(r[0]) <= at(first[0]) || at(r[1]) <= at(first[1]) {
+		t.Fatalf("after re-hash: %v", r)
+	}
+	// A per-entry maxAge wins over the request's.
+	vOld := map[string]any{"rootId": root, "path": "DCIM/b.jpg", "sha256": sum(blob), "size": len(blob), "maxAge": hour}
+	clock(7 * time.Hour)
+	if r := ask(24*hour, vOld); r[0]["verified"] != "pending" {
+		t.Fatalf("per entry: %v", r)
+	}
+	hs.drain()
+
+	// A blob damaged after a stale yes: still yes without maxAge, differs once re-hashed.
+	bp := hs.blobFile(sum(blob))
+	_ = os.Chmod(bp, 0o600)
+	if err := os.WriteFile(bp, append([]byte("x"), blob[1:]...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clock(10 * time.Hour)
+	if r := ask(nil, vb); r[0]["verified"] != "yes" {
+		t.Fatalf("damaged, no maxAge: %v", r)
+	}
+	if r := ask(hour, vb); r[0]["verified"] != "pending" {
+		t.Fatalf("damaged, stale: %v", r)
+	}
+	hs.drain()
+	if r := ask(hour, vb); r[0]["verified"] != "no" || r[0]["reason"] != "differs" {
+		t.Fatalf("damaged, re-hashed: %v", r)
+	}
+}

@@ -208,6 +208,13 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.12.1 (verify can demand a fresh re-hash)
+
+0.12.1 adds an optional `maxAge` (milliseconds) to `POST /v1/backup/verify`, for Hoard's "Free up space": a stored
+re-hash older than `maxAge` is done again in the background (the answer is `pending` until then) instead of being
+trusted for 30 days. `maxAge` is clamped to 1 hour to 30 days, so a client cannot make the server hash nonstop;
+without it nothing changes. No migration; the API is `/v1`-compatible (ADR 0013, ADR 0024 Amendment S1).
+
 ## Upgrading to 0.12.0 (phone backup)
 
 0.12.0 adds the phone backup (ADR 0024) for Hoard 2.4.0 and later: nothing happens until you turn on a folder in

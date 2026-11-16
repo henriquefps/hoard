@@ -1785,7 +1785,9 @@ paths:
         copy of NAS files a phone no longer has" is on (the default); with it off, the NAS file is hashed where it is,
         only while its size and mtime still match the index. Every result carries `namedByRecord`: a live Reveal photo
         record names the entry's fingerprint, or a live version record names it as `data.photoFingerprint`. A root of
-        another physical device is `404` with `details.index`.
+        another physical device is `404` with `details.index`. 0.12.1: with `maxAge`, a stored re-hash older than it is
+        queued again and answered `pending` (with `retryAfter`) exactly as when none exists, and `verifiedAt` is the new
+        re-hash's once it ran (a blob's, and a NAS entry's `verified_sha256` / `nas_files.sha256`).
       requestBody:
         required: true
         content:
@@ -1794,6 +1796,13 @@ paths:
               type: object
               required: [entries]
               properties:
+                maxAge:
+                  type: integer
+                  format: int64
+                  description: >-
+                    0.12.1, optional, milliseconds: the oldest stored re-hash that may answer. Clamped to 1 hour
+                    (3600000) to 30 days (2592000000), so a client cannot make the server hash nonstop; absent means
+                    30 days. An entry's own `maxAge` wins.
                 entries:
                   type: array
                   minItems: 1
@@ -1806,6 +1815,7 @@ paths:
                       path: { type: string }
                       sha256: { $ref: "#/components/schemas/Sha256" }
                       size: { type: integer, minimum: 1 }
+                      maxAge: { type: integer, format: int64, description: "0.12.1, optional: this entry's `maxAge` (see the request's); wins over it" }
       responses:
         "200":
           description: Per entry

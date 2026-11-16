@@ -453,6 +453,24 @@ type verifyIn struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
 	Size   int64  `json:"size"`
+	// MaxAge (ms, hoard-server 0.12.1, optional): this entry's own limit; it wins over the request's.
+	MaxAge *int64 `json:"maxAge"`
+}
+
+// verifyAge is how old a stored re-hash may be to answer: maxAge (ms) clamped to [verifyMinAge, verifyValidFor];
+// nil (no maxAge) is verifyValidFor, the behaviour before 0.12.1.
+func verifyAge(maxAge *int64) time.Duration {
+	if maxAge == nil {
+		return verifyValidFor
+	}
+	switch ms := *maxAge; {
+	case ms < verifyMinAge.Milliseconds():
+		return verifyMinAge
+	case ms > verifyValidFor.Milliseconds():
+		return verifyValidFor
+	default:
+		return time.Duration(ms) * time.Millisecond
+	}
 }
 
 // handleBackupVerify answers, for free up, whether the server's copy of each file is byte-identical to the phone's,
@@ -461,6 +479,7 @@ type verifyIn struct {
 func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Entries []verifyIn `json:"entries"`
+		MaxAge  *int64     `json:"maxAge"` // ms, hoard-server 0.12.1: a re-hash older than this is done again
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -512,6 +531,10 @@ func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 			results = append(results, res)
 			continue
 		}
+		maxAge := verifyAge(req.MaxAge)
+		if in.MaxAge != nil {
+			maxAge = verifyAge(in.MaxAge)
+		}
 		pending := func() {
 			res["verified"], res["retryAfter"] = "pending", verifyRetryAfter
 		}
@@ -546,7 +569,7 @@ func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 				no(reason)
 				break
 			}
-			if e.VerifiedSHA != "" && e.VerifiedAt != nil && now.Sub(time.UnixMilli(*e.VerifiedAt)) < verifyValidFor && !s.pendingJob(key) {
+			if e.VerifiedSHA != "" && e.VerifiedAt != nil && now.Sub(time.UnixMilli(*e.VerifiedAt)) < maxAge && !s.pendingJob(key) {
 				nf, err := s.store.NasFileForVerify(ctx, e.Fingerprint)
 				switch {
 				case errors.Is(err, store.ErrNotFound):
@@ -573,7 +596,7 @@ func (s *Server) handleBackupVerify(w http.ResponseWriter, r *http.Request) {
 				s.internal(w, r, err)
 				return
 			}
-			if !ok || now.Sub(time.UnixMilli(at)) >= verifyValidFor || s.pendingJob(key) {
+			if !ok || now.Sub(time.UnixMilli(at)) >= maxAge || s.pendingJob(key) {
 				s.enqueue(key)
 				pending()
 				break
