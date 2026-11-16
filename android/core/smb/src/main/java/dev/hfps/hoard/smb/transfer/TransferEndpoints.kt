@@ -177,11 +177,27 @@ class PathTransferFs(
         if (target.exists() && !replace) smbFail(ErrorCode.ALREADY_EXISTS, "${target.name} already exists")
         // rename(2): atomic, replaces a file; fails across filesystems (the caller copies then).
         val moved = source.renameTo(target)
-        if (moved) scan(source, target)
+        if (moved) {
+            scan(source, target)
+            // Android 11+: MediaStore keeps the row it made for the hidden part file (size 0, time 0) through the rename;
+            // the published file is scanned so the Gallery and the phone backup see its real size and time (2.5.0).
+            if (!target.isDirectory) publish(target)
+        }
         return moved
     }
 
-    override fun setModified(path: String, millis: Long): Boolean = file(path).setLastModified(millis)
+    override fun setModified(path: String, millis: Long): Boolean {
+        val f = file(path)
+        val ok = f.setLastModified(millis)
+        if (ok && f.isFile) publish(f)
+        return ok
+    }
+
+    /** Android 11+: MediaStore scans [file] again (FUSE does not refresh a renamed file's size and time; older Android: [scan]). */
+    private fun publish(file: File) {
+        if (Build.VERSION.SDK_INT < 30) return
+        runCatching { MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null) }
+    }
 
     override fun canWrite(path: String): Boolean = !readOnly && file(path).canWrite()
 

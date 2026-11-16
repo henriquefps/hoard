@@ -882,5 +882,9 @@ What the app PR settled where the text above was silent or loose. Where this dif
 - **Linked, not uploaded.** Nothing new on the backup side: a saved file inside a backed-up folder is a new file to
   A1's engine, reported with its fingerprint; the server already has the content (`stored`), links it into this
   phone's tree and nothing is uploaded (verified on the emulator, `docs/testing/backup.md` "A2").
+- **Found on the emulator, fixed for every copy**: on Android 11+ MediaStore kept the row it made for the engine's
+  hidden part file (size 0, time 0) through the rename that publishes it, so a copied file was indexed with size 0 and
+  would have been reported to the backup as such. `PathTransferFs` now asks MediaStore to scan the published file, and
+  again after its modified time is set.
 - Not in A2 (still open): "Reveal on this phone is not grouped with Hoard" in Settings › Backup (A1 deferred it here);
   it needs `physicalDevice.devices` and is left for A3, where the Reveal gate reads the same list.

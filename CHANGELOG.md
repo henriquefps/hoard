@@ -11,6 +11,7 @@ Other devices see backups ([ADR 0024](docs/adr/0024-phone-backup.md), phase A2).
 - **Save to this device** (in the viewer, and in the selection bar for several photos): copies whole shots from the server (RAW, JPEG, video and the `.xmp` sidecar when the server has one) into `Pictures/From <phone name>/`, or a folder you choose once (never Hoard's copies for Reveal in `Pictures/Hoard`). It is a normal transfer: progress, Cancel, retries after a dropped connection (resuming where it stopped) and the name-conflict choice are in Transfers. A saved photo shows once in the Gallery, as on the phone and on the server; if its folder is backed up, the next backup links it on the server without uploading it again.
 - This phone's own backed-up files show once even before Hoard has read them (matched by where they are on the phone).
 - Search finds photos by the phone they were backed up from.
+- Fixed: on Android 11 and later, files copied to the phone's storage (any copy, not only Save to this device) were seen by Android with size 0 and no date until the next media scan, which the Gallery and the backup read.
 
 ## 2.4.0 (unreleased)
 
