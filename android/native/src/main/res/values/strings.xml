@@ -601,6 +601,7 @@
     <string name="freeup_how">Just before deleting, the server reads its copy of every file again and checks it is the same. Then Android asks you to allow the deletion.</string>
     <string name="freeup_reveal_on">Reveal on this phone has not been updated to keep photos Hoard frees: photos Reveal knows stay on the phone.</string>
     <string name="freeup_reveal_stale">Open Reveal once so its edits reach the server: until then nothing is freed.</string>
+    <string name="freeup_reveal_ungrouped">Reveal is installed on this phone but not grouped with Hoard on the server: nothing is freed until you group them (Reveal › Settings › Sync › This device).</string>
     <string name="freeup_kept_intro">Staying on the phone: %1$s</string>
     <plurals name="freeup_kept_recent">
         <item quantity="one">%1$s from the last %2$d days</item>

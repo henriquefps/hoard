@@ -146,7 +146,7 @@ class AppContainer(context: Context) {
     val serverSaves: dev.hfps.hoard.app.gallery.ServerSaves by lazy { dev.hfps.hoard.app.gallery.ServerSaves(gallery, { transfers }, settingsStore) }
     val backup: dev.hfps.hoard.app.backup.PhoneBackup by lazy { dev.hfps.hoard.app.backup.PhoneBackup(appContext, gallery, settingsStore, scope) }
     /** Free up space (ADR 0024, Hoard 2.6.0): the phone's verified, backed-up shots deleted with the system's consent. */
-    val freeUp: dev.hfps.hoard.app.backup.PhoneFreeUp by lazy { dev.hfps.hoard.app.backup.PhoneFreeUp(appContext, gallery, settingsStore) }
+    val freeUp: dev.hfps.hoard.app.backup.PhoneFreeUp by lazy { dev.hfps.hoard.app.backup.PhoneFreeUp(appContext, gallery, settingsStore) { reveal.isAvailable() } }
 
     /** SMB folders mapped to the server's NAS folders (ADR 0022). */
     val serverLinks: dev.hfps.hoard.app.files.ServerLinks by lazy { dev.hfps.hoard.app.files.ServerLinks(this) }
@@ -213,6 +213,8 @@ class AppContainer(context: Context) {
         runCatching { dev.hfps.hoard.app.trash.TrashCleanupWorker.schedule(appContext) }
         network = NetworkMonitor(appContext) { scope.launch { routes.recheckAll() } }.also { it.start() }
         backup.start()
+        // Free up (ADR 0024 A3): a delete request a killed process left waiting for consent is settled (only if one is).
+        if (java.io.File(appContext.noBackupFilesDir, dev.hfps.hoard.app.backup.PhoneFreeUp.PENDING_FILE).isFile) scope.launch { freeUp.settlePending() }
         gallery.start()
         // "Save to this device" (ADR 0024 A2): saved files reach the device index with their server fingerprint.
         TransferManager.get(appContext).addListener { progress ->

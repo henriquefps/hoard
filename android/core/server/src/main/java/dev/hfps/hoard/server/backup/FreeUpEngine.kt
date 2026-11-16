@@ -38,6 +38,12 @@ interface FreeUpSource {
 
     fun conditions(): Conditions
 
+    /** Reveal (release or debug) is installed on this phone: the gate then fails closed when the server does not group it. */
+    fun revealInstalled(): Boolean = false
+
+    /** A file's size and modified time now (null when it is gone). */
+    fun stamp(absolute: String): FileStamp? = file(absolute).takeIf { it.isFile }?.let { FileStamp(it.length(), it.lastModified()) }
+
     fun file(absolute: String): File = File(absolute)
 }
 
@@ -67,10 +73,16 @@ data class FreeUpCheck(
     val gate: RevealGate,
     val answers: Map<String, VerifyAnswer>,
     val block: FreeUpBlock? = null,
+    /** Every checked file as it was hashed: a delete request (and a sidecar's deletion) needs it unchanged. */
+    val stamps: Map<String, FileStamp> = emptyMap(),
 ) {
     /** "Kept for Reveal: 42". */
-    val keptForReveal: Int get() = kept.count { it.second == FreeUpPlan.REASON_REVEAL || it.second == FreeUpPlan.REASON_REVEAL_STALE }
+    val keptForReveal: Int get() = kept.count { it.second in FreeUpPlan.REVEAL_REASONS }
 }
+
+/** A delete request waiting for the owner's consent ([FreeUpEngine.awaitConsent]): its shots' file keys and their stamps. */
+@kotlinx.serialization.Serializable
+data class FreeUpPending(val at: Long, val shots: List<List<String>>, val stamps: Map<String, FileStamp> = emptyMap())
 
 /** What a deletion freed (reported to the server, or kept for the next backup run to report). */
 data class FreeUpDone(val files: Int, val bytes: Long, val shots: Int, val reported: Boolean)
@@ -92,6 +104,8 @@ class FreeUpEngine(
     /** How long a check waits for `pending` answers before it gives up on them. */
     private val maxWaitMs: Long = 10 * 60_000L,
     private val sleep: suspend (Long) -> Unit = { delay(it) },
+    /** Where a delete request waiting for the owner's consent is kept, so a crash during the dialog is settled later. */
+    private val pendingFile: File? = null,
 ) {
     private val dao = db.backup()
     private val mutex = Mutex()
@@ -105,7 +119,11 @@ class FreeUpEngine(
         return api to null
     }
 
-    private suspend fun gate(api: ServerApi): RevealGate = FreeUpPlan.revealGate(api.device().physicalDevice?.devices.orEmpty(), now())
+    /** The gate on the server's clock (`Date` of `GET /v1/device`; the phone's only when the server sends none). */
+    private suspend fun gate(api: ServerApi): RevealGate {
+        val dated = api.deviceDated()
+        return FreeUpPlan.revealGate(dated.value.physicalDevice?.devices.orEmpty(), dated.serverDate ?: now(), source.revealInstalled())
+    }
 
     private fun blockOf(e: Exception): FreeUpBlock = if (e is ServerException && e.unauthorized) FreeUpBlock.Unauthorized else FreeUpBlock.Offline
 
@@ -160,11 +178,15 @@ class FreeUpEngine(
             if (e !is IOException && e !is ServerException) throw e
             return FreeUpCheck(emptyList(), emptyList(), RevealGate.Off, emptyMap(), blockOf(e))
         }
-        if (gate.blocksAll) return FreeUpCheck(emptyList(), shots.map { it to FreeUpPlan.REASON_REVEAL_STALE }, gate, emptyMap())
+        if (gate.blocksAll) {
+            val why = if (gate is RevealGate.Ungrouped) FreeUpPlan.REASON_REVEAL_UNGROUPED else FreeUpPlan.REASON_REVEAL_STALE
+            return FreeUpCheck(emptyList(), shots.map { it to why }, gate, emptyMap())
+        }
         val kept = ArrayList<Pair<FreeShot, String>>()
-        // 1. Re-stat and hash.
+        // 1. Re-stat and hash the current bytes of every file (never a cached hash: ADR 0024 A3, review).
         val current = ArrayList<FreeShot>()
-        val toHash = shots.sumOf { s -> s.files.count { !BackupPlan.hashed(it) } }
+        val stamps = HashMap<String, FileStamp>()
+        val toHash = shots.sumOf { it.files.size }
         var hashed = 0
         for (shot in shots) {
             if (stopped()) return FreeUpCheck(emptyList(), kept, gate, emptyMap())
@@ -176,14 +198,10 @@ class FreeUpEngine(
                     reason = FreeUpPlan.REASON_UNREADABLE
                     break
                 }
-                if (file.length() != row.size) {
+                val before = FileStamp(file.length(), file.lastModified())
+                if (before.size != row.size) {
                     reason = FreeUpPlan.REASON_CHANGED
                     break
-                }
-                val sameTime = file.lastModified() / 1000 == row.modified / 1000
-                if (sameTime && BackupPlan.hashed(row)) {
-                    files += row
-                    continue
                 }
                 _progress.value = FreeUpProgress(PHASE_HASHING, hashed, toHash, file.name)
                 val sha = try {
@@ -193,20 +211,24 @@ class FreeUpEngine(
                     break
                 } ?: return FreeUpCheck(emptyList(), kept, gate, emptyMap())
                 hashed++
-                if (BackupPlan.hashed(row) && sha != row.sha256) {
-                    // Rewritten in place with the same size: the next backup run reports the new content.
+                if (FileStamp(file.length(), file.lastModified()) != before) {
+                    // Written while it was read: the next backup run sees it.
                     reason = FreeUpPlan.REASON_CHANGED
                     break
                 }
-                if (!sameTime) {
-                    // Only the time moved (the same bytes): verified with the hash, the row keeps what was reported.
-                    files += row.copy(sha256 = sha)
-                    continue
+                if (BackupPlan.hashed(row) && sha != row.sha256) {
+                    // Not the bytes the backup hashed and reported (rewritten in place, same size).
+                    reason = FreeUpPlan.REASON_CHANGED
+                    break
                 }
-                val updated = row.copy(sha256 = sha, shaSize = row.size, shaModified = row.modified, updatedAt = now())
-                dao.putFiles(listOf(updated))
-                row.mediaId?.let { source.hashed(it, sha, row.size, row.modified) }
-                files += updated
+                stamps[FreeUpPlan.fileKey(row)] = before
+                val sameTime = before.modified / 1000 == row.modified / 1000
+                if (sameTime && !BackupPlan.hashed(row)) {
+                    // A file never hashed (a NAS reference over 2 MiB): the hash is kept for the row and the index.
+                    dao.putFiles(listOf(row.copy(sha256 = sha, shaSize = row.size, shaModified = row.modified, updatedAt = now())))
+                    row.mediaId?.let { source.hashed(it, sha, row.size, row.modified) }
+                }
+                files += row.copy(sha256 = sha)
             }
             if (reason != null) kept += shot to reason else current += shot.copy(files = files)
         }
@@ -221,8 +243,8 @@ class FreeUpEngine(
             val ask = FreeUpPlan.toAsk(active, answers, now())
             _progress.value = FreeUpProgress(PHASE_VERIFYING, go.size, current.size)
             for (part in ask.chunked(batch)) {
-                val response = try {
-                    api.backupVerify(BackupVerifyRequest(part.map { BackupVerifyEntry(it.rootId, it.path, it.sha256!!, it.size) }))
+                val dated = try {
+                    api.backupVerifyDated(BackupVerifyRequest(part.map { BackupVerifyEntry(it.rootId, it.path, it.sha256!!, it.size) }, maxAge = FreeUpPlan.REHASH_MAX_AGE_MS))
                 } catch (e: ServerException) {
                     if (e.unauthorized) return FreeUpCheck(go, kept, gate, answers, FreeUpBlock.Unauthorized)
                     if (e.status == 404) {
@@ -237,7 +259,7 @@ class FreeUpEngine(
                     return FreeUpCheck(go, kept + active.map { it to "offline" }, gate, answers, FreeUpBlock.Offline)
                 }
                 val at = now()
-                for (r in response.results) part.getOrNull(r.index)?.let { answers[FreeUpPlan.fileKey(it)] = FreeUpPlan.answer(r, at) }
+                for (r in dated.value.results) part.getOrNull(r.index)?.let { answers[FreeUpPlan.fileKey(it)] = FreeUpPlan.answer(r, at, dated.serverDate) }
             }
             val waiting = ArrayList<FreeShot>()
             for (s in active) {
@@ -258,7 +280,7 @@ class FreeUpEngine(
             sleep((next - now()).coerceIn(1_000L, 60_000L))
         }
         Log.i(TAG, "free up check: ${go.size} shots verified, ${kept.size} kept")
-        return FreeUpCheck(go.sortedBy { it.taken }, kept, gate, answers)
+        return FreeUpCheck(go.sortedBy { it.taken }, kept, gate, answers, stamps = stamps)
     }
 
     /**
@@ -307,6 +329,60 @@ class FreeUpEngine(
             }
         }
         return ok
+    }
+
+    // --- A request waiting for consent (ADR 0024 A3, review) --------------------------------------------------------
+
+    /**
+     * Written before the system dialog shows: the request's files and their stamps. If the process dies while the
+     * dialog is up, [settlePending] (next start, and before every backup run) frees and reports what the system
+     * deleted, so those files are never reported `deleted`.
+     */
+    fun awaitConsent(request: List<FreeShot>, stamps: Map<String, FileStamp>) {
+        val f = pendingFile ?: return
+        val pending = FreeUpPending(
+            at = now(),
+            shots = request.map { s -> s.files.map { FreeUpPlan.fileKey(it) } },
+            stamps = request.flatMap { it.files }.mapNotNull { r -> stamps[FreeUpPlan.fileKey(r)]?.let { FreeUpPlan.fileKey(r) to it } }.toMap(),
+        )
+        f.parentFile?.mkdirs()
+        val tmp = File(f.parentFile, f.name + ".tmp")
+        tmp.writeText(dev.hfps.hoard.server.api.ServerJson.encodeToString(FreeUpPending.serializer(), pending))
+        if (!tmp.renameTo(f)) {
+            f.writeText(tmp.readText())
+            tmp.delete()
+        }
+    }
+
+    /** The request was answered and settled (or nothing was asked). */
+    fun consentSettled() {
+        pendingFile?.delete()
+    }
+
+    /**
+     * A request left waiting for consent by a process that died: [gone] reads which media files the system deleted;
+     * those (and the other files of shots whose media all went, while unchanged, through [deleteOther]) are freed and
+     * reported. Null when there was nothing to settle.
+     */
+    suspend fun settlePending(gone: suspend (List<FreeShot>) -> Set<String>, deleteOther: (BackupFileEntity, FileStamp?) -> Boolean): FreeUpDone? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val f = pendingFile ?: return@withLock null
+            if (!f.isFile) return@withLock null
+            val pending = runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(FreeUpPending.serializer(), f.readText()) }.getOrNull()
+            if (pending == null) {
+                f.delete()
+                return@withLock null
+            }
+            val roots = dao.roots()
+            val shots = pending.shots.mapNotNull { keys ->
+                val rows = keys.mapNotNull { k -> dao.file(k.substringBefore('|'), k.substringAfter('|')) }
+                if (rows.isEmpty()) null else FreeUpPlan.shots(roots, rows).firstOrNull()
+            }
+            val done = if (shots.isEmpty()) null else freed(FreeUpPlan.settle(shots, gone(shots))) { deleteOther(it, pending.stamps[FreeUpPlan.fileKey(it)]) }
+            f.delete()
+            Log.i(TAG, "free up: settled a request left waiting for consent: ${done?.files ?: 0} files freed")
+            done
+        }
     }
 
     companion object {

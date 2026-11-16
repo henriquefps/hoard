@@ -128,7 +128,8 @@ class FreeUpPlanTest {
 
     private fun shot(vararg files: BackupFileEntity) = FreeUpPlan.shots(listOf(root), files.toList()).single()
 
-    private fun yes(namedByRecord: Boolean = false, at: Long = now) = VerifyAnswer("yes", at, namedByRecord = namedByRecord)
+    private fun yes(namedByRecord: Boolean = false, at: Long = now, rehashedAgo: Long = 0) =
+        VerifyAnswer("yes", at, namedByRecord = namedByRecord, verifiedAt = at - rehashedAgo, serverAt = at)
 
     @Test
     fun verifyAnswersYesPendingNoAndRefused() {
@@ -222,5 +223,69 @@ class FreeUpPlanTest {
         assertThat(out.map { it.path to it.reason }).containsExactly("DCIM/Camera/A.jpg" to "freed")
         // Still on the phone (a restore): nothing to report.
         assertThat(BackupPlan.freedRemovals(listOf(a), freed) { true }).isEmpty()
+    }
+
+    @Test
+    fun aYesCountsOnlyOnAServerRehashAtMost24HoursOld() {
+        val jpg = row("DCIM/Camera/R.jpg")
+        val s1 = shot(jpg)
+        val k = FreeUpPlan.fileKey(jpg)
+        assertThat(FreeUpPlan.check(s1, mapOf(k to yes(rehashedAgo = 23 * 3_600_000L)), RevealGate.Off, now)).isEqualTo(ShotCheck.Go)
+        // Older (a server before maxAge kept its 30-day re-hash): never taken, asked again later.
+        val old = FreeUpPlan.answer(BackupVerifyResult(0, "yes", verifiedAt = now - 25 * 3_600_000L), now, serverAt = now)
+        assertThat(FreeUpPlan.rehashFresh(old)).isFalse()
+        assertThat(FreeUpPlan.check(s1, mapOf(k to old), RevealGate.Off, now)).isEqualTo(ShotCheck.Wait)
+        assertThat(FreeUpPlan.toAsk(listOf(s1), mapOf(k to old), now)).isEmpty()
+        assertThat(FreeUpPlan.toAsk(listOf(s1), mapOf(k to old), now + 30_000)).containsExactly(jpg)
+        // No server clock (no Date header) or no verifiedAt: cannot tell, so no.
+        assertThat(FreeUpPlan.rehashFresh(FreeUpPlan.answer(BackupVerifyResult(0, "yes", verifiedAt = now), now, serverAt = null))).isFalse()
+        assertThat(FreeUpPlan.rehashFresh(FreeUpPlan.answer(BackupVerifyResult(0, "yes"), now, serverAt = now))).isFalse()
+    }
+
+    @Test
+    fun theGateFailsClosedWhenRevealIsInstalledButNotGrouped() {
+        val hoard = device("hoard", now)
+        // Installed, not in this phone's group: nothing goes.
+        val g = FreeUpPlan.revealGate(listOf(hoard), now, revealInstalled = true)
+        assertThat(g).isEqualTo(RevealGate.Ungrouped)
+        assertThat(g.blocksAll).isTrue()
+        val plain = shot(row("DCIM/Camera/U.jpg"))
+        assertThat(FreeUpPlan.check(plain, mapOf(FreeUpPlan.fileKey(plain.files[0]) to yes()), g, now)).isEqualTo(ShotCheck.Keep(FreeUpPlan.REASON_REVEAL_UNGROUPED))
+        // Listed without lastSeenAt (never seen): the same.
+        assertThat(FreeUpPlan.revealGate(listOf(hoard, device("reveal", null)), now, revealInstalled = true)).isEqualTo(RevealGate.Ungrouped)
+        // Grouped and live: the normal gate (on without freed-adopt, off with it).
+        assertThat(FreeUpPlan.revealGate(listOf(hoard, device("reveal", now - 1000)), now, revealInstalled = true)).isInstanceOf(RevealGate.On::class.java)
+        assertThat(FreeUpPlan.revealGate(listOf(hoard, device("reveal", now - 1000, "freed-adopt")), now, revealInstalled = true)).isEqualTo(RevealGate.Off)
+        // Not installed and not listed: off.
+        assertThat(FreeUpPlan.revealGate(listOf(hoard), now, revealInstalled = false)).isEqualTo(RevealGate.Off)
+    }
+
+    @Test
+    fun aRequestTakesOnlyFilesStillAsCheckedAndMediaIdsStillNamingThem() {
+        val a = shot(row("DCIM/Camera/A.jpg"), row("DCIM/Camera/A.xmp", media = false))
+        val b = shot(row("DCIM/Camera/B.jpg"))
+        val c = shot(row("DCIM/Camera/C.jpg"))
+        val d = shot(row("DCIM/Camera/D.jpg"))
+        val stamps = (a.files + b.files + c.files + d.files).associate { FreeUpPlan.fileKey(it) to FileStamp(it.size, 10_000) }
+        val stat = HashMap<String, FileStamp?>()
+        for (f in a.files + b.files + c.files + d.files) stat[f.absolute] = FileStamp(f.size, 10_000)
+        val media = HashMap<Long, MediaRow?>()
+        for (f in (a.files + b.files + c.files + d.files).filter { it.mediaId != null }) media[f.mediaId!!] = MediaRow(f.absolute, f.size, 10_000)
+        // B: its id now names another photo (a rebuilt media index).
+        media[b.files[0].mediaId!!] = MediaRow("/storage/emulated/0/DCIM/Camera/Other.jpg", 1000, 10_000)
+        // C: its sidecar-free still was rewritten since the check (new time).
+        stat[c.files[0].absolute] = FileStamp(1000, 20_000)
+        // D: MediaStore no longer has the row.
+        media[d.files[0].mediaId!!] = null
+        val (ok, dropped) = FreeUpPlan.confirm(listOf(a, b, c, d), stamps, { stat[it] }, { media[it] })
+        assertThat(ok).containsExactly(a)
+        assertThat(dropped).containsExactly(b, c, d)
+        // A's sidecar rewritten after the check (culling, Reveal): the shot is dropped too.
+        stat[a.files[1].absolute] = FileStamp(a.files[1].size, 30_000)
+        assertThat(FreeUpPlan.confirm(listOf(a), stamps, { stat[it] }, { media[it] }).first).isEmpty()
+        // ...and the sidecar is never deleted as it is now.
+        assertThat(FreeUpPlan.unchanged(a.files[1], stamps, stat[a.files[1].absolute])).isFalse()
+        assertThat(FreeUpPlan.unchanged(a.files[1], stamps, FileStamp(a.files[1].size, 10_000))).isTrue()
+        assertThat(FreeUpPlan.unchanged(a.files[1], stamps, null)).isFalse()
     }
 }

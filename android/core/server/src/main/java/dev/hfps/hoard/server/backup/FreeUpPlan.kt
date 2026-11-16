@@ -62,15 +62,31 @@ sealed interface RevealGate {
     /** That Reveal was last seen more than 30 minutes ago: nothing is freed ("Open Reveal once…"). */
     data class Stale(val lastSeenAt: Long) : RevealGate
 
+    /**
+     * Reveal is installed on this phone but not in its group on the server (`physicalDevice.devices`), or listed
+     * without `lastSeenAt`: the gate fails closed, as [Stale] (nothing is freed: "group Reveal with Hoard").
+     */
+    data object Ungrouped : RevealGate
+
     /** Whether the gate lets anything go at all. */
-    val blocksAll: Boolean get() = this is Stale
+    val blocksAll: Boolean get() = this is Stale || this is Ungrouped
 }
+
+/** A phone file as stat'ed at the check: its size and modified time (ms, as `File.lastModified`). */
+@kotlinx.serialization.Serializable
+data class FileStamp(val size: Long, val modified: Long)
+
+/** A MediaStore row as read just before a delete request: its path (`DATA`), `SIZE` and `DATE_MODIFIED` (ms). */
+data class MediaRow(val path: String, val size: Long, val modified: Long)
 
 /** A verification answer as the phone keeps it: [at] is when the phone received it (yes answers go for 10 minutes). */
 data class VerifyAnswer(
     /** `yes`, `pending`, `no` (a refused entry is `no`). */
     val verified: String,
     val at: Long,
+    /** `yes`: when the server re-hashed its copy (its clock), and the server's clock when it answered (`Date`). */
+    val verifiedAt: Long? = null,
+    val serverAt: Long? = null,
     val reason: String? = null,
     val namedByRecord: Boolean = false,
     val refused: Boolean = false,
@@ -122,6 +138,9 @@ object FreeUpPlan {
     /** `MediaStore.createDeleteRequest` takes at most this many items per request (one consent each). */
     const val MAX_DELETE_REQUEST = 1000
     const val FEATURE_FREED_ADOPT = "freed-adopt"
+
+    /** A server `yes` counts only on a re-hash at most this old (the server's clock; `maxAge` of verify). */
+    const val REHASH_MAX_AGE_MS = 24 * 3_600_000L
 
     /** A file's key: its root and its path on the volume. */
     fun fileKey(f: BackupFileEntity): String = "${f.rootId}|${f.path}"
@@ -183,7 +202,9 @@ object FreeUpPlan {
      * The gate from this phone's `physicalDevice.devices` (`GET /v1/device`): live Reveals (seen in the last 90 days)
      * that did not declare `freed-adopt` close it; one of them not seen for 30 minutes blocks everything.
      */
-    fun revealGate(devices: List<CandidateDevice>, now: Long): RevealGate {
+    fun revealGate(devices: List<CandidateDevice>, now: Long, revealInstalled: Boolean = false): RevealGate {
+        // Fails closed: Reveal on this phone that the server does not show in this phone's group (or never saw).
+        if (revealInstalled && devices.none { isReveal(it) && isLive(it, now) }) return RevealGate.Ungrouped
         val live = devices.filter { isReveal(it) && isLive(it, now) }
         val gating = live.filter { FEATURE_FREED_ADOPT !in it.features }
         if (gating.isEmpty()) return RevealGate.Off
@@ -191,8 +212,12 @@ object FreeUpPlan {
         return if (now - oldest > REVEAL_STALE_MS) RevealGate.Stale(oldest) else RevealGate.On(gating.maxOf { it.lastSeenAt!! })
     }
 
-    /** A verify result as the phone keeps it (received at [now]). */
-    fun answer(r: BackupVerifyResult, now: Long): VerifyAnswer {
+    /** Whether a `yes` rests on a server re-hash at most 24 hours old (the server's clock; unknown = no). */
+    fun rehashFresh(a: VerifyAnswer): Boolean =
+        a.verified == "yes" && a.verifiedAt != null && a.serverAt != null && a.serverAt - a.verifiedAt <= REHASH_MAX_AGE_MS
+
+    /** A verify result as the phone keeps it (received at [now], answered at [serverAt] on the server's clock). */
+    fun answer(r: BackupVerifyResult, now: Long, serverAt: Long? = null): VerifyAnswer {
         val refused = r.state == "refused"
         val verified = when {
             refused -> "no"
@@ -209,7 +234,14 @@ object FreeUpPlan {
             },
             namedByRecord = r.namedByRecord,
             refused = refused,
-            retryAt = if (verified == "pending") now + (r.retryAfter?.takeIf { it > 0 } ?: DEFAULT_RETRY_S) * 1000 else null,
+            retryAt = when {
+                verified == "pending" -> now + (r.retryAfter?.takeIf { it > 0 } ?: DEFAULT_RETRY_S) * 1000
+                // A yes on an older re-hash (a server before `maxAge`): asked again later, never taken.
+                verified == "yes" && !(r.verifiedAt != null && serverAt != null && serverAt - r.verifiedAt <= REHASH_MAX_AGE_MS) -> now + DEFAULT_RETRY_S * 1000
+                else -> null
+            },
+            verifiedAt = r.verifiedAt,
+            serverAt = serverAt,
         )
     }
 
@@ -220,10 +252,11 @@ object FreeUpPlan {
      */
     fun check(shot: FreeShot, answers: Map<String, VerifyAnswer>, gate: RevealGate, now: Long): ShotCheck {
         if (gate is RevealGate.Stale) return ShotCheck.Keep(REASON_REVEAL_STALE)
+        if (gate is RevealGate.Ungrouped) return ShotCheck.Keep(REASON_REVEAL_UNGROUPED)
         val mine = shot.files.map { answers[fileKey(it)] }
         mine.firstOrNull { it != null && it.verified == "no" }?.let { return ShotCheck.Keep(it.reason ?: "unknown") }
         if (gate is RevealGate.On && mine.any { it?.namedByRecord == true }) return ShotCheck.Keep(REASON_REVEAL)
-        if (mine.any { it == null || it.verified != "yes" || now - it.at > VERIFY_FRESH_MS }) return ShotCheck.Wait
+        if (mine.any { it == null || !rehashFresh(it) || now - it.at > VERIFY_FRESH_MS }) return ShotCheck.Wait
         return ShotCheck.Go
     }
 
@@ -231,9 +264,37 @@ object FreeUpPlan {
     fun toAsk(shots: List<FreeShot>, answers: Map<String, VerifyAnswer>, now: Long): List<BackupFileEntity> = shots.flatMap { s ->
         s.files.filter { f ->
             val a = answers[fileKey(f)]
-            a == null || (a.verified == "pending" && (a.retryAt ?: 0L) <= now) || (a.verified == "yes" && now - a.at > VERIFY_FRESH_MS)
+            a == null ||
+                (a.verified == "pending" && (a.retryAt ?: 0L) <= now) ||
+                (a.verified == "yes" && !rehashFresh(a) && (a.retryAt ?: 0L) <= now) ||
+                (a.verified == "yes" && now - a.at > VERIFY_FRESH_MS)
         }
     }
+
+    /**
+     * Just before a delete request (ADR 0024 A3, review): every file of the shot must still be what the check hashed
+     * ([stamps]: same size and modified time, [stat] now), and every media file's MediaStore row ([media] by id) must
+     * name the same path with the same size and time (seconds): an id left from an older media index must never name
+     * another photo. Shots failing any of it are dropped (checked again, or left on the phone).
+     */
+    fun confirm(
+        shots: List<FreeShot>,
+        stamps: Map<String, FileStamp>,
+        stat: (String) -> FileStamp?,
+        media: (Long) -> MediaRow?,
+    ): Pair<List<FreeShot>, List<FreeShot>> = shots.partition { s ->
+        s.files.all { f ->
+            val stamp = stamps[fileKey(f)] ?: return@all false
+            if (stat(f.absolute) != stamp) return@all false
+            val id = f.mediaId ?: return@all true
+            val row = media(id) ?: return@all false
+            row.path == f.absolute && row.size == stamp.size && row.modified / 1000 == stamp.modified / 1000
+        }
+    }
+
+    /** A sidecar or listed RAW is deleted only while it is exactly what the check saw (culling or Reveal may rewrite it). */
+    fun unchanged(f: BackupFileEntity, stamps: Map<String, FileStamp>, now: FileStamp?): Boolean =
+        now != null && stamps[fileKey(f)] == now
 
     /** The shots to delete split into system requests of at most [MAX_DELETE_REQUEST] media files, whole shots per request. */
     fun requests(shots: List<FreeShot>, max: Int = MAX_DELETE_REQUEST): List<List<FreeShot>> {
@@ -285,10 +346,13 @@ object FreeUpPlan {
 
     const val REASON_REVEAL = "reveal"
     const val REASON_REVEAL_STALE = "reveal_stale"
+    /** Reveal is installed here but the server does not group it with this phone: nothing goes (fails closed). */
+    const val REASON_REVEAL_UNGROUPED = "reveal_ungrouped"
     /** The file is not as it was hashed and reported (the next backup run reports it again). */
     const val REASON_CHANGED = "changed"
     /** The file is not on the phone any more (or unreadable) when checked. */
     const val REASON_UNREADABLE = "unreadable"
     const val DEFAULT_RETRY_S = 30L
+    val REVEAL_REASONS = setOf(REASON_REVEAL, REASON_REVEAL_STALE, REASON_REVEAL_UNGROUPED)
     private val SERVER_HELD = setOf("stored", "nas")
 }

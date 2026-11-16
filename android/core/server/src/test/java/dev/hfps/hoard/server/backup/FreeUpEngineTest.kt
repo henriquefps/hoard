@@ -42,6 +42,8 @@ class FreeUpEngineTest {
         var favourites = emptySet<Long>()
         var pending = emptySet<String>()
         var pushed = 0
+        var installed = false
+        override fun revealInstalled() = installed
         override suspend fun favourites(mediaIds: Collection<Long>) = favourites
         override suspend fun pushCulling() {
             pushed++
@@ -54,6 +56,7 @@ class FreeUpEngineTest {
     fun setUp() {
         server = FakeServer()
         fake = FakeBackup(server)
+        fake.serverNow = { clock }
         db = GalleryDatabase.open(ApplicationProvider.getApplicationContext(), null)
         sync = SyncEngine(db, vault, DeviceInfo("Pixel 8", "hoard-debug", "Google", "Pixel 8", "2.6.0"), now = { clock })
         runBlocking { sync.pair(PairingCode(server.url, "good", "fake-server")) }
@@ -69,10 +72,12 @@ class FreeUpEngineTest {
 
     private fun backup() = BackupEngine(db, { sync.api() }, source, now = { clock }, throttle = null)
 
-    private fun engine(maxWaitMs: Long = 600_000) = FreeUpEngine(db, { sync.api() }, freeSource, now = { clock }, throttle = null, maxWaitMs = maxWaitMs, sleep = { ms ->
+    private val pending by lazy { File(tmp.root, "free-up-pending.json") }
+
+    private fun engine(maxWaitMs: Long = 600_000, now: () -> Long = { clock }) = FreeUpEngine(db, { sync.api() }, freeSource, now = now, throttle = null, maxWaitMs = maxWaitMs, sleep = { ms ->
         sleeps += ms
         clock += ms
-    })
+    }, pendingFile = pending)
 
     /** A synthetic photo, 100 days old (its time is its capture time in [BackupEngineTest.DirSource]). */
     private fun photo(path: String, size: Int, seed: Int = path.hashCode(), daysAgo: Int = 100): File {
@@ -268,5 +273,122 @@ class FreeUpEngineTest {
         server.features = server.features - "backup"
         sync.sync()
         assertThat(engine().preview(FreeUpRules()).block).isEqualTo(FreeUpBlock.Unsupported)
+    }
+
+    @Test
+    fun theRevealGateUsesTheServersClock() = runBlocking<Unit> {
+        val a = photo("DCIM/Camera/A.jpg", 3_000)
+        backedUp(a)
+        // Seen 5 minutes ago on the server's clock; the phone's clock is 2 hours ahead: not stale.
+        fake.devices += """{"id":"rv","app":"reveal","platform":"android","lastSeenAt":${clock - 5 * 60_000},"features":[]}"""
+        val ahead = engine(now = { clock + 2 * 3_600_000 }).preview(FreeUpRules())
+        assertThat(ahead.gate).isInstanceOf(RevealGate.On::class.java)
+        // Seen 40 minutes ago on the server's clock; the phone's clock is an hour behind: stale.
+        fake.devices.clear()
+        fake.devices += """{"id":"rv","app":"reveal","platform":"android","lastSeenAt":${clock - 40 * 60_000},"features":[]}"""
+        assertThat(engine(now = { clock - 3_600_000 }).preview(FreeUpRules()).gate).isInstanceOf(RevealGate.Stale::class.java)
+    }
+
+    @Test
+    fun revealInstalledButNotGroupedFreesNothing() = runBlocking<Unit> {
+        val a = photo("DCIM/Camera/A.jpg", 3_000)
+        backedUp(a)
+        freeSource.installed = true
+        val preview = engine().preview(FreeUpRules())
+        assertThat(preview.gate).isEqualTo(RevealGate.Ungrouped)
+        val asked = fake.verifies.size
+        val check = engine().check(preview.candidates.shots)
+        assertThat(check.go).isEmpty()
+        assertThat(check.kept.map { it.second }).containsExactly(FreeUpPlan.REASON_REVEAL_UNGROUPED)
+        assertThat(fake.verifies.size).isEqualTo(asked)
+        // Grouped (listed and seen): the normal gate.
+        fake.devices += """{"id":"rv","app":"reveal","platform":"android","lastSeenAt":${clock - 60_000},"features":["freed-adopt"]}"""
+        assertThat(engine().check(preview.candidates.shots).go).hasSize(1)
+    }
+
+    @Test
+    fun theCheckHashesTheCurrentBytesNotTheCachedHash() = runBlocking<Unit> {
+        val a = photo("DCIM/Camera/A.jpg", 3_000)
+        val rootId = backedUp(a)
+        val shots = engine().preview(FreeUpRules()).candidates.shots
+        // Rewritten with the same size and its old time put back: only reading the bytes finds it.
+        val time = a.lastModified()
+        a.writeBytes(ByteArray(3_000) { 9 })
+        a.setLastModified(time)
+        val check = engine().check(shots)
+        assertThat(check.go).isEmpty()
+        assertThat(check.kept.single().second).isEqualTo(FreeUpPlan.REASON_CHANGED)
+        assertThat(db.backup().file(rootId, "DCIM/Camera/A.jpg")!!.sha256).isNotNull()
+    }
+
+    @Test
+    fun verifyAsksForARehashAtMost24HoursOld() = runBlocking<Unit> {
+        val a = photo("DCIM/Camera/A.jpg", 3_000)
+        val b = photo("DCIM/Camera/B.jpg", 3_000)
+        backedUp(a, b)
+        // The server's stored re-hash of A is 3 days old.
+        fake.rehashAge["DCIM/Camera/A.jpg"] = 3 * FreeUpPlan.DAY_MS
+        val shots = engine().preview(FreeUpRules()).candidates.shots
+        // hoard-server 0.12.1 honours maxAge: pending, re-hashed, then yes.
+        val check = engine().check(shots)
+        assertThat(fake.maxAges.toSet()).containsExactly(FreeUpPlan.REHASH_MAX_AGE_MS)
+        assertThat(check.go.map { it.stem }).containsExactly("A", "B")
+        // An older server ignores maxAge and keeps answering its 3-day-old yes: A is never freed.
+        fake.honorMaxAge = false
+        fake.rehashAge["DCIM/Camera/A.jpg"] = 3 * FreeUpPlan.DAY_MS
+        val old = engine(maxWaitMs = 120_000).check(shots)
+        assertThat(old.go.map { it.stem }).containsExactly("B")
+        assertThat(old.kept.map { it.first.stem to it.second }).containsExactly("A" to "pending")
+        // Without a Date header the age cannot be told: nothing goes.
+        fake.rehashAge.clear()
+        fake.serverNow = null
+        assertThat(engine(maxWaitMs = 60_000).check(shots).go).isEmpty()
+    }
+
+    @Test
+    fun aRequestLeftWaitingForConsentBySomeoneKillingTheProcessIsSettledAsFreed() = runBlocking<Unit> {
+        source.allFiles = true
+        val a = photo("DCIM/Camera/A.jpg", 3_000)
+        val aXmp = photo("DCIM/Camera/A.xmp", 200)
+        val b = photo("DCIM/Camera/B.jpg", 3_000)
+        val rootId = backedUp(a, aXmp, b)
+        val check = engine().check(engine().preview(FreeUpRules()).candidates.shots)
+        assertThat(check.go.map { it.stem }).containsExactly("A", "B")
+        // Kept before the dialog; the system deletes A's still, then the process dies before anything is reported.
+        engine().awaitConsent(check.go, check.stamps)
+        assertThat(pending.isFile).isTrue()
+        a.delete()
+        // The next start: A (with its unchanged sidecar) is freed and reported freed; B stays.
+        val gone: suspend (List<FreeShot>) -> Set<String> = { shots -> shots.flatMap { it.media }.filter { !File(it.absolute).exists() }.map { FreeUpPlan.fileKey(it) }.toSet() }
+        val done = engine().settlePending(gone) { f, stamp -> stamp != null && FileStamp(File(f.absolute).length(), File(f.absolute).lastModified()) == stamp && File(f.absolute).delete() }
+        assertThat(done!!.files).isEqualTo(2)
+        assertThat(pending.exists()).isFalse()
+        assertThat(fake.removed).containsExactly("DCIM/Camera/A.jpg" to "freed", "DCIM/Camera/A.xmp" to "freed")
+        assertThat(aXmp.exists()).isFalse()
+        assertThat(b.exists()).isTrue()
+        // A backup run after it reports nothing as deleted.
+        backup().run()
+        assertThat(fake.removed.map { it.second }.toSet()).containsExactly("freed")
+        assertThat(db.backup().file(rootId, "DCIM/Camera/B.jpg")).isNotNull()
+        // Nothing pending: nothing to settle.
+        assertThat(engine().settlePending(gone) { _, _ -> false }).isNull()
+    }
+
+    @Test
+    fun aSidecarRewrittenAfterTheCheckIsNeverDeleted() = runBlocking<Unit> {
+        source.allFiles = true
+        val a = photo("DCIM/Camera/A.jpg", 3_000)
+        val aXmp = photo("DCIM/Camera/A.xmp", 200)
+        backedUp(a, aXmp)
+        val check = engine().check(engine().preview(FreeUpRules()).candidates.shots)
+        engine().awaitConsent(check.go, check.stamps)
+        // Culling rewrites the sidecar while the dialog is up; the system deletes the still.
+        aXmp.writeText("<x:xmpmeta rating=5/>")
+        a.delete()
+        val gone: suspend (List<FreeShot>) -> Set<String> = { shots -> shots.flatMap { it.media }.filter { !File(it.absolute).exists() }.map { FreeUpPlan.fileKey(it) }.toSet() }
+        val done = engine().settlePending(gone) { f, stamp -> stamp != null && FileStamp(File(f.absolute).length(), File(f.absolute).lastModified()) == stamp && File(f.absolute).delete() }
+        assertThat(done!!.files).isEqualTo(1)
+        assertThat(aXmp.exists()).isTrue()
+        assertThat(fake.removed).containsExactly("DCIM/Camera/A.jpg" to "freed")
     }
 }

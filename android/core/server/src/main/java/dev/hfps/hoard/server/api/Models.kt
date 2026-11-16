@@ -459,8 +459,15 @@ data class BackupReportResponse(val results: List<BackupReportResult> = emptyLis
 @Serializable
 data class BackupVerifyEntry(val rootId: String, val path: String, val sha256: String, val size: Long)
 
+/**
+ * [maxAge] (ms, hoard-server 0.12.1): a server re-hash older than this is not reused; the server queues a new one and
+ * answers `pending`. Older servers ignore it (the client then also checks `verifiedAt` against the server's clock).
+ */
 @Serializable
-data class BackupVerifyRequest(val entries: List<BackupVerifyEntry>)
+data class BackupVerifyRequest(val entries: List<BackupVerifyEntry>, val maxAge: Long? = null)
+
+/** A response with the server's clock (its `Date` header, Unix ms; null when absent). */
+data class Dated<T>(val value: T, val serverDate: Long?)
 
 /**
  * One verify answer (ADR 0024 "`POST /v1/backup/verify`"): [verified] `yes` (with the server's [verifiedAt]),

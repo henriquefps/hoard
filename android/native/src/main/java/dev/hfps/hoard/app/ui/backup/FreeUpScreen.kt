@@ -165,12 +165,14 @@ class FreeUpViewModel(private val container: AppContainer) : ViewModel() {
         if (shots.isEmpty() || _ui.value.stage != FreeUpStage.Preview) return
         viewModelScope.launch {
             _ui.update { it.copy(stage = FreeUpStage.Checking) }
+            freeUp.settlePending()
             val check = freeUp.engine.check(shots)
             if (check.block != null && check.go.isEmpty()) {
                 _ui.update { it.copy(stage = FreeUpStage.Done, result = FreeUpResult(kept = check.kept, keptForReveal = check.keptForReveal, block = check.block)) }
                 return@launch
             }
             var answers = check.answers
+            val stamps = HashMap(check.stamps)
             val kept = ArrayList(check.kept)
             var files = 0
             var bytes = 0L
@@ -185,16 +187,36 @@ class FreeUpViewModel(private val container: AppContainer) : ViewModel() {
                     _ui.update { it.copy(stage = FreeUpStage.Checking) }
                     val again = freeUp.engine.check(request)
                     answers = answers + again.answers
+                    stamps += again.stamps
                     kept += again.kept
                     keptForReveal += again.keptForReveal
                     request = again.go
-                    if (request.isEmpty()) continue
                 }
+                // Just before the dialog: every file as the check hashed it, every MediaStore id still naming that
+                // file. A shot that changed is checked once more (hashed and verified again); else it stays.
+                var (ok, dropped) = FreeUpPlan.confirm(request, stamps, freeUp::stamp, freeUp::mediaRow)
+                if (dropped.isNotEmpty()) {
+                    _ui.update { it.copy(stage = FreeUpStage.Checking) }
+                    val again = freeUp.engine.check(dropped)
+                    answers = answers + again.answers
+                    stamps += again.stamps
+                    kept += again.kept
+                    keptForReveal += again.keptForReveal
+                    val (ok2, still) = FreeUpPlan.confirm(again.go, stamps, freeUp::stamp, freeUp::mediaRow)
+                    ok = ok + ok2
+                    kept += still.map { it to FreeUpPlan.REASON_CHANGED }
+                }
+                request = ok
+                if (request.isEmpty()) continue
                 _ui.update { it.copy(stage = FreeUpStage.Deleting) }
+                // Kept before the dialog: a process that dies while it is up settles it at the next start.
+                freeUp.engine.awaitConsent(request, stamps)
                 if (Build.VERSION.SDK_INT >= 30) freeUp.requestDelete(request)
                 val gone = freeUp.gone(request)
                 val settlement = FreeUpPlan.settle(request, gone)
-                val done = freeUp.engine.freed(settlement) { withFiles -> freeUp.deleteOther(withFiles) }
+                // Sidecars and listed RAWs go only while they are exactly what the check hashed.
+                val done = freeUp.engine.freed(settlement) { f -> FreeUpPlan.unchanged(f, stamps, freeUp.stamp(f.absolute)) && freeUp.deleteOther(f) }
+                freeUp.engine.consentSettled()
                 files += done.files
                 bytes += done.bytes
                 freedShots += settlement.whole.size + settlement.partial.size
@@ -356,7 +378,11 @@ private fun Preview(
         if (ui.gate !is RevealGate.Off) {
             item("gate", span = { GridItemSpan(maxLineSpan) }) {
                 Note(
-                    if (ui.gate is RevealGate.Stale) R.string.freeup_reveal_stale else R.string.freeup_reveal_on,
+                    when (ui.gate) {
+                        is RevealGate.Stale -> R.string.freeup_reveal_stale
+                        RevealGate.Ungrouped -> R.string.freeup_reveal_ungrouped
+                        else -> R.string.freeup_reveal_on
+                    },
                     PhosphorRegular.Warning,
                     "freeup-gate",
                 )
@@ -481,7 +507,7 @@ fun keptReason(reason: String): String = when {
     reason == FreeUpPlan.REASON_UNREADABLE -> stringResource(R.string.freeup_reason_unreadable)
     reason == "pending" -> stringResource(R.string.freeup_reason_pending)
     reason == "offline" -> stringResource(R.string.backup_offline)
-    reason == FreeUpPlan.REASON_REVEAL || reason == FreeUpPlan.REASON_REVEAL_STALE -> stringResource(R.string.freeup_reason_reveal)
+    reason in FreeUpPlan.REVEAL_REASONS -> stringResource(R.string.freeup_reason_reveal)
     reason.startsWith("refused:") -> stringResource(R.string.freeup_reason_refused)
     else -> reason
 }
@@ -515,7 +541,7 @@ private fun Result(result: FreeUpResult, onDone: () -> Unit) {
         if (result.keptForReveal > 0) {
             Text(stringResource(R.string.freeup_kept_for_reveal, formatNumber(result.keptForReveal, l)), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp).testTag("freeup-kept-reveal"))
         }
-        val byReason = result.kept.filter { it.second != FreeUpPlan.REASON_REVEAL && it.second != FreeUpPlan.REASON_REVEAL_STALE }.groupBy({ it.second }, { it.first })
+        val byReason = result.kept.filter { it.second !in FreeUpPlan.REVEAL_REASONS }.groupBy({ it.second }, { it.first })
         if (byReason.isNotEmpty()) {
             Eyebrow(stringResource(R.string.freeup_stayed), Modifier.padding(start = 16.dp, top = 8.dp))
             Column(Modifier.fillMaxWidth().background(HfpsTheme.colors.card).padding(16.dp).testTag("freeup-stayed"), verticalArrangement = Arrangement.spacedBy(6.dp)) {

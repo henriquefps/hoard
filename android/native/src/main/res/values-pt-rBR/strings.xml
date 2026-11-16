@@ -643,6 +643,7 @@
     <string name="freeup_how">Logo antes de apagar, o servidor lê de novo a cópia dele de cada arquivo e confere se é igual. Depois o Android pede que você permita a exclusão.</string>
     <string name="freeup_reveal_on">O Reveal deste celular ainda não foi atualizado para manter as fotos que o Hoard libera: as fotos que o Reveal conhece ficam no celular.</string>
     <string name="freeup_reveal_stale">Abra o Reveal uma vez para que as edições dele cheguem ao servidor: até lá nada é liberado.</string>
+    <string name="freeup_reveal_ungrouped">O Reveal está instalado neste celular, mas não está agrupado com o Hoard no servidor: nada é liberado até você agrupá-los (Reveal › Ajustes › Sincronização › Este dispositivo).</string>
     <string name="freeup_kept_intro">Ficam no celular: %1$s</string>
     <plurals name="freeup_kept_recent">
         <item quantity="one">%1$s dos últimos %2$d dias</item>

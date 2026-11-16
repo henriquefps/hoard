@@ -36,9 +36,42 @@ class PhoneFreeUp(
     private val context: Context,
     private val gallery: GalleryRepository,
     private val settings: SettingsStore,
+    /** Reveal (release or debug) is installed here (the hand-off's probe). */
+    private val revealInstalledProbe: () -> Boolean = { false },
 ) : FreeUpSource {
     private val db get() = gallery.db
-    val engine: FreeUpEngine by lazy { FreeUpEngine(db, { gallery.sync.api() }, this) }
+    val engine: FreeUpEngine by lazy {
+        FreeUpEngine(db, { gallery.sync.api() }, this, pendingFile = File(context.noBackupFilesDir, PENDING_FILE))
+    }
+
+    override fun revealInstalled(): Boolean = runCatching { revealInstalledProbe() }.getOrDefault(false)
+
+    /**
+     * A delete request left waiting for consent by a process that died (ADR 0024 A3): what the system deleted is freed
+     * and reported `freed`. Called at process start and before every backup run (so it is never reported `deleted`).
+     */
+    suspend fun settlePending() {
+        val done = runCatching { engine.settlePending({ gone(it) }) { f, stamp -> stamp != null && stamp == stamp(f.absolute) && deleteOther(f) } }
+            .onFailure { Log.w(TAG, "free up: settling a pending request failed (${it.javaClass.simpleName})") }
+            .getOrNull()
+        if (done != null && done.files > 0) afterDeletion()
+    }
+
+    /**
+     * The MediaStore row of a backed-up file now (`DATA`, `SIZE`, `DATE_MODIFIED` in ms), or null when there is none:
+     * checked against the path and the check's stamp just before each delete request.
+     */
+    fun mediaRow(mediaId: Long): dev.hfps.hoard.server.backup.MediaRow? = runCatching {
+        context.contentResolver.query(
+            uriOf(mediaId),
+            arrayOf(MediaStore.MediaColumns.DATA, MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DATE_MODIFIED),
+            null,
+            null,
+            null,
+        )?.use { c ->
+            if (!c.moveToFirst()) null else dev.hfps.hoard.server.backup.MediaRow(c.getString(0) ?: "", c.getLong(1), c.getLong(2) * 1000)
+        }
+    }.getOrNull()
 
     // --- Rules (Settings › Backup › Free up space) -----------------------------------------------------------------
 
@@ -151,6 +184,8 @@ class PhoneFreeUp(
         const val TAG = "HoardFreeUp"
         const val KEY_KEEP_RECENT = "freeUpKeepRecent"
         const val KEY_KEEP_FAVOURITES = "freeUpKeepFavourites"
+        /** The delete request waiting for consent (in `noBackupFilesDir`). */
+        const val PENDING_FILE = "free-up-pending.json"
         private const val ON = "on"
         private const val OFF = "off"
 
