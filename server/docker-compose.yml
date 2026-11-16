@@ -36,6 +36,10 @@ services:
     mem_limit: 1536m
     restart: unless-stopped
     read_only: true
+    # A read-only root has no /tmp. The server keeps SQLite's temporary data in memory (0.11.1) and needs none, but
+    # ffmpeg and other tools may: a small tmpfs costs nothing (defence in depth).
+    tmpfs:
+      - /tmp
     security_opt:
       - no-new-privileges:true
 
