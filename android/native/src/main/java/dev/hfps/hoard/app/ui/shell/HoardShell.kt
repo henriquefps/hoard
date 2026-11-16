@@ -280,8 +280,14 @@ fun HoardShell(container: AppContainer) {
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
                             composable<TrashRoute> { dev.hfps.hoard.app.ui.trash.TrashScreen(container, onBack = { navController.popBackStack() }) }
                             composable<BackupRoute> {
-                                dev.hfps.hoard.app.ui.backup.BackupScreen(container, onBack = { navController.popBackStack() }, onOpenFolder = { navController.navigate(BackupFolderRoute(it)) })
+                                dev.hfps.hoard.app.ui.backup.BackupScreen(
+                                    container,
+                                    onBack = { navController.popBackStack() },
+                                    onOpenFolder = { navController.navigate(BackupFolderRoute(it)) },
+                                    onFreeUp = { navController.navigate(FreeUpRoute) { launchSingleTop = true } },
+                                )
                             }
+                            composable<FreeUpRoute> { dev.hfps.hoard.app.ui.backup.FreeUpScreen(container, onBack = { navController.popBackStack() }) }
                             composable<BackupFolderRoute> { entry ->
                                 val route = entry.toRoute<BackupFolderRoute>()
                                 dev.hfps.hoard.app.ui.backup.BackupFolderScreen(container, route.rootId, onBack = { navController.popBackStack() })

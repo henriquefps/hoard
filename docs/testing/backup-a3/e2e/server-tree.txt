@@ -1,0 +1,19 @@
+2 400 300031 ./reveal-sync/blobs/10/9f/109f98cbfb9ae9fb98b6609a948360ec3b54eecb476e0524f79bdf06bd3e25e0
+2 400 198 ./reveal-sync/blobs/44/fa/44fac39a689c74c1725e0da385c618924f33e69d8864cddc82155758c7cd39bb
+2 400 230954 ./reveal-sync/blobs/52/e1/52e14452a486647585662a92c388b0cea2fa0ef76d24ed00117f22b5aa99608a
+2 400 231250 ./reveal-sync/blobs/62/ca/62caf436088eee47b30aff8f703482b3b7d9ca93a21a4c751b548bd65b09ed6f
+2 400 2500008 ./reveal-sync/blobs/67/ad/67ad5aa55dcfae457402f2ca466b85af0473d5fc3b0913e64ac016b0eed5b757
+2 400 374577 ./reveal-sync/blobs/9a/ae/9aae6dc021df9dfdf11079b817d0086fd977ad77b7fc9808f17b0bd41f84e9e7
+2 400 230651 ./reveal-sync/blobs/a9/68/a968d9923cb844e536456640ea30370ae27b68efb04daf171a68b56178d6a36f
+2 400 292299 ./reveal-sync/blobs/c3/58/c358387af09817f64d15532b6004a4a3df99aa03673c2036c1216ed8f45abc82
+2 400 319379 ./reveal-sync/blobs/de/46/de46aa612a924ac06ea63229d78198770afb65b688a8c894c20e3641e1b08ba0
+2 400 292299 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260802_101500.jpg
+2 400 2500008 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260803_181000.dng
+2 400 300031 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260803_181000.jpg
+2 400 198 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260803_181000.xmp
+2 400 231250 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260815_090000.jpg
+2 400 319379 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260816_090000.jpg
+2 400 374577 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260901_080000.jpg
+2 400 230651 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20260902_080000.jpg
+2 400 230954 ./sdk_gphone64_x86_64 (d5aa3fe3)/DCIM/Camera/PXL_20261116_090000.jpg
+1 600 1820 ./sdk_gphone64_x86_64 (d5aa3fe3)/.hoard-mirror/manifest-f16af623-41f6-4166-960d-68d66233dfeb.tsv

@@ -37,8 +37,9 @@ data class FreeShot(val key: String, val rootId: String, val dir: String, val st
     val others: List<BackupFileEntity> get() = files.filter { it.mediaId == null }
     /** The shot is a video (its main file): counted as such in the preview. */
     val video: Boolean get() = files.none { it.kind == BackupKind.IMAGE || it.kind == BackupKind.RAW } && files.any { it.kind == BackupKind.VIDEO }
-    /** The file the preview shows: a still MediaStore lists, else a video. */
-    val cover: BackupFileEntity? get() = media.firstOrNull { it.kind == BackupKind.IMAGE } ?: media.firstOrNull()
+    /** The file the preview shows: a rendered still (a JPEG before its RAW), else any still MediaStore lists, else a video. */
+    val cover: BackupFileEntity? get() = media.firstOrNull { it.kind == BackupKind.IMAGE && BackupExtensions.of(it.path) !in BackupExtensions.RAW }
+        ?: media.firstOrNull { it.kind == BackupKind.IMAGE } ?: media.firstOrNull()
 }
 
 /** Free up's candidates: the shots that may go, oldest first, and how many shots each rule kept. */
@@ -172,6 +173,9 @@ object FreeUpPlan {
         return FreeUpCandidates(out.sortedWith(compareBy({ it.taken }, { it.key })), excluded)
     }
 
+    /** ADR 0017 "Liveness": listed, and seen in the last 90 days. */
+    fun isLive(d: CandidateDevice, now: Long): Boolean = d.lastSeenAt?.let { now - it <= LIVE_MS } == true
+
     /** Whether a device of `physicalDevice.devices` is Reveal (any build: `reveal`, `reveal-debug`, …). */
     fun isReveal(d: CandidateDevice): Boolean = d.app == "reveal" || d.app?.startsWith("reveal-") == true
 
@@ -180,7 +184,7 @@ object FreeUpPlan {
      * that did not declare `freed-adopt` close it; one of them not seen for 30 minutes blocks everything.
      */
     fun revealGate(devices: List<CandidateDevice>, now: Long): RevealGate {
-        val live = devices.filter { isReveal(it) && it.lastSeenAt != null && now - it.lastSeenAt <= LIVE_MS }
+        val live = devices.filter { isReveal(it) && isLive(it, now) }
         val gating = live.filter { FEATURE_FREED_ADOPT !in it.features }
         if (gating.isEmpty()) return RevealGate.Off
         val oldest = gating.minOf { it.lastSeenAt!! }

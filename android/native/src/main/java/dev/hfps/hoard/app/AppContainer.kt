@@ -145,6 +145,8 @@ class AppContainer(context: Context) {
     /** "Save to this device" and the transfer engine's server endpoint (ADR 0024 A2). */
     val serverSaves: dev.hfps.hoard.app.gallery.ServerSaves by lazy { dev.hfps.hoard.app.gallery.ServerSaves(gallery, { transfers }, settingsStore) }
     val backup: dev.hfps.hoard.app.backup.PhoneBackup by lazy { dev.hfps.hoard.app.backup.PhoneBackup(appContext, gallery, settingsStore, scope) }
+    /** Free up space (ADR 0024, Hoard 2.6.0): the phone's verified, backed-up shots deleted with the system's consent. */
+    val freeUp: dev.hfps.hoard.app.backup.PhoneFreeUp by lazy { dev.hfps.hoard.app.backup.PhoneFreeUp(appContext, gallery, settingsStore) }
 
     /** SMB folders mapped to the server's NAS folders (ADR 0022). */
     val serverLinks: dev.hfps.hoard.app.files.ServerLinks by lazy { dev.hfps.hoard.app.files.ServerLinks(this) }

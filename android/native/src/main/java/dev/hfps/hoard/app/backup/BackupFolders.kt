@@ -92,6 +92,14 @@ object BackupFolders {
     }
 
     /**
+     * Settings › Backup's "Reveal on this phone is not grouped with Hoard" (ADR 0024 "When only one app is installed, or
+     * they are not grouped"): Reveal is installed here, and no live Reveal (seen in the last 90 days, ADR 0017) is in
+     * this phone's `physicalDevice.devices`.
+     */
+    fun revealNotGrouped(installed: Boolean, devices: List<dev.hfps.hoard.server.api.CandidateDevice>, now: Long): Boolean =
+        installed && devices.none { d -> dev.hfps.hoard.server.backup.FreeUpPlan.isReveal(d) && dev.hfps.hoard.server.backup.FreeUpPlan.isLive(d, now) }
+
+    /**
      * A folder the owner typed ("Add a folder"): relative to the phone's storage (`Download/Photos`), or absolute under
      * it or an SD card (`/storage/1234-ABCD/DCIM`). Null when it is not a phone folder or names a hidden one.
      */
