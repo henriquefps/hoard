@@ -1,4 +1,4 @@
-# Phone backup (Hoard 2.4.0, ADR 0024 phase A1): tests and the emulator run
+# Phone backup (Hoard 2.4.0–2.6.0, ADR 0024 phases A1–A3): tests and the emulator runs
 
 ## JVM and Robolectric (`cd android && ./gradlew testDebugUnitTest`)
 
@@ -81,3 +81,42 @@ the hidden part file's row through the rename that publishes it), so the tablet'
 the fix, was rescanned by hand; the second save, after it, was indexed at once with its size and the phone's time.
 Notes: the tablet's pull to refresh did not start a sync in one try (`adb input swipe`), Settings › Sync now did; the
 fake DNG has no thumbnail on the tablet (Android cannot decode it), as expected for that synthetic file.
+
+## A3: free up space (Hoard 2.6.0)
+
+### JVM and Robolectric
+
+| Suite | What it checks |
+| --- | --- |
+| `:core:server` `FreeUpPlanTest` | whole shots oldest first (a pair with its sidecar; a pair whose RAW is still uploading stays whole); NAS references count as backed up; exclusions: the last 30 days, favourites, pending culling, a shot of listed files only, failed, refused, reported before it changed; both settings off; shots per folder and volume, paused roots left out; **the Reveal gate**: no Reveal (off), a live Reveal without `freed-adopt` (on; the debug build too), seen 31 minutes ago (stale: nothing goes), with `freed-adopt` (off), never seen or not for 90 days (off), two Reveals one without it (on); verify answers `yes` / `pending` (asked again at `retryAfter`) / `no` (the whole shot stays with the reason) / `refused` / unknown; a `yes` older than 10 minutes asked again; a shot named by a record through one file of a pair kept while the gate is on, not with it off; requests of at most 1000 media files with whole shots; a partial consent (one file of a pair: reported alone, its sidecar stays) and a refused one; a lost `freed` report found again |
+| `:core:server` `FreeUpEngineTest` (fake hoard-server 0.12.0: `FakeBackup` with verify and `GET /v1/device`) | backed up by `BackupEngine` first, then: the preview (culling pushed, the 30-day rule), the check, the deletion reported `freed` and kept in `freed`, the answers stale after 10 minutes; `pending` twice then `yes`, `differs` and `refused` kept; pending for too long kept; the gate on (the named shot kept, the other freed), stale (nothing verified), `freed-adopt` (both go); a file rewritten in place after its backup kept (`changed`), a 3 MB NAS reference hashed by the check, then verified; a partial consent (a still deleted, its video and sidecar kept; a whole shot's sidecar deleted after its media); a report that fails is made as `freed` by the next backup run; no `backup` feature, no free up |
+| `:native` `FreeUpMonthsTest` | months oldest first in the phone's zone (a shot at 23:30 UTC on 31 August is September in Tokyo), counts, bytes, shots left out; "Reveal not grouped" only with Reveal installed and no live Reveal in the group |
+| `:native` `FreeUpScreenshotTest` | goldens (copies in [`backup-a3/goldens/`](backup-a3/goldens/)): `freeup_preview_{phone_light,phone_dark,tablet_light}` (one shot left out), `freeup_reveal_on_phone_light`, `freeup_reveal_stale_phone_light` (button off), `freeup_checking_phone_light`, `freeup_result_phone_light` (freed, declined, kept for Reveal, reasons), `freeup_result_none_phone_dark`, `backup_freeup_phone_{light,dark}` (Settings › Backup with Free up space, the freed total and the "Reveal not grouped" hint) |
+
+### Emulator run (2026-11-16)
+
+Emulator `hoard-a3` (API 36 Google Play image, `-memory 3072 -no-window`, port 5600, made for the run and deleted
+after), the debug build. My own hoard-server image built from main's `server/` (0.12.0, legacy builder) and run with
+[`backup-a3/server.sh`](backup-a3/server.sh) on `127.0.0.1:3996` → `http://10.0.2.2:3996`, typed by hand in the pairing
+link. Synthetic files from [`backup-a3/make-files.py`](backup-a3/make-files.py) (noise JPEGs with an EXIF capture time
+in August and September 2026, a fake DNG and an `.xmp` for a pair, one taken today), pushed to `DCIM/Camera`, times set
+with `touch -d`, All files access granted. Reveal was simulated with `curl`: a device paired with `"app": "reveal"`,
+claimed into the phone's physical device (`POST /v1/device/claim`), and a `photo` record (`POST /v1/changes`) naming
+`PXL_20260816_090000.jpg`'s fingerprint. Driven with `adb shell input` and `uiautomator dump`. Container, image, work
+folders, emulator and AVD removed afterwards.
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Camera on | 9 of 9 backed up (the pair's DNG and `.xmp` included) | — |
+| The server copy of `PXL_20260815_090000.jpg` damaged in my container (8 bytes overwritten in its blob, in place: the mirror's hard link has the same inode) | — | — |
+| Free up space, Reveal live without `freed-adopt` | preview: "6 photos from before Oct 17, 2026 · 4.1 MB", August (4) and September (2), the Reveal note, "Staying on the phone: 1 from the last 30 days" | `e2e/e01-preview-reveal-gate.png` |
+| Free up, the system dialog **denied** | "Checking on the server…", then Android's "Allow Hoard debug to delete 5 photos?"; denied: "Nothing was deleted. 4 shots stay", "Kept for Reveal: 1", the damaged one stays ("The server's copy is not the same"); every file still on the phone | `e2e/e02-checking.png`, `e2e/e03-consent.png`, `e2e/e04-denied.png` |
+| Free up again with `freeup-request-size` = 1 (one dialog per shot): allow, allow, allow, **deny** | "Freed 5 files · 3.3 MB" (the lone photo, the pair's JPEG and DNG, then its `.xmp`, and the first September photo), "1 shot stays: Android did not delete it"; the damaged and the Reveal-named photos stay. The manifest: exactly those 5 entries `on_device 0`, `freed`; the others `1` | `e2e/e05-consent-denied-last.png`, `e2e/e06-result-partial.png` |
+| The simulated Reveal declares `freed-adopt` (`PATCH /v1/device`) | the Reveal note is gone; the named photo is a candidate | `e2e/e07-preview-freed-adopt.png` |
+| One shot left out by tapping it, Free up, allow | "Freed 1 file · 312 KB" (the Reveal-named photo); the photo left out and the damaged one stay | `e2e/e08-result-freed-adopt.png` |
+| Settings and the Gallery after a sync | "3.6 MB freed · 6 files"; the freed photos are server items with the "Freed from the phone" badge, the record's rating (3 stars) on the Reveal-named one | `e2e/e09-settings-freed.png`, `e2e/e10-gallery-after.png` |
+
+The server's tree after the run: [`backup-a3/e2e/server-tree.txt`](backup-a3/e2e/server-tree.txt) (freed files keep
+their hard links in the phone's folder). Found and fixed during the run: the debug override of the request size was
+first read from the app's external files folder, which `adb shell` can write but the app could not read; it is now
+read from the app's own files folder (`run-as`). The preview's cover of a RAW + JPEG pair is the JPEG.

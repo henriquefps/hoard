@@ -88,7 +88,11 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   `docs/testing/backup.md`. A2 (other devices see backups): `gallery.db` 5 (`server_item_mirrors`, the items' `mirror`
   locations), `gallery/Devices.kt` (tree, "Where" filter, badge, own-files merge by place), "Save to this device" =
   `ServerSaves` + `SaveToDevice` through `TransferService` with the read-only `ServerTransferFs` (`Endpoint.Server`,
-  `:core:smb`, opened by the app through `TransferEndpoints.server`). E2E: two debug ids in two Android users of one AVD.
+  `:core:smb`, opened by the app through `TransferEndpoints.server`). E2E: two debug ids in two Android users of one AVD. A3 (free up
+  space, Android 11+): `FreeUpPlan` (pure) and `FreeUpEngine` in `:core:server` `backup/`, `PhoneFreeUp` and
+  `ui/backup/FreeUpScreen.kt`; deletion only through `MediaStore.createDeleteRequest` (never a direct delete), only
+  `yes` verify answers younger than 10 minutes, `freed` written before the report. E2E: `docs/testing/backup.md` "A3"
+  (a debug build reads the delete request size from `files/freeup-request-size`).
 - **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017; Reveal's edited previews ADR 0020): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and

@@ -888,3 +888,56 @@ What the app PR settled where the text above was silent or loose. Where this dif
   again after its modified time is set.
 - Not in A2 (still open): "Reveal on this phone is not grouped with Hoard" in Settings › Backup (A1 deferred it here);
   it needs `physicalDevice.devices` and is left for A3, where the Reveal gate reads the same list.
+
+## Amendment (A3, Hoard 2.6.0)
+
+What the app PR settled where the text above was silent or loose. Where this differs from a line above, this wins.
+
+- **Where the code is.** `FreeUpPlan` (pure: candidates, the Reveal gate, verify answers, delete requests, what a
+  consent deleted) and `FreeUpEngine` (preview, the check just before, the report) live in `:core:server` `backup/`
+  and run on the JVM against a fake server; the phone side is a `FreeUpSource`, `PhoneFreeUp` in `:native` `backup/`
+  (MediaStore favourites, culling, `createDeleteRequest`, the read-back); the screen is `ui/backup/FreeUpScreen.kt`
+  (Settings › Backup › Free up space). No schema change: `freed` was made in `gallery.db` 4.
+- **A shot** is every `backup_files` row of one root with one directory and one stem (lower case), as the server groups
+  a mirror and the Gallery keys a phone shot (`<location>/<dir>/<stem>`). It is a candidate when every file is backed up
+  (state `stored`, `nas` or `verified`, the server's last answer `stored` or `nas`, for the size, time and fingerprint
+  it has now), it has at least one MediaStore file (a shot of listed files only, a lone CR3 or sidecar, has no system
+  consent to cover it and stays: "RAW or sidecar without a photo"), and its root is not paused. Oldest first by the
+  shot's oldest capture time. Kept files are counted per reason in the preview.
+- **Favourites** are read from MediaStore (`IS_FAVORITE`, images and videos) when the preview opens; the index keeps no
+  column for them. **Culling** is pushed first (a sync, which also hands decided phone shots over); a shot still has
+  pending culling when it has a decision on the phone and no server item yet, when its hand-over is still due, or when
+  its item has queued changes.
+- **The Reveal gate** reads `physicalDevice.devices` of `GET /v1/device` when the preview opens and again at the check.
+  Reveal is `app` `reveal` or `reveal-<variant>`; live is ADR 0017's rule (seen in the last 90 days). The gate is off
+  only when **every** live Reveal declared `freed-adopt`; it blocks everything when one of the Reveals that did not
+  declare it was last seen more than 30 minutes ago (then nothing is even verified). The preview shows the gate; the
+  result counts "Kept for Reveal".
+- **"Within the last 10 minutes"** is the age of the `yes` on the phone (when the answer was received), not the
+  server's `verifiedAt`, which is the time of its re-hash and stays valid there for 30 days per content (Amendment S1).
+  A delete request made more than 10 minutes after its answers (a slow dialog before it) checks its shots again first.
+- **The check just before** stats every file again: gone, unreadable or another size stays (`unreadable`, `changed`);
+  another time with the same size is hashed again (the same bytes go, other bytes stay `changed`); a file with no valid
+  hash (a NAS reference over 2 MiB was never uploaded, so never hashed) is hashed then. This hashing runs in the app's
+  process, **only after the owner's tap on the preview** (never at start-up or when a screen opens), one file at a time
+  at the backup's throttle unless charging: an exception to "hashing runs only inside `BackupWorker`" for the check the
+  owner is waiting for. `POST /v1/backup/verify` goes in batches of `maxVerify`; `pending` is asked again at its
+  `retryAfter` for at most 10 minutes, then the shot stays ("still being checked on the server"). `no` keeps the whole
+  shot with the server's reason; a per-entry `refused` is a `no` ("not taken by the server"); a root the server no
+  longer knows (`404`) keeps its shots.
+- **Delete requests** hold whole shots, at most 1000 MediaStore files each (one consent each), oldest first. A debug
+  build reads a smaller size from `files/freeup-request-size` (written with `run-as`), to test a partial consent with a
+  few files. After each dialog, a file is gone when its MediaStore row and its file are both gone; a shot's other files
+  (sidecars, listed RAWs) are deleted (All files access) only when all its media went. Only what is gone is reported.
+- **Reported, or reported later.** What is gone is written to `freed` first (phone path, item, fingerprint, bytes),
+  then reported (`removed`, reason `freed`) per root, and leaves `backup_files`. When the report fails, the next backup
+  run reports as `freed` every row whose path is in `freed` with the same fingerprint and whose file is gone, whatever
+  its listing (so a root freed to empty, whose listing would never count as complete, is still reported).
+- **Settings** shows what was freed ("18.4 GB freed · 4,210 files") on the Photo server row and in Settings › Backup's
+  Free up space section, with the two rules ("Keep the last 30 days on the phone", "Keep favourites on the phone", both
+  on). The section is shown on Android 11 and later only, once a folder is backed up.
+- **"Reveal on this phone is not grouped with Hoard"** (deferred from A1 and A2) shows in Settings › Backup when
+  Reveal is installed (it answers Reveal's hand-off action) and no live Reveal is in this phone's
+  `physicalDevice.devices`; its button goes back to Settings, where **This phone** is.
+- Client models gained `physicalDevice.devices[].lastSeenAt` and `features`, and the verify answer's `state`/`detail`
+  (a refused entry). Nothing changed on the server or in `/v1`.
