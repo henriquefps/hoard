@@ -32,7 +32,8 @@ const (
 	uploadLiveWindow    = 10 * time.Minute    // an upload with a chunk this recent is "in progress"
 	uploadRetryAfter    = 300                 // seconds
 	verifyRetryAfter    = 30                  // seconds
-	verifyValidFor      = 30 * 24 * time.Hour // a re-hash is good for this long
+	verifyValidFor      = 30 * 24 * time.Hour // a re-hash is good for this long (also the largest maxAge)
+	verifyMinAge        = time.Hour           // the smallest maxAge: a client cannot make the server hash nonstop
 	rootActiveWindow    = 7 * 24 * time.Hour  // a root is active while a live device reported within it
 	moveWindow          = 24 * time.Hour      // a reported move waits this long for its new path
 	backupFailureMemory = 10 * time.Minute    // a failed job's reason is answered for this long

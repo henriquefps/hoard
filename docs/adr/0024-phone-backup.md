@@ -784,6 +784,13 @@ From the S1 review (same PR):
   same lock, so a row never outlives its file.
 
 
+**hoard-server 0.12.1: `maxAge` on verify.** Free up must delete only after a recent re-hash, but a stored one answered
+for 30 days. `POST /v1/backup/verify` takes an optional `maxAge` (ms; in the body, or on an entry, which wins). A
+stored re-hash (blob, or the NAS entry's `verified_sha256` / `nas_files.sha256`) older than `maxAge` is queued again in
+the same bounded queue and answered `pending` with `retryAfter`; once it ran, `verifiedAt` is the new time and a
+damaged copy answers `differs`. The value is clamped to 1 hour to 30 days (never nonstop hashing); without it the
+behaviour is the 30 days above. Additive under `/v1`.
+
 ## Amendment (A1, Hoard 2.4.0)
 
 What the app PR settled where the text above was silent or loose. Where this differs from a line above, this wins.
