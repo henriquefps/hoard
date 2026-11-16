@@ -26,16 +26,16 @@ import (
 const (
 	settingKeepNasCopies = "backupKeepNasCopies" // "Keep a copy of NAS files a phone no longer has" (on unless "false")
 
-	backupMaxRoots       = 64
-	backupMaxReport      = 1000
-	backupMaxVerify      = 500
-	uploadLiveWindow     = 10 * time.Minute    // an upload with a chunk this recent is "in progress"
-	uploadRetryAfter     = 300                 // seconds
-	verifyRetryAfter     = 30                  // seconds
-	verifyValidFor       = 30 * 24 * time.Hour // a re-hash is good for this long
-	rootActiveWindow     = 7 * 24 * time.Hour  // a root is active while a live device reported within it
-	moveWindow           = 24 * time.Hour      // a reported move waits this long for its new path
-	backupFailureMemory  = 10 * time.Minute    // a failed job's reason is answered for this long
+	backupMaxRoots      = 64
+	backupMaxReport     = 1000
+	backupMaxVerify     = 500
+	uploadLiveWindow    = 10 * time.Minute    // an upload with a chunk this recent is "in progress"
+	uploadRetryAfter    = 300                 // seconds
+	verifyRetryAfter    = 30                  // seconds
+	verifyValidFor      = 30 * 24 * time.Hour // a re-hash is good for this long
+	rootActiveWindow    = 7 * 24 * time.Hour  // a root is active while a live device reported within it
+	moveWindow          = 24 * time.Hour      // a reported move waits this long for its new path
+	backupFailureMemory = 10 * time.Minute    // a failed job's reason is answered for this long
 )
 
 var backupTypes = map[string]bool{"image": true, "video": true, "raw": true, "sidecar": true}
