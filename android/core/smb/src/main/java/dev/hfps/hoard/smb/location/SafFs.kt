@@ -13,6 +13,7 @@ import dev.hfps.hoard.smb.IsoTime
 import dev.hfps.hoard.smb.SafDestinations
 import dev.hfps.hoard.smb.SmbAccess
 import dev.hfps.hoard.smb.SmbEntry
+import dev.hfps.hoard.smb.SmbErrors
 import dev.hfps.hoard.smb.SmbPaths
 import dev.hfps.hoard.smb.smbFail
 import dev.hfps.hoard.smb.text.TextCodec
@@ -176,6 +177,52 @@ class SafFs(
             ?: smbFail(ErrorCode.ACCESS_DENIED, "Could not rename ${SmbPaths.name(clean)}")
         stat(target)
     }
+
+    /**
+     * `DocumentsContract.moveDocument` into the target's folder, then `renameDocument` when the name changes (ADR
+     * 0023). Both ends must be under the same grant (one tree); a provider without move support fails `UNAVAILABLE`
+     * with reason [LocalErrors.MOVE_UNSUPPORTED], never a copy.
+     */
+    override fun move(path: String, targetPath: String): SmbEntry = LocalErrors.guard(path) {
+        val clean = LocalPaths.normalize(path)
+        val target = LocalPaths.normalize(targetPath)
+        if (clean.isEmpty() || target.isEmpty()) smbFail(ErrorCode.ACCESS_DENIED, "Cannot move the root")
+        val name = LocalPaths.requireValidName(SmbPaths.name(target), "target name")
+        if (target == clean) return@guard stat(clean)
+        if (target.startsWith("$clean/")) smbFail(ErrorCode.ACCESS_DENIED, "Cannot move a folder into itself")
+        val grant = SafVolumes.grantFor(grants, clean)
+        if (grant == null || SafVolumes.grantFor(grants, target) != grant) {
+            smbFail(ErrorCode.UNAVAILABLE, "$target is outside the folder Hoard can use", mapOf(SmbErrors.REASON to LocalErrors.MOVE_UNSUPPORTED))
+        }
+        row(clean)
+        val sourceParent = SmbPaths.parent(clean)
+        val targetParent = SmbPaths.parent(target)
+        requireWritableFolder(sourceParent)
+        requireWritableFolder(targetParent)
+        if (exists(target)) smbFail(ErrorCode.ALREADY_EXISTS, "$name already exists")
+        val tree = SafVolumes.treeUri(uuid, grant)
+        fun uri(p: String) = DocumentsContract.buildDocumentUriUsingTree(tree, SafVolumes.documentId(uuid, p))
+        var at = clean
+        if (sourceParent != targetParent) {
+            val moved: Uri? = try {
+                DocumentsContract.moveDocument(resolver, uri(clean), uri(sourceParent), uri(targetParent))
+            } catch (e: UnsupportedOperationException) {
+                smbFail(ErrorCode.UNAVAILABLE, "This storage cannot move files", mapOf(SmbErrors.REASON to LocalErrors.MOVE_UNSUPPORTED))
+            } catch (e: IllegalArgumentException) {
+                // The external storage provider throws this for a document it cannot move (no FLAG_SUPPORTS_MOVE).
+                smbFail(ErrorCode.UNAVAILABLE, "This storage cannot move files", mapOf(SmbErrors.REASON to LocalErrors.MOVE_UNSUPPORTED))
+            }
+            moved ?: smbFail(ErrorCode.ACCESS_DENIED, "Could not move ${SmbPaths.name(clean)}")
+            at = SmbPaths.join(targetParent, SmbPaths.name(clean))
+        }
+        if (SmbPaths.name(at) != name) {
+            DocumentsContract.renameDocument(resolver, uri(at), name)
+                ?: smbFail(ErrorCode.ACCESS_DENIED, "Could not rename ${SmbPaths.name(at)}")
+        }
+        stat(target)
+    }
+
+    override fun moveRootOf(path: String): String? = SafVolumes.grantFor(grants, LocalPaths.normalize(path))
 
     override fun delete(path: String, recursive: Boolean, cancellation: Cancellation) = LocalErrors.guard(path) {
         val clean = LocalPaths.normalize(path)

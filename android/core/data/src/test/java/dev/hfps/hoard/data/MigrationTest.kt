@@ -60,7 +60,7 @@ class MigrationTest {
             // A changed source copied again keeps its older copy as another row.
             db.revealCopies().save(listOf(RevealCopyEntity(uri = "content://media/external_primary/images/media/2", sourceKey = "m/share", sourcePath = "a/DSC1.ARW", size = 11, modifiedMillis = 6, copiedAt = "2026-11-16T00:00:00Z")))
             assertThat(db.revealCopies().find("m/share", listOf("a/DSC1.ARW")).map { it.size }).containsExactly(11L, 10L).inOrder()
-            assertThat(db.openHelper.readableDatabase.version).isEqualTo(3)
+            assertThat(db.openHelper.readableDatabase.version).isEqualTo(4)
         } finally {
             db.close()
             file.delete()
@@ -90,7 +90,50 @@ class MigrationTest {
             assertThat(cull.sidecarReads("m1", "photos", "shoot").single().rating).isEqualTo(3)
             cull.saveSidecarReads("m1", "photos", "shoot", emptyList(), listOf("dsc1"))
             assertThat(cull.sidecarReads("m1", "photos", "shoot")).isEmpty()
-            assertThat(db.openHelper.readableDatabase.version).isEqualTo(3)
+            assertThat(db.openHelper.readableDatabase.version).isEqualTo(4)
+        } finally {
+            db.close()
+            file.delete()
+        }
+    }
+
+    @Test fun version3MigratesToVersion4WithEmptyTrashTables() = runBlocking {
+        val file = context.getDatabasePath("migration-3-4.db").apply { parentFile?.mkdirs() }
+        create(file, 3) { db ->
+            db.execSQL("INSERT INTO cull_decisions (location_id, share, path, shot_id, flag, rating, updated_at) VALUES ('m1', 'photos', 'shoot', 'dsc1', 'reject', 0, '2026-11-14T00:00:00.000Z')")
+            db.execSQL("INSERT INTO cull_sidecar_reads (location_id, share, path, shot_id, name, size, modified_ms, rating, flag, label) VALUES ('m1', 'photos', 'shoot', 'dsc1', 'DSC1.xmp', 512, 4000, 3, 'pick', NULL)")
+            db.execSQL("INSERT INTO settings (key, value) VALUES ('showHiddenFiles', 'true')")
+        }
+        val db = Room.databaseBuilder(context, HoardDatabase::class.java, file.path)
+            .addMigrations(*HoardMigrations.ALL)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            // Room validates every table (and the new ones) against schema 4 when it opens the database.
+            assertThat(db.cull().forFolder("m1", "photos", "shoot").single().flag).isEqualTo("reject")
+            assertThat(db.cull().sidecarReads("m1", "photos", "shoot").single().rating).isEqualTo(3)
+            assertThat(db.settings().get("showHiddenFiles")).isEqualTo("true")
+            val trash = db.trash()
+            assertThat(trash.all()).isEmpty()
+            assertThat(trash.roots()).isEmpty()
+            val row = TrashEntryEntity(
+                id = "e1", runId = "r1", locationId = "m1", share = "photos", trashRoot = "Imagens", dayFolder = "2026-11-15",
+                originalPath = "Imagens/2024/DSC1.ARW", trashedPath = "Imagens/.hoard-trash/2026-11-15/2024/DSC1.ARW",
+                shotKey = "imagens/2024/dsc1", size = 10, modifiedMillis = 5, trashedAt = 1_000, serverItemId = "it1",
+                serverFolderId = "f1", state = TrashStates.MOVING,
+            )
+            trash.put(listOf(row))
+            trash.setState(listOf("e1"), TrashStates.TRASHED)
+            assertThat(trash.all().single().state).isEqualTo(TrashStates.TRASHED)
+            assertThat(trash.unsettled()).isEmpty()
+            trash.touchRoot("m1", "photos", "Imagens", "f1")
+            trash.touchRoot("m1", "photos", "Imagens", null, listedAt = 7)
+            val root = trash.roots().single()
+            assertThat(root.serverFolderId).isEqualTo("f1")
+            assertThat(root.lastListed).isEqualTo(7)
+            trash.delete(listOf("e1"))
+            assertThat(trash.all()).isEmpty()
+            assertThat(db.openHelper.readableDatabase.version).isEqualTo(4)
         } finally {
             db.close()
             file.delete()

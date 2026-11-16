@@ -107,6 +107,19 @@ class AppSettings(private val store: SettingsStore) {
         require(ms in 200..30_000)
         store.putJson(PROBE_TIMEOUT, ms.toString())
     }
+    /**
+     * Settings › Trash › "Empty the trash automatically" (ADR 0023): days after which a day folder of the trash is
+     * deleted, one of [TRASH_AUTO_EMPTY_DAYS]; 0 = off. On by default, after 30 days (the owner's decision).
+     */
+    val trashAutoEmptyDays: Flow<Int> = store.observeJson(TRASH_AUTO_EMPTY).map(::parseTrashDays)
+
+    suspend fun trashAutoEmptyDaysNow(): Int = parseTrashDays(store.getJson(TRASH_AUTO_EMPTY))
+
+    suspend fun setTrashAutoEmptyDays(days: Int) {
+        require(days in TRASH_AUTO_EMPTY_DAYS)
+        store.putJson(TRASH_AUTO_EMPTY, days.toString())
+    }
+
     suspend fun setStorageIntroSeen(value: Boolean) = store.putJson(STORAGE_INTRO_SEEN, value.toString())
     suspend fun setRevealStreamNoteSeen(value: Boolean) = store.putJson(REVEAL_STREAM_NOTE_SEEN, value.toString())
 
@@ -125,6 +138,15 @@ class AppSettings(private val store: SettingsStore) {
         const val CULL_BLUR = "cullBlurSensitivity"
         const val CULL_EYES = "cullEyesSensitivity"
         const val CULL_BURST_GAP = "cullBurstGapMs"
+        const val TRASH_AUTO_EMPTY = "trashAutoEmptyDays"
+
+        /** The auto-empty choices of Settings › Trash: 7, 30 or 90 days, or 0 = off (ADR 0023). */
+        val TRASH_AUTO_EMPTY_DAYS = listOf(7, 30, 90, 0)
+        const val TRASH_AUTO_EMPTY_DEFAULT = 30
+
+        /** Pure: the stored auto-empty setting, the default (30) for anything that is not one of the choices. */
+        fun parseTrashDays(json: String?): Int =
+            number(json)?.takeIf { it % 1.0 == 0.0 }?.toInt()?.takeIf { it in TRASH_AUTO_EMPTY_DAYS } ?: TRASH_AUTO_EMPTY_DEFAULT
 
         /** Pure: the culling settings from their stored JSON texts, in the order of [cull]'s keys (JVM-tested). */
         fun parseCull(values: List<String?>): CullSettings {

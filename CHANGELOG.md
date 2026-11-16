@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.3.0 (unreleased)
+
+- **Trash, the core** ([ADR 0023](docs/adr/0023-trash.md), phase A1; no screens yet). Hoard can move a shot (every file of it and its `.xmp` sidecars) or a plain file into a hidden `.hoard-trash` folder on the same share or drive, by date and with the original folders, in one rename per file: no bytes are copied. On a share that is also a photo server folder, the trash goes inside that folder so the server can see it; when Hoard does not know yet whether the folder is on the server and cannot reach it, it refuses instead of guessing.
+  - Restore puts each file back exactly where it was and refuses (never renames) when another file took its place; Empty deletes for good; the trash empties itself after 30 days by default (7, 30, 90 days or off).
+  - If Hoard is stopped in the middle, it finishes or undoes the interrupted shot the next time it starts, so a shot is never left half in the trash.
+  - The phone's own trash (Android 11 and later) and the Gallery come in later phases.
+
 ## 2.2.2 (2026-11-15)
 
 - **The Gallery keeps your place** ([ADR 0021](docs/adr/0021-gallery.md), "Amendment 2.2.2"). Opening a photo and coming back no longer sends you to the top of the library: the grid stays where it was, and if you swiped to other photos in the viewer, the one you closed on is brought into view. The grid also stays on the same photo when a sync adds new photos above it, when a decision changes a filtered list, and after Android closes Hoard in the background.

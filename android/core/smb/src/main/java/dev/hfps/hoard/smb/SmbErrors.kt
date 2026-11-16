@@ -67,7 +67,19 @@ object SmbErrors {
         put(0xC0000120L, ErrorCode.CANCELLED) // STATUS_CANCELLED
         put(0xC000020CL, ErrorCode.UNREACHABLE) // STATUS_CONNECTION_DISCONNECTED
         put(0xC000020DL, ErrorCode.UNREACHABLE) // STATUS_CONNECTION_RESET
+        // A rename across two filesystems of one share (Samba's rename(2) gives EXDEV): ADR 0023, a move that cannot be
+        // a rename fails, it is never a copy. Carries [REASON] = [NOT_SAME_DEVICE] in `data`.
+        put(STATUS_NOT_SAME_DEVICE, ErrorCode.UNAVAILABLE)
     }
+
+    /** `STATUS_NOT_SAME_DEVICE` (MS-ERREF 2.3.1). */
+    const val STATUS_NOT_SAME_DEVICE = 0xC00000D4L
+
+    /** The `data` key of a failure's own reason, when its code alone does not say it. */
+    const val REASON = "reason"
+
+    /** [REASON] of `STATUS_NOT_SAME_DEVICE`: the share spans two filesystems, so the move cannot be a rename. */
+    const val NOT_SAME_DEVICE = "notSameDevice"
 
     /** Statuses meaning the SMB session itself is gone (the registry drops it). */
     private val SESSION_GONE = setOf(0xC0000203L, 0xC000035CL, 0xC00000C9L)
@@ -88,7 +100,8 @@ object SmbErrors {
         val code = classify(error)
         val detail = describe(error)
         val message = if (context.isNullOrBlank()) detail else "$context: $detail"
-        return HoardSmbException(code, message, error)
+        val notSameDevice = causes(error).any { it is SMBApiException && (it.statusCode and 0xFFFFFFFFL) == STATUS_NOT_SAME_DEVICE }
+        return HoardSmbException(code, message, error, if (notSameDevice) mapOf(REASON to NOT_SAME_DEVICE) else emptyMap())
     }
 
     /** The first specific classification found in the cause chain; generic I/O falls back to UNREACHABLE. */
