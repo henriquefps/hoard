@@ -398,3 +398,190 @@ func TestTrashSidecars(t *testing.T) {
 		t.Fatalf("culling record dropped at purge: %v", err)
 	}
 }
+
+func (e *env) edit(itemID, version string) {
+	e.t.Helper()
+	_, _, _, _, err := e.st.PutEdit(context.Background(), store.Edit{VersionID: version, ItemID: itemID, DeviceID: "device-1",
+		RecipeDigest: "r:" + version, EditedAt: 1_700_000_000_000, SHA256: strings.Repeat("ab", 32), Format: "jpeg", Width: 10,
+		Height: 10, Bytes: 100}, 10)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) edits(itemID string) int {
+	e.t.Helper()
+	l, err := e.st.ItemEdits(context.Background(), itemID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return len(l)
+}
+
+// A trashed shot keeps its item while another file takes its path (an export, a reused camera number): only the same
+// main fingerprint joins a trashed copy to a live item (ADR 0023, "Amendment (S1)").
+func TestTrashStemReusedByAnotherFile(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.write("2024/DSC01234.ARW", mediatest.RAW(shotAt(1, "2024:05:01 10:00:00")))
+	e.walk()
+	reject := e.live()["DSC01234.ARW"].ID
+	e.edit(reject, "0b6c41de-8b4a-4d55-9f0e-6f0c2d1a0001")
+	if _, err := e.st.PushCulling(ctx, "device-1", []store.CullChange{{ItemID: reject, Field: store.CullFlag, Value: []byte(`"reject"`),
+		ModifiedAt: 1_700_000_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	e.move("2024/DSC01234.ARW", day+"/2024/DSC01234.ARW")
+	e.walk()
+	// A different photo with the same name and stem appears at the same path, and a JPEG with the stem next to it.
+	e.write("2024/DSC01234.ARW", mediatest.RAW(shotAt(2, "2024:06:01 10:00:00")))
+	e.write("2024/DSC01234.JPG", mediatest.JPEG(shotAt(3, "2024:06:01 10:00:00"), ""))
+	e.walk()
+	if r := e.row(reject); r.Deleted || !r.Trashed() {
+		t.Fatalf("the trashed reject was tombstoned by an unrelated file: %+v", r)
+	}
+	if e.edits(reject) != 1 {
+		t.Fatal("the reject's edits were dropped")
+	}
+	if locs := e.trashLocations(reject); len(locs) != 1 || locs["DSC01234.ARW"][0] != day+"/2024/DSC01234.ARW" {
+		t.Fatalf("reject %v", locs)
+	}
+	newer := ""
+	for _, it := range e.live() {
+		if it.ID != reject && it.Files[0].Name == "DSC01234.ARW" {
+			newer = it.ID
+		}
+	}
+	if newer == "" || e.row(newer).Trashed() || len(e.item(newer).Files) != 2 {
+		t.Fatalf("the new pair %+v", e.item(newer))
+	}
+	if _, err := e.st.Culling(ctx, newer); err == nil {
+		t.Fatal("the reject's culling moved to the unrelated photo")
+	}
+	if f := e.culling(reject); string(f[store.CullFlag].Value) != `"reject"` {
+		t.Fatalf("%+v", f)
+	}
+}
+
+// The same path trashed on two days with different content: two trashed items, neither tombstoned, each with its own
+// files; purging one leaves the other.
+func TestTrashSamePathTwoDays(t *testing.T) {
+	e := newEnv(t)
+	e.write("A.JPG", mediatest.JPEG(shotAt(1, "2024:05:01 10:00:00"), ""))
+	e.walk()
+	first := e.live()["A.JPG"].ID
+	e.edit(first, "0b6c41de-8b4a-4d55-9f0e-6f0c2d1a0001")
+	e.move("A.JPG", ".hoard-trash/2026-11-14/A.JPG")
+	e.write("A.JPG", mediatest.JPEG(shotAt(2, "2024:05:02 10:00:00"), ""))
+	e.walk()
+	var second string
+	for _, it := range e.live() {
+		if it.ID != first {
+			second = it.ID
+		}
+	}
+	e.edit(second, "0b6c41de-8b4a-4d55-9f0e-6f0c2d1a0002")
+	e.move("A.JPG", day+"/A.JPG")
+	e.walk()
+	for _, id := range []string{first, second} {
+		if r := e.row(id); r.Deleted || !r.Trashed() || e.edits(id) != 1 || len(e.item(id).Files) != 1 {
+			t.Fatalf("%s: %+v %+v", id, r, e.item(id))
+		}
+	}
+	if l := e.trashLocations(first)["A.JPG"]; len(l) != 1 || l[0] != ".hoard-trash/2026-11-14/A.JPG" {
+		t.Fatalf("first %v", l)
+	}
+	e.remove(".hoard-trash/2026-11-14/A.JPG")
+	e.walk()
+	if !e.row(first).Deleted || e.edits(first) != 0 {
+		t.Fatal("first not purged")
+	}
+	if r := e.row(second); !r.Trashed() || e.edits(second) != 1 {
+		t.Fatalf("second %+v", r)
+	}
+	// The same file trashed twice (a copy on two days) is one item with two locations.
+	e.write("B.JPG", mediatest.JPEG(shotAt(3, "2024:05:03 10:00:00"), ""))
+	e.walk()
+	b := e.live()["B.JPG"].ID
+	raw, _ := os.ReadFile(filepath.Join(e.nas, "B.JPG"))
+	e.write(".hoard-trash/2026-11-14/B.JPG", raw)
+	e.move("B.JPG", day+"/B.JPG")
+	e.walk()
+	if l := e.trashLocations(b)["B.JPG"]; !e.row(b).Trashed() || len(l) != 2 {
+		t.Fatalf("B %v", l)
+	}
+}
+
+// A trashed item is never the replacement or the heir of a live item that goes (ADR 0023): a live JPEG whose bytes are
+// also in a trashed pair is deleted, and nothing moves to the trashed pair.
+func TestTrashedItemIsNoHeir(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	jpeg := mediatest.JPEG(shotAt(2, "2024:05:01 10:00:00"), "")
+	e.write("A.ARW", mediatest.RAW(shotAt(1, "2024:05:01 10:00:00")))
+	e.write("A.JPG", jpeg)
+	e.write("copy/A.JPG", jpeg)
+	e.walk()
+	live := e.live()
+	pair, copyItem := live["A.ARW"].ID, ""
+	for _, it := range live {
+		if it.ID != pair {
+			copyItem = it.ID
+		}
+	}
+	e.edit(copyItem, "0b6c41de-8b4a-4d55-9f0e-6f0c2d1a0001")
+	if _, err := e.st.PushCulling(ctx, "device-1", []store.CullChange{{ItemID: copyItem, Field: store.CullRating, Value: []byte("4"),
+		ModifiedAt: 1_700_000_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	e.move("A.ARW", day+"/A.ARW")
+	e.move("A.JPG", day+"/A.JPG")
+	e.walk()
+	if !e.row(pair).Trashed() {
+		t.Fatal("pair not trashed")
+	}
+	e.remove("copy/A.JPG")
+	e.walk()
+	if v := e.item(copyItem); !v.Deleted || v.Replaced != "" {
+		t.Fatalf("copy %+v", v)
+	}
+	if e.edits(pair) != 0 {
+		t.Fatal("edits moved to a trashed item")
+	}
+	if _, err := e.st.Culling(ctx, pair); err == nil {
+		t.Fatal("culling moved to a trashed item")
+	}
+}
+
+// A trashed pair whose RAW is purged while its JPEG stays in the trash: the JPEG is a trashed item of its own and takes
+// the shot's culling (same bytes, never a live item).
+func TestTrashPurgedMainCarriesCullingInTheTrash(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.write("A.ARW", mediatest.RAW(shotAt(1, "2024:05:01 10:00:00")))
+	e.write("A.JPG", mediatest.JPEG(shotAt(2, "2024:05:01 10:00:00"), ""))
+	e.walk()
+	pair := e.live()["A.ARW"].ID
+	if _, err := e.st.PushCulling(ctx, "device-1", []store.CullChange{{ItemID: pair, Field: store.CullFlag, Value: []byte(`"reject"`),
+		ModifiedAt: 1_700_000_000_000}}); err != nil {
+		t.Fatal(err)
+	}
+	e.move("A.ARW", day+"/A.ARW")
+	e.move("A.JPG", day+"/A.JPG")
+	e.walk()
+	e.remove(day + "/A.ARW")
+	e.walk()
+	if !e.row(pair).Deleted {
+		t.Fatal("pair not a tombstone")
+	}
+	var jpegItem string
+	for _, it := range e.live() {
+		jpegItem = it.ID
+	}
+	if jpegItem == "" || !e.row(jpegItem).Trashed() {
+		t.Fatalf("JPEG item %q", jpegItem)
+	}
+	if f := e.culling(jpegItem); string(f[store.CullFlag].Value) != `"reject"` {
+		t.Fatalf("%+v", f)
+	}
+}

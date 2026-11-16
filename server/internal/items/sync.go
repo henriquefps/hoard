@@ -47,23 +47,14 @@ func (y *Syncer) SyncFolder(ctx context.Context, folderID string, groups []Group
 	for _, r := range existing {
 		old[[3]string{r.Source, r.Dir, r.Key}] = r
 	}
-	// Files in a trash belong to the shot of their original directory and stem (ADR 0023): a trash group joins the
-	// item of the live group with the same key (the JPEG of a pair trashed alone stays a member of the pair), else it
-	// is an item of its own main file.
-	liveMain := map[[2]string]string{}
-	for _, g := range groups {
-		if !g.Trash() {
-			liveMain[[2]string{g.Dir, g.Key}] = g.Main
-		}
-	}
 	var ops []sourceOp
 	for _, g := range groups {
+		// A trash group is an item of its own main file, like any group (ADR 0023): it joins a live group, or another
+		// trashed copy, only through the same main fingerprint, so an unrelated file that later takes the trashed
+		// shot's path never takes its item over.
 		source, main := SourceNAS, g.Main
 		if g.Trash() {
 			source = SourceTrash
-			if m, ok := liveMain[[2]string{g.Dir, g.Key}]; ok {
-				main = m
-			}
 		}
 		k := [3]string{source, g.Dir, g.Key}
 		id := ID(main)
@@ -278,6 +269,18 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 				if other, err := tx.LiveItemWithFile(fp, id, ""); err == nil && other != "" {
 					heir = other
 					break
+				}
+			}
+			// A trashed item whose main file was purged: its culling goes to the trashed item of the same shot's other
+			// files (same bytes), never to a live one (ADR 0023).
+			if trashed, err := tx.ItemTrashed(id); err != nil {
+				return n, err
+			} else if heir == "" && trashed {
+				for _, fp := range fps {
+					if other, err := tx.TrashedItemWithFile(fp, id); err == nil && other != "" {
+						heir = other
+						break
+					}
 				}
 			}
 		}

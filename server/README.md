@@ -212,7 +212,7 @@ the share instead of deleting them. The walk now reads those folders (other hidd
 trashed photo as **trashed**, not deleted: its Reveal edits, previews and culling stay, and it comes back as the same
 item when Hoard restores it. Only emptying the trash deletes it (and its edits, as before). Trashed photos leave the web
 gallery and Hoard's Gallery; Reveal sees them as removed NAS files (with `trashed: true`) until it shows a trash.
-Moving into or out of the trash costs no hashing. Hoard asks for a walk after it moves files (`POST /v1/nas/walk`).
+Moving into or out of the trash costs no hashing. Hoard asks for a walk after it moves files (`POST /v1/nas/walk`; at most one such walk per folder per minute, whoever asks).
 
 A database migration (schema 9) is applied in place on start: no step to take, and nothing changes for released Reveal
 or Hoard (clients that do not ask for the trash get the same answers as before). **Back up `data/` before upgrading**:

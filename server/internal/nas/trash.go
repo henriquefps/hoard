@@ -52,6 +52,17 @@ func trashOrigin(rel string) (origin string, ok bool) {
 	return "", false
 }
 
+// trashDayDir returns the day folder of a path in a trash ("<P>/.hoard-trash/<day>"), "" for another path.
+func trashDayDir(rel string) string {
+	segs := strings.Split(rel, "/")
+	for i, s := range segs {
+		if s == TrashDirName && i+1 < len(segs) {
+			return strings.Join(segs[:i+2], "/")
+		}
+	}
+	return ""
+}
+
 // inTrash reports whether a folder-relative path lies under a .hoard-trash folder.
 func inTrash(rel string) bool {
 	return rel == TrashDirName || strings.HasPrefix(rel, TrashDirName+"/") || strings.Contains(rel, "/"+TrashDirName+"/") ||

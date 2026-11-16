@@ -108,6 +108,7 @@ type Server struct {
 
 	deviceLimit  *ratelimit.Limiter
 	previewLimit *ratelimit.Limiter
+	walkLimit    *ratelimit.Limiter // POST /v1/nas/walk, per device (ADR 0023)
 	anonLimit    *ratelimit.Limiter
 	loginLimit   *ratelimit.Limiter
 
@@ -137,7 +138,7 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 	s := &Server{
 		cfg: cfg, store: st, log: cfg.Logger,
 		deviceLimit: ratelimit.New(30, 120), previewLimit: ratelimit.New(previewRate, previewBurst),
-		anonLimit:  ratelimit.New(10.0/60, 10),
+		anonLimit: ratelimit.New(10.0/60, 10), walkLimit: ratelimit.New(walkRate, walkBurst),
 		loginLimit: ratelimit.New(5.0/60, 5),
 		touched:    map[string]time.Time{},
 	}

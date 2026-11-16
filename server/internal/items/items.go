@@ -50,15 +50,17 @@ type Seen struct {
 	Size        int64
 	MTime       int64
 	Fingerprint string // "" = not readable yet
-	// In a trash (ADR 0023): the path the file came from; "" for a live file.
-	Origin string
+	// In a trash (ADR 0023): Origin is the path the file came from and TrashDir its day folder
+	// ("<P>/.hoard-trash/<yyyy-MM-dd(-n)>"); both "" for a live file.
+	Origin   string
+	TrashDir string
 }
 
 // Group is one shot in a folder: the files of a directory that share a stem (case-insensitive).
 type Group struct {
 	Source  string // SourceNAS ("" too) or SourceTrash
 	Dir     string // directory relative to the folder ("" = top); in a trash, the original directory
-	Key     string // lower-case stem
+	Key     string // lower-case stem; in a trash, "<day folder>/<stem>": one group per trashed copy of a shot
 	Main    string // the main file's fingerprint
 	Members []Member
 }
@@ -105,7 +107,8 @@ func roleOrder(role string) int {
 // RAW first (by name), then renderings (JPEG before HEIF, then name), videos, sidecars. The main file is the first
 // readable RAW, else rendering, else video. Hidden files and housekeeping folders are skipped; a group of sidecars
 // only, or with no readable still or video, is no item. Files in a trash (ADR 0023) group by their original directory
-// and stem, as SourceTrash groups (whatever their day folder).
+// and stem within one day folder, as SourceTrash groups: each trashed copy of a shot is a group of its own, whose item
+// is its main file's like any group's (copies with the same main file are the same item, others never merge).
 func GroupFolder(files []Seen) []Group {
 	byKey := map[[3]string][]Member{}
 	for _, f := range files {
@@ -125,7 +128,7 @@ func GroupFolder(files []Seen) []Group {
 		k := [3]string{"", dir, stemKey(name, role)}
 		m := Member{Fingerprint: f.Fingerprint, Role: role, Name: name, Path: at, Size: f.Size, MTime: f.MTime}
 		if f.Origin != "" {
-			k[0] = SourceTrash
+			k[0], k[2] = SourceTrash, f.TrashDir+"/"+k[2]
 			m.Trash = f.Path
 		}
 		byKey[k] = append(byKey[k], m)

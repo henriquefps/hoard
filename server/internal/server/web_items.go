@@ -51,7 +51,7 @@ func (s *Server) liveItem(w http.ResponseWriter, r *http.Request) (store.ItemRow
 		s.internal(w, r, err)
 		return store.ItemRow{}, items.Data{}, false
 	}
-	return row, d, true
+	return row, d.Live(), true // members only in a trash are not served (ADR 0023)
 }
 
 // handleWebItem answers {"item": <as /v1/items/{id}>, "culling": <record> | null, "edited": bool}.
@@ -287,7 +287,7 @@ func (s *Server) handleWebDownloadCreate(w http.ResponseWriter, r *http.Request)
 		}
 		seen[id] = true
 		row, err := s.store.Item(r.Context(), id)
-		if errors.Is(err, store.ErrNotFound) || err == nil && row.Deleted {
+		if errors.Is(err, store.ErrNotFound) || err == nil && (row.Deleted || row.Trashed()) {
 			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "No such item.", map[string]any{"index": i})
 			return
 		}
@@ -300,6 +300,7 @@ func (s *Server) handleWebDownloadCreate(w http.ResponseWriter, r *http.Request)
 			s.internal(w, r, err)
 			return
 		}
+		d = d.Live()
 		for _, f := range d.Files {
 			files++
 			size += f.Size
@@ -441,7 +442,7 @@ func (s *Server) handleWebDownload(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	for _, id := range dl.items {
 		row, err := s.store.Item(ctx, id)
-		if err != nil || row.Deleted {
+		if err != nil || row.Deleted || row.Trashed() { // trashed since the download was made
 			missing = append(missing, id)
 			continue
 		}
@@ -450,6 +451,7 @@ func (s *Server) handleWebDownload(w http.ResponseWriter, r *http.Request) {
 			missing = append(missing, id)
 			continue
 		}
+		d = d.Live()
 		files := append([]items.File(nil), d.Files...)
 		sort.SliceStable(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 		for _, f := range files {

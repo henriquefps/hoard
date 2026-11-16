@@ -378,7 +378,7 @@ func (s *Server) handleEditGet(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	row, err := s.store.Item(ctx, itemID)
-	if errors.Is(err, store.ErrNotFound) || err == nil && row.Deleted {
+	if errors.Is(err, store.ErrNotFound) || err == nil && (row.Deleted || webTrashed(r, row)) {
 		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
 		return
 	}

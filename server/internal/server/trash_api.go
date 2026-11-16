@@ -17,8 +17,12 @@ import (
 // for the trash (include=trash) sees exactly what older servers answered: a trashed item is a tombstone, and a live
 // item lists only its live locations.
 
-// maxWalkFolders is how many folders one POST /v1/nas/walk names at most.
-const maxWalkFolders = 100
+// maxWalkFolders is how many folders one POST /v1/nas/walk names at most; walkRate and walkBurst its per-device rate.
+const (
+	maxWalkFolders = 100
+	walkRate       = 1.0 / 10
+	walkBurst      = 6
+)
 
 // tombstoneJSON writes the tombstone shape of an item (what a client that did not ask for the trash sees of a
 // trashed one).
@@ -36,21 +40,7 @@ func withoutTrash(data []byte) ([]byte, bool) {
 	if err := json.Unmarshal(data, &d); err != nil {
 		return data, false
 	}
-	files := d.Files[:0]
-	for _, f := range d.Files {
-		locs := f.Locations[:0]
-		for _, l := range f.Locations {
-			if l.Trash == "" {
-				locs = append(locs, l)
-			}
-		}
-		if len(locs) == 0 {
-			continue
-		}
-		f.Locations = locs
-		files = append(files, f)
-	}
-	d.Files = files
+	d = d.Live()
 	b, err := json.Marshal(d)
 	if err != nil {
 		return data, false
@@ -97,9 +87,21 @@ func parseTrashInclude(v string) (trash, ok bool) {
 	return trash, true
 }
 
+// webTrashed reports whether a request on /web/ names a trashed item: the web gallery shows no trash yet (ADR 0023),
+// while /v1 serves a trashed item's previews and edits.
+func webTrashed(r *http.Request, row store.ItemRow) bool {
+	return row.Trashed() && strings.HasPrefix(r.URL.Path, "/web/")
+}
+
 // handleNasWalk queues a walk of NAS folders (ADR 0023): Hoard asks for one after it moved files into or out of a
 // trash, so the gallery follows at once.
 func (s *Server) handleNasWalk(w http.ResponseWriter, r *http.Request) {
+	// Per device: a few requests in a burst, then one per 10 s (429 with Retry-After beyond). The walks themselves
+	// are budgeted per folder, whoever asks (Indexer.RequestGap).
+	if ok, wait := s.walkLimit.Allow(info(r).device.ID); !ok {
+		rateLimited(w, r, wait)
+		return
+	}
 	var req struct {
 		Folders []string `json:"folders"`
 	}
@@ -132,6 +134,10 @@ func (s *Server) handleNasWalk(w http.ResponseWriter, r *http.Request) {
 		}
 		ids = append(ids, id)
 	}
-	s.indexer.RequestWalk(ids)
-	writeJSON(w, http.StatusAccepted, map[string]any{"queued": ids})
+	deferred := s.indexer.RequestWalk(ids)
+	later := map[string]int64{}
+	for id, at := range deferred {
+		later[id] = at.UnixMilli()
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"queued": ids, "deferred": later})
 }

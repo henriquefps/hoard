@@ -290,17 +290,41 @@ func (t *ItemTx) writeItem(id, mainFP, kind string, sortTime int64, data []byte,
 }
 
 // LiveItemWithFile returns a live item, other than except, that has fp as a member and at least one source of the
-// given kind ("" = any): the item fp's file belongs to.
+// given kind ("" = any): the item fp's file belongs to. A trashed item is not live (ADR 0023): never an heir or a
+// replacement.
 func (t *ItemTx) LiveItemWithFile(fp, except, sourceKind string) (string, error) {
 	var id string
 	err := t.tx.QueryRowContext(t.ctx, `SELECT f.item_id FROM item_files f JOIN items i ON i.id = f.item_id
-		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0
+		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0 AND i.trashed_at IS NULL
 		AND (? = '' OR EXISTS (SELECT 1 FROM item_sources s WHERE s.item_id = f.item_id AND s.source = ?))
 		ORDER BY (i.main_fp = f.fingerprint) DESC, f.item_id LIMIT 1`, fp, except, sourceKind, sourceKind).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return id, err
+}
+
+// TrashedItemWithFile returns a trashed item, other than except, that has fp as a member (ADR 0023): the heir of the
+// culling of a trashed item whose main file was purged while another of its files is still in a trash.
+func (t *ItemTx) TrashedItemWithFile(fp, except string) (string, error) {
+	var id string
+	err := t.tx.QueryRowContext(t.ctx, `SELECT f.item_id FROM item_files f JOIN items i ON i.id = f.item_id
+		WHERE f.fingerprint = ? AND f.item_id != ? AND i.deleted = 0 AND i.trashed_at IS NOT NULL
+		ORDER BY (i.main_fp = f.fingerprint) DESC, f.item_id LIMIT 1`, fp, except).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
+
+// ItemTrashed reports whether an item is trashed (ADR 0023).
+func (t *ItemTx) ItemTrashed(id string) (bool, error) {
+	var trashed bool
+	err := t.tx.QueryRowContext(t.ctx, "SELECT deleted = 0 AND trashed_at IS NOT NULL FROM items WHERE id = ?", id).Scan(&trashed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return trashed, err
 }
 
 // --- reads for the API ---------------------------------------------------------------------------------------------

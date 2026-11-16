@@ -52,6 +52,10 @@ type Indexer struct {
 	// WalkGap is the shortest time between the start of a folder's last walk and a walk a device asked for
 	// (POST /v1/nas/walk, ADR 0023); 0 = FolderWalkGap.
 	WalkGap time.Duration
+	// RequestGap is the server-wide budget of requested walks: one per folder per RequestGap, whoever asks;
+	// 0 = FolderRequestGap. Requests beyond it are coalesced into the next walk the budget allows.
+	RequestGap time.Duration
+	lastAsked  map[string]time.Time // when a requested walk of each folder last started
 
 	queued    map[string]bool
 	lastStart map[string]time.Time
@@ -59,8 +63,30 @@ type Indexer struct {
 	beforeDir func(rel string)
 }
 
-// FolderWalkGap is the default WalkGap.
-const FolderWalkGap = 10 * time.Second
+// FolderWalkGap is the default WalkGap; FolderRequestGap the default RequestGap.
+const (
+	FolderWalkGap    = 10 * time.Second
+	FolderRequestGap = time.Minute
+)
+
+// dueAt is when a requested walk of a folder may start (the zero time: now). Called with ix.mu held.
+func (ix *Indexer) dueAt(id string) time.Time {
+	gap, budget := ix.WalkGap, ix.RequestGap
+	if gap <= 0 {
+		gap = FolderWalkGap
+	}
+	if budget <= 0 {
+		budget = FolderRequestGap
+	}
+	var at time.Time
+	if last, ok := ix.lastStart[id]; ok {
+		at = last.Add(gap)
+	}
+	if last, ok := ix.lastAsked[id]; ok && last.Add(budget).After(at) {
+		at = last.Add(budget)
+	}
+	return at
+}
 
 // Stats is what the last walk of a folder did (for logs, tests and the benchmark).
 type Stats struct {
@@ -84,19 +110,26 @@ func (ix *Indexer) init() {
 }
 
 // RequestWalk queues a walk of each folder (ADR 0023, POST /v1/nas/walk), coalesced: a folder already queued is not
-// queued again (one running is queued once more, so the walk sees what changed after it started), and a folder walks
-// at most once per WalkGap.
-func (ix *Indexer) RequestWalk(ids []string) {
+// queued again (one running is queued once more, so the walk sees what changed after it started). A requested walk
+// starts at least WalkGap after the folder's last walk started and RequestGap after its last requested walk started
+// (the server-wide budget). It returns, per folder whose walk waits for that, when it may start.
+func (ix *Indexer) RequestWalk(ids []string) map[string]time.Time {
 	ix.init()
 	ix.mu.Lock()
 	if ix.queued == nil {
 		ix.queued = map[string]bool{}
 	}
+	now := time.Now()
+	deferred := map[string]time.Time{}
 	for _, id := range ids {
 		ix.queued[id] = true
+		if at := ix.dueAt(id); at.After(now) {
+			deferred[id] = at
+		}
 	}
 	ix.mu.Unlock()
 	ix.signalFolders()
+	return deferred
 }
 
 func (ix *Indexer) signalFolders() {
@@ -119,23 +152,23 @@ func (ix *Indexer) Queued() []string {
 
 // walkQueued walks the requested folders that are due; the others are walked when their gap has passed.
 func (ix *Indexer) walkQueued(ctx context.Context) {
-	gap := ix.WalkGap
-	if gap <= 0 {
-		gap = FolderWalkGap
-	}
 	ix.mu.Lock()
 	now := time.Now()
 	var due []string
 	var wait time.Duration
+	if ix.lastAsked == nil {
+		ix.lastAsked = map[string]time.Time{}
+	}
 	for id := range ix.queued {
-		if last, ok := ix.lastStart[id]; ok && now.Sub(last) < gap {
-			if w := gap - now.Sub(last); wait == 0 || w < wait {
+		if at := ix.dueAt(id); at.After(now) {
+			if w := at.Sub(now); wait == 0 || w < wait {
 				wait = w
 			}
 			continue
 		}
 		due = append(due, id)
 		delete(ix.queued, id)
+		ix.lastAsked[id] = now
 	}
 	ix.mu.Unlock()
 	if wait > 0 {
@@ -684,6 +717,7 @@ func (ix *Indexer) Folder(ctx context.Context, f store.NasFolder) error {
 			is := items.Seen{Path: rel, Size: k.Size, MTime: k.MTime, Fingerprint: k.Fingerprint}
 			if k.Origin != "" {
 				is.Origin = k.Origin
+				is.TrashDir = trashDayDir(rel)
 			}
 			current = append(current, is)
 		}

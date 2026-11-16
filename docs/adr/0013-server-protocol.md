@@ -431,8 +431,8 @@ items feed. An item's edits follow it when it is replaced and go when it is dele
 Added by ADR 0023, which is the reference (the walk rules, what Hoard and Reveal do). Additions only; `features`
 gains `"trash"`. Schema 9 (`0009_trash.sql`: `nas_files.origin_path` and `trash_path`, `items.trashed_at`).
 
-A file under `<P>/.hoard-trash/<yyyy-MM-dd(-n)>/<R>` in a NAS folder is a **trashed copy** of `<P>/<R>`; an item
-whose every location is in a trash is **trashed**: same id, edits, previews and culling, not a tombstone. A restore
+A file under `<P>/.hoard-trash/<yyyy-MM-dd(-n)>/<R>` in a NAS folder is a **trashed copy** of `<P>/<R>` (it joins an
+item only through the same main fingerprint); an item whose every location is in a trash is **trashed**: same id, edits, previews and culling, not a tombstone. A restore
 (the file back at its path) makes it live again with the same id; the trash copies leaving (Empty) make it a
 tombstone, and its edits go then (ADR 0020). Filtering is done when serving; clients that do not ask for the trash
 see exactly the answers of older servers (a trashed item is a tombstone, a restored one comes back live).
@@ -441,7 +441,7 @@ see exactly the answers of older servers (a trashed item is a tombstone, a resto
 | --- | --- |
 | `GET /v1/items/changes?include=…,trash`, `GET /v1/items/{itemId}?include=trash`, `POST /v1/items/lookup {"include": ["trash"]}` | A trashed item whole, with `"deleted": false` and `"trashed": {"since": <ms>}`; every location in a trash carries `"trash": "<folder-relative path in .hoard-trash>"` (`path` stays the original). `include=trash` alone on the feed is `items,trash`. Without `trash`: a trashed item is `{"id", "rev", "deleted": true, "createdAt", "updatedAt"}`, a live item lists only its live locations (a member file whose every location is in a trash is left out), and the lookup puts trashed items and such files in `missing`. |
 | `GET /v1/items?trashed=only&…` | The trashed items (in the `include=trash` shape) instead of the live ones; `folder` / `path` match their original directory. Without it, trashed items are left out. `by-path` stays live only. |
-| `POST /v1/nas/walk` `{"folders": [...]}` (1-100 folder ids; device key) | `202 {"queued": [...]}`: a walk of each folder soon, coalesced (a folder already queued is not queued again; one being walked is queued once more) and at most once per folder per 10 s. `404 not_found` (`details.folder`) for a folder the server does not index, nothing queued; `422 invalid_request` when malformed. |
+| `POST /v1/nas/walk` `{"folders": [...]}` (1-100 folder ids; device key) | `202 {"queued": [...], "deferred": {"<id>": <ms>}}`: a walk of each folder soon, coalesced (a folder already queued is not queued again; one being walked is queued once more). Server-wide budget: a requested walk of a folder starts at least 1 min after the previous requested one and 10 s after any walk of it, whoever asks; `deferred` names the folders that wait for it and when they may start (requests meanwhile change nothing). Per device: a burst of 6, then one request per 10 s, else `429 rate_limited` with `Retry-After`. `404 not_found` (`details.folder`) for a folder the server does not index, nothing queued; `422 invalid_request` when malformed. |
 
 Also: `PUT /v1/items/{itemId}/edits/{versionId}` on a trashed item is `404 not_found` (as a tombstone); `GET` and
 `DELETE` of its edits work, and its previews are kept and served. Culling records are untouched by trash and restore;
@@ -449,7 +449,8 @@ pushes on a trashed item apply. `GET /v1/originals/{fingerprint}` and `POST /v1/
 file until it is purged. The **NAS feed** never lists files in a trash: a file moved to a trash is its original row with
 `"removed": true, "trashed": true`; a restore is `"removed": false` (same path and fingerprint); a purge sends the row
 again with `"removed": true` and no `trashed`. `counts.nasFiles` and `counts.items` count live files and items only.
-The web gallery's library leaves trashed items out.
+The web gallery serves nothing in a trash: trashed items are absent from every `/web/` route, and a live item's
+members only in a trash are left out of its files, downloads and library row.
 
 ## Other endpoints
 

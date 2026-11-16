@@ -543,7 +543,10 @@ paths:
       description: |
         Hoard asks for a walk after it moved files into or out of a folder's `.hoard-trash`, so the items follow
         without waiting for the scheduled walk. Coalesced: a folder already queued is not queued again (one being
-        walked is queued once more), and a folder is walked at most once per 10 s.
+        walked is queued once more). Server-wide budget, whoever asks: a requested walk of a folder starts at least
+        1 minute after the previous requested walk of it and 10 s after any walk of it; the answer is still `202`,
+        with `deferred` giving when such a folder's walk may start (more requests meanwhile change nothing). Per
+        device: a burst of 6 requests, then one per 10 s; beyond that `429 rate_limited` with `Retry-After`.
       requestBody:
         required: true
         content:
@@ -564,11 +567,15 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [queued]
+                required: [queued, deferred]
                 properties:
                   queued:
                     type: array
                     items: { $ref: "#/components/schemas/Uuid" }
+                  deferred:
+                    type: object
+                    description: The queued folders whose walk waits for the budget, with when it may start (Unix ms); empty when none
+                    additionalProperties: { type: integer }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404":
@@ -577,6 +584,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/items/changes:
     get:
       tags: [items]

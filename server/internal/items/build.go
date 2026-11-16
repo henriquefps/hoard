@@ -220,3 +220,24 @@ func fill(dst *string, v string) {
 		*dst = v
 	}
 }
+
+// Live returns the item without its locations in a trash (ADR 0023) and without the member files left with none: what
+// a client that does not ask for the trash, and the web gallery, see.
+func (d Data) Live() Data {
+	files := make([]File, 0, len(d.Files))
+	for _, f := range d.Files {
+		locs := make([]Location, 0, len(f.Locations))
+		for _, l := range f.Locations {
+			if l.Trash == "" {
+				locs = append(locs, l)
+			}
+		}
+		if len(locs) == 0 {
+			continue
+		}
+		f.Locations = locs
+		files = append(files, f)
+	}
+	d.Files = files
+	return d
+}
