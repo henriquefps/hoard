@@ -224,6 +224,7 @@ class BackupEngine(
         dao.deleteOrphans()
         val types = source.types()
         val listings = HashMap<String, Listing>()
+        val freedPaths = dao.freed().associateBy { it.path }
         // 1. Each folder: list, identify, report, report removals.
         for (initial in dao.roots()) {
             if (stopped()) return BackupRunResult(BackupOutcome.Stopped)
@@ -238,6 +239,9 @@ class BackupEngine(
             if (!identify(root, stopped)) return BackupRunResult(BackupOutcome.Stopped)
             _progress.value = _progress.value.copy(phase = PHASE_REPORTING)
             val live = report(api, root, batch) ?: continue
+            // Files free up deleted whose report did not reach the server go first, as `freed` (ADR 0024 A3).
+            val freed = BackupPlan.freedRemovals(dao.files(live.id), freedPaths) { source.file(it).exists() }
+            if (freed.isNotEmpty()) reportRemovals(api, live, freed, batch)
             val removals = BackupPlan.removals(listing, dao.files(live.id))
             reportRemovals(api, live, removals, batch)
         }

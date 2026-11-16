@@ -5,6 +5,7 @@ import dev.hfps.hoard.server.api.BackupRemoval
 import dev.hfps.hoard.server.api.BackupReportEntry
 import dev.hfps.hoard.server.api.BackupReportResult
 import dev.hfps.hoard.server.db.BackupFileEntity
+import dev.hfps.hoard.server.db.FreedEntity
 
 /** The kinds of files a root covers (ADR 0024 "`GET /v1/backup/roots`" `types`). */
 object BackupKind {
@@ -230,6 +231,14 @@ object BackupPlan {
         }
     }
 
+    /**
+     * Files free up deleted whose `freed` report did not reach the server (ADR 0024 A3): the path is in `freed` with
+     * the row's content, and the file is gone. Reported `freed` whatever the listing (free up knows it deleted them).
+     */
+    fun freedRemovals(rows: List<BackupFileEntity>, freed: Map<String, FreedEntity>, exists: (String) -> Boolean): List<BackupRemoval> =
+        rows.filter { r -> freed[r.absolute]?.let { it.fingerprint == r.fingerprint } == true && !exists(r.absolute) }
+            .map { BackupRemoval(it.path, REASON_FREED) }
+
     private fun fresh(rootId: String, f: PhoneFile, now: Long): BackupFileEntity {
         val known = f.fingerprint != null && Fingerprint.isValid(f.fingerprint)
         return BackupFileEntity(
@@ -333,6 +342,8 @@ object BackupPlan {
 
     const val REASON_DELETED = "deleted"
     const val REASON_MOVED = "moved"
+    /** Only after a free-up deletion the owner confirmed (ADR 0024 "Free up space"). */
+    const val REASON_FREED = "freed"
     const val DEFAULT_RETRY_S = 300L
     private val UPLOAD_STATES = setOf("missing", "differs", "in_progress")
 }
