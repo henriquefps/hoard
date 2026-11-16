@@ -24,6 +24,13 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
 
+    /** MediaStore's trash, restore and delete consents (ADR 0023, the phone's trash): one at a time. */
+    private var consent: kotlinx.coroutines.CompletableDeferred<Boolean>? = null
+    private val consentLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        consent?.complete(result.resultCode == RESULT_OK)
+        consent = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -33,6 +40,12 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 runCatching { notifications.launch(Manifest.permission.POST_NOTIFICATIONS) }
             }
+        }
+        dev.hfps.hoard.app.trash.MediaConsent.launcher = { intent, result ->
+            consent?.complete(false)
+            consent = result
+            runCatching { consentLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(intent).build()) }
+                .onFailure { result.complete(false); consent = null }
         }
         // Launched from another app's share sheet (ADR 0007, share in).
         if (savedInstanceState == null) receiveShare(intent)
@@ -56,6 +69,13 @@ class MainActivity : ComponentActivity() {
 
     override fun attachBaseContext(newBase: android.content.Context) {
         super.attachBaseContext(dev.hfps.hoard.app.data.AppLanguage.wrap(newBase))
+    }
+
+    override fun onDestroy() {
+        consent?.complete(false)
+        consent = null
+        dev.hfps.hoard.app.trash.MediaConsent.launcher = null
+        super.onDestroy()
     }
 
     override fun onStop() {

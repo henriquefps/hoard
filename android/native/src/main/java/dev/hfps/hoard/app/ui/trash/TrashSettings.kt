@@ -39,6 +39,13 @@ fun TrashSettingsSection(container: AppContainer, onOpenTrash: () -> Unit) {
     val days by container.appSettings.trashAutoEmptyDays.collectAsState(initial = AppSettings.TRASH_AUTO_EMPTY_DEFAULT)
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Read again when the user comes back from Android's settings.
+    var media by remember { mutableStateOf(mediaManagementOf(context)) }
+    androidx.lifecycle.compose.LifecycleResumeEffect(Unit) {
+        media = mediaManagementOf(context)
+        onPauseOrDispose {}
+    }
     var confirm by remember { mutableStateOf<Pair<Int, TrashService.AutoEmptyPreview>?>(null) }
     fun apply(value: Int) = scope.launch {
         container.appSettings.setTrashAutoEmptyDays(value)
@@ -57,7 +64,7 @@ fun TrashSettingsSection(container: AppContainer, onOpenTrash: () -> Unit) {
             checking = false
             if (preview == null || preview.empty) apply(value) else confirm = value to preview
         }
-    }, onOpenTrash = onOpenTrash, checking = checking)
+    }, onOpenTrash = onOpenTrash, checking = checking, media = media, onMedia = { openMediaManagement(context) })
     confirm?.let { (value, preview) ->
         ConfirmDialog(
             title = stringResource(R.string.trash_shorten_title),
@@ -66,6 +73,53 @@ fun TrashSettingsSection(container: AppContainer, onOpenTrash: () -> Unit) {
             onDismiss = { confirm = null },
             onConfirm = { apply(value).join() },
         ) { ShortenBody(value, preview) }
+    }
+}
+
+/** Media management (MANAGE_MEDIA, Android 12+) as Settings › Trash shows it. */
+enum class MediaManagement { Unsupported, Allowed, NotAllowed }
+
+/** The state of Media management on this phone now. */
+fun mediaManagementOf(context: android.content.Context): MediaManagement = when {
+    android.os.Build.VERSION.SDK_INT < 31 -> MediaManagement.Unsupported
+    dev.hfps.hoard.app.trash.AndroidMediaStoreOps.canManageMedia(context) -> MediaManagement.Allowed
+    else -> MediaManagement.NotAllowed
+}
+
+/** Android's screen where the user allows Media management for Hoard (Android 12+). */
+fun openMediaManagement(context: android.content.Context) {
+    if (android.os.Build.VERSION.SDK_INT < 31) return
+    val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_MANAGE_MEDIA, android.net.Uri.parse("package:${context.packageName}"))
+        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
+}
+
+@Composable
+private fun MediaManagementRow(media: MediaManagement, onMedia: () -> Unit) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp).testTag("settings-media-management"),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.trash_settings_media), style = HfpsTheme.typography.body, color = HfpsTheme.colors.foreground)
+            Text(
+                stringResource(
+                    when (media) {
+                        MediaManagement.Allowed -> R.string.trash_settings_media_allowed
+                        MediaManagement.NotAllowed -> R.string.trash_settings_media_not_allowed
+                        MediaManagement.Unsupported -> R.string.trash_settings_media_unsupported
+                    },
+                ),
+                style = HfpsTheme.typography.ui,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+        }
+        if (media != MediaManagement.Unsupported) {
+            dev.hfps.hoard.designsystem.components.SecondaryButton(
+                stringResource(if (media == MediaManagement.Allowed) R.string.trash_settings_media_change else R.string.trash_media_allow),
+                onMedia,
+            )
+        }
     }
 }
 
@@ -90,7 +144,14 @@ fun ShortenBody(days: Int, preview: TrashService.AutoEmptyPreview) {
  * and Media management, which comes with the phone's trash (A3).
  */
 @Composable
-fun TrashSettingsContent(days: Int, onDays: (Int) -> Unit, onOpenTrash: () -> Unit, checking: Boolean = false) {
+fun TrashSettingsContent(
+    days: Int,
+    onDays: (Int) -> Unit,
+    onOpenTrash: () -> Unit,
+    checking: Boolean = false,
+    media: MediaManagement = MediaManagement.Unsupported,
+    onMedia: () -> Unit = {},
+) {
     Eyebrow(stringResource(R.string.trash_title), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
     HfpsListRow(title = stringResource(R.string.trash_settings_open), icon = PhosphorRegular.Trash, onClick = onOpenTrash, modifier = Modifier.testTag("settings-open-trash"))
     HfpsRowDivider(Modifier.padding(start = 54.dp))
@@ -113,17 +174,6 @@ fun TrashSettingsContent(days: Int, onDays: (Int) -> Unit, onOpenTrash: () -> Un
             HfpsChoiceRow(label, days == option, { onDays(option) })
         }
     }
-    Text(
-        stringResource(R.string.trash_settings_media),
-        style = HfpsTheme.typography.body,
-        color = HfpsTheme.colors.mutedForeground,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
-    )
-    Text(
-        stringResource(R.string.trash_settings_media_hint),
-        style = HfpsTheme.typography.ui,
-        color = HfpsTheme.colors.mutedForeground,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-    )
+    MediaManagementRow(media, onMedia)
     HfpsRowDivider(Modifier.padding(top = 8.dp))
 }

@@ -99,10 +99,13 @@ class TrashService(private val container: AppContainer) {
     val runner = TrashRunner(index, ::fsFor)
     private val folders = FolderTrashBackend(runner)
 
-    /** The backend of a kind; the MediaStore trash comes with phase A3. */
+    /** The phone's MediaStore trash (Android 11+, phase A3). */
+    private val media: MediaStoreTrashBackend? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) MediaStoreTrashBackend(index, AndroidMediaStoreOps(container.appContext)) else null
+
     fun backend(kind: TrashKind): TrashBackend? = when (kind) {
         TrashKind.FOLDER -> folders
-        TrashKind.MEDIA_STORE -> null
+        TrashKind.MEDIA_STORE -> media
     }
 
     private val running = Mutex()
@@ -146,6 +149,12 @@ class TrashService(private val container: AppContainer) {
         val serverHasTrash = account?.has(Features.TRASH) == true
         if (backend(TrashKind.of(location.id)) == null) {
             return TrashPlan(place, emptyList(), units.map { RefusedUnit(it, TrashRefusal.PHONE_TRASH_UNAVAILABLE) })
+        }
+        if (TrashKind.of(location.id) == TrashKind.MEDIA_STORE) {
+            // MediaStore trashes files: a folder cannot go (the dialog offers today's delete for it).
+            val (folders, filesOnly) = units.partition { u -> u.files.any { it.isDirectory } }
+            val plan = TrashPlanner.plan(place, filesOnly, RootChoice.Root(""), serverHasTrash = false)
+            return plan.copy(refused = plan.refused + folders.map { RefusedUnit(it, TrashRefusal.FOLDER_NOT_TRASHABLE) })
         }
         // Selected folders are walked once (bounded): what they hold decides both the refusals (a `.hoard-trash`
         // inside) and, on a share, the mapping when the folder on screen has no photos of its own.
@@ -331,7 +340,7 @@ class TrashService(private val container: AppContainer) {
             }
             Log.i(TAG, "trash ${plan.place.locationId}: ${report.trashed.size} trashed, ${report.refused.size} refused, ${report.partial.size} partial, ${report.cancelled.size} cancelled")
             for (r in report.refused) Log.i(TAG, "refused ${r.unit.key}: ${r.reason} ${r.code ?: ""} ${r.message.orEmpty()}")
-            for (p in report.partial) Log.i(TAG, "partial ${p.unit.key}: ${p.reason} ${p.message.orEmpty()}")
+            for (p in report.partial) Log.i(TAG, "partial ${p.unit.key}: ${p.reason} failed ${p.failed} ${p.message.orEmpty()}")
             report
         } finally {
             _progress.value = null
@@ -371,7 +380,9 @@ class TrashService(private val container: AppContainer) {
     }
 
     private suspend fun settle(): ResumeReport? {
-        if (dao.unsettled().isEmpty()) return null
+        val unsettled = dao.unsettled()
+        if (unsettled.isEmpty()) return null
+        media?.let { m -> unsettled.filter { it.mediaUri != null }.takeIf { it.isNotEmpty() }?.let { m.reconcile(it) } }
         return runner.resume().also { r ->
             Log.i(TAG, "resume: ${r.settled.size} settled, ${r.rolledBack.size} rolled back, ${r.dropped.size} dropped, ${r.unreachable.size} places unreachable")
             if (r.settled.isNotEmpty()) requestWalk(r.settled.mapNotNull { it.serverFolderId })
@@ -447,6 +458,8 @@ class TrashService(private val container: AppContainer) {
     fun observeRoots() = dao.observeRoots()
 
     private suspend fun refreshRoots(): Set<TrashPlace> {
+        // The phone's trash: rows Android purged or the user restored elsewhere are forgotten, expiry dates updated.
+        media?.let { m -> withContext(Dispatchers.IO) { m.reconcile(dao.all().filter { it.mediaUri != null }) } }
         val unreachable = HashSet<TrashPlace>()
         for (root in roots()) {
             if (TrashKind.of(root.place.locationId) != TrashKind.FOLDER) continue
@@ -499,6 +512,15 @@ class TrashService(private val container: AppContainer) {
         // A clock that went back: nothing runs until it is past the newest trash time this device wrote.
         val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
         val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime)
+        // The phone's trash: only Hoard's own rows (no consent can be shown here); Android expires the rest itself.
+        val phonePurged = media?.let { m ->
+            val nowMs = listOfNotNull(System.currentTimeMillis(), networkTime()).min()
+            if (nowMs < notBefore) emptyList() else m.autoEmpty(dao.all().filter { it.mediaUri != null }, nowMs - days * 86_400_000L)
+        }.orEmpty()
+        if (phonePurged.isNotEmpty()) {
+            afterPurge(phonePurged)
+            changed()
+        }
         afterPurge(expired.flatMap { it.purged })
         requestWalk(expired.mapNotNull { it.root.serverFolderId })
         if (expired.isNotEmpty()) changed()

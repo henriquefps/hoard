@@ -21,6 +21,9 @@ data class TrashFolderGroup(
     val files: Int get() = rows.size
     val bytes: Long get() = rows.sumOf { it.size }
     val shots: Int get() = rows.map { it.shotKey }.distinct().size
+
+    /** The phone's trash: when Android deletes the first of these files (MediaStore's `DATE_EXPIRES`). */
+    val expiresAt: Long? get() = rows.mapNotNull { it.expiresAt }.minOrNull()
 }
 
 /** One day of the trash (the day folder's date; MediaStore entries by their trash time). */

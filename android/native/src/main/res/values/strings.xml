@@ -310,6 +310,7 @@
     <string name="trash_reason_phone">the phone\'s own trash comes in a later version</string>
     <string name="trash_reason_unknown_place">Hoard cannot tell where its trash belongs on the photo server; open the folder in Files once, then try again</string>
     <string name="trash_rejects_read_only">Move rejects to trash (read-only folder)</string>
+    <string name="trash_reason_declined">Android\'s confirmation was declined</string>
     <string name="trash_reason_failed">it could not be moved</string>
     <string name="trash_running">Moving to the trash…</string>
     <plurals name="trash_permanent_title">
@@ -370,7 +371,6 @@
     <string name="trash_settings_never">Never</string>
     <string name="trash_settings_open">Open the trash</string>
     <string name="trash_settings_media">Media management</string>
-    <string name="trash_settings_media_hint">Lets Hoard move phone photos to Android\'s trash without asking each time. Comes with the phone trash in a later version.</string>
     <plurals name="trash_rejects_menu">
         <item quantity="one">Move %1$s reject to trash…</item>
         <item quantity="other">Move %1$s rejects to trash…</item>
@@ -396,4 +396,16 @@
     <string name="trash_shorten_apply">Delete and apply</string>
     <string name="trash_checking">Checking the trash…</string>
     <string name="trash_permanent_reason">They cannot go to the trash: %1$s.</string>
+    <string name="trash_media_ask">Android asks you to confirm each time Hoard moves phone photos to its trash. Allow Media management and it stops asking.</string>
+    <string name="trash_media_allow">Allow</string>
+    <string name="trash_settings_media_allowed">Allowed: Android does not ask before each trash, restore or delete.</string>
+    <string name="trash_settings_media_not_allowed">Not allowed: Android asks you to confirm each time Hoard moves phone photos to its trash.</string>
+    <string name="trash_settings_media_unsupported">Needs Android 12 or later.</string>
+    <string name="trash_settings_media_change">Change</string>
+    <string name="trash_expires">Android deletes them on %1$s</string>
+    <string name="trash_reason_folder">Android\'s trash takes files, not folders</string>
+    <plurals name="trash_permanent_folders">
+        <item quantity="one">%1$s item with folders in %2$s cannot go to the trash: %3$s.</item>
+        <item quantity="other">%1$s items with folders in %2$s cannot go to the trash: %3$s.</item>
+    </plurals>
 </resources>

@@ -13,6 +13,7 @@
   - When the trash cannot take something (a read-only share root, the phone until its own trash arrives), Hoard offers to delete exactly the files you chose, with their count, size and place; **Keep** is the default.
   - Moving many files shows a notification with the progress and Cancel.
   - With a photo server older than 0.11.0, the dialog warns that the server will forget Reveal's edits of the trashed photos until it is updated.
+- **The phone's own trash** ([ADR 0023](docs/adr/0023-trash.md), phase A3). On Android 11 and later, photos on the phone go to Android's trash, the one the system's Files and Photos apps show; Android deletes them after its 30 days, and the Trash screen shows when. With All files access Hoard moves them without asking; otherwise Android asks once per batch, and **Media management** (Android 12+, offered in the first trash dialog and in Settings › Trash) stops it asking. Restore puts them back where they were (or says that another file took the place), and Delete permanently (or Empty trash) removes them for good, always after Android's own confirmation for photos that other apps made. The trash's automatic emptying leaves those to Android's 30 days. Items Android already deleted, or that you restored in another app, leave Hoard's list by themselves. A folder on the phone cannot go to Android's trash: Hoard offers to delete it permanently instead, with Keep as the default.
 
 ## 2.2.2 (2026-11-15)
 

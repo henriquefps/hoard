@@ -31,6 +31,8 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
     <!-- The Gallery (ADR 0021): the phone's photos and videos through MediaStore, without All files access. -->
+    <!-- The phone's trash (ADR 0023): with Media management (Android 12+) MediaStore's trash requests do not ask. -->
+    <uses-permission android:name="android.permission.MANAGE_MEDIA" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <!-- Tells USB drives from SD cards. Not required. -->
