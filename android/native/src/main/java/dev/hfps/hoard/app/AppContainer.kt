@@ -144,6 +144,9 @@ class AppContainer(context: Context) {
     /** SMB folders mapped to the server's NAS folders (ADR 0022). */
     val serverLinks: dev.hfps.hoard.app.files.ServerLinks by lazy { dev.hfps.hoard.app.files.ServerLinks(this) }
 
+    /** The trash for rejects (ADR 0023): `.hoard-trash` folders, restore, Empty, auto-empty. */
+    val trash: dev.hfps.hoard.app.trash.TrashService by lazy { dev.hfps.hoard.app.trash.TrashService(this) }
+
     val transfers: TransferService by lazy {
         TransferService(scope, NativeTransferManager(TransferManager.get(appContext)), database.transfers(), ::endpointOf)
     }
@@ -197,6 +200,9 @@ class AppContainer(context: Context) {
             val imported = runCatching { settingsStore.getString("language") }.getOrNull()
             dev.hfps.hoard.app.data.AppLanguage.applyImported(appContext, imported)
         }
+        // The trash (ADR 0023): rows a killed run left are settled; auto-empty runs daily.
+        scope.launch { runCatching { trash.resume() } }
+        runCatching { dev.hfps.hoard.app.trash.TrashCleanupWorker.schedule(appContext) }
         network = NetworkMonitor(appContext) { scope.launch { routes.recheckAll() } }.also { it.start() }
         gallery.start()
     }

@@ -34,8 +34,10 @@ import kotlinx.coroutines.flow.Flow
         CullSidecarReadEntity::class,
         LegacyImportEntity::class,
         RevealCopyEntity::class,
+        TrashEntryEntity::class,
+        TrashRootEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class HoardDatabase : RoomDatabase() {
@@ -47,6 +49,7 @@ abstract class HoardDatabase : RoomDatabase() {
     abstract fun settings(): SettingsDao
     abstract fun legacyImports(): LegacyImportDao
     abstract fun revealCopies(): RevealCopyDao
+    abstract fun trash(): TrashDao
 
     companion object {
         /**
@@ -488,4 +491,65 @@ interface RevealCopyDao {
 
     @Query("DELETE FROM reveal_copies WHERE uri IN (:uris)")
     suspend fun deleteUris(uris: List<String>)
+}
+
+/** The trash index (ADR 0023). */
+@Dao
+abstract class TrashDao {
+    @Query("SELECT * FROM trash_entries ORDER BY trashed_at DESC, original_path")
+    abstract fun observeAll(): Flow<List<TrashEntryEntity>>
+
+    @Query("SELECT * FROM trash_entries ORDER BY trashed_at DESC, original_path")
+    abstract suspend fun all(): List<TrashEntryEntity>
+
+    @Query("SELECT * FROM trash_entries WHERE state != 'trashed'")
+    abstract suspend fun unsettled(): List<TrashEntryEntity>
+
+    @Query("SELECT * FROM trash_entries WHERE id IN (:ids)")
+    abstract suspend fun byIds(ids: List<String>): List<TrashEntryEntity>
+
+    @Query("SELECT * FROM trash_entries WHERE location_id = :locationId AND share = :share AND trash_root = :root")
+    abstract suspend fun inRoot(locationId: String, share: String, root: String): List<TrashEntryEntity>
+
+    @Upsert
+    abstract suspend fun put(rows: List<TrashEntryEntity>)
+
+    @Query("UPDATE trash_entries SET state = :state WHERE id IN (:ids)")
+    abstract suspend fun setState(ids: List<String>, state: String)
+
+    @Query("DELETE FROM trash_entries WHERE id IN (:ids)")
+    abstract suspend fun delete(ids: List<String>)
+
+    @Query("SELECT * FROM trash_roots ORDER BY location_id, share, root_path")
+    abstract suspend fun roots(): List<TrashRootEntity>
+
+    @Query("SELECT * FROM trash_roots ORDER BY location_id, share, root_path")
+    abstract fun observeRoots(): Flow<List<TrashRootEntity>>
+
+    @Query("SELECT * FROM trash_roots WHERE location_id = :locationId AND share = :share AND root_path = :root")
+    abstract suspend fun root(locationId: String, share: String, root: String): TrashRootEntity?
+
+    @Upsert
+    abstract suspend fun putRoot(root: TrashRootEntity)
+
+    /** Records a root (keeps its last listing; a known server folder is not forgotten by an unmapped call). */
+    @Transaction
+    open suspend fun touchRoot(locationId: String, share: String, root: String, serverFolderId: String?, listedAt: Long? = null) {
+        val existing = root(locationId, share, root)
+        putRoot(
+            TrashRootEntity(
+                locationId = locationId,
+                share = share,
+                rootPath = root,
+                lastListed = listedAt ?: existing?.lastListed,
+                serverFolderId = serverFolderId ?: existing?.serverFolderId,
+            ),
+        )
+    }
+
+    @Query("DELETE FROM trash_roots WHERE location_id = :locationId")
+    abstract suspend fun forgetLocation(locationId: String)
+
+    @Query("DELETE FROM trash_entries WHERE location_id = :locationId")
+    abstract suspend fun forgetLocationEntries(locationId: String)
 }

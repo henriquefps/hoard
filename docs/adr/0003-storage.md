@@ -92,6 +92,22 @@ phase 2c they are also mirrored into `settings` (`themeMode`, `palette`, `langua
   writes; a sidecar gone from a complete listing loses its row; `deleteMachine` and "Delete rejects" clear them too.
   `cull_sidecars` is unchanged (still Hoard 1's schema v7).
 
+### Room version 4 (Hoard 2.3.0)
+
+`HoardMigrations.MIGRATION_3_4` (schema `core/data/schemas/…/4.json`, `MigrationTest`), for the trash of
+[ADR 0023](0023-trash.md). Both tables are created empty; times are Unix ms:
+
+- **`trash_entries`** (`id` primary key; `run_id`, `location_id`, `share`, `trash_root`, `day_folder`, `original_path`,
+  `trashed_path`, `shot_key`, `is_directory`, `size`, `modified_ms`, `trashed_at`, `media_uri`, `expires_at`,
+  `server_item_id`, `server_folder_id`, `state`; indexes `index_trash_entries_original` on `(location_id, share,
+  original_path)` and `index_trash_entries_state` on `state`): one row per file Hoard moved into a `.hoard-trash`
+  folder (the index, rebuilt by listing the folders) or into the phone's MediaStore trash (the record, phase A3).
+  `state` is `moving` | `trashed` | `restoring` | `purging`; a row is written `moving` before its move and settled
+  after, so a killed process resumes or rolls back. `run_id` groups a run's rows (`scan` for rows found by listing).
+- **`trash_roots`** (`location_id`, `share`, `root_path` primary key; `last_listed`, `server_folder_id`): every folder
+  holding a `.hoard-trash` that Hoard trashed into or found; auto-empty visits each reachable one.
+- Settings: `trashAutoEmptyDays` (JSON number, one of 7, 30, 90 or 0 = off; 30 when unset or invalid).
+
 ## Consequences
 
 - No secret ever reaches a backup. The app opts out of Android backup and device-to-device

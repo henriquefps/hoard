@@ -334,6 +334,40 @@ Henrique accepted this ADR with these answers to its open questions; where they 
    trashed: "Try again when the photo server is reachable".
 4. **Media management is asked in the first trash dialog** (once), and offered again in Settings › Trash.
 
+## Amendment (A1)
+
+Phase A1 (`HoardFs.move`, `hoard.db` v4, `TrashPlanner`, `TrashRunner` / `TrashService`, `TrashCleanupWorker`) follows
+the decision above with these small, justified deviations:
+
+1. **A SAF volume's trash root is its granted folder**, not the volume root: a SAF tree reaches nothing outside its
+   grant (Android 11+ refuses the volume root in the picker), so `HoardFs.moveRootOf` answers the grant covering the
+   path (`""` for path access) and the trash is `<grant>/.hoard-trash`. A path outside every grant is refused
+   (`MOVE_UNSUPPORTED`), as a provider without move support is.
+2. **`trash_entries` has three more columns** than listed: `run_id` (the run that wrote a row; `scan` for rows found by
+   listing), `is_directory` (a plain folder of a Files selection moves as one rename, one row) and `server_folder_id`
+   (the NAS folder to ask a walk for); `trash_roots` keeps `server_folder_id` too. Times are Unix ms. ADR 0003 lists
+   the tables.
+3. **Case 5 needs learning failures to stay unknown.** Until 2.2.2 an unreadable sample or a failed lookup stored a
+   `smb_mapping_misses` row (as if the folder were not on the server) for a day; that would turn case 5 into case 4.
+   `SmbServerPaths.mappingState` (and learning when a folder opens) now records a miss only when the server answered
+   that the samples are not there (or disagree); a failure is tried again next time.
+4. **A folder with fewer than two photos** cannot learn a mapping (one file is never trusted alone to store one): its
+   biggest photo or video is looked up (one 2 MiB read), and a hit places the trash by that file's mapping without
+   storing it; not found is case 4; a failure is case 5.
+5. **Resume rule.** A unit whose `moving` rows are left by a kill is completed when any of its files is already in the
+   trash, and rolled back (rows forgotten, files untouched) when none is, so a kill never leaves half a shot. A
+   `restoring` row returns to `trashed` while the file is still in the trash; a `purging` one too (Empty runs again).
+6. **The day folder is chosen per unit** (shot or plain item): the first `<day>`, `<day>-2`… where none of the unit's
+   targets is taken, so all files of a shot share one day folder.
+7. **Auto-empty** deletes a day folder whose date is at least the setting's days before today (`2026-10-16` goes on
+   `2026-11-15` with 30 days). Empty and restore remove the folders they leave empty up to the day folder;
+   `.hoard-trash` itself (and its `.nomedia`) stays.
+8. **No foreground service yet.** A1 runs a trash in the app's process scope with progress and Cancel (between units);
+   the rows make a kill safe. The foreground notification comes with the screens (A2).
+9. **The phone below Android 11 already uses the folder trash** (`.hoard-trash` with `.nomedia`, the same code as a
+   volume); on Android 11+ the phone is refused (`PHONE_TRASH_UNAVAILABLE`) until A3 plugs the MediaStore trash in as
+   another `TrashBackend`.
+
 ## Alternatives considered
 
 - **Tombstones keep their edits (B)**: see "Server": blind to the trash, previews lost, the empty-mount guard keeps

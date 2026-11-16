@@ -33,6 +33,19 @@ interface HoardFs {
     fun stat(path: String): SmbEntry
     fun createFolder(path: String, name: String): SmbEntry
     fun rename(path: String, newName: String): SmbEntry
+
+    /**
+     * Moves [path] to [targetPath] inside this location as one rename (ADR 0023): the target's parent must exist, an
+     * existing target is never replaced (`ALREADY_EXISTS`), and it is never a copy: a move that cannot be a rename
+     * fails (`UNAVAILABLE` with `reason` `notSameDevice` or `moveUnsupported` in `data`).
+     */
+    fun move(path: String, targetPath: String): SmbEntry
+
+    /**
+     * The highest folder a [move] from [path] can reach ("" = the location's root), or null when this location cannot
+     * move it at all. A SAF volume answers the grant that covers [path] (its tree is all the provider lets it see).
+     */
+    fun moveRootOf(path: String): String? = ""
     fun delete(path: String, recursive: Boolean, cancellation: Cancellation = Cancellation.NONE)
     fun readText(path: String, maxBytes: Int, truncate: Boolean): TextRead
     fun writeText(path: String, text: String, encoding: String, mode: String, expectedModifiedAt: String?): SmbEntry
@@ -44,6 +57,7 @@ class SmbFs(private val session: SmbSession, private val share: String) : HoardF
     override fun stat(path: String) = SmbBrowser.stat(session, share, path)
     override fun createFolder(path: String, name: String) = SmbBrowser.createFolder(session, share, path, name)
     override fun rename(path: String, newName: String) = SmbBrowser.rename(session, share, path, newName)
+    override fun move(path: String, targetPath: String) = SmbBrowser.move(session, share, path, targetPath)
     override fun delete(path: String, recursive: Boolean, cancellation: Cancellation) =
         SmbBrowser.delete(session, share, path, recursive)
     override fun readText(path: String, maxBytes: Int, truncate: Boolean) = TextFiles.read(session, share, path, maxBytes, truncate)
@@ -93,6 +107,9 @@ interface LocalFs : HoardFs {
 
 /** Exceptions from java.io / java.nio / SAF providers → contract codes. */
 object LocalErrors {
+    /** `data.reason` of a SAF provider that cannot move documents (ADR 0023: the trash refuses, never copies). */
+    const val MOVE_UNSUPPORTED = "moveUnsupported"
+
     fun map(error: Throwable, what: String? = null): HoardSmbException {
         if (error is HoardSmbException) return error
         val message = listOfNotNull(what, error.message).joinToString(": ").ifEmpty { error.javaClass.simpleName }

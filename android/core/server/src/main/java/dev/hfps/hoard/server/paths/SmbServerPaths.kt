@@ -21,6 +21,18 @@ data class SmbFolderRef(val machineId: String, val share: String, val path: Stri
     val key: String get() = "$machineId/${share.lowercase()}/${SharePaths.normalize(path).lowercase()}"
 }
 
+/** Where an SMB folder stands with the paired server, for the trash root (ADR 0023): see [SmbServerPaths.mappingState]. */
+sealed interface MappingState {
+    /** Covered by [mapping]: stored, learned now, or placed from one file ([stored] false: not kept). */
+    data class Mapped(val mapping: PathMapping, val stored: Boolean = true) : MappingState
+
+    /** Not on the server: no paired server (or one without `items-by-path`), or learning found nothing (a miss). */
+    data object NotOnServer : MappingState
+
+    /** Paired, the folder not known yet, and the server (or the file to fingerprint) could not be read. */
+    data object Unreachable : MappingState
+}
+
 /** Reads the v1 fingerprint of one file of the share (2 MiB: the first and the last MiB). */
 fun interface FingerprintReader {
     suspend fun fingerprint(path: String): String
@@ -154,43 +166,121 @@ class SmbServerPaths(
 
     /**
      * The mapping covering [folder]: a stored one that still holds, else learned from two files of [files] (unless
-     * this folder found nothing less than a day ago).
+     * this folder found nothing less than a day ago). A folder where learning found nothing is remembered as a miss; a
+     * server or share that could not be read is not (it is tried again next time).
      */
     private suspend fun mappingFor(folder: SmbFolderRef, files: List<MappingDiscovery.SmbFile>, reader: FingerprintReader, serverId: String, api: ServerApi): PathMapping? =
         learning.withLock {
-            val share = folder.share.lowercase()
-            val stored = db.mappings().forShare(folder.machineId, share).map(::mappingOf)
-            for (m in stored) if (!MappingDiscovery.valid(m, serverId, folder.smbGuid)) db.mappings().forget(m.machineId, m.share, m.smbPrefix)
-            MappingDiscovery.best(stored.filter { MappingDiscovery.valid(it, serverId, folder.smbGuid) }, folder.machineId, share, folder.path)?.let { return@withLock it }
-            val path = SharePaths.normalize(folder.path).lowercase()
-            val miss = db.mappings().miss(folder.machineId, share, path)
-            if (miss != null && miss.serverId == serverId && now() - miss.checkedAt < MISS_RETRY_MS) return@withLock null
-            val learned = learn(folder, files, reader, serverId, api)
-            if (learned == null) {
-                db.mappings().putMiss(SmbMappingMissEntity(folder.machineId, share, path, serverId, now()))
-                return@withLock null
+            storedMapping(folder, serverId)?.let { return@withLock it }
+            if (freshMiss(folder, serverId)) return@withLock null
+            when (val outcome = learn(folder, files, reader, serverId, api)) {
+                is Learned.Found -> outcome.mapping
+                Learned.Failed -> null
+                Learned.NotFound, Learned.TooFew -> {
+                    putMiss(folder, serverId)
+                    null
+                }
             }
-            db.mappings().put(entityOf(learned))
-            db.mappings().clearMisses(folder.machineId, share)
-            learned
         }
 
-    /** Learning (ADR 0022 "Mapping"): fingerprint one photo, look it up, derive; the second photo must agree. */
-    private suspend fun learn(folder: SmbFolderRef, files: List<MappingDiscovery.SmbFile>, reader: FingerprintReader, serverId: String, api: ServerApi): PathMapping? =
+    /** The stored mapping that covers [folder] and still holds (stored ones that no longer hold are forgotten). */
+    private suspend fun storedMapping(folder: SmbFolderRef, serverId: String): PathMapping? {
+        val share = folder.share.lowercase()
+        val stored = db.mappings().forShare(folder.machineId, share).map(::mappingOf)
+        for (m in stored) if (!MappingDiscovery.valid(m, serverId, folder.smbGuid)) db.mappings().forget(m.machineId, m.share, m.smbPrefix)
+        return MappingDiscovery.best(stored.filter { MappingDiscovery.valid(it, serverId, folder.smbGuid) }, folder.machineId, share, folder.path)
+    }
+
+    private suspend fun freshMiss(folder: SmbFolderRef, serverId: String): Boolean {
+        val miss = db.mappings().miss(folder.machineId, folder.share.lowercase(), SharePaths.normalize(folder.path).lowercase())
+        return miss != null && miss.serverId == serverId && now() - miss.checkedAt < MISS_RETRY_MS
+    }
+
+    private suspend fun putMiss(folder: SmbFolderRef, serverId: String) =
+        db.mappings().putMiss(SmbMappingMissEntity(folder.machineId, folder.share.lowercase(), SharePaths.normalize(folder.path).lowercase(), serverId, now()))
+
+    /**
+     * Where [folder] stands with the paired server, for the trash root (ADR 0023 "The SMB trash root"): a stored
+     * mapping, else learned now (the same two reads as opening the folder); [MappingState.NotOnServer] when there is no
+     * paired server (or one without `items-by-path`) or learning found nothing; [MappingState.Unreachable] when the
+     * server (or the file to fingerprint) could not be read, so the caller refuses instead of guessing.
+     *
+     * A folder with fewer than two photos cannot learn a mapping (one file is never trusted alone to store one): its
+     * biggest indexed file is looked up, and a hit places it under that file's mapping without storing it.
+     */
+    suspend fun mappingState(folder: SmbFolderRef, listed: List<MappingDiscovery.SmbFile>, reader: FingerprintReader): MappingState {
+        val account = db.account().get()
+        onServer(account?.serverId)
+        account ?: return MappingState.NotOnServer
+        val serverId = account.serverId
+        learning.withLock { storedMapping(folder, serverId) }?.let { return MappingState.Mapped(it) }
+        if (!account.has(Features.ITEMS_BY_PATH)) return MappingState.NotOnServer
+        val files = listed.filter { MappingDiscovery.indexed(it.name) }
+        if (files.isEmpty()) return MappingState.NotOnServer
+        val api = api() ?: return MappingState.Unreachable
+        if (MappingDiscovery.samples(files).size < MappingDiscovery.SAMPLE_FILES) return placeOne(folder, files, reader, serverId, api)
+        return learning.withLock {
+            storedMapping(folder, serverId)?.let { return@withLock MappingState.Mapped(it) }
+            if (freshMiss(folder, serverId)) return@withLock MappingState.NotOnServer
+            when (val outcome = learn(folder, files, reader, serverId, api)) {
+                is Learned.Found -> MappingState.Mapped(outcome.mapping)
+                Learned.Failed -> MappingState.Unreachable
+                Learned.NotFound, Learned.TooFew -> {
+                    putMiss(folder, serverId)
+                    MappingState.NotOnServer
+                }
+            }
+        }
+    }
+
+    /** One file looked up (a folder with fewer than two photos): its mapping, not stored. */
+    private suspend fun placeOne(folder: SmbFolderRef, files: List<MappingDiscovery.SmbFile>, reader: FingerprintReader, serverId: String, api: ServerApi): MappingState =
+        withContext(Dispatchers.IO) {
+            val file = files.maxByOrNull { it.size } ?: return@withContext MappingState.NotOnServer
+            val fp = runCatching { reader.fingerprint(file.path) }.getOrNull()?.also { reads.incrementAndGet() }
+                ?: return@withContext MappingState.Unreachable
+            val found = runCatching { api.lookup(listOf(fp)) }.getOrNull() ?: return@withContext MappingState.Unreachable
+            val derived = MappingDiscovery.candidates(file.path, fp, found.items).firstOrNull() ?: return@withContext MappingState.NotOnServer
+            val at = now()
+            MappingState.Mapped(
+                PathMapping(folder.machineId, folder.share.lowercase(), derived.smbPrefix, serverId, derived.folderId, derived.folderName, derived.serverPrefix, folder.smbGuid, at, at),
+                stored = false,
+            )
+        }
+
+    /** What learning found. */
+    private sealed interface Learned {
+        data class Found(val mapping: PathMapping) : Learned
+
+        /** The samples are not on the server, or they disagree: the folder is not (reliably) there. */
+        data object NotFound : Learned
+
+        /** Fewer than two photos to sample. */
+        data object TooFew : Learned
+
+        /** A sample could not be read, or the server could not be asked: nothing is known. */
+        data object Failed : Learned
+    }
+
+    /** Learning (ADR 0022 "Mapping"): fingerprint one photo, look it up, derive; the second photo must agree. Stores it. */
+    private suspend fun learn(folder: SmbFolderRef, files: List<MappingDiscovery.SmbFile>, reader: FingerprintReader, serverId: String, api: ServerApi): Learned =
         withContext(Dispatchers.IO) {
             val samples = MappingDiscovery.samples(files)
-            if (samples.size < MappingDiscovery.SAMPLE_FILES) return@withContext null
+            if (samples.size < MappingDiscovery.SAMPLE_FILES) return@withContext Learned.TooFew
             val first = samples[0]
-            val fp1 = runCatching { reader.fingerprint(first.path) }.getOrNull()?.also { reads.incrementAndGet() } ?: return@withContext null
-            val found1 = runCatching { api.lookup(listOf(fp1)) }.getOrNull() ?: return@withContext null
+            val fp1 = runCatching { reader.fingerprint(first.path) }.getOrNull()?.also { reads.incrementAndGet() } ?: return@withContext Learned.Failed
+            val found1 = runCatching { api.lookup(listOf(fp1)) }.getOrNull() ?: return@withContext Learned.Failed
             val c1 = MappingDiscovery.candidates(first.path, fp1, found1.items)
-            if (c1.isEmpty()) return@withContext null
+            if (c1.isEmpty()) return@withContext Learned.NotFound
             val second = samples[1]
-            val fp2 = runCatching { reader.fingerprint(second.path) }.getOrNull()?.also { reads.incrementAndGet() } ?: return@withContext null
-            val found2 = runCatching { api.lookup(listOf(fp2)) }.getOrNull() ?: return@withContext null
-            val agreed = MappingDiscovery.agree(c1, MappingDiscovery.candidates(second.path, fp2, found2.items)) ?: return@withContext null
+            val fp2 = runCatching { reader.fingerprint(second.path) }.getOrNull()?.also { reads.incrementAndGet() } ?: return@withContext Learned.Failed
+            val found2 = runCatching { api.lookup(listOf(fp2)) }.getOrNull() ?: return@withContext Learned.Failed
+            val agreed = MappingDiscovery.agree(c1, MappingDiscovery.candidates(second.path, fp2, found2.items)) ?: return@withContext Learned.NotFound
             val at = now()
-            PathMapping(folder.machineId, folder.share.lowercase(), agreed.smbPrefix, serverId, agreed.folderId, agreed.folderName, agreed.serverPrefix, folder.smbGuid, at, at)
+            val mapping = PathMapping(folder.machineId, folder.share.lowercase(), agreed.smbPrefix, serverId, agreed.folderId, agreed.folderName, agreed.serverPrefix, folder.smbGuid, at, at)
+            db.mappings().put(entityOf(mapping))
+            db.mappings().clearMisses(folder.machineId, folder.share.lowercase())
+            Learned.Found(mapping)
         }
 
     private class FolderGone : Exception()

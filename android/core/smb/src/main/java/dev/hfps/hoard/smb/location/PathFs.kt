@@ -174,6 +174,34 @@ class PathFs(
         entryOf(target, SmbPaths.join(SmbPaths.parent(clean), valid))
     }
 
+    /** One `rename(2)` inside the volume (ADR 0023): never replaces, never copies; the target's parent must exist. */
+    override fun move(path: String, targetPath: String): SmbEntry = LocalErrors.guard(path) {
+        val clean = LocalPaths.normalize(path)
+        val target = LocalPaths.normalize(targetPath)
+        if (clean.isEmpty() || target.isEmpty()) smbFail(ErrorCode.ACCESS_DENIED, "Cannot move the root")
+        if (LocalPaths.isRestricted(clean, sdkInt)) restrictedFail(clean)
+        if (LocalPaths.isRestricted(target, sdkInt)) restrictedFail(target)
+        LocalPaths.requireValidName(SmbPaths.name(target), "target name")
+        if (target == clean) return@guard stat(clean)
+        if (target.startsWith("$clean/")) smbFail(ErrorCode.ACCESS_DENIED, "Cannot move a folder into itself")
+        checkRoot()
+        val source = resolve(clean)
+        if (!source.exists()) smbFail(ErrorCode.NOT_FOUND, "$clean does not exist")
+        val destination = resolve(target)
+        val parent = destination.parentFile ?: smbFail(ErrorCode.UNKNOWN, "No parent folder")
+        if (!parent.isDirectory) smbFail(ErrorCode.NOT_FOUND, "${SmbPaths.parent(target)} is not a folder")
+        source.parentFile?.let(::requireWritable)
+        requireWritable(parent)
+        if (destination.exists()) smbFail(ErrorCode.ALREADY_EXISTS, "${destination.name} already exists")
+        if (!source.renameTo(destination)) {
+            checkRoot()
+            if (destination.exists()) smbFail(ErrorCode.ALREADY_EXISTS, "${destination.name} already exists")
+            smbFail(ErrorCode.ACCESS_DENIED, "Could not move ${source.name}")
+        }
+        scan(source, destination)
+        entryOf(destination, target)
+    }
+
     override fun delete(path: String, recursive: Boolean, cancellation: Cancellation) = LocalErrors.guard(path) {
         val clean = LocalPaths.normalize(path)
         if (clean.isEmpty()) smbFail(ErrorCode.ACCESS_DENIED, "Cannot delete the root")

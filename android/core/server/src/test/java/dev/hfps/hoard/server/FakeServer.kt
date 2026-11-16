@@ -67,6 +67,10 @@ class FakeServer : AutoCloseable {
     var folderQueries = 0
     var byPathCalls = 0
     var lookupCalls = 0
+    /** Answer this many lookups with a 503 (the server is reachable but failing). */
+    var lookupFailures = 0
+    /** `POST /v1/nas/walk` bodies received (ADR 0023). */
+    val walks = java.util.concurrent.CopyOnWriteArrayList<List<String>>()
 
     init {
         Thread {
@@ -271,6 +275,17 @@ class FakeServer : AutoCloseable {
                     if (hit != null) found += hit else missing += p
                 }
                 send(ex, 200, ServerJson.encodeToString(dev.hfps.hoard.server.api.ByPathResponse.serializer(), dev.hfps.hoard.server.api.ByPathResponse(found, missing)))
+            }
+            path == "/v1/nas/walk" -> {
+                val folders = ServerJson.parseToJsonElement(body).jsonObject["folders"]!!.jsonArray.map { it.jsonPrimitive.content }
+                walks += folders
+                if (folders.any { it !in nasFolders }) return send(ex, 404, """{"error":{"code":"not_found","message":"unknown folder"}}""")
+                send(ex, 202, folders.joinToString(",", """{"queued":[""", "]}") { "\"$it\"" })
+            }
+            path == "/v1/items/lookup" && lookupFailures > 0 -> {
+                lookupFailures--
+                lookupCalls++
+                send(ex, 503, """{"error":{"code":"unavailable","message":"busy"}}""")
             }
             path == "/v1/items/lookup" -> {
                 lookupCalls++
