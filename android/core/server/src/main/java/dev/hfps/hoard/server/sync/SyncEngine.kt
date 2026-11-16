@@ -171,6 +171,7 @@ class SyncEngine(
         db.withTransaction {
             db.items().clearItems()
             db.items().clearFiles()
+            db.items().clearMirrors()
             db.culling().clearRecords()
             db.culling().clearFingerprints()
             db.account().setCursor(null, false)
@@ -183,6 +184,7 @@ class SyncEngine(
         db.withTransaction {
             db.items().clearItems()
             db.items().clearFiles()
+            db.items().clearMirrors()
             db.culling().clearRecords()
             db.culling().clearFingerprints()
             db.culling().clearPending()
@@ -252,7 +254,9 @@ class SyncEngine(
                 // bridge records again); a failed declaration is retried on the next sync, and nothing is pushed until then.
                 val canPush = culling && (account.cullingDeclared || declareCulling(api, info.features))
                 val first = if (canPush) push(api, account.deviceId) else PushPass()
+                indexMirrors()
                 val pulled = pull(api, minOf(pageSize, info.limits.maxPullLimit))
+                if (Features.BACKUP in info.features) refreshBackupRoots(api) else db.account().setBackupRoots(null)
                 val second = if (canPush) push(api, account.deviceId) else PushPass()
                 db.account().synced(now())
                 _status.value = SyncStatus(running = false, pulled = pulled, pushed = first.answered + second.answered, pushError = second.error ?: first.error)
@@ -273,6 +277,38 @@ class SyncEngine(
                 false
             }
         }
+    }
+
+    /**
+     * Every phone's backup roots (`GET /v1/backup/roots`, ADR 0024 A2), kept as JSON for Gallery › Devices. A failure
+     * keeps the last list (the tree is built from the items' mirror locations too).
+     */
+    private suspend fun refreshBackupRoots(api: ServerApi) {
+        val roots = runCatching { api.backupRoots() }.getOrElse {
+            if (it is ServerException && it.unauthorized) throw it
+            runCatching { android.util.Log.w("HoardServer", "backup roots: ${it.message}") }
+            return
+        }
+        db.account().setBackupRoots(ServerJson.encodeToString(dev.hfps.hoard.server.api.BackupRoots.serializer(), roots))
+    }
+
+    /** gallery.db 5: the `mirror` locations of items cached before the upgrade, read once from their JSON. */
+    private suspend fun indexMirrors() {
+        if (db.account().get()?.mirrorsIndexed != false) return
+        var offset = 0
+        while (true) {
+            val rows = db.items().mirrorJson(MIRROR_PAGE, offset)
+            if (rows.isEmpty()) break
+            offset += rows.size
+            val mirrors = rows.flatMap { row ->
+                runCatching { Feed.mirrors(ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json)) }.getOrDefault(emptyList())
+            }
+            db.withTransaction {
+                db.items().deleteMirrors(rows.map { it.id })
+                if (mirrors.isNotEmpty()) db.items().putMirrors(mirrors)
+            }
+        }
+        db.account().setMirrorsIndexed(true)
     }
 
     @Volatile private var httpsTriedAt = Long.MIN_VALUE / 2
@@ -408,7 +444,7 @@ class SyncEngine(
             }
             val writes = Feed.writes(page)
             db.withTransaction {
-                db.items().apply(writes.items, writes.files, writes.goneItems)
+                db.items().apply(writes.items, writes.files, writes.goneItems, writes.mirrors)
                 db.culling().apply(writes.records, writes.recordFingerprints, writes.replaced.keys.toList())
                 for ((from, to) in writes.replaced) db.culling().movePending(from, to)
                 db.account().setCursor(page.cursor ?: account.cursor, account.caughtUp || !page.hasMore)
@@ -450,6 +486,8 @@ class SyncEngine(
         const val HTTPS_RETRY_MS = 24 * 3_600_000L
 
         /** How long a change refused [attempts] times is kept back: 30 s, doubling, at most 6 hours. */
+        const val MIRROR_PAGE = 200
+
         fun backoffMs(attempts: Int): Long = minOf(30_000L shl (attempts - 1).coerceIn(0, 20), 6 * 3_600_000L)
         const val ERROR_UNAUTHORIZED = "unauthorized"
         const val ERROR_OFFLINE = "offline"

@@ -68,6 +68,8 @@ class TransferManager private constructor(context: Context) {
         if (request.op != "copy" && request.op != "move") smbFail(ErrorCode.UNKNOWN, "op must be copy or move")
         if (request.conflict !in Conflicts.ALL) smbFail(ErrorCode.UNKNOWN, "conflict must be ask, rename, overwrite or skip")
         if (request.destination is Endpoint.Incoming) smbFail(ErrorCode.UNKNOWN, "Shared files are not a destination")
+        if (request.destination is Endpoint.Server) smbFail(ErrorCode.UNKNOWN, "The photo server is not a destination")
+        if (request.op != "copy" && request.sources.any { it.endpoint is Endpoint.Server }) smbFail(ErrorCode.UNKNOWN, "Server originals are only copied")
         if (request.sources.any { it.endpoint is Endpoint.MediaStore }) smbFail(ErrorCode.UNKNOWN, "Reveal's copies are not a source")
         if (request.destination is Endpoint.MediaStore && request.op != "copy") smbFail(ErrorCode.UNKNOWN, "Reveal's copies are made by copies only")
         if (request.sources.isEmpty()) smbFail(ErrorCode.UNKNOWN, "No sources")

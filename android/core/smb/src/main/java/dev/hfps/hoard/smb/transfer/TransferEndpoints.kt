@@ -67,6 +67,16 @@ class TransferEndpoints(private val context: Context, private val credentials: C
         } else {
             smbFail(ErrorCode.UNAVAILABLE, "Copies for Reveal need Android 10")
         }
+        is Endpoint.Server -> server?.invoke(endpoint) ?: smbFail(ErrorCode.UNAVAILABLE, "The photo server is not paired")
+    }
+
+    companion object {
+        /**
+         * Opens hoard-server's originals ([Endpoint.Server], ADR 0024 A2). Set by the application at start (`:core:smb`
+         * does not know the server client); null = not paired.
+         */
+        @Volatile
+        var server: ((Endpoint.Server) -> TransferFs?)? = null
     }
 
     /** A device or volume: by path with all files access, else its SAF grants. */

@@ -37,6 +37,13 @@ data class ServerAccountEntity(
     @ColumnInfo(name = "claim_candidates") val claimCandidates: String? = null,
     /** `culling` declared with `PATCH /v1/device` (ADR 0016 rule 6). */
     @ColumnInfo(name = "culling_declared", defaultValue = "0") val cullingDeclared: Boolean = false,
+    /** Every phone's backup roots (`GET /v1/backup/roots`, JSON) as of the last sync (ADR 0024 A2: Gallery › Devices). */
+    @ColumnInfo(name = "backup_roots") val backupRoots: String? = null,
+    /**
+     * `server_item_mirrors` holds the `mirror` locations of every cached item (gallery.db 5 fills it from the items'
+     * JSON once after the upgrade; a new pairing starts filled).
+     */
+    @ColumnInfo(name = "mirrors_indexed", defaultValue = "0") val mirrorsIndexed: Boolean = true,
 ) {
     fun has(feature: String): Boolean = feature in features.split(',')
 }
@@ -91,6 +98,34 @@ data class ServerItemFileEntity(
     val fingerprint: String,
     @ColumnInfo(name = "item_id") val itemId: String,
     val role: String,
+)
+
+/**
+ * A `mirror` location of a cached item's file (ADR 0024 A2): where a phone has (or had) that file, for Gallery ›
+ * Devices, the "Where: <phone> backup" filter, the "Deleted from the phone" badge and the merge of this phone's own
+ * files with their backed-up items. [path] is relative to the phone's [volume] (`primary` or a volume UUID).
+ */
+@Entity(
+    tableName = "server_item_mirrors",
+    primaryKeys = ["item_id", "fingerprint", "root_id", "path"],
+    indices = [
+        Index(value = ["root_id"], name = "idx_server_item_mirrors_root"),
+        Index(value = ["physical_id"], name = "idx_server_item_mirrors_physical"),
+    ],
+)
+data class ServerItemMirrorEntity(
+    @ColumnInfo(name = "item_id") val itemId: String,
+    val fingerprint: String,
+    @ColumnInfo(name = "physical_id") val physicalId: String,
+    @ColumnInfo(name = "device_name") val deviceName: String,
+    @ColumnInfo(name = "root_id") val rootId: String,
+    val volume: String,
+    val path: String,
+    val size: Long,
+    @ColumnInfo(name = "modified_at") val modifiedAt: Long?,
+    @ColumnInfo(name = "on_device") val onDevice: Boolean,
+    /** `freed` or `deleted` when off the phone. */
+    val gone: String?,
 )
 
 /**

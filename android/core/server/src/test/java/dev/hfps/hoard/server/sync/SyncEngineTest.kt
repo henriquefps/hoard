@@ -10,6 +10,7 @@ import dev.hfps.hoard.server.api.FileLocation
 import dev.hfps.hoard.server.api.Item
 import dev.hfps.hoard.server.api.ItemEdit
 import dev.hfps.hoard.server.api.ItemFile
+import dev.hfps.hoard.server.api.ServerJson
 import dev.hfps.hoard.server.db.GalleryDatabase
 import dev.hfps.hoard.server.preview.HttpRangeSource
 import dev.hfps.hoard.server.preview.PreviewCache
@@ -489,5 +490,60 @@ class SyncEngineTest {
         val fourth = NasWalks.request(api, listOf("f1", "gone")) {}
         assertThat(fourth.queued).containsExactly("f1")
         assertThat(fourth.unknown).containsExactly("gone")
+    }
+
+    @Test
+    fun anOriginalStreamsFromAnOffsetAndAMissingOneIsA404() = runBlocking<Unit> {
+        pair()
+        val bytes = ByteArray(300_000) { (it % 241).toByte() }
+        server.originals["v1:big"] = bytes
+        val api = engine.api()!!
+        api.openOriginal("v1:big", 0).use { assertThat(it.readBytes().toList()).isEqualTo(bytes.toList()) }
+        api.openOriginal("v1:big", 123_456).use { assertThat(it.readBytes().toList()).isEqualTo(bytes.copyOfRange(123_456, bytes.size).toList()) }
+        val missing = runCatching { api.openOriginal("v1:gone", 0) }.exceptionOrNull() as dev.hfps.hoard.server.api.ServerException
+        assertThat(missing.status).isEqualTo(404)
+        assertThat(missing.code).isEqualTo("not_found")
+    }
+
+    @Test
+    fun aSyncKeepsEveryPhonesBackupRootsAndTheItemsMirrorLocations() = runBlocking<Unit> {
+        server.features = server.features + "backup"
+        server.extra = { ex, path, _, _ ->
+            if (path == "/v1/backup/roots" && ex.requestMethod == "GET") {
+                server.send(ex, 200, """{"roots":[{"id":"r1","physicalDeviceId":"p1","deviceName":"Pixel 8","mine":false,"folder":"Pixel 8 (p1)","volume":"PRIMARY","path":"DCIM/Camera","types":["image","video"],"active":true,"stats":{"files":3}}]}""")
+                true
+            } else {
+                false
+            }
+        }
+        pair()
+        val mirror = FileLocation("mirror", path = "DCIM/Camera/PXL_1.jpg", modifiedAt = 5, physicalDeviceId = "p1", deviceName = "Pixel 8", rootId = "r1", volume = "primary", onDevice = false, gone = "deleted")
+        server.putItem(item(1).let { it.copy(files = it.files.map { f -> f.copy(locations = f.locations + mirror) }) })
+        server.putItem(item(2))
+        assertThat(engine.sync()).isTrue()
+        val roots = ServerJson.decodeFromString(dev.hfps.hoard.server.api.BackupRoots.serializer(), db.account().get()!!.backupRoots!!)
+        assertThat(roots.roots.single().deviceName).isEqualTo("Pixel 8")
+        val rows = db.items().observeMirrors().first()
+        assertThat(rows.single().itemId).isEqualTo("item-1")
+        assertThat(rows.single().onDevice).isFalse()
+
+        // The item no longer names the phone (an admin purge): its row goes with the next page.
+        server.putItem(item(1))
+        assertThat(engine.sync()).isTrue()
+        assertThat(db.items().observeMirrors().first()).isEmpty()
+    }
+
+    @Test
+    fun itemsCachedBeforeTheUpgradeAreIndexedOnceFromTheirJson() = runBlocking<Unit> {
+        pair()
+        val mirror = FileLocation("mirror", path = "DCIM/Camera/PXL_1.jpg", physicalDeviceId = "p1", deviceName = "Pixel 8", rootId = "r1", volume = "primary")
+        server.putItem(item(1).let { it.copy(files = it.files.map { f -> f.copy(locations = f.locations + mirror) }) })
+        assertThat(engine.sync()).isTrue()
+        // As gallery.db 4 left it: the items, no mirror rows, not indexed yet.
+        db.items().clearMirrors()
+        db.account().setMirrorsIndexed(false)
+        assertThat(engine.sync()).isTrue()
+        assertThat(db.items().observeMirrors().first().single().onDevice).isTrue()
+        assertThat(db.account().get()!!.mirrorsIndexed).isTrue()
     }
 }

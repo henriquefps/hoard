@@ -15,7 +15,8 @@ import kotlinx.coroutines.flow.Flow
  * `gallery.db` (ADR 0021). Room migrations checked against `core/server/schemas/`: version 2 (Hoard 2.2.0, ADR 0022)
  * adds `smb_mappings` and `smb_mapping_misses`; version 3 (Hoard 2.3.0, ADR 0023) adds `server_items.trashed_since`;
  * version 4 (Hoard 2.4.0, ADR 0024) adds the phone backup: `backup_roots`, `backup_files`, `freed` and
- * `device_media.sha256` / `sha_size` / `sha_modified`.
+ * `device_media.sha256` / `sha_size` / `sha_modified`; version 5 (Hoard 2.5.0, ADR 0024 A2) adds other phones'
+ * backups: `server_item_mirrors`, `server_account.backup_roots` and `mirrors_indexed`.
  */
 @Database(
     entities = [
@@ -33,8 +34,9 @@ import kotlinx.coroutines.flow.Flow
         BackupRootEntity::class,
         BackupFileEntity::class,
         FreedEntity::class,
+        ServerItemMirrorEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -104,13 +106,32 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * 2.5.0 (ADR 0024 A2): the items' `mirror` locations and every phone's backup roots. Cached items are indexed
+         * from their JSON once ([ItemDao.mirrorJson], `mirrors_indexed`), not pulled again.
+         */
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `server_item_mirrors` (`item_id` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, " +
+                        "`physical_id` TEXT NOT NULL, `device_name` TEXT NOT NULL, `root_id` TEXT NOT NULL, `volume` TEXT NOT NULL, " +
+                        "`path` TEXT NOT NULL, `size` INTEGER NOT NULL, `modified_at` INTEGER, `on_device` INTEGER NOT NULL, `gone` TEXT, " +
+                        "PRIMARY KEY(`item_id`, `fingerprint`, `root_id`, `path`))",
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `idx_server_item_mirrors_root` ON `server_item_mirrors` (`root_id`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `idx_server_item_mirrors_physical` ON `server_item_mirrors` (`physical_id`)")
+                db.execSQL("ALTER TABLE `server_account` ADD COLUMN `backup_roots` TEXT")
+                db.execSQL("ALTER TABLE `server_account` ADD COLUMN `mirrors_indexed` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun open(context: Context, name: String? = FILE_NAME): GalleryDatabase {
             val builder = if (name == null) {
                 Room.inMemoryDatabaseBuilder(context.applicationContext, GalleryDatabase::class.java)
             } else {
                 Room.databaseBuilder(context.applicationContext, GalleryDatabase::class.java, name)
             }
-            return builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+            return builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
         }
     }
 }
@@ -144,12 +165,20 @@ interface AccountDao {
     @Query("UPDATE server_account SET features = :features, server_name = :name, server_version = :version WHERE id = 1")
     suspend fun setServerInfo(features: String, name: String?, version: String?)
 
+    @Query("UPDATE server_account SET backup_roots = :json WHERE id = 1")
+    suspend fun setBackupRoots(json: String?)
+
+    @Query("UPDATE server_account SET mirrors_indexed = :done WHERE id = 1")
+    suspend fun setMirrorsIndexed(done: Boolean)
+
     @Query("UPDATE server_account SET culling_declared = 1 WHERE id = 1")
     suspend fun cullingDeclared()
 
     @Query("DELETE FROM server_account")
     suspend fun clear()
 }
+
+data class ItemJsonRow(val id: String, val json: String)
 
 /** What the grid needs of a server item (no JSON). */
 data class ServerItemRow(
@@ -212,14 +241,35 @@ interface ItemDao {
     @Query("DELETE FROM server_items WHERE id IN (:ids)")
     suspend fun deleteItems(ids: List<String>)
 
-    /** Replaces items (and their member files) and drops tombstones, in one transaction. */
+    @Upsert
+    suspend fun putMirrors(mirrors: List<ServerItemMirrorEntity>)
+
+    @Query("DELETE FROM server_item_mirrors WHERE item_id IN (:ids)")
+    suspend fun deleteMirrors(ids: List<String>)
+
+    /** Every `mirror` location of a live item (ADR 0024 A2). */
+    @Query("SELECT m.* FROM server_item_mirrors m JOIN server_items i ON i.id = m.item_id WHERE i.trashed_since IS NULL")
+    fun observeMirrors(): Flow<List<ServerItemMirrorEntity>>
+
+    /** Ids and JSON of live items that name a mirror location, a page at a time (gallery.db 5's one-off index). */
+    @Query("SELECT id, json FROM server_items WHERE trashed_since IS NULL AND json LIKE '%\"mirror\"%' ORDER BY id LIMIT :limit OFFSET :offset")
+    suspend fun mirrorJson(limit: Int, offset: Int): List<ItemJsonRow>
+
+    @Query("DELETE FROM server_item_mirrors")
+    suspend fun clearMirrors()
+
+    /** Replaces items (their member files and mirror locations) and drops tombstones, in one transaction. */
     @Transaction
-    suspend fun apply(live: List<ServerItemEntity>, files: List<ServerItemFileEntity>, gone: List<String>) {
+    suspend fun apply(live: List<ServerItemEntity>, files: List<ServerItemFileEntity>, gone: List<String>, mirrors: List<ServerItemMirrorEntity> = emptyList()) {
         val touched = live.map { it.id } + gone
-        for (chunk in touched.chunked(500)) deleteFiles(chunk)
+        for (chunk in touched.chunked(500)) {
+            deleteFiles(chunk)
+            deleteMirrors(chunk)
+        }
         for (chunk in gone.chunked(500)) deleteItems(chunk)
         if (live.isNotEmpty()) putItems(live)
         if (files.isNotEmpty()) putFiles(files)
+        if (mirrors.isNotEmpty()) putMirrors(mirrors)
     }
 
     /** Fingerprint → item for the given files (each file once; any member). */
