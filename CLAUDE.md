@@ -42,6 +42,9 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   (`10.0.2.2:<port>`) by hand; never accept or tap a discovered machine (discovery on the build host sees the LAN, the
   owner's machines included), and check the saved address before connecting. Drive the app with `adb shell input` and
   `uiautomator dump`, screenshots with `adb exec-out screencap -p`.
+- Test containers and images on a shared build host: remove only your own, by name or id (`docker rm`, `docker image rm`).
+  Never run a host-wide `docker image prune`, `docker system prune` or `docker builder prune`: other projects' images,
+  build caches and services live on the same host.
 - Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/core/image/src/main/cpp`): see
   `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
   `HOARD_ARW_DIR` JVM tests. Real photos are private: never commit them, use copies.
