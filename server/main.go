@@ -255,8 +255,7 @@ func serve(args []string, stderr io.Writer) int {
 	}
 	st, err := store.Open(dbPath)
 	if err != nil {
-		logger.Error("cannot open the database", "dir", dir, "err", err,
-			"hint", "the server's user must own the data directory, e.g. for the Docker image: sudo chown -R 65532:65532 ./data")
+		logger.Error("cannot open the database", "dir", dir, "err", err, "hint", databaseHint(err))
 		return 1
 	}
 	defer st.Close()
@@ -331,4 +330,25 @@ func addrStrings(a []netip.Addr) []string {
 		out[i] = x.String()
 	}
 	return out
+}
+
+// databaseHint says what to check for a database that did not open. Only permission errors point at the data
+// directory's owner; other I/O errors (a full or failing disk, a missing temp directory) say what they are.
+func databaseHint(err error) string {
+	var se interface{ Code() int } // *sqlite.Error
+	if errors.As(err, &se) {
+		switch se.Code() & 0xff {
+		case 3, 8, 14: // SQLITE_PERM, SQLITE_READONLY, SQLITE_CANTOPEN
+			return "the server's user must own the data directory, e.g. for the Docker image: sudo chown -R 65532:65532 ./data"
+		case 10: // SQLITE_IOERR, extended codes included (6410 is SQLITE_IOERR_GETTEMPPATH)
+			if se.Code() == 6410 {
+				return "SQLite found no writable temporary directory: mount a writable /tmp (tmpfs: [/tmp] in docker-compose.yml) or set TMPDIR"
+			}
+			return "SQLite reported an I/O error: check that the data volume has free space and is healthy (dmesg, df), and that it is mounted read-write"
+		}
+	}
+	if errors.Is(err, os.ErrPermission) {
+		return "the server's user must own the data directory, e.g. for the Docker image: sudo chown -R 65532:65532 ./data"
+	}
+	return "see err; if the data directory is new, check that the server's user can write it"
 }

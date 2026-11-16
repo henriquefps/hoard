@@ -39,7 +39,11 @@ func Open(path string) (*Store, error) {
 	}
 	f.Close()
 	q := url.Values{}
-	for _, p := range []string{"busy_timeout(10000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(FULL)"} {
+	// temp_store(MEMORY): sorts, index builds and temp tables never need a temp directory. The image runs with
+	// read_only: true and no writable /tmp, where SQLite fails with SQLITE_IOERR_GETTEMPPATH (6410) as soon as a
+	// migration rebuilds an index (hoard-server 0.11.0). With a library of tens of thousands of photos the database
+	// is tens of MB, so the sort fits in memory well within the container's limit.
+	for _, p := range []string{"busy_timeout(10000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(FULL)", "temp_store(MEMORY)"} {
 		q.Add("_pragma", p)
 	}
 	q.Set("_txlock", "immediate")

@@ -205,6 +205,16 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.11.1 (a read-only container starts)
+
+0.11.0 could crash-loop on upgrade in a container with `read_only: true` and no writable `/tmp` (the example
+`docker-compose.yml`), logging `migrate: 0009_trash.sql: disk I/O error (6410)`: the migration rebuilds the `items`
+indexes and SQLite wanted a temporary file to sort them. 0.11.1 keeps SQLite's temporary data in memory
+(`PRAGMA temp_store = MEMORY`, a few tens of MB for a library of this size), so no temporary directory is needed, and the
+example compose file now also mounts a `tmpfs: [/tmp]` on the service. No data change, nothing to do but pull the new
+image (a failed 0.11.0 start left the database at schema 8: the migration is one transaction). The start-up hint for
+an I/O error no longer blames the data directory's owner: it does that only for permission errors.
+
 ## Upgrading to 0.11.0 (trash)
 
 0.11.0 understands Hoard's trash (ADR 0023): Hoard 2.3.0 moves rejected photos into a hidden `.hoard-trash` folder on
