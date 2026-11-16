@@ -61,6 +61,8 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/items/{itemId}/edits/{versionId}", s.device(s.handleEditPut))
 	mux.HandleFunc("GET /v1/items/{itemId}/edits/{versionId}", s.previewDevice(s.handleEditGet))
 	mux.HandleFunc("DELETE /v1/items/{itemId}/edits/{versionId}", s.device(s.handleEditDelete))
+	// The trash (ADR 0023, hoard-server 0.11.0): additions.
+	mux.HandleFunc("POST /v1/nas/walk", s.device(s.handleNasWalk))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -166,7 +168,8 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
-// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews), "items-by-path" (ADR 0014, 0.10.0).
+// when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews), "items-by-path" (ADR 0014, 0.10.0),
+// "trash" (ADR 0023, 0.11.0).
 func (s *Server) features() []string {
 	f := []string{"items", "items-by-path"}
 	if s.prev != nil {
@@ -176,7 +179,7 @@ func (s *Server) features() []string {
 	if s.prev != nil {
 		f = append(f, "edits")
 	}
-	return f
+	return append(f, "trash")
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device

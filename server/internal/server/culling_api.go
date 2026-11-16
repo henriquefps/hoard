@@ -125,25 +125,36 @@ func (s *Server) handleCulling(w http.ResponseWriter, r *http.Request) {
 }
 
 // feedInclude parses include= of the items feed: items (default) and/or culling.
-func feedInclude(v string) (items, culling, ok bool) {
+func feedInclude(v string) (inc feedIncludes, ok bool) {
 	if v == "" {
-		return true, false, true
+		return feedIncludes{items: true}, true
 	}
 	for _, p := range strings.Split(v, ",") {
 		switch p {
 		case "items":
-			items = true
+			inc.items = true
 		case "culling":
-			culling = true
+			inc.culling = true
+		case "trash": // ADR 0023: trashed items whole, files in a trash listed
+			inc.trash = true
 		default:
-			return false, false, false
+			return feedIncludes{}, false
 		}
 	}
-	return items, culling, true
+	if !inc.items && !inc.culling { // "trash" alone: the items, with the trash
+		inc.items = true
+	}
+	return inc, true
+}
+
+// feedIncludes is what the items feed serves (include=…).
+type feedIncludes struct {
+	items, culling, trash bool
 }
 
 // writeFeed answers the items feed with items and culling records merged in revision order, at most limit in all.
-func (s *Server) writeFeed(w http.ResponseWriter, r *http.Request, since int64, limit int, withItems, withCulling bool) {
+func (s *Server) writeFeed(w http.ResponseWriter, r *http.Request, since int64, limit int, inc feedIncludes) {
+	withItems, withCulling := inc.items, inc.culling
 	var rows []store.ItemRow
 	var recs []store.CullRecord
 	var moreItems, moreCulling bool
@@ -192,5 +203,5 @@ func (s *Server) writeFeed(w http.ResponseWriter, r *http.Request, since int64, 
 	if !withItems {
 		keptItems = nil
 	}
-	writeItems(w, keptItems, extra+fmt.Sprintf(`,"cursor":%s,"hasMore":%t`, jsonString(s.cursor("i", last)), more))
+	writeItems(w, keptItems, extra+fmt.Sprintf(`,"cursor":%s,"hasMore":%t`, jsonString(s.cursor("i", last)), more), inc.trash)
 }

@@ -205,6 +205,20 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
 
+## Upgrading to 0.11.0 (trash)
+
+0.11.0 understands Hoard's trash (ADR 0023): Hoard 2.3.0 moves rejected photos into a hidden `.hoard-trash` folder on
+the share instead of deleting them. The walk now reads those folders (other hidden folders stay skipped) and keeps a
+trashed photo as **trashed**, not deleted: its Reveal edits, previews and culling stay, and it comes back as the same
+item when Hoard restores it. Only emptying the trash deletes it (and its edits, as before). Trashed photos leave the web
+gallery and Hoard's Gallery; Reveal sees them as removed NAS files (with `trashed: true`) until it shows a trash.
+Moving into or out of the trash costs no hashing. Hoard asks for a walk after it moves files (`POST /v1/nas/walk`).
+
+A database migration (schema 9) is applied in place on start: no step to take, and nothing changes for released Reveal
+or Hoard (clients that do not ask for the trash get the same answers as before). **Back up `data/` before upgrading**:
+0.10.x refuses a schema-9 database. One behaviour change for every folder: a sub-folder the server cannot read (a
+permission change) no longer makes its files count as deleted; they are kept until the folder can be read again.
+
 ## Upgrading to 0.10.1 (sidecar import skips first-write defaults, first read keeps decisions)
 
 0.10.1 changes one thing in how the server imports the culling values of NAS sidecars (ADR 0016): a sidecar value that is the

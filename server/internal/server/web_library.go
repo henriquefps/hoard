@@ -208,7 +208,7 @@ func (x *libraryIndex) applyFeed(ctx context.Context, head int64) error {
 }
 
 func (x *libraryIndex) applyItem(r store.ItemRow) {
-	if r.Deleted {
+	if r.Deleted || r.Trashed() { // trashed items are not in the library (ADR 0023)
 		if _, ok := x.rows[r.ID]; ok {
 			delete(x.rows, r.ID)
 			x.gen++

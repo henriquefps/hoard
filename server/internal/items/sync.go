@@ -31,22 +31,43 @@ type sourceOp struct {
 	affected []string
 }
 
-// SyncFolder makes the NAS sources of a folder equal to groups (nil: the folder is no longer indexed) and rebuilds
-// every item a changed source belongs or belonged to. Unchanged groups cost nothing.
+// SyncFolder makes the NAS and trash sources of a folder equal to groups (nil: the folder is no longer indexed) and
+// rebuilds every item a changed source belongs or belonged to. Unchanged groups cost nothing.
 func (y *Syncer) SyncFolder(ctx context.Context, folderID string, groups []Group) (Stats, error) {
 	existing, err := y.Store.ItemSources(ctx, SourceNAS, folderID)
 	if err != nil {
 		return Stats{}, err
 	}
-	old := make(map[[2]string]store.ItemSource, len(existing))
+	trash, err := y.Store.ItemSources(ctx, SourceTrash, folderID)
+	if err != nil {
+		return Stats{}, err
+	}
+	existing = append(existing, trash...)
+	old := make(map[[3]string]store.ItemSource, len(existing))
 	for _, r := range existing {
-		old[[2]string{r.Dir, r.Key}] = r
+		old[[3]string{r.Source, r.Dir, r.Key}] = r
+	}
+	// Files in a trash belong to the shot of their original directory and stem (ADR 0023): a trash group joins the
+	// item of the live group with the same key (the JPEG of a pair trashed alone stays a member of the pair), else it
+	// is an item of its own main file.
+	liveMain := map[[2]string]string{}
+	for _, g := range groups {
+		if !g.Trash() {
+			liveMain[[2]string{g.Dir, g.Key}] = g.Main
+		}
 	}
 	var ops []sourceOp
 	for _, g := range groups {
-		k := [2]string{g.Dir, g.Key}
-		id := ID(g.Main)
-		sig := Signature(g.Main, g.Members)
+		source, main := SourceNAS, g.Main
+		if g.Trash() {
+			source = SourceTrash
+			if m, ok := liveMain[[2]string{g.Dir, g.Key}]; ok {
+				main = m
+			}
+		}
+		k := [3]string{source, g.Dir, g.Key}
+		id := ID(main)
+		sig := Signature(main, g.Members)
 		prev, had := old[k]
 		delete(old, k)
 		if had && prev.Signature == sig && prev.ItemID == id {
@@ -56,7 +77,7 @@ func (y *Syncer) SyncFolder(ctx context.Context, folderID string, groups []Group
 		if err != nil {
 			return Stats{}, err
 		}
-		op := sourceOp{put: &store.ItemSource{Source: SourceNAS, FolderID: folderID, Dir: g.Dir, Key: g.Key, ItemID: id, MainFP: g.Main,
+		op := sourceOp{put: &store.ItemSource{Source: source, FolderID: folderID, Dir: g.Dir, Key: g.Key, ItemID: id, MainFP: main,
 			Signature: sig, Members: members}, affected: []string{id}}
 		if had && prev.ItemID != id {
 			op.affected = append(op.affected, prev.ItemID)
@@ -173,7 +194,8 @@ func (y *Syncer) apply(ctx context.Context, ops []sourceOp) (Stats, error) {
 }
 
 // rebuild recomputes items from their sources: live items first, then tombstones (which then can name the item that
-// took their main file over, "replacedBy").
+// took their main file over, "replacedBy"). An item whose every source is a trash is trashed (ADR 0023), not a
+// tombstone: it keeps its id, edits, previews and culling.
 func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 	n := 0
 	var dead []string
@@ -189,7 +211,9 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		var sources []Source
 		var fps []string
 		hasMain := false
+		trashed := len(rows) > 0
 		for _, r := range rows {
+			trashed = trashed && r.Source == SourceTrash
 			var ms []Member
 			if err := json.Unmarshal(r.Members, &ms); err != nil {
 				return n, err
@@ -228,7 +252,7 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		for _, f := range d.Files {
 			files = append(files, store.ItemFile{Fingerprint: f.Fingerprint, Role: f.Role})
 		}
-		changed, err := tx.WriteItem(id, main, d.Kind, d.SortTime, js, files, nil)
+		changed, err := tx.WriteItemState(id, main, d.Kind, d.SortTime, js, files, trashed)
 		if err != nil {
 			return n, err
 		}

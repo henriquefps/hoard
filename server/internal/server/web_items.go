@@ -38,7 +38,7 @@ func (s *Server) liveItem(w http.ResponseWriter, r *http.Request) (store.ItemRow
 		return store.ItemRow{}, items.Data{}, false
 	}
 	row, err := s.store.Item(r.Context(), id)
-	if errors.Is(err, store.ErrNotFound) || err == nil && row.Deleted {
+	if errors.Is(err, store.ErrNotFound) || err == nil && (row.Deleted || row.Trashed()) { // the web gallery shows no trash yet (ADR 0023)
 		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
 		return store.ItemRow{}, items.Data{}, false
 	}
@@ -62,7 +62,7 @@ func (s *Server) handleWebItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	buf.WriteString(`{"item":`)
-	itemJSON(&buf, row)
+	itemJSON(&buf, row, false)
 	buf.WriteString(`,"culling":`)
 	rec, err := s.store.Culling(r.Context(), row.ID)
 	switch {
