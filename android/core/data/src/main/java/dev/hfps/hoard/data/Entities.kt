@@ -288,3 +288,72 @@ data class RevealCopyEntity(
     @ColumnInfo(name = "modified_ms") val modifiedMillis: Long?,
     @ColumnInfo(name = "copied_at", defaultValue = NOW) val copiedAt: String,
 )
+
+/**
+ * One file Hoard moved to a trash (ADR 0023; Room version 4). For SMB shares and volumes it is an index of what the
+ * `.hoard-trash` folders hold (rebuilt by listing them); for the phone's MediaStore trash (phase A3) it is the record.
+ * Written **before** the move ([TrashStates.MOVING]) and settled after, so a killed process resumes or rolls back.
+ */
+@Entity(
+    tableName = "trash_entries",
+    indices = [
+        Index(value = ["location_id", "share", "original_path"], name = "index_trash_entries_original"),
+        Index(value = ["state"], name = "index_trash_entries_state"),
+    ],
+)
+data class TrashEntryEntity(
+    @PrimaryKey val id: String,
+    /** The trash operation that wrote the row (a run of the trash service). */
+    @ColumnInfo(name = "run_id") val runId: String,
+    /** Machine id, `device` or `vol-<uuid>` (ADR 0005). */
+    @ColumnInfo(name = "location_id") val locationId: String,
+    @ColumnInfo(defaultValue = "''") val share: String,
+    /** The folder holding `.hoard-trash` ("" = the share's or volume's root); "" for MediaStore. */
+    @ColumnInfo(name = "trash_root") val trashRoot: String,
+    /** `yyyy-MM-dd` or `yyyy-MM-dd-<n>`; "" for MediaStore. */
+    @ColumnInfo(name = "day_folder") val dayFolder: String,
+    @ColumnInfo(name = "original_path") val originalPath: String,
+    /** `<root>/.hoard-trash/<day>/<path from the root>`; "" for MediaStore. */
+    @ColumnInfo(name = "trashed_path") val trashedPath: String,
+    /** Folder + lower-case stem of the shot (`a/b/dsc0001`), or the plain file's lower-case path. */
+    @ColumnInfo(name = "shot_key") val shotKey: String,
+    @ColumnInfo(name = "is_directory", defaultValue = "0") val isDirectory: Boolean = false,
+    val size: Long,
+    @ColumnInfo(name = "modified_ms") val modifiedMillis: Long?,
+    /** Unix ms. */
+    @ColumnInfo(name = "trashed_at") val trashedAt: Long,
+    /** The MediaStore row of a phone file (phase A3). */
+    @ColumnInfo(name = "media_uri") val mediaUri: String? = null,
+    /** MediaStore's `DATE_EXPIRES` (Unix ms) of a phone file. */
+    @ColumnInfo(name = "expires_at") val expiresAt: Long? = null,
+    /** The server's item, when the file was mapped (ADR 0022) as it was trashed. */
+    @ColumnInfo(name = "server_item_id") val serverItemId: String? = null,
+    /** The NAS folder of the trash root's mapping (the walk Hoard asks for). */
+    @ColumnInfo(name = "server_folder_id") val serverFolderId: String? = null,
+    /** [TrashStates]: `moving`, `trashed`, `restoring` or `purging`. */
+    val state: String,
+)
+
+/** The states of a [TrashEntryEntity]. */
+object TrashStates {
+    const val MOVING = "moving"
+    const val TRASHED = "trashed"
+    const val RESTORING = "restoring"
+    const val PURGING = "purging"
+}
+
+/**
+ * A folder holding a `.hoard-trash` that Hoard trashed into or found (ADR 0023; Room version 4): the Trash screen
+ * lists them, auto-empty visits every reachable one.
+ */
+@Entity(tableName = "trash_roots", primaryKeys = ["location_id", "share", "root_path"])
+data class TrashRootEntity(
+    @ColumnInfo(name = "location_id") val locationId: String,
+    @ColumnInfo(defaultValue = "''") val share: String,
+    /** "" = the share's or volume's root. */
+    @ColumnInfo(name = "root_path") val rootPath: String,
+    /** Unix ms of the last listing of its `.hoard-trash`; null = never listed. */
+    @ColumnInfo(name = "last_listed") val lastListed: Long? = null,
+    /** The NAS folder this root is inside (a mapped root), for the walk Hoard asks for after a purge. */
+    @ColumnInfo(name = "server_folder_id") val serverFolderId: String? = null,
+)

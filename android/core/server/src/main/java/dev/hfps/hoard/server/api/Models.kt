@@ -270,6 +270,18 @@ data class LookupResponse(
 @Serializable
 data class ItemsQueryPage(val items: List<Item> = emptyList(), val cursor: String? = null, val hasMore: Boolean = false)
 
+/** `POST /v1/nas/walk` (ADR 0023, feature `trash`): at most [NasWalkRequest.MAX_FOLDERS] NAS folder ids. */
+@Serializable
+data class NasWalkRequest(val folders: List<String>) {
+    companion object {
+        const val MAX_FOLDERS = 100
+    }
+}
+
+/** `202 {"queued": [...]}`: the folders whose walk was queued (a queued or running walk is not queued twice). */
+@Serializable
+data class NasWalkResponse(val queued: List<String> = emptyList())
+
 @Serializable
 data class ByPathRequest(val folder: String, val paths: List<String>)
 
@@ -307,6 +319,11 @@ object Features {
     const val EDITS = "edits"
     /** `POST /v1/items/by-path` (hoard-server 0.10.0): Hoard maps SMB folders to NAS folders (ADR 0022). */
     const val ITEMS_BY_PATH = "items-by-path"
+    /**
+     * hoard-server 0.11.0 (ADR 0023): `.hoard-trash` is walked as a trashed state, `include=trash`, and
+     * `POST /v1/nas/walk`. Without it Hoard still trashes, but warns that the server will forget Reveal's edits.
+     */
+    const val TRASH = "trash"
 }
 
 /** The `include` of the items feed Hoard asks for: one cursor for items and culling (ADR 0016 rule 3). */

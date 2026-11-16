@@ -37,6 +37,15 @@ class SmbErrorsTest {
     }
 
     @Test
+    fun `NOT_SAME_DEVICE is UNAVAILABLE with its own reason`() {
+        // ADR 0023: a rename across two filesystems of one share; the trash refuses instead of copying.
+        val mapped = SmbErrors.map(api(0xC00000D4L), "Could not move a.jpg")
+        assertEquals(ErrorCode.UNAVAILABLE, mapped.code)
+        assertEquals(SmbErrors.NOT_SAME_DEVICE, mapped.data[SmbErrors.REASON])
+        assertTrue(SmbErrors.map(api(0xC0000022L)).data.isEmpty())
+    }
+
+    @Test
     fun `network failures map to UNREACHABLE or TIMEOUT`() {
         assertEquals(ErrorCode.UNREACHABLE, SmbErrors.map(ConnectException("Connection refused")).code)
         assertEquals(ErrorCode.UNREACHABLE, SmbErrors.map(UnknownHostException("nas")).code)

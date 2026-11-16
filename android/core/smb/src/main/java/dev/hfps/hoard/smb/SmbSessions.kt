@@ -376,6 +376,34 @@ object SmbBrowser {
         return stat(session, shareName, target)
     }
 
+    /**
+     * Moves [path] to [targetPath], both from the share root, in one SMB2 rename (ADR 0023): the target's parent must
+     * exist, an existing target is never replaced (`ALREADY_EXISTS`), and nothing is copied. A share that spans two
+     * filesystems answers `STATUS_NOT_SAME_DEVICE` → `UNAVAILABLE` with reason [SmbErrors.NOT_SAME_DEVICE].
+     */
+    fun move(session: SmbSession, shareName: String, path: String, targetPath: String): SmbEntry {
+        val clean = SmbPaths.normalize(path)
+        val target = SmbPaths.normalize(targetPath)
+        if (clean.isEmpty() || target.isEmpty()) smbFail(ErrorCode.ACCESS_DENIED, "Cannot move the share root")
+        SmbPaths.requireValidName(SmbPaths.name(target), "target name")
+        if (target == clean) return stat(session, shareName, clean)
+        if (target.startsWith("$clean/")) smbFail(ErrorCode.ACCESS_DENIED, "Cannot move a folder into itself")
+        val share = session.share(shareName)
+        try {
+            share.open(
+                SmbPaths.toSmb(clean),
+                EnumSet.of(AccessMask.DELETE, AccessMask.FILE_READ_ATTRIBUTES),
+                null,
+                EnumSet.of(SMB2ShareAccess.FILE_SHARE_READ, SMB2ShareAccess.FILE_SHARE_WRITE, SMB2ShareAccess.FILE_SHARE_DELETE),
+                SMB2CreateDisposition.FILE_OPEN,
+                null,
+            ).use { entry -> entry.rename(SmbPaths.toSmb(target), false) }
+        } catch (e: SMBApiException) {
+            throw SmbErrors.map(e, "Could not move ${SmbPaths.name(clean)}")
+        }
+        return stat(session, shareName, target)
+    }
+
     fun delete(session: SmbSession, shareName: String, path: String, recursive: Boolean) {
         val clean = SmbPaths.normalize(path)
         if (clean.isEmpty()) smbFail(ErrorCode.ACCESS_DENIED, "Cannot delete the share root")

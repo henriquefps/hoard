@@ -79,6 +79,13 @@ class ServerApi(
     fun itemsByPath(folder: String, paths: List<String>): ByPathResponse =
         send("POST", "/v1/items/by-path", ByPathRequest(folder, paths), ByPathRequest.serializer(), ByPathResponse.serializer())
 
+    /**
+     * `POST /v1/nas/walk` (ADR 0023, feature `trash`): asks for a walk of these NAS folders (≤ 100), coalesced by the
+     * server; `404` for an unknown folder id.
+     */
+    fun nasWalk(folders: List<String>): NasWalkResponse =
+        send("POST", "/v1/nas/walk", NasWalkRequest(folders), NasWalkRequest.serializer(), NasWalkResponse.serializer())
+
     fun lookup(fingerprints: List<String>): LookupResponse =
         send("POST", "/v1/items/lookup", LookupRequest(fingerprints), LookupRequest.serializer(), LookupResponse.serializer())
 
