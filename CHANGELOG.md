@@ -1,21 +1,10 @@
 # Changelog
 
-## 2.5.0 (unreleased)
+## 2.5.0 (2026-11-16)
 
-Other devices see backups ([ADR 0024](docs/adr/0024-phone-backup.md), phase A2). Needs hoard-server 0.12.0.
+Phone backup to your photo server, and every device sees it ([ADR 0024](docs/adr/0024-phone-backup.md)). Needs hoard-server 0.12.0; with an older server Settings says so and nothing is sent.
 
-- **Gallery › Devices** (the phone button in the Gallery's top bar): every phone with a backup on your server, this one first, each with its storage (internal storage, SD cards) and backed-up folders, how many photos each holds and how many were deleted from the phone. Tap a phone, a storage or a folder to show that part of its backup in the grid; the bar above the grid says where you are and **✕** shows everything again.
-- **Filters › Phone backups**: "Pixel 8 backup" (one chip per phone) shows only what that phone backed up.
-- **"Deleted from the phone"**: a backed-up photo the phone no longer has keeps its place in the Gallery with a badge (also in the viewer); the server keeps it.
-- Another phone's photos show from the server's previews: nothing is downloaded to browse them. Opening one at 100 % reads the original from the server by ranges, and keeps it only within the originals budget of Settings › Photo server.
-- **Save to this device** (in the viewer, and in the selection bar for several photos): copies whole shots from the server (RAW, JPEG, video and the `.xmp` sidecar when the server has one) into `Pictures/From <phone name>/`, or a folder you choose once (never Hoard's copies for Reveal in `Pictures/Hoard`). It is a normal transfer: progress, Cancel, retries after a dropped connection (resuming where it stopped) and the name-conflict choice are in Transfers. A saved photo shows once in the Gallery, as on the phone and on the server; if its folder is backed up, the next backup links it on the server without uploading it again.
-- This phone's own backed-up files show once even before Hoard has read them (matched by where they are on the phone).
-- Search finds photos by the phone they were backed up from.
-- Fixed: on Android 11 and later, files copied to the phone's storage (any copy, not only Save to this device) were seen by Android with size 0 and no date until the next media scan, which the Gallery and the backup read.
-
-## 2.4.0 (unreleased)
-
-Phone backup ([ADR 0024](docs/adr/0024-phone-backup.md), phase A1). Needs hoard-server 0.12.0; with an older server Settings says so and nothing is sent.
+### Phone backup
 
 - **Settings › Photo server › Phone backup.** Your phone's folders with photos or videos (Camera, Screenshots, WhatsApp images and videos, the others), each with a switch; no folder is on until you turn it on. **Add a folder** backs up any other folder of the phone or of an SD card. The server keeps each folder exactly as the phone has it, in a folder of its own for this phone next to the backup's other files.
 - **Nothing is sent twice.** A photo the server already has (uploaded by Reveal or another phone, or a copy on your NAS) is linked, not uploaded: the folder says "950 already on the server". Only files the server is missing are uploaded, newest first, in resumable chunks: a backup cut off by the network, the phone or Android continues where it stopped.
@@ -26,6 +15,20 @@ Phone backup ([ADR 0024](docs/adr/0024-phone-backup.md), phase A1). Needs hoard-
 - **RAW files and XMP sidecars** (CR3 and the RAWs Android does not list) are backed up too when Hoard has All files access; without it Settings › Backup says so and offers to allow it.
 - PNG screenshots, WebP and GIF are backed up like any photo. A file the server does not take is shown with the reason and never holds up the rest of its folder.
 - The backup runs in the background (every 6 hours, 2 minutes after new photos arrive, and on **Back up now**), never while Hoard starts; long uploads show a notification. Checksums are made only for files that must be uploaded (small files get theirs while the Gallery reads them anyway), at most 32 MB/s on battery.
+
+### Other devices see backups
+
+- **Gallery › Devices** (the phone button in the Gallery's top bar): every phone with a backup on your server, this one first, each with its storage (internal storage, SD cards) and backed-up folders, how many photos each holds and how many were deleted from the phone. Tap a phone, a storage or a folder to show that part of its backup in the grid; the bar above the grid says where you are and **✕** shows everything again.
+- **Filters › Phone backups**: "Pixel 8 backup" (one chip per phone) shows only what that phone backed up.
+- **"Deleted from the phone"**: a backed-up photo the phone no longer has keeps its place in the Gallery with a badge (also in the viewer); the server keeps it.
+- Another phone's photos show from the server's previews: nothing is downloaded to browse them. Opening one at 100 % reads the original from the server by ranges, and keeps it only within the originals budget of Settings › Photo server.
+- **Save to this device** (in the viewer, and in the selection bar for several photos): copies whole shots from the server (RAW, JPEG, video and the `.xmp` sidecar when the server has one) into `Pictures/From <phone name>/`, or a folder you choose once (never Hoard's copies for Reveal in `Pictures/Hoard`). It is a normal transfer: progress, Cancel, retries after a dropped connection (resuming where it stopped) and the name-conflict choice are in Transfers. A saved photo shows once in the Gallery, as on the phone and on the server; if its folder is backed up, the next backup links it on the server without uploading it again.
+- This phone's own backed-up files show once even before Hoard has read them (matched by where they are on the phone).
+- Search finds photos by the phone they were backed up from.
+
+### Fixed
+
+- Fixed: on Android 11 and later, files copied to the phone's storage (any copy, not only Save to this device) were seen by Android with size 0 and no date until the next media scan, which the Gallery and the backup read.
 
 ## 2.3.0 (2026-11-16)
 
