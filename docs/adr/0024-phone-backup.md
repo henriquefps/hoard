@@ -699,8 +699,12 @@ What the server PR settled where the text above was silent or loose. Where this 
   ADR 0014 extension; removals may name any path.
 - **Paused roots** still take reports (pausing is the phone's upload rule); stopped roots answer `409 stopped`. Only
   roots that are not stopped cover a path (`409 covered`) and count towards `maxRoots`.
-- **`active`** counts the root's creation as a report (a root is active before its first report) and needs a device
-  of the phone that is not revoked.
+- **`active`** counts the root's creation as a report (a root is active before its first report). Only a live device
+  can report (a revoked key is `401`), so a revoked phone's roots turn inactive 7 days after its last report.
+- **Writes go through `os.Root` opened on the backup root**, not on the device folder: a hard link needs the blob and
+  the new name in one root. Device folder names are validated as one path segment (never `reveal-sync`, never a dot
+  name) and phone paths as above, so no name leaves the phone's folder; a symbolic link out of the backup root is
+  refused by `os.Root`. A file in the way that is not a hard link of a blob (one name only) is never replaced.
 - **Moves**: a `moved` removal whose new path has not been reported keeps its content out of the tree and settles as
   `deleted` after 24 hours (`replaced` when another file took the path meanwhile). The inferred move applies to
   `deleted` entries only: a `freed` entry stays pinned even when its content comes back at another path (that path is a

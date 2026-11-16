@@ -672,9 +672,15 @@ func TestBackupRevokeAndClaimMerge(t *testing.T) {
 	expect(t, hs.do("GET", "/v1/backup/roots", nil, bearer(old.key)), 401, "unauthorized")
 	tablet := hs.phone("Tablet", "hoard")
 	roots := decode(t, hs.do("GET", "/v1/backup/roots", nil, bearer(tablet.key)))["roots"].([]any)
-	if len(roots) != 1 || roots[0].(map[string]any)["active"] != false { // no live device left on that phone
+	if len(roots) != 1 || roots[0].(map[string]any)["active"] != true { // until 7 days after its last report
 		t.Fatalf("%v", roots)
 	}
+	soon := time.Now()
+	hs.st.Now = func() time.Time { return soon.Add(8 * 24 * time.Hour) }
+	if r := decode(t, hs.do("GET", "/v1/backup/roots", nil, bearer(tablet.key)))["roots"].([]any); r[0].(map[string]any)["active"] != false {
+		t.Fatalf("%v", r)
+	}
+	hs.st.Now = time.Now
 
 	// A new Hoard on another physical device backs up the same folder, then claims the old phone: its backup moves
 	// there and merges (the newer file wins a path).

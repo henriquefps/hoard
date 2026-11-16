@@ -378,13 +378,13 @@ func (s *Server) reconcile(ctx context.Context, ids []int64) {
 	if t == nil || len(ids) == 0 {
 		return
 	}
+	s.backup.fsMu.Lock() // the entries are read under the lock: what another reconcile just linked is seen
+	defer s.backup.fsMu.Unlock()
 	es, err := s.store.MirrorEntries(ctx, ids)
 	if err != nil {
 		s.log.Error("backup: reconcile", "err", err)
 		return
 	}
-	s.backup.fsMu.Lock()
-	defer s.backup.fsMu.Unlock()
 	roots := map[string]bool{}
 	for i := range es {
 		e := &es[i]
@@ -558,9 +558,10 @@ func (s *Server) applyMirrorMove(ctx context.Context, mv *store.MirrorMove) {
 	s.indexer.TriggerBackup()
 }
 
-// rootActive: not paused, not stopped, and a live device of its phone reported (or made it) within rootActiveWindow.
-func rootActive(r store.MirrorRoot, live map[string]bool, now time.Time) bool {
-	if r.Paused() || r.Stopped() || !live[r.PhysicalID] {
+// rootActive: not paused, not stopped, and a report (or the root's creation) within rootActiveWindow. Only a live
+// device can report (a revoked key is 401), so a revoked phone's roots turn inactive 7 days after its last report.
+func rootActive(r store.MirrorRoot, _ map[string]bool, now time.Time) bool {
+	if r.Paused() || r.Stopped() {
 		return false
 	}
 	last := r.CreatedAt
