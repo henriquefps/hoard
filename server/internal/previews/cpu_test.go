@@ -215,6 +215,26 @@ func TestCPUStillHEIFAndAVIF(t *testing.T) {
 	}
 }
 
+// TestCPUStillPNGWebPGIF: a phone backup's PNG screenshots, WebP and GIF stills (an animated GIF: its first frame) make
+// the same four preview files as a JPEG.
+func TestCPUStillPNGWebPGIF(t *testing.T) {
+	c := testCPU(t, false)
+	src := testJPEG(t, c, t.TempDir(), 640, 480)
+	for _, ext := range []string{"png", "webp", "gif"} {
+		if !hasLoader(t, c, ext+"load") {
+			t.Logf("libvips without %sload", ext)
+			continue
+		}
+		in := filepath.Join(t.TempDir(), "shot."+ext)
+		if b, err := exec.Command(c.vips, "copy", src, in).CombinedOutput(); err != nil {
+			t.Logf("no %s writer in this libvips: %v %s", ext, err, b)
+			continue
+		}
+		res, dir := generate(t, c, Job{Job: JobImage, Source: Source{Role: media.RoleRendered, Format: ext}}, in)
+		checkImages(t, res, dir, 640, 480)
+	}
+}
+
 // TestCPURawEmbeddedPreview: a RAW with a big enough embedded JPEG uses it, upright by the RAW's orientation.
 func TestCPURawEmbeddedPreview(t *testing.T) {
 	c := testCPU(t, false)

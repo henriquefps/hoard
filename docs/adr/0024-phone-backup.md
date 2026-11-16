@@ -246,7 +246,7 @@ All additive. `GET /v1/server` `features` gains `"backup"`, and a `backup` objec
 server) the app hides backup and free up. Every route needs a device key; a revoked key is `401` as everywhere.
 
 **Paths** (roots, entries, removals): relative, `/`-separated, NFC, at most 1024 bytes, segments at most 255 bytes;
-refused (`422 invalid_request`, `details.index`) when absolute, empty (except a root's `""`), with `.` or `..`
+refused (a root's: `422 invalid_request`; an entry's or removal's: refused on its own, Amendment S1) when absolute, empty (except a root's `""`), with `.` or `..`
 segments, a segment starting with `.`, a backslash, a NUL or control character. The server normalises `a//b` to `a/b`
 first. Volumes: `primary` or `^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$|^[0-9a-f-]{36}$` (stored upper-case).
 
@@ -316,7 +316,7 @@ What the phone has, in batches. Idempotent; the order of batches does not matter
   has this fingerprint with another SHA-256 than the one sent: upload it; both contents are kept). `verified`: `yes`
   (the server's own re-hash matched this file's `sha256`), `pending`, `no` (never asked, or the phone sent no hash).
   Removal `state`: `kept`, `moved` (to a current path of this phone), `unknown` (no such path; ignored).
-- A malformed entry is `422 invalid_request` with `details.index` and nothing is applied (like `POST /v1/changes`).
+- A bad entry is refused on its own (Amendment S1): `state: "refused"` with a reason, the rest of the batch is applied.
   A stopped root: `409 conflict`, reason `stopped`. Calling it updates `lastReportAt`.
 
 ### Uploads: `POST /v1/uploads` gains `wait`
@@ -698,7 +698,26 @@ What the server PR settled where the text above was silent or loose. Where this 
   `blob_verifications` (one re-hash per content, kept 30 days).
 - **Entry and verify paths are relative to the volume** (as in the examples: root `DCIM/Camera`, entry
   `DCIM/Camera/PXL_….jpg`) and must lie inside the root (`422` otherwise). Entries must be photos, videos or sidecars by
-  ADR 0014 extension; removals may name any path.
+  ADR 0014 extension, and `png`, `webp` and `gif` (below); removals may name any path.
+- **Phone backups accept PNG, WebP and GIF** (every Android screenshot is a PNG; the root type `image` means every
+  still MediaStore lists). `media.ClassifyMirror` is `Classify` plus those three as rendered stills; only the mirror
+  paths use it (report, verify, `GroupMirror`). The NAS walk, its trash and its sidecar pairing keep `media.Classify`,
+  so a PNG or GIF on the NAS stays unindexed. A PNG pairs by stem like any other rendering (after JPEG and HEIF in a
+  shot's order) and is the main file of a shot of its own otherwise. Previews: libvips reads them (a GIF: its first
+  frame) and the image job is the same four files; the web gallery shows the file itself (a browser shows PNG, WebP and
+  GIF as they are). The fingerprint (`v1:`) hashes sampled bytes and does not depend on the format. No EXIF is read
+  from them: the sort time is the file's mtime.
+- **A bad entry never fails a batch.** `POST /v1/backup/report` and `/verify` refuse one entry or removal on its own:
+  `state: "refused"` with `reason` (`unsupported_type`, `invalid_path`, `outside_root`, `reserved_prefix`,
+  `invalid_fingerprint`, `invalid_size`, `invalid_modified_at`, `invalid_sha256`; a removal also `invalid_reason`) and
+  a `detail`; the other entries are applied and answered (verify: `verified: "no"` with the same `state`, `reason`).
+  `422` stays for a malformed request as a whole (bad JSON, more than the limit; an unknown root is `404`). Where lines
+  above say `422` for a path, this wins.
+- **Device features** (schema 11, `devices.features`): `PATCH /v1/device` stores every known declared feature
+  (`culling` as before in `culling_since`, which pushing culling also sets; `freed-adopt` in the new column; unknown
+  names are dropped), never removed. `GET /v1/device` shows them in `features` and, additively, per device in
+  `physicalDevice.devices[].features`: the free-up gate reads "a live Reveal on this physical device declared
+  `freed-adopt`" there.
 - **Paused roots** still take reports (pausing is the phone's upload rule); stopped roots answer `409 stopped`. Only
   roots that are not stopped cover a path (`409 covered`) and count towards `maxRoots`.
 - **`active`** counts the root's creation as a report (a root is active before its first report). Only a live device

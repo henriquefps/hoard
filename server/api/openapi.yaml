@@ -485,7 +485,8 @@ paths:
                   description: |
                     Capabilities the app implements (ADR 0016). Known ones are recorded, unknown ones ignored, and a
                     recorded one is never removed. `culling`: the device syncs culling per field, so the server stops
-                    bridging the culling fields of its photo records.
+                    bridging the culling fields of its photo records. `freed-adopt` (0.12.0, ADR 0024): the app adopts
+                    a photo the phone freed; a live Reveal that declared it opens Hoard's free-up gate.
       responses:
         "200":
           description: The device view
@@ -1684,9 +1685,11 @@ paths:
         Entries are applied first, then removals: a new path whose content was deleted at another path of the phone is
         a move; a removal whose content is at another current path is `moved`. A file deleted from the phone is kept
         (forever); a file rewritten in place keeps its earlier content as a previous version. Report a removal only when
-        the listing of the root was complete; the server never infers a deletion from silence. A malformed entry or
-        removal is `422 invalid_request` with `details.index` and `details.field` (`entries` | `removed`), and nothing
-        is applied.
+        the listing of the root was complete; the server never infers a deletion from silence. A bad entry or
+        removal never fails the batch (0.12.0): it is answered on its own with `state: refused` and a `reason`, and the
+        others are applied. Only a malformed request as a whole is `422` (bad JSON, more than 1000 entries or removals).
+        Phone backups also take PNG, WebP and GIF stills (a screenshot is a photo of its own shot); the NAS library
+        keeps indexing only what it did.
       requestBody:
         required: true
         content:
@@ -1703,7 +1706,7 @@ paths:
                     type: object
                     required: [path, fingerprint, size, modifiedAt]
                     properties:
-                      path: { type: string, description: "A photo, video or sidecar (ADR 0014 extensions)" }
+                      path: { type: string, description: "A photo, video or sidecar (ADR 0014 extensions, and `png`, `webp`, `gif`)" }
                       fingerprint: { $ref: "#/components/schemas/Fingerprint" }
                       size: { type: integer, minimum: 1 }
                       modifiedAt: { type: integer, format: int64, description: "The phone's mtime, Unix ms" }
@@ -1736,14 +1739,17 @@ paths:
                         path: { type: string }
                         state:
                           type: string
-                          enum: [stored, nas, missing, in_progress, differs]
+                          enum: [stored, nas, missing, in_progress, differs, refused]
                           description: >-
+                            `refused`: this entry was not taken (see `reason`, `detail`); the rest of the batch was applied.
                             `stored`: the bytes are in the store (and linked); `nas`: an indexed NAS file has them;
                             `missing`: upload it; `in_progress`: another device's upload of it is running (`retryAfter`);
                             `differs`: the server has this fingerprint with another SHA-256: upload it, both are kept.
                         itemId: { $ref: "#/components/schemas/Uuid", description: "The live item holding the file, once made" }
                         verified: { type: string, enum: ["yes", pending, "no"] }
                         retryAfter: { type: integer }
+                        reason: { $ref: "#/components/schemas/BackupRefusal" }
+                        detail: { type: string, description: "With `refused`: why, for people" }
                   removed:
                     type: array
                     items:
@@ -1752,7 +1758,9 @@ paths:
                       properties:
                         index: { type: integer }
                         path: { type: string }
-                        state: { type: string, enum: [kept, moved, unknown] }
+                        state: { type: string, enum: [kept, moved, unknown, refused] }
+                        reason: { $ref: "#/components/schemas/BackupRefusal" }
+                        detail: { type: string }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { description: "`not_found`: unknown root, or a root of another physical device" }
         "409":
@@ -1814,10 +1822,15 @@ paths:
                       required: [index, verified, namedByRecord]
                       properties:
                         index: { type: integer }
+                        state: { type: string, enum: [refused], description: "Present when this entry was refused on its own (`reason`, `detail`); `verified` is then `no`" }
+                        detail: { type: string }
                         verified: { type: string, enum: ["yes", pending, "no"] }
                         verifiedAt: { type: integer, format: int64 }
                         retryAfter: { type: integer }
-                        reason: { type: string, enum: [differs, missing, changed_on_nas, unavailable, not_found] }
+                        reason:
+                          oneOf:
+                            - { type: string, enum: [differs, missing, changed_on_nas, unavailable, not_found] }
+                            - { $ref: "#/components/schemas/BackupRefusal" }
                         namedByRecord: { type: boolean }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { description: "`not_found`: a root that is unknown or another physical device's (`details.index`)" }
@@ -1960,6 +1973,13 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
   schemas:
+    BackupRefusal:
+      type: string
+      enum: [unsupported_type, invalid_path, outside_root, reserved_prefix, invalid_fingerprint, invalid_size, invalid_modified_at, invalid_sha256, invalid_reason]
+      description: >-
+        Why one report or verify entry was refused on its own (0.12.0): `unsupported_type` (not a photo, video or
+        sidecar the backup takes), `invalid_path`, `outside_root`, `reserved_prefix` (`SD card <UUID>` on the primary
+        volume), `invalid_*` (a malformed field), `invalid_reason` (a removal's reason).
     Uuid:
       type: string
       pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -2413,7 +2433,7 @@ components:
         features:
           type: array
           items: { type: string }
-          description: Capabilities the device declared or was seen using (ADR 0016), e.g. `culling`.
+          description: Capabilities the device declared or was seen using (ADR 0016), e.g. `culling`, `freed-adopt`.
         physicalDevice:
           type: object
           required: [id, name, devices]
@@ -2430,6 +2450,10 @@ components:
                     required: [lastSeenAt]
                     properties:
                       lastSeenAt: { type: [integer, "null"], format: int64, description: "Unix ms; null: never seen" }
+                      features:
+                        type: array
+                        items: { type: string }
+                        description: "hoard-server 0.12.0: what that device declared (`culling`, `freed-adopt`), sorted; `[]` for none"
             backup:
               type: object
               description: >-

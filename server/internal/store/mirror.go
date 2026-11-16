@@ -35,7 +35,9 @@ const (
 	StateNAS        = "nas"
 	StateMissing    = "missing"
 	StateInProgress = "in_progress"
-	StateDiffers    = "differs"
+	// StateRefused is an entry the server did not take (a reason says why); the rest of its batch was applied.
+	StateRefused = "refused"
+	StateDiffers = "differs"
 )
 
 // Root errors.

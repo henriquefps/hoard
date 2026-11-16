@@ -101,10 +101,10 @@ func skipped(rel string) bool {
 }
 
 // stemKey is the grouping key of a file: its lower-case stem; a sidecar "X.xmp" or "X.ARW.xmp" belongs to stem X.
-func stemKey(name, role string) string {
+func stemKey(name, role string, classify func(string) (string, string)) string {
 	stem := media.Stem(name)
 	if role == media.RoleSidecar {
-		if m, _ := media.Classify(stem); m == media.MediaImage || m == media.MediaVideo {
+		if m, _ := classify(stem); m == media.MediaImage || m == media.MediaVideo {
 			stem = media.Stem(stem)
 		}
 	}
@@ -145,7 +145,7 @@ func GroupFolder(files []Seen) []Group {
 		if dir == "." {
 			dir = ""
 		}
-		k := [3]string{"", dir, stemKey(name, role)}
+		k := [3]string{"", dir, stemKey(name, role, media.Classify)}
 		m := Member{Fingerprint: f.Fingerprint, Role: role, Name: name, Path: at, Size: f.Size, MTime: f.MTime}
 		if f.Origin != "" {
 			k[0], k[2] = SourceTrash, f.TrashDir+"/"+k[2]
