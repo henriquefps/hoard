@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.6.0 (unreleased)
+## 2.6.0 (2026-11-18)
 
 Free up space on the phone: what the server holds and has just checked leaves the phone, oldest first, after you see it and Android asks you ([ADR 0024](docs/adr/0024-phone-backup.md), "Free up space"). Android 11 and later; needs hoard-server 0.12.0.
 
