@@ -220,10 +220,21 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 	}
 	var trashedLater []trashedItem
 	held := map[string]map[string]bool{} // folder -> trash paths an unfinished compression journal holds
+	var heldKept map[string]bool         // fingerprints of blob compressions a phone is swapping (their kept side is held)
 	markHeld := func(d *Data) error {
 		for i := range d.Files {
 			for j := range d.Files[i].Locations {
 				l := &d.Files[i].Locations[j]
+				if l.Source == SourceMirror && l.Gone == store.RemovedCompressed {
+					if heldKept == nil {
+						var err error
+						if heldKept, err = tx.HeldKept(); err != nil {
+							return err
+						}
+					}
+					l.Held = heldKept[d.Files[i].Fingerprint]
+					continue
+				}
 				if l.Trash == "" {
 					continue
 				}

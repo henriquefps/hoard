@@ -1108,6 +1108,15 @@ the text above left open or a small deviation.
   created since the switch (new recordings) and that are no longer on the phone (freed or deleted): a video still on
   the phone is never compressed on the server alone, and a video backed up before the switch that is freed later is
   not new (on demand only; coordinator's ruling).
+- **Held and stalled (with #71's rules).** While a phone restores a blob compression (or restores it again), the kept
+  side's trash location (`mirror`, `gone: "compressed"`) is served `"held": true`; the server's purge acts only on
+  `replaced`/`restored` rows, so a held one answers `{"error": "state"}`. A phone restore no phone reported for 24 hours
+  gets `stalled_at` and counts in `compress.attention.stalled` until the phone reports or gives up; every swap clears it.
+- **Review nits.** The write mount's writability is probed on the library's NAS folders at their write paths (any one
+  writable is enough), not on the mount's root, which may be root's while the owner's folders are his; the root is
+  probed only when no folder is known. `compress.attention.untrackedTrash` reflects the files still there: after a walk,
+  a failed replace's original that is gone from the trash (Hoard emptied it) loses its `trash_path`, unless the folder
+  looks unmounted.
 - **Items in the answers.** Compression items gain `target` (from the job) and `source`; phone and backup items add
   `rootId`, `volume`, `path` (on the phone), `physicalDeviceId`, `modifiedAt`, `sha256` (the original's), `outSha256`
   and, while a phone writes, `direction`. Estimate rows of phone and backup targets carry `rootId`, `volume` and the

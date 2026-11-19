@@ -590,4 +590,18 @@ func TestCompressUntrackedTrashCounted(t *testing.T) {
 	if att["untrackedTrash"].(float64) != 1 {
 		t.Fatalf("%v", att)
 	}
+	// A walk while it is still there keeps it counted; once Hoard emptied it, the next walk stops counting it.
+	ch.walkAll()
+	ch.srv.compress.AfterWalk(t.Context())
+	if att := decode(t, ch.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any); att["untrackedTrash"].(float64) != 1 {
+		t.Fatalf("%v", att)
+	}
+	if err := os.Remove(filepath.Join(ch.nas, it.TrashPath)); err != nil {
+		t.Fatal(err)
+	}
+	ch.walkAll()
+	ch.srv.compress.AfterWalk(t.Context())
+	if att := decode(t, ch.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any); att["untrackedTrash"].(float64) != 0 {
+		t.Fatalf("%v", att)
+	}
 }

@@ -862,6 +862,7 @@ func (m *Manager) AfterWalk(ctx context.Context) {
 			}
 		}
 	}
+	m.settleUntracked(ctx)
 	if err := m.autoAppend(ctx); err != nil && ctx.Err() == nil {
 		m.log.Error("compress: automatic folders", "err", err)
 	}

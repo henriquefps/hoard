@@ -910,6 +910,27 @@ func (s *Store) CompressAttentionNow(ctx context.Context) (CompressAttention, er
 	return a, err
 }
 
+// HeldKept lists the fingerprints of both sides of the blob compressions a phone is swapping (replacing: a restore,
+// or a restore again, by the phone): the kept entry of such an item is a held trash entry (ADR 0025, re-review N2), which
+// Hoard's Empty must leave and the server never purges.
+func (t *ItemTx) HeldKept() (map[string]bool, error) {
+	rows, err := t.tx.QueryContext(t.ctx, "SELECT fingerprint, coalesce(out_fingerprint, '') FROM compress_items WHERE source = 'blob' AND state = 'replacing'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var a, b string
+		if err := rows.Scan(&a, &b); err != nil {
+			return nil, err
+		}
+		out[a], out[b] = true, true
+	}
+	delete(out, "")
+	return out, rows.Err()
+}
+
 // HeldTrash lists, per folder, the trash paths an unfinished compression journal holds (its original or, during a
 // restore, the output it moved): Hoard's Empty and auto-empty must leave them, and so does the server's purge.
 func (t *ItemTx) HeldTrash(folderID string) (map[string]bool, error) {

@@ -265,7 +265,7 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 	default:
 		return out, err
 	}
-	it.State, it.Reason, it.ReplaceStep, it.TrashPath = final, "", "", ""
+	it.State, it.Reason, it.ReplaceStep, it.TrashPath, it.StalledAt = final, "", "", "", nil
 	it.TrashedAt, it.PurgeAfter = &now, ptr(now+in.TrashMs)
 	if final == CompressReplaced {
 		it.ReplacedAt = &now

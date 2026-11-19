@@ -514,9 +514,9 @@ func TestCompressPhoneOwnership(t *testing.T) {
 	if p.item(ib.ID).State != store.CompressReplaced {
 		t.Fatal("the backup purge changed the compression")
 	}
-	p.st.Now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }
+	p.st.SetNow(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
 	p.srv.compress.Housekeeping(ctx)
-	p.st.Now = time.Now
+	p.st.SetNow(time.Now)
 	if it := p.item(ib.ID); it.State != store.CompressPurged || exists(p.blobFile(ib.SHA256)) {
 		t.Fatalf("purge by trashDays: %+v", it)
 	}
@@ -592,9 +592,9 @@ func TestCompressBackupFreed(t *testing.T) {
 	}
 
 	// Purge by trashDays.
-	p.st.Now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }
+	p.st.SetNow(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
 	p.srv.compress.Housekeeping(ctx)
-	p.st.Now = time.Now
+	p.st.SetNow(time.Now)
 	if it := p.item(it.ID); it.State != store.CompressPurged || exists(p.blobFile(origSHA)) {
 		t.Fatalf("%+v", it)
 	}
@@ -739,4 +739,68 @@ func TestCompressPhoneNasReferenceAndAbandon(t *testing.T) {
 		}
 	}
 	_ = ctx
+}
+
+// A phone restore holds the kept side (held: true on its trash location) until the phone reports: a purge refuses it,
+// and a restore no phone reported for a day counts among the stalled journals (compress.attention).
+func TestCompressPhoneRestoreHeldAndStalled(t *testing.T) {
+	p := newPhoneH(t)
+	ctx := t.Context()
+	orig := phoneVideo(71)
+	const path = "DCIM/VID_H.mp4"
+	p.backUp(path, orig)
+	p.index()
+	origItem := store.ItemID(fingerprint.Bytes(orig))
+	p.jobAs(p.ph.key, "phone", map[string]any{"itemIds": []string{origItem}}, nil)
+	p.runAll()
+	it := p.one()
+	id := fmt.Sprint(it.ID)
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/replaced", p.outBody(it), bearer(p.ph.key)), 200, "")
+	heldOf := func() bool {
+		t.Helper()
+		for _, l := range itemLocations(getItem(t, p.harness, p.ph.key, origItem, "?include=trash")) {
+			if l["source"] == "mirror" && l["gone"] == "compressed" {
+				return l["held"] == true
+			}
+		}
+		t.Fatal("no kept location")
+		return false
+	}
+	attention := func() map[string]any {
+		t.Helper()
+		return decode(t, p.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any)
+	}
+	p.index()
+	if heldOf() {
+		t.Fatal("held before any restore")
+	}
+	expect(t, p.do("POST", "/v1/compress/restore", map[string]any{"itemIds": []string{id}}, bearer(p.ph.key)), 200, "")
+	if !heldOf() {
+		t.Fatal("the kept side is not held while the phone restores it")
+	}
+	w := p.do("POST", "/v1/compress/purge", map[string]any{"itemIds": []string{id}}, bearer(p.ph.key))
+	expect(t, w, 200, "")
+	if a := decode(t, w)["items"].(map[string]any)[id].(map[string]any); a["error"] != "state" || !exists(p.blobFile(it.SHA256)) {
+		t.Fatalf("a held entry was purged: %v", a)
+	}
+	p.srv.compress.Housekeeping(ctx)
+	if att := attention(); att["stalled"].(float64) != 0 {
+		t.Fatalf("stalled at once: %v", att)
+	}
+	p.st.SetNow(func() time.Time { return time.Now().Add(25 * time.Hour) })
+	p.srv.compress.Housekeeping(ctx)
+	p.st.SetNow(time.Now)
+	if att := attention(); att["stalled"].(float64) != 1 || att["stalledSince"] == nil {
+		t.Fatalf("not stalled after a day: %v", att)
+	}
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/restored", p.origBody(it), bearer(p.ph.key)), 200, "")
+	if att := attention(); att["stalled"].(float64) != 0 {
+		t.Fatalf("still stalled: %v", att)
+	}
+	p.index()
+	for _, l := range itemLocations(getItem(t, p.harness, p.ph.key, store.ItemID(it.OutFingerprint), "?include=trash")) {
+		if l["held"] == true {
+			t.Fatalf("held after the restore: %v", l)
+		}
+	}
 }

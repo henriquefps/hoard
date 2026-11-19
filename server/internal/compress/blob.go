@@ -346,10 +346,11 @@ func (m *Manager) Abandon(ctx context.Context, it store.CompressItem, reason str
 		if toOutput {
 			back = store.CompressRestored
 		}
-		it.State, it.Reason, it.ReplaceStep = back, reason, ""
+		it.State, it.Reason, it.ReplaceStep, it.StalledAt = back, reason, "", nil
 		if !m.save(ctx, &it, store.CompressReplacing) {
 			return it, store.ErrConflict
 		}
+		m.refreshBlob(ctx, it) // its kept side is no longer held
 		return it, nil
 	}
 	return it, store.ErrConflict
@@ -399,13 +400,14 @@ func (m *Manager) restoreBlob(ctx context.Context, it store.CompressItem) Restor
 	owner, err := m.pathOwner(ctx, it)
 	if err == nil && owner.OnDevice && j.Target == TargetPhone {
 		prev := it.State
-		it.State, it.Reason, it.ReplaceStep = store.CompressReplacing, "", store.StepRestorePhone
+		it.State, it.Reason, it.ReplaceStep, it.StalledAt = store.CompressReplacing, "", store.StepRestorePhone, nil
 		if toOutput {
 			it.ReplaceStep = store.StepReswapPhone
 		}
 		if !m.save(ctx, &it, prev) {
 			return RestoreAnswer{ID: it.ID, State: it.State, Error: "state"}
 		}
+		m.refreshBlob(ctx, it) // its kept side is held while the phone writes
 		m.log.Info("compress: restore by the phone", "job", it.JobID, "item", it.ID)
 		return RestoreAnswer{ID: it.ID, State: store.CompressReplacing}
 	}
@@ -485,6 +487,30 @@ func (m *Manager) housekeepBlobs(ctx context.Context) {
 			if it.Source == "blob" && ctx.Err() == nil {
 				m.purgeBlob(ctx, it, "auto")
 			}
+		}
+	}
+	m.stallPhones(ctx)
+}
+
+// phoneStall is how long a phone may take to write a restore before its journal counts as waiting (attention).
+const phoneStall = 24 * time.Hour
+
+// stallPhones marks the phone restores (and restores again) no phone reported for phoneStall as waiting: they are
+// counted with the stalled journals (compress.attention) until the phone reports or gives up.
+func (m *Manager) stallPhones(ctx context.Context) {
+	list, err := m.cfg.Store.CompressItemsIn(ctx, store.CompressReplacing)
+	if err != nil {
+		return
+	}
+	now := m.now()
+	for _, it := range list {
+		if it.Source != "blob" || it.StalledAt != nil || (it.ReplaceStep != store.StepRestorePhone && it.ReplaceStep != store.StepReswapPhone) ||
+			now.Sub(time.UnixMilli(it.UpdatedAt)) < phoneStall {
+			continue
+		}
+		it.StalledAt = i64(it.UpdatedAt)
+		if m.save(ctx, &it, store.CompressReplacing) {
+			m.log.Warn("compress: a phone restore waits", "job", it.JobID, "item", it.ID)
 		}
 	}
 }
