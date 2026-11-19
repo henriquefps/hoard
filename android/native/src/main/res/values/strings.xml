@@ -653,4 +653,172 @@
     <string name="freeup_reason_reveal">Kept for Reveal</string>
     <string name="freeup_reason_refused">Not taken by the server</string>
     <string name="freeup_close">Done</string>
+    <!-- Video compression (ADR 0025, Hoard 2.7.0) -->
+    <string name="compress_title">Compress videos</string>
+    <string name="compress_settings_summary">Shrink videos on the photo server\'s GPU</string>
+    <string name="compress_action">Compress videos</string>
+    <string name="compress_action_selection">Compress videos</string>
+    <string name="compress_action_folder">Compress videos in this folder</string>
+    <string name="compress_action_backup">Compress videos of this backup</string>
+    <string name="compress_target_nas">Library videos: the server replaces the files in the library.</string>
+    <string name="compress_target_backup">Backups no longer on a phone: compressed on the server.</string>
+    <string name="compress_profile_label">Profile</string>
+    <string name="compress_profile_same">Same look</string>
+    <string name="compress_profile_same_desc">HEVC with the look you approved. Recommended.</string>
+    <string name="compress_profile_smaller">Smaller</string>
+    <string name="compress_profile_smaller_desc">Another 15–25% smaller, slightly softer.</string>
+    <string name="compress_profile_av1">AV1</string>
+    <string name="compress_profile_av1_desc">About 15–20% smaller than HEVC; plays only where AV1 is decoded in hardware.</string>
+    <string name="compress_estimate_title">Estimate</string>
+    <string name="compress_estimate_sizes">%1$s → about %2$s · about %3$s</string>
+    <string name="compress_estimate_pending">Still reading some videos on the server…</string>
+    <string name="compress_estimating">Estimating…</string>
+    <string name="compress_estimate_nothing">Nothing here to compress.</string>
+    <string name="compress_warn_hdr10plus">Some videos have HDR10+: its dynamic metadata cannot be kept (HDR10 stays).</string>
+    <string name="compress_meta_saved">Per-frame camera data is saved on the server.</string>
+    <string name="compress_originals_to_trash">Originals go to the trash: restore them there until it is emptied (%1$s days).</string>
+    <string name="compress_start">Start</string>
+    <string name="compress_eta">about %1$s left</string>
+    <string name="compress_pause">Pause</string>
+    <string name="compress_resume">Resume</string>
+    <string name="compress_cancel">Cancel</string>
+    <string name="compress_cancel_confirm_title">Cancel this compression?</string>
+    <string name="compress_cancel_confirm_body">Videos not compressed yet stay as they are. Videos already compressed stay compressed; restore them from the trash.</string>
+    <string name="compress_auto_title">Compress automatically</string>
+    <string name="compress_auto_switch">Compress automatically</string>
+    <string name="compress_auto_desc">New videos in this folder will be compressed after they are backed up (or found on the server). Originals go to the trash.</string>
+    <string name="compress_auto_on">On: new videos in this folder will be compressed</string>
+    <string name="compress_auto_off">Compress automatically is off for this folder</string>
+    <string name="compress_auto_turn_off">Turn off</string>
+    <string name="compress_auto_folders_title">Folders compressed automatically</string>
+    <string name="compress_auto_none">No folder yet. Turn it on from a folder in Files.</string>
+    <string name="compress_running_title">In progress</string>
+    <string name="compress_history_title">History</string>
+    <string name="compress_no_jobs">Nothing compressed yet. Choose videos in the Gallery or a folder in Files.</string>
+    <string name="compress_totals">%1$s saved · %2$s in the trash</string>
+    <string name="compress_saved">%1$s saved</string>
+    <string name="compress_restore">Restore original</string>
+    <string name="compress_restore_desc">Restore puts the original back and moves the compressed video to the trash.</string>
+    <string name="compress_trash_label">Original of a compressed video</string>
+    <string name="compress_trash_saves">saves %1$s when emptied</string>
+    <string name="compress_trash_held">Held by a compression in progress</string>
+    <string name="compress_trash_section">Originals of compressed videos</string>
+    <string name="compress_failed_reason_verify">failed the quality checks</string>
+    <string name="compress_failed_reason_changed">the file changed meanwhile</string>
+    <string name="compress_failed_reason_space">not enough space</string>
+    <string name="compress_failed_reason_encoder">the encoder failed</string>
+    <string name="compress_failed_reason_trash">could not move the original to the trash</string>
+    <string name="compress_failed_reason_writable">the server cannot write that folder</string>
+    <string name="compress_failed_reason_other">other reasons</string>
+    <string name="compress_badge_compressed">Compressed</string>
+    <string name="compress_badge_compressing">Compressing</string>
+    <string name="compress_unavailable_gpu">The photo server has no usable GPU for compression right now.</string>
+    <string name="compress_unavailable_write_mount">The photo server cannot write the library (its write mount: %1$s).</string>
+    <string name="compress_unavailable_backup_root">The photo server has no backup folder, which compression needs.</string>
+    <string name="compress_unavailable_other">Compression is not available on the photo server now (%1$s).</string>
+    <string name="compress_start_failed">Could not start the compression (%1$s).</string>
+    <string name="compress_exists">This folder is compressed automatically already.</string>
+    <string name="compress_busy">These videos are being compressed already.</string>
+    <string name="compress_none_in_selection">None of these videos can be compressed by the server (videos only on this phone come in a later version).</string>
+    <string name="compress_job_auto">Automatic</string>
+    <string name="compress_job_paused">Paused</string>
+    <string name="compress_job_done">Done</string>
+    <string name="compress_job_cancelled">Cancelled</string>
+    <string name="compress_job_current">Now: %1$s%%</string>
+    <string name="compress_duration_min">%1$s min</string>
+    <string name="compress_duration_hours">%1$s h %2$s min</string>
+    <string name="compress_load_failed">Could not reach the photo server.</string>
+    <string name="compress_night_window">Night window and GPU sharing are set on the server\'s setup page.</string>
+    <string name="compress_av1_offered">AV1 is offered (Offer AV1 is on on the server).</string>
+    <string name="compress_av1_hidden">AV1 is not offered (Offer AV1 is off on the server).</string>
+    <string name="compress_gpu">GPU: %1$s</string>
+    <plurals name="compress_estimate_summary">
+        <item quantity="one">%1$s of %2$s video</item>
+        <item quantity="other">%1$s of %2$s videos</item>
+    </plurals>
+    <plurals name="compress_skip_already">
+        <item quantity="one">%1$s already compressed</item>
+        <item quantity="other">%1$s already compressed</item>
+    </plurals>
+    <plurals name="compress_skip_older">
+        <item quantity="one">%1$s already compressed by an older tool</item>
+        <item quantity="other">%1$s already compressed by an older tool</item>
+    </plurals>
+    <plurals name="compress_skip_efficient">
+        <item quantity="one">%1$s already efficient</item>
+        <item quantity="other">%1$s already efficient</item>
+    </plurals>
+    <plurals name="compress_skip_small">
+        <item quantity="one">%1$s would save too little</item>
+        <item quantity="other">%1$s would save too little</item>
+    </plurals>
+    <plurals name="compress_skip_unreadable">
+        <item quantity="one">%1$s unreadable</item>
+        <item quantity="other">%1$s unreadable</item>
+    </plurals>
+    <plurals name="compress_skip_dolby_vision">
+        <item quantity="one">%1$s in Dolby Vision, kept as is</item>
+        <item quantity="other">%1$s in Dolby Vision, kept as they are</item>
+    </plurals>
+    <plurals name="compress_skip_reveal">
+        <item quantity="one">%1$s with Reveal records, kept as is</item>
+        <item quantity="other">%1$s with Reveal records, kept as they are</item>
+    </plurals>
+    <plurals name="compress_skip_sync_artifact">
+        <item quantity="one">%1$s sync tool copy</item>
+        <item quantity="other">%1$s sync tool copies</item>
+    </plurals>
+    <plurals name="compress_skip_not_writable">
+        <item quantity="one">%1$s in a folder the server cannot write</item>
+        <item quantity="other">%1$s in folders the server cannot write</item>
+    </plurals>
+    <plurals name="compress_skip_busy">
+        <item quantity="one">%1$s being compressed already</item>
+        <item quantity="other">%1$s being compressed already</item>
+    </plurals>
+    <plurals name="compress_skip_other">
+        <item quantity="one">%1$s skipped for another reason</item>
+        <item quantity="other">%1$s skipped for other reasons</item>
+    </plurals>
+    <plurals name="compress_auto_existing">
+        <item quantity="one">Also compress the %1$s video already there</item>
+        <item quantity="other">Also compress the %1$s videos already there</item>
+    </plurals>
+    <plurals name="compress_in_trash">
+        <item quantity="one">%1$s original in the trash</item>
+        <item quantity="other">%1$s originals in the trash</item>
+    </plurals>
+    <plurals name="compress_trash_held_note">
+        <item quantity="one">%1$s entry held by a compression in progress stays in the trash.</item>
+        <item quantity="other">%1$s entries held by a compression in progress stay in the trash.</item>
+    </plurals>
+    <plurals name="compress_progress">
+        <item quantity="one">%1$s of %2$s video</item>
+        <item quantity="other">%1$s of %2$s videos</item>
+    </plurals>
+    <plurals name="compress_started">
+        <item quantity="one">%1$s video queued for compression</item>
+        <item quantity="other">%1$s videos queued for compression</item>
+    </plurals>
+    <plurals name="compress_left_out">
+        <item quantity="one">%1$s video is only on this phone or an upload: left out</item>
+        <item quantity="other">%1$s videos are only on this phone or uploads: left out</item>
+    </plurals>
+    <plurals name="compress_failed_count">
+        <item quantity="one">%1$s failed: %2$s</item>
+        <item quantity="other">%1$s failed: %2$s</item>
+    </plurals>
+    <plurals name="compress_skipped_count">
+        <item quantity="one">%1$s skipped</item>
+        <item quantity="other">%1$s skipped</item>
+    </plurals>
+    <plurals name="compress_attention">
+        <item quantity="one">%1$s compression waits for the server\'s write mount</item>
+        <item quantity="other">%1$s compressions wait for the server\'s write mount</item>
+    </plurals>
+    <plurals name="compress_restored">
+        <item quantity="one">%1$s original restored</item>
+        <item quantity="other">%1$s originals restored</item>
+    </plurals>
+    <!-- /Video compression -->
 </resources>

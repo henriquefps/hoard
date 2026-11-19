@@ -38,6 +38,9 @@ import kotlinx.serialization.Serializable
 /** The trash (ADR 0023): from Files, the Gallery and Settings. */
 @Serializable data object TrashRoute
 
+/** Settings › Compress videos (ADR 0025). */
+@Serializable data object CompressRoute
+
 /** Settings › Backup (ADR 0024). */
 @Serializable data object BackupRoute
 

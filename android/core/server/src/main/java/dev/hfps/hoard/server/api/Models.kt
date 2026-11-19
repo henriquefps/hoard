@@ -92,6 +92,8 @@ data class ServerInfo(
     val limits: ServerLimits = ServerLimits(),
     val previews: PreviewsInfo? = null,
     val backup: BackupLimits? = null,
+    /** Video compression (ADR 0025, hoard-server 0.13.0): present with a GPU, the feature `compress` or jobs. */
+    val compress: CompressInfo? = null,
 )
 
 @Serializable
@@ -168,8 +170,13 @@ data class FileLocation(
     val volume: String? = null,
     /** `mirror`: false once the phone no longer has the file (absent = on the phone). */
     val onDevice: Boolean? = null,
-    /** `mirror`, off the phone: `freed` or `deleted` (an unknown value means `deleted`). */
+    /** `mirror`, off the phone: `freed`, `deleted` or (0.13.0) `compressed` (an unknown value means `deleted`). */
     val gone: String? = null,
+    /**
+     * A trashed location (0.13.0, ADR 0025 Amendment (S1)): an unfinished compression journal holds this file. Empty,
+     * Delete permanently and auto-empty must leave it while held.
+     */
+    val held: Boolean? = null,
 ) {
     companion object {
         const val SOURCE_MIRROR = "mirror"
@@ -250,7 +257,27 @@ data class Item(
     val edits: List<ItemEdit> = emptyList(),
     /** With `include=trash` (0.11.0, ADR 0023): the item is in a trash since [ItemTrash.since]; null = live. */
     val trashed: ItemTrash? = null,
+    /** 0.13.0 (ADR 0025): a trashed item a compression replaced (or a restored output): the live item. */
+    val compressedTo: String? = null,
+    /** 0.13.0 (ADR 0025): on a compression's output. */
+    val compressed: ItemCompressed? = null,
 )
+
+/** `Item.compressed` (ADR 0025): where an output came from; [original] `trashed` or `purged`. */
+@Serializable
+data class ItemCompressed(
+    val from: String? = null,
+    val fromItem: String? = null,
+    val profile: String? = null,
+    val q: Int? = null,
+    val at: Long? = null,
+    val original: String? = null,
+    val originalSize: Long? = null,
+    val metaSidecar: Boolean = false,
+) {
+    /** The original is still in a trash (the Gallery's "Compressed" badge). */
+    val originalInTrash: Boolean get() = original == "trashed"
+}
 
 @Serializable
 data class ItemTrash(val since: Long = 0)
@@ -530,6 +557,11 @@ object Features {
     const val TRASH = "trash"
     /** hoard-server 0.12.0 (ADR 0024): the phone backup (roots, report, verify, `wait`/`claim` on uploads). */
     const val BACKUP = "backup"
+    /**
+     * hoard-server 0.13.0 (ADR 0025): video compression, a usable GPU and at least one usable target. Hoard 2.7.0 offers
+     * library jobs only when `compress.targets.nas.ok` (backup jobs when `targets.backup.ok`).
+     */
+    const val COMPRESS = "compress"
 }
 
 /** The `include` of the items feed Hoard asks for: one cursor for items and culling (ADR 0016 rule 3). */

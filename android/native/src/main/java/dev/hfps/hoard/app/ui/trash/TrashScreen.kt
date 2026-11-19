@@ -55,6 +55,7 @@ import dev.hfps.hoard.app.ui.common.bytes
 import dev.hfps.hoard.app.ui.common.formatNumber
 import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.data.TrashEntryEntity
+import dev.hfps.hoard.server.paths.SharePaths
 import dev.hfps.hoard.designsystem.components.Eyebrow
 import dev.hfps.hoard.designsystem.components.HfpsIconButton
 import dev.hfps.hoard.designsystem.components.HfpsRowDivider
@@ -81,14 +82,24 @@ data class TrashUi(
     val loaded: Boolean = false,
     /** Server photos another device trashed whose share Hoard does not know (ADR 0023, A4). */
     val server: List<ServerTrashRow> = emptyList(),
+    /** Originals of compressed videos with no row on a share Hoard knows (ADR 0025: NAS without a mapping, backups). */
+    val compressed: List<CompressedTrashRow> = emptyList(),
 ) {
-    val files: Int get() = days.sumOf { it.files }
-    val bytes: Long get() = days.sumOf { it.bytes }
+    private val freeCompressed: List<CompressedTrashRow> get() = compressed.filter { !it.original.held }
 
-    /** What Empty trash can delete now: the places that answered the last refresh. */
-    val reachableFiles: Int get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.files } }
-    val reachableBytes: Long get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.bytes } }
+    val files: Int get() = days.sumOf { it.files } + freeCompressed.size
+    val bytes: Long get() = days.sumOf { it.bytes } + freeCompressed.sumOf { it.original.size }
+
+    /** What Empty trash can delete now: the places that answered the last refresh, and the server's compressed originals. */
+    val reachableFiles: Int get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.files } } + freeCompressed.size
+    val reachableBytes: Long get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.bytes } } + freeCompressed.sumOf { it.original.size }
+
+    /** Entries a compression journal holds (ADR 0025): listed, left by Empty, not counted. */
+    val held: Int get() = days.sumOf { d -> d.folders.sumOf { it.heldRows.size } } + compressed.count { it.original.held }
 }
+
+/** A compressed original the Trash screen lists in its server section (with the server's thumbnail when cached). */
+data class CompressedTrashRow(val original: dev.hfps.hoard.app.trash.CompressedOriginal, val entry: dev.hfps.hoard.app.gallery.GalleryEntry?)
 
 /** A server photo in a trash that Hoard cannot reach through a share: shown with the server's thumbnail, no actions. */
 data class ServerTrashRow(val entry: dev.hfps.hoard.app.gallery.GalleryEntry, val since: Long)
@@ -110,14 +121,18 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
     private val unreachable = MutableStateFlow<Set<TrashPlace>>(emptySet())
     private val refreshing = MutableStateFlow(false)
     private val server = MutableStateFlow<List<ServerTrashRow>>(emptyList())
+    private val compression = MutableStateFlow(dev.hfps.hoard.app.trash.TrashCompressionState.NONE)
+
+    /** Gallery entries of trashed server items (thumbnails of the server section). */
+    private val entries = MutableStateFlow<Map<String, dev.hfps.hoard.app.gallery.GalleryEntry>>(emptyMap())
 
     val ui: StateFlow<TrashUi> = combine(
-        container.trash.observe(),
+        combine(container.trash.observe(), compression) { rows, c -> rows to c },
         unreachable,
         refreshing,
         container.database.machines().observeAll(),
         container.appSettings.trashAutoEmptyDays,
-    ) { rows, away, busy, machines, days ->
+    ) { (rows, comp), away, busy, machines, days ->
         val volumes = runCatching { container.volumeRegistry.list() }.getOrDefault(emptyList())
         val label = { place: TrashPlace ->
             val loc = FileService.resolve(place.locationId, place.share.ifEmpty { null }, machines, volumes, phoneName, driveName)
@@ -127,7 +142,9 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
                 else -> loc.name
             }
         }
-        TrashUi(TrashGroups.of(rows, away, label), busy, days, loaded = true)
+        val groups = TrashGroups.of(rows, away, label, compression = comp)
+        val compressedRows = comp.serverOnly(rows).map { o -> CompressedTrashRow(o, entries.value[o.itemId]) }
+        TrashUi(groups, busy, days, loaded = true, compressed = compressedRows)
     }.combine(server) { ui, srv -> ui.copy(server = srv) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrashUi())
 
     init {
@@ -141,7 +158,12 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
             try {
                 unreachable.value = container.trash.refresh()
                 val unplaced = runCatching { container.trash.registerServerTrash() }.getOrDefault(emptyList()).toSet()
-                server.value = serverTrashRows(container.gallery.db.items().trashed().filter { it.id in unplaced })
+                val state = runCatching { container.trash.compression(refresh = false) }.getOrDefault(dev.hfps.hoard.app.trash.TrashCompressionState.NONE)
+                val compressedIds = state.originals.map { it.itemId }.toSet()
+                val trashed = container.gallery.db.items().trashed()
+                entries.value = serverTrashRows(trashed.filter { it.id in compressedIds }).associateBy { it.entry.itemId.orEmpty() }.mapValues { it.value.entry }
+                server.value = serverTrashRows(trashed.filter { it.id in unplaced && it.id !in compressedIds })
+                compression.value = state
             } finally {
                 refreshing.value = false
             }
@@ -150,9 +172,24 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
 
     suspend fun restore(rows: List<TrashEntryEntity>): List<RestoreOutcome> = container.trash.restore(rows.map { it.id })
 
-    suspend fun delete(rows: List<TrashEntryEntity>): Int = container.trash.empty(rows.map { it.id }).size
+    suspend fun delete(rows: List<TrashEntryEntity>): Int = container.trash.empty(rows.map { it.id }).count.also { recompute() }
 
-    suspend fun emptyAll(): Int = container.trash.emptyAll().size
+    suspend fun emptyAll(): Int = container.trash.emptyAll().count.also { recompute() }
+
+    /** Restore of compressed originals in the server section: undoes their compression (ADR 0025). */
+    suspend fun restoreCompressed(rows: List<CompressedTrashRow>): Int =
+        container.trash.restoreCompressed(rows.map { it.original }).done.size.also { recompute() }
+
+    suspend fun deleteCompressed(rows: List<CompressedTrashRow>): Int =
+        container.trash.purgeCompressed(rows.map { it.original }).done.size.also { recompute() }
+
+    /** After an action: the server walks and rebuilds; the cache follows at the next sync, then the screen. */
+    private fun recompute() {
+        viewModelScope.launch {
+            runCatching { container.gallery.syncNow() }
+            compression.value = runCatching { container.trash.compression(refresh = false) }.getOrDefault(compression.value)
+        }
+    }
 
     companion object {
         fun factory(container: AppContainer, phoneName: String, driveName: String): ViewModelProvider.Factory =
@@ -162,6 +199,7 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
 
 private sealed interface TrashDialog {
     data class Delete(val rows: List<TrashEntryEntity>) : TrashDialog
+    data class DeleteCompressed(val rows: List<CompressedTrashRow>) : TrashDialog
     data object Empty : TrashDialog
     data class Conflict(val path: String) : TrashDialog
 }
@@ -184,6 +222,13 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
         onRefresh = vm::refresh,
         onEmpty = { dialog = TrashDialog.Empty },
         onDelete = { dialog = TrashDialog.Delete(it) },
+        onRestoreCompressed = { rows ->
+            scope.launch {
+                val n = vm.restoreCompressed(rows)
+                if (n > 0) toaster.show(res.getQuantityString(R.plurals.trash_restored, n, n.toString())) else toaster.show(res.getString(R.string.trash_restore_failed))
+            }
+        },
+        onDeleteCompressed = { dialog = TrashDialog.DeleteCompressed(it) },
         onRestore = { rows ->
             scope.launch {
                 val outcomes = vm.restore(rows)
@@ -207,6 +252,17 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             onDismiss = { dialog = null },
             onConfirm = {
                 val n = vm.delete(d.rows)
+                toaster.show(res.getQuantityString(R.plurals.trash_purged, n, n.toString()))
+            },
+        )
+        is TrashDialog.DeleteCompressed -> ConfirmDialog(
+            title = pluralStringResource(R.plurals.trash_delete_group_title, d.rows.size, formatNumber(d.rows.size, locale())),
+            body = pluralStringResource(R.plurals.trash_delete_confirm_body, d.rows.size, formatNumber(d.rows.size, locale()), bytes(d.rows.sumOf { it.original.size })),
+            confirmLabel = stringResource(R.string.trash_delete_permanently),
+            destructive = true,
+            onDismiss = { dialog = null },
+            onConfirm = {
+                val n = vm.deleteCompressed(d.rows)
                 toaster.show(res.getQuantityString(R.plurals.trash_purged, n, n.toString()))
             },
         )
@@ -245,6 +301,15 @@ fun EmptyUnreachableNote(ui: TrashUi) {
             modifier = Modifier.padding(top = 8.dp),
         )
     }
+    // ADR 0025: what a compression journal holds stays, and is not in the count above.
+    if (ui.held > 0) {
+        Text(
+            pluralStringResource(R.plurals.compress_trash_held_note, ui.held, formatNumber(ui.held, locale())),
+            style = HfpsTheme.typography.ui,
+            color = HfpsTheme.colors.mutedForeground,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
 }
 
 /** The screen without its view model (goldens). */
@@ -257,6 +322,8 @@ fun TrashContent(
     onRestore: (List<TrashEntryEntity>) -> Unit = {},
     onDelete: (List<TrashEntryEntity>) -> Unit = {},
     thumbs: dev.hfps.hoard.app.gallery.ThumbSource? = null,
+    onRestoreCompressed: (List<CompressedTrashRow>) -> Unit = {},
+    onDeleteCompressed: (List<CompressedTrashRow>) -> Unit = {},
 ) {
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
@@ -285,7 +352,7 @@ fun TrashContent(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
-                if (ui.loaded && ui.days.isEmpty() && ui.server.isEmpty()) {
+                if (ui.loaded && ui.days.isEmpty() && ui.server.isEmpty() && ui.compressed.isEmpty()) {
                     item("empty") { EmptyTrash() }
                 }
                 for (day in ui.days) {
@@ -294,6 +361,20 @@ fun TrashContent(
                         Column(Modifier.background(HfpsTheme.colors.card)) {
                             if (folder != day.folders.first()) HfpsRowDivider(Modifier.padding(start = 16.dp))
                             FolderRow(folder, onRestore, onDelete)
+                        }
+                    }
+                }
+                if (ui.compressed.isNotEmpty()) {
+                    item("compressed") {
+                        Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
+                            Eyebrow(stringResource(R.string.compress_trash_section))
+                            Text(stringResource(R.string.compress_restore_desc), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+                        }
+                    }
+                    items(ui.compressed, key = { "cmp-" + it.original.itemId }) { row ->
+                        Column(Modifier.background(HfpsTheme.colors.card)) {
+                            if (row != ui.compressed.first()) HfpsRowDivider(Modifier.padding(start = 16.dp))
+                            CompressedRow(row, thumbs, { onRestoreCompressed(listOf(row)) }, { onDeleteCompressed(listOf(row)) })
                         }
                     }
                 }
@@ -361,8 +442,8 @@ private fun DayHeader(day: TrashDayGroup, onRestore: (List<TrashEntryEntity>) ->
                 color = HfpsTheme.colors.mutedForeground,
             )
         }
-        GroupMenu(stringResource(R.string.t_locations_actions_for, dayLabel(day.date)), day.reachable, { onRestore(day.rows.filter { r -> day.folders.any { it.reachable && r in it.rows } }) }) {
-            onDelete(day.folders.filter { it.reachable }.flatMap { it.rows })
+        GroupMenu(stringResource(R.string.t_locations_actions_for, dayLabel(day.date)), day.reachable, { onRestore(day.folders.filter { it.reachable }.flatMap { it.freeRows }) }) {
+            onDelete(day.folders.filter { it.reachable }.flatMap { it.freeRows })
         }
     }
 }
@@ -388,9 +469,89 @@ private fun FolderRow(folder: TrashFolderGroup, onRestore: (List<TrashEntryEntit
                 Text(stringResource(R.string.trash_expires, date.format(DAY_FORMAT.withLocale(locale()))), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
             }
         }
-        GroupMenu(stringResource(R.string.t_locations_actions_for, folder.folder.ifEmpty { folder.placeLabel }), folder.reachable, { onRestore(folder.rows) }) {
-            onDelete(folder.rows)
+        GroupMenu(stringResource(R.string.t_locations_actions_for, folder.folder.ifEmpty { folder.placeLabel }), folder.reachable && folder.freeRows.isNotEmpty(), { onRestore(folder.freeRows) }) {
+            onDelete(folder.freeRows)
         }
+    }
+    // ADR 0025: each compressed original of the folder (restore = undo the compression), then what a journal holds.
+    for ((original, rows) in folder.originals) {
+        CompressedLine(
+            name = original.name,
+            detail = stringResource(R.string.compress_trash_label) + " · " + stringResource(R.string.compress_trash_saves, bytes(rows.sumOf { it.size })),
+            enabled = folder.reachable,
+            onRestore = { onRestore(rows) },
+            onDelete = { onDelete(rows) },
+        )
+    }
+    for (row in folder.heldRows) {
+        CompressedLine(name = SharePaths.name(row.originalPath), detail = stringResource(R.string.compress_trash_held), enabled = false, onRestore = null, onDelete = null)
+    }
+}
+
+/** One compressed original (or a held entry) under its folder: the name, the label and its own menu. */
+@Composable
+private fun CompressedLine(name: String, detail: String, enabled: Boolean, onRestore: (() -> Unit)?, onDelete: (() -> Unit)?) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 48.dp, end = 4.dp, bottom = 8.dp).testTag("trash-compressed-line"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(PhosphorRegular.ArrowsIn, null, Modifier.size(16.dp), tint = HfpsTheme.colors.mutedForeground)
+        Column(Modifier.weight(1f)) {
+            Text(name, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.cardForeground, maxLines = 1)
+            Text(detail, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 2)
+        }
+        if (onRestore != null && onDelete != null) {
+            CompressedMenu(stringResource(R.string.t_locations_actions_for, name), enabled, onRestore, onDelete)
+        } else {
+            Box(Modifier.size(48.dp))
+        }
+    }
+}
+
+@Composable
+private fun CompressedMenu(description: String, enabled: Boolean, onRestore: () -> Unit, onDelete: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        HfpsIconButton(PhosphorRegular.DotsThreeVertical, description, { open = true }, enabled = enabled)
+        DropdownMenu(open, { open = false }, containerColor = HfpsTheme.colors.card) {
+            MenuItem(stringResource(R.string.compress_restore), PhosphorRegular.ArrowCounterClockwise, { open = false; onRestore() })
+            MenuItem(stringResource(R.string.trash_delete_permanently), PhosphorRegular.Trash, { open = false; onDelete() }, destructive = true)
+        }
+    }
+}
+
+/** A compressed original the server keeps (no share row): its thumbnail, name, label and menu, or "Held". */
+@Composable
+private fun CompressedRow(row: CompressedTrashRow, thumbs: dev.hfps.hoard.app.gallery.ThumbSource?, onRestore: () -> Unit, onDelete: () -> Unit) {
+    val px = 144
+    val entry = row.entry
+    val image by androidx.compose.runtime.produceState(entry?.let { e -> thumbs?.peek(e, px) }, entry?.key) {
+        if (value == null && thumbs != null && entry != null) value = runCatching { thumbs.load(entry, px) }.getOrNull()
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp).testTag("trash-compressed-row"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(48.dp).background(HfpsTheme.colors.muted, HfpsTheme.shapes.card), contentAlignment = Alignment.Center) {
+            image?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+                ?: Icon(PhosphorRegular.FileVideo, null, Modifier.size(20.dp), tint = HfpsTheme.colors.mutedForeground)
+        }
+        Column(Modifier.weight(1f)) {
+            Text(row.original.name, style = HfpsTheme.typography.body, color = HfpsTheme.colors.cardForeground, maxLines = 1)
+            Text(
+                if (row.original.held) {
+                    stringResource(R.string.compress_trash_held)
+                } else {
+                    stringResource(R.string.compress_trash_label) + " · " + stringResource(R.string.compress_trash_saves, bytes(row.original.size))
+                },
+                style = HfpsTheme.typography.ui,
+                color = HfpsTheme.colors.mutedForeground,
+                maxLines = 2,
+            )
+        }
+        if (!row.original.held) CompressedMenu(stringResource(R.string.t_locations_actions_for, row.original.name), true, onRestore, onDelete) else Box(Modifier.size(48.dp))
     }
 }
 

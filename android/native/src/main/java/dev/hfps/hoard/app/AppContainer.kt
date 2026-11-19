@@ -154,6 +154,11 @@ class AppContainer(context: Context) {
     /** The trash for rejects (ADR 0023): `.hoard-trash` folders, restore, Empty, auto-empty. */
     val trash: dev.hfps.hoard.app.trash.TrashService by lazy { dev.hfps.hoard.app.trash.TrashService(this) }
 
+    /** Video compression on hoard-server (ADR 0025, phase A1). */
+    val compress: dev.hfps.hoard.app.compress.CompressService by lazy {
+        dev.hfps.hoard.app.compress.CompressService(gallery, scope) { serverLinks.paths.mappings() }
+    }
+
     val transfers: TransferService by lazy {
         TransferService(scope, NativeTransferManager(TransferManager.get(appContext)), database.transfers(), ::endpointOf)
     }

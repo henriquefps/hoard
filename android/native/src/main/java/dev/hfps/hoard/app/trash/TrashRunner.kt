@@ -400,9 +400,11 @@ class TrashRunner(
      * Returns the rows purged (the caller forgets their culling rows and asks the server for a walk); rows of a place
      * that cannot be reached, or whose delete failed, stay `trashed`.
      */
-    suspend fun empty(entries: List<TrashEntryEntity>, cancelled: () -> Boolean = { false }): List<TrashEntryEntity> {
+    suspend fun empty(entries: List<TrashEntryEntity>, cancelled: () -> Boolean = { false }, held: HeldTrash = HeldTrash.NONE): List<TrashEntryEntity> {
         val purged = ArrayList<TrashEntryEntity>()
-        for ((place, rows) in entries.filter { it.state == TrashStates.TRASHED }.groupBy { TrashPlace(it.locationId, it.share) }) {
+        // ADR 0025: an entry an unfinished compression journal holds is never deleted (it stays `trashed`, listed).
+        val free = entries.filter { it.state == TrashStates.TRASHED && !held.holdsRow(it) }
+        for ((place, rows) in free.groupBy { TrashPlace(it.locationId, it.share) }) {
             val fs = fsFor(place) ?: continue
             val done = ArrayList<TrashEntryEntity>()
             for (row in rows) {
@@ -449,14 +451,17 @@ class TrashRunner(
      *   older than the setting too; a folder without an mtime goes only when it is this device's and every row of it
      *   was trashed before the limit. A clock that jumped ahead, or a day folder named by a clock that was behind,
      *   purges nothing.
+     * - [held] entries (ADR 0025: an unfinished compression journal holds them) are left: a day folder holding one is
+     *   emptied file by file around it, and a root whose held state is unknown is not touched this run.
      */
-    suspend fun autoEmpty(roots: List<Root>, days: Int, notBefore: Long = 0, trustedNow: () -> Long? = { null }, dryRun: Boolean = false): List<Expired> {
+    suspend fun autoEmpty(roots: List<Root>, days: Int, notBefore: Long = 0, trustedNow: () -> Long? = { null }, dryRun: Boolean = false, held: HeldTrash = HeldTrash.NONE): List<Expired> {
         if (days <= 0) return emptyList()
         val phoneNow = now()
         if (phoneNow < notBefore) return emptyList()
         val out = ArrayList<Expired>()
         val today = today()
         for (root in roots) {
+            if (held.holdsRoot(root.serverFolderId)) continue
             val fs = fsFor(root.place) ?: continue
             try {
                 val dir = TrashPaths.trashDir(root.path)
@@ -465,6 +470,8 @@ class TrashRunner(
                 var nowMs = phoneNow
                 var files = 0
                 var bytes = 0L
+                /** Day folders emptied around held entries (their held rows stay). */
+                val partial = HashSet<String>()
                 val expired = fs.use { hoard ->
                     val entries = try {
                         hoard.list(dir).entries
@@ -484,14 +491,25 @@ class TrashRunner(
                         if (mtime != null) mtime <= limitMs else own.isNotEmpty() && own.all { it.trashedAt <= limitMs }
                     }.onEach { day ->
                         val path = requireTrashPath(root.path, SharePaths.join(dir, day))
-                        walk(hoard, path).forEach { f ->
-                            files++
-                            bytes += f.size
+                        if (held.holdsUnder(root.place, path)) {
+                            // A held entry inside: every other file goes, the held ones (and their folders) stay.
+                            for (f in walk(hoard, path).filter { !held.holds(root.place, it.path) }) {
+                                files++
+                                bytes += f.size
+                                if (!dryRun) deleteIfExists(hoard, f.path)
+                            }
+                            if (!dryRun) removeEmptyDirs(hoard, path)
+                            partial += day
+                        } else {
+                            walk(hoard, path).forEach { f ->
+                                files++
+                                bytes += f.size
+                            }
+                            if (!dryRun) deleteIfExists(hoard, path)
                         }
-                        if (!dryRun) deleteIfExists(hoard, path)
                     }
                 }
-                val purged = rows.filter { it.dayFolder in expired }
+                val purged = rows.filter { it.dayFolder in expired && !(it.dayFolder in partial && held.holdsRow(it)) }
                 if (!dryRun) {
                     if (purged.isNotEmpty()) index.delete(purged.map { it.id })
                     index.touchRoot(root.place, root.path, root.serverFolderId, nowMs)
@@ -575,6 +593,25 @@ class TrashRunner(
             }
         }
         return out
+    }
+
+    /** Removes the empty folders under [dir] (deepest first), and [dir] itself when it ends up empty. */
+    private fun removeEmptyDirs(fs: HoardFs, dir: String): Boolean {
+        val entries = try {
+            fs.list(dir).entries
+        } catch (e: HoardSmbException) {
+            if (e.code == ErrorCode.NOT_FOUND) return true else throw e
+        }
+        var empty = true
+        for (e in entries) {
+            if (e.isDirectory) {
+                if (!removeEmptyDirs(fs, e.path)) empty = false
+            } else {
+                empty = false
+            }
+        }
+        if (empty) runCatching { fs.delete(dir, false) }
+        return empty
     }
 
     /** Removes the folders [rows] leave empty, from each file's folder up to (and with) its day folder. */
