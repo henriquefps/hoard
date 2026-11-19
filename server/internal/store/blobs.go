@@ -319,6 +319,11 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string
 		if named {
 			return ErrReferenced
 		}
+		if held, err := compressHolds(ctx, tx, fp, sha); err != nil {
+			return err
+		} else if held {
+			return ErrCompressed // ADR 0025 rule 5: until the purge; the caller's claim is released below
+		}
 		mirrored, err := mirrorNames(ctx, tx, fp, sha)
 		if err != nil {
 			return err
@@ -348,7 +353,7 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string
 		removed = sha
 		return nil
 	})
-	if errors.Is(err, ErrMirror) {
+	if errors.Is(err, ErrMirror) || errors.Is(err, ErrCompressed) {
 		// The device's claim goes (so the bytes go when the mirror no longer needs them).
 		if _, cerr := s.db.ExecContext(ctx, "DELETE FROM original_claims WHERE fingerprint = ? AND device_id = ?", fp, deviceID); cerr != nil {
 			return "", cerr

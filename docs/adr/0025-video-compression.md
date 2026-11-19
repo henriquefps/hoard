@@ -1050,3 +1050,111 @@ Phase S1 (hoard-server 0.13.0) as built; each point is a detail the text above l
     the failed row, is logged loudly and counted as `untrackedTrash`; a purge whose journal the housekeeping runs at that
     moment answers `busy`; the background probe never caches "unreadable" for a file that vanished during a rename; the
     store's clock is safe for concurrent use (tests).
+
+## Amendment (S2)
+
+Phase S2 (phone and backup targets, folded into hoard-server 0.13.0 since S1 had not shipped); each point is a detail
+the text above left open or a small deviation.
+
+- **Routes.** The four phone routes are routed as `/v1/compress/items/{compressItemId}/output`, `…/replaced`,
+  `…/restored` and `…/abandon` (the path parameter is named so because the OpenAPI contract test maps a route's `{id}`
+  to the uploads' `{uploadId}`); `server/testdata/v1-routes.txt` now has the 14 routes. `target: "phone"` and
+  `"backup"` are served; `422 target_not_supported` is gone.
+- **Selections.** A root's `path` is a path on the phone's volume inside the root (`""` = the whole root), checked like
+  a report's paths. A phone target takes the caller's **current** files (`on_device = 1`, no removal); a backup target
+  the files no longer on their phone (`freed` or `deleted`), any phone. One entry per item (the first by volume and
+  path). Priorities: 1 phone, 2 backup (and nas), 3 automatic.
+- **When the original is ingested.** A NAS-referenced original is copied into the store (ADR 0024's checked NAS copy,
+  the same code as "Keep a copy of NAS files") after the skip rules and before the encode, so skipped videos are never
+  copied; the encode then reads the blob. The output's mtime is the phone's mtime of the original.
+- **The output blob** is moved into the store by a hard link (else a rename) from the work directory (both on the
+  backup root's filesystem), under the content's lock; its `blobs` and `originals` rows (no device, no claim) are
+  written in one transaction with the item's `ready`. Until the phone has it, it is no gallery item: blobs a blob
+  compression holds (the output while `ready`, both sides while `replacing`, the trashed side while `replaced` or
+  `restored`) make no `backup` item source.
+- **Phone states.** A phone item stays `ready` until the phone reports (no route reports "writing"); `replacing` is a
+  phone restore (`direction: "restore"`, journal step `restore:phone`) or a restore again by the phone (`direction:
+  "compress"`, `reswap:phone`). `…/replaced` and `…/restored` accept `modifiedAt` within 2 s of the original's phone
+  mtime (FAT keeps even seconds); the same report again answers `200` with the item as it is. A phone item whose file
+  left the phone before the phone replaced it (freed or deleted meanwhile) is swapped by the server, as a backup item.
+- **The swap** (`store.CompressSwap`, one transaction): the entry holding the path becomes `compressed` (`on_device = 0`,
+  `pinned = 1`, its link moves to `.hoard-mirror/compressed/<tree path>~<sha8>`); the other side takes the path: a new
+  entry the first time (its `verified_sha256` taken from the blob's last re-hash, if any), else the kept entry again.
+  With a phone report the new owner is on the phone; without one (server-only) it keeps the old owner's `on_device`,
+  `removed_reason` and `pinned` (a freed video stays freed and pinned). A report whose file at the path is the other
+  side of a `ready` (or `replacing`) blob item completes the swap the same way (`stored`, nothing uploaded, no
+  `replaced` previous version); a removal is never inferred from it.
+- **Restore** of a phone item is the phone's when the file at the path is on the phone (`replacing`); otherwise (a
+  backup item, or the phone no longer has the file) the server swaps at once and the answer is `restored` (or
+  `replaced` for a restore again), not `replacing`.
+- **Abandon.** `gone` finishes the item on the server (a `ready` item is swapped, a phone restore done there);
+  `verify` fails it with reason `verify_phone`, `changed` with `source_changed`; `refused` cancels it (reason
+  `refused`); the output blob is dropped when nothing else keeps it. A phone restore given up on (other than `gone`)
+  goes back to `replaced` (a restore again to `restored`) with the reason. A cancelled phone item drops its output too.
+- **The kept source** is one item source per kept entry (`source = 'kept'`, `folder_id` = the root, key = its
+  fingerprint), served as its `mirror` location (`onDevice: false`, `gone: "compressed"`) and its `backup` location.
+  It joins a live NAS or phone item that has the file (a phone video that was a NAS reference: the NAS copy keeps the
+  item live, and the phone's output is an item of its own), else it is an item of its own, trashed (every source a
+  `trash` or `kept`), with `compressedTo`/`replacedBy` by the heir rule.
+- **Ownership rule 5** counts blob compressions only (`source = 'blob'`): a NAS replace's original is a NAS file in the
+  trash, which ADR 0023 governs. `DELETE /v1/originals` answering `409 compressed` releases the caller's claim, as
+  `mirror` does, so the bytes go at the purge. A purge's `alsoKeptBy` may also say `compress` (another compression
+  holds the bytes). The admin's backup purge removes a phone's kept entries with the rest (the trashed item leaves the
+  trash), but the blobs of a compression stay until its own purge (by route or `trashDays`).
+- **Automatic phone folders.** `"auto": true` with one root: target phone (the caller's root) appends, after each items
+  pass of the backup (the indexer's `AfterBackup`), the videos whose entries were created since the switch and are
+  stored (`blob` or `nas`) and on the phone; a replace's output is never appended (its fingerprint is a record's).
+  Target backup (the web gallery's switch on a phone backup) takes, the same way, only videos whose entries were
+  created since the switch (new recordings) and that are no longer on the phone (freed or deleted): a video still on
+  the phone is never compressed on the server alone, and a video backed up before the switch that is freed later is
+  not new (on demand only; coordinator's ruling).
+- **Held and stalled (with #71's rules).** While a phone restores a blob compression (or restores it again), the kept
+  side's trash location (`mirror`, `gone: "compressed"`) is served `"held": true`; the server's purge acts only on
+  `replaced`/`restored` rows, so a held one answers `{"error": "state"}`. A phone restore no phone reported for 24 hours
+  gets `stalled_at` and counts in `compress.attention.stalled` until the phone reports or gives up; every swap clears it.
+- **Targets.** The feature `compress` (and `compress.available`) is a usable GPU **and at least one usable target**, so
+  a server with a backup folder and no write mount offers phone and backup jobs. `GET /v1/server`'s `compress` object
+  gains `targets: {nas, phone, backup}`, each `{ok, reason?}`: every target needs the GPU (`no_gpu`, `no_tools`) and a
+  backup folder (`no_backup_root`: the work directory and the blob store are there; S1 already refused jobs without it);
+  `nas` also the write mount's gate (`no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`,
+  `unstable_inode`). Job creation answers a target that is not ok with the same reason (`503 unavailable`, or `503
+  storage_not_configured` with `details.reason: "no_backup_root"`); `compress.reason` (feature off) is the nas target's,
+  else the phone's. The setup page's Compression tab shows each target. **Clients:** Hoard 2.7.0 offers NAS jobs only
+  when `targets.nas.ok`; Hoard 2.8.0 offers phone jobs when `targets.phone.ok`. The deployment rule of the S1 review
+  stands: the write mount is added only once every device runs Hoard 2.7.0+ (`held`).
+- **Review nits.** The write mount's writability is probed on the library's NAS folders at their write paths (any one
+  writable is enough), not on the mount's root, which may be root's while the owner's folders are his; the root is
+  probed only when no folder is known. `compress.attention.untrackedTrash` reflects the files still there: after a walk,
+  a failed replace's original that is gone from the trash (Hoard emptied it) loses its `trash_path`, unless the folder
+  looks unmounted.
+- **Review of #72.**
+  - *New since the switch* (automatic phone and backup folders) means the entry **and its shot's item** were first seen
+    since the switch: a row the backup makes again for an old video (the phone moved the file, a root stopped and added
+    again, a claim merging another phone's older backup) keeps its item's first-seen time, so it is not new. The root
+    identifies the phone (it moves with a claimed backup).
+  - *A served output.* Once the phone downloaded a `ready` item's output (`GET …/output`, recorded as the step
+    `phone:served`) it may have written it already: a cancel (of the item or its job) answers its state and leaves it
+    `ready` with its output, and only the phone settles it (`…/replaced`, its backup report, or `…/abandon`). An output
+    never served is cancelled and dropped as before.
+  - *A renamed video.* A swap finds the live side where the phone keeps it now: the item's path, else the phone's entry
+    with that content that holds a path (moved or renamed on the phone); the kept side comes back at that path. A backup
+    report completes a swap at any path of the phone. A restore that finds the live side nowhere answers
+    `live_missing` and restarts the retention instead of letting the trashed side be purged by an old date.
+  - *Abandon `gone`* leaves the path's new owner off the phone (`deleted`), not a file the phone would have.
+  - *Retention.* A phone restore given up on (abandon other than `gone`) restarts `purge_after`.
+  - *Hidden blobs.* While a phone or backup compression is `replaced`, its original's fingerprint makes no `backup`
+    item anywhere (a Reveal upload of the same bytes shows only as the trashed kept item until the purge); the bytes
+    stay (rule 5), and after the purge a claimed upload is a backup item again.
+- **Items in the answers.** Compression items gain `target` (from the job) and `source`; phone and backup items add
+  `rootId`, `volume`, `path` (on the phone), `physicalDeviceId`, `modifiedAt`, `sha256` (the original's), `outSha256`
+  and, while a phone writes, `direction`. Estimate rows of phone and backup targets carry `rootId`, `volume` and the
+  phone path instead of `folderId`.
+- **Tests** (Go, fake encoder): `TestCompressPhoneFlow` (estimate and job of the caller's phone, the output served by
+  range to that phone only, mismatches, `…/replaced` first, the next report uploading and removing nothing, free-up
+  verify of the output, the trashed original with `include=trash` and `trashed=only`, culling moved, restore and
+  restore again by the phone, purge by route), `TestCompressPhoneReportFirst` (the report first, for a replace and a
+  restore), `TestCompressPhoneOwnership` (a Reveal delete, a purge with another claim, a backup purge then the purge by
+  `trashDays`), `TestCompressBackupFreed` (server-only, the entry stays freed and pinned, restore and restore again on
+  the server, purge by `trashDays`), `TestCompressAutomaticPhoneFolder` (new stored videos only, not outputs; the
+  backup target's freed videos), `TestCompressPhoneNasReferenceAndAbandon` (the NAS copy ingested first; abandon
+  verify, gone, refused; cancel). The encoder path did not change, so the GPU test was not re-run.

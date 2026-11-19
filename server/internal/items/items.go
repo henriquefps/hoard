@@ -33,6 +33,10 @@ const (
 	// SourceMirror is a group of a phone backup's root (ADR 0024): folder_id is the root id, dir is relative to the
 	// root.
 	SourceMirror = "mirror"
+	// SourceKept is a phone video's side a compression keeps (ADR 0025 "Phone videos"): one source per kept entry
+	// (folder_id the root id, key its fingerprint), served as its mirror location (gone "compressed") and its backup
+	// location. An item whose every source is a trash or kept is trashed.
+	SourceKept = "kept"
 )
 
 // MirrorRef is what a mirror member adds to a member: where the file is (or was) on its phone, and where its bytes
@@ -43,7 +47,7 @@ type MirrorRef struct {
 	RootID     string `json:"root"`
 	Volume     string `json:"vol"`
 	OnDevice   bool   `json:"on"`
-	Gone       string `json:"gone,omitempty"` // freed | deleted (absent while on the phone)
+	Gone       string `json:"gone,omitempty"` // freed | deleted | compressed (absent while on the phone)
 	// A NAS reference's live NAS file (served as a nas location next to the mirror one).
 	NasFolderID string `json:"nf,omitempty"`
 	NasPath     string `json:"np,omitempty"`

@@ -154,6 +154,16 @@ func PreviousPath(volume, p, contentID string) string {
 	return MetaDir + "/previous/" + TreePath(volume, p) + "~" + id
 }
 
+// CompressedPath is where a compression's kept side (the original after a replace, the output after a restore; ADR
+// 0025) is linked until it is purged: .hoard-mirror/compressed/<tree path>~<sha8>.
+func CompressedPath(volume, p, contentID string) string {
+	id := contentID
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return MetaDir + "/compressed/" + TreePath(volume, p) + "~" + id
+}
+
 // ManifestPath is a root's manifest inside its device folder.
 func ManifestPath(rootID string) string { return MetaDir + "/manifest-" + rootID + ".tsv" }
 

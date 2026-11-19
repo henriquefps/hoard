@@ -35,3 +35,7 @@ POST /v1/compress/cancel
 POST /v1/compress/restore
 POST /v1/compress/purge
 POST /v1/compress/lookup
+GET /v1/compress/items/{compressItemId}/output
+POST /v1/compress/items/{compressItemId}/replaced
+POST /v1/compress/items/{compressItemId}/restored
+POST /v1/compress/items/{compressItemId}/abandon

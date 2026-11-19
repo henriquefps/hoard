@@ -535,6 +535,8 @@ type ReportOutcome struct {
 	// NasOnly lists entries whose only copy became a NAS file (on_device = 0 and store nas): copy them into the store
 	// ("Keep a copy of NAS files a phone no longer has").
 	NasOnly []int64
+	// Compressed lists the blob compressions whose swap the report completed (ADR 0025 "Order does not matter").
+	Compressed []CompressItem
 }
 
 // ReportOptions tunes a report.
@@ -542,6 +544,8 @@ type ReportOptions struct {
 	DeviceID string
 	// UploadLiveSince (ms): another device's unfinished upload touched since then is "in_progress".
 	UploadLiveSince int64
+	// CompressTrashMs: how long a compression's trashed side is kept (ADR 0025), for a swap the report completes.
+	CompressTrashMs int64
 }
 
 // resolveContent finds where the server has a file: uploaded bytes (by SHA-256 when sent, else by fingerprint), an
@@ -636,6 +640,10 @@ func (s *Store) ApplyReport(ctx context.Context, root MirrorRoot, entries []Repo
 				if cur.SHA256 == "" {
 					cur.SHA256 = e.SHA256
 				}
+			} else if done, err := compressRewrite(ctx, tx, had, owner, e, opt, now, &out, touch); err != nil {
+				return err
+			} else if done != nil {
+				cur = *done
 			} else {
 				if had { // rewritten in place: the old content is kept as a previous version
 					if _, err := tx.ExecContext(ctx, `UPDATE mirror_entries SET removed_reason = 'replaced', removed_at = ?, on_device = 0, updated_at = ?
@@ -855,13 +863,19 @@ type MirrorMember struct {
 	NasMTime    int64 // ns
 }
 
-// MirrorMembers lists every member entry, by root.
+// MirrorMembers lists every member entry, by root. Entries a compression keeps (ADR 0025, "compressed") are not
+// members: they are the "kept" sources (CompressedMembers).
 func (s *Store) MirrorMembers(ctx context.Context) (map[string][]MirrorMember, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+mirrorEntryCols+`, r.path, coalesce(f.folder_id, ''), coalesce(f.rel_path, ''), coalesce(f.mtime, 0)
+	return mirrorMembers(ctx, s.db, "e.store IN ('blob', 'nas') AND (e.removed_reason IS NULL OR e.removed_reason NOT IN ('moved', 'compressed'))")
+}
+
+func mirrorMembers(ctx context.Context, q rowsQueryer, where string) (map[string][]MirrorMember, error) {
+	//nolint:gosec // fixed clauses only
+	rows, err := q.QueryContext(ctx, `SELECT `+mirrorEntryCols+`, r.path, coalesce(f.folder_id, ''), coalesce(f.rel_path, ''), coalesce(f.mtime, 0)
 		FROM mirror_entries e JOIN mirror_roots r ON r.id = e.root_id
 		LEFT JOIN nas_files f ON e.store = 'nas' AND f.id = (SELECT f2.id FROM nas_files f2 JOIN nas_folders d2 ON d2.id = f2.folder_id
 			WHERE f2.fingerprint = e.fingerprint AND f2.removed = 0 AND f2.origin_path IS NULL AND d2.enabled = 1 ORDER BY f2.id LIMIT 1)
-		WHERE e.store IN ('blob', 'nas') AND (e.removed_reason IS NULL OR e.removed_reason != 'moved')
+		WHERE `+where+`
 		ORDER BY e.root_id, e.id`)
 	if err != nil {
 		return nil, err
@@ -1133,10 +1147,13 @@ func (s *Store) MirrorNames(ctx context.Context, fp string) (bool, error) {
 }
 
 // contentKept reports whether anything still names an original's content (ADR 0024 "Ownership"): a mirror entry, a
-// device claim or a live photo record.
+// device claim, a live photo record, or a blob compression that is not purged (ADR 0025, rule 5).
 func contentKept(ctx context.Context, tx *sql.Tx, fp, sha string) (bool, error) {
 	if named, err := mirrorNames(ctx, tx, fp, sha); err != nil || named {
 		return named, err
+	}
+	if held, err := compressHolds(ctx, tx, fp, sha); err != nil || held {
+		return held, err
 	}
 	var one int
 	err := tx.QueryRowContext(ctx, "SELECT 1 FROM original_claims WHERE fingerprint = ? LIMIT 1", fp).Scan(&one)

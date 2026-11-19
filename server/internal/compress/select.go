@@ -73,6 +73,10 @@ type Candidate struct {
 	SortTime    int64
 	Others      []string // the item's other NAS copies, left as they are
 	Skip        string   // not_in_target, not_video, not_writable (decided before the rules)
+	// Phone and backup targets (phase S2): the mirror entry (RelPath is then its path on the phone's volume).
+	MirrorEntryID *int64
+	RootID        string
+	Volume        string
 }
 
 // Resolve lists the videos of a NAS selection, newest first: one candidate per item (the copy under the selection).
@@ -285,7 +289,8 @@ func (m *Manager) probeLater(cands []Candidate) {
 					delete(m.probing, c.Fingerprint)
 					m.mu.Unlock()
 				}()
-				f, _, err := m.openNas(ctx, store.CompressItem{FolderID: c.FolderID, RelPath: c.RelPath, Size: c.Size, Fingerprint: c.Fingerprint})
+				f, _, err := m.openSource(ctx, store.CompressItem{FolderID: c.FolderID, RelPath: c.RelPath, Size: c.Size, Fingerprint: c.Fingerprint,
+					MirrorEntryID: c.MirrorEntryID})
 				if err != nil {
 					b, _ := json.Marshal(Probe{Unreadable: true})
 					if errors.Is(err, ErrChanged) || errors.Is(err, os.ErrNotExist) {
@@ -322,6 +327,8 @@ type JobRequest struct {
 	Name      string
 	RequestID string
 	CreatedBy string
+	// PhysicalID: a phone job's phone (the caller's physical device).
+	PhysicalID string
 }
 
 // JobResult is a created job.
@@ -352,15 +359,18 @@ func (m *Manager) CreateJob(ctx context.Context, r JobRequest) (JobResult, error
 		}
 	}
 	priority := 2
-	if r.Auto {
+	switch {
+	case r.Auto:
 		priority = 3
+	case r.Target == TargetPhone:
+		priority = 1
 	}
-	j := store.CompressJob{ID: store.NewUUID(), Target: r.Target, CreatedBy: r.CreatedBy, Name: r.Name, Selection: r.RawSel,
+	j := store.CompressJob{ID: store.NewUUID(), Target: r.Target, PhysicalID: r.PhysicalID, CreatedBy: r.CreatedBy, Name: r.Name, Selection: r.RawSel,
 		Profile: r.Profile.ID, Options: r.Options, Auto: r.Auto, Priority: priority, State: store.JobActive, RequestID: r.RequestID}
 	var rows []store.CompressItem
 	res.Skipped = map[string]int{}
 	if !r.Auto {
-		cands, err := m.Resolve(ctx, r.Selection)
+		cands, err := m.ResolveTarget(ctx, r.Target, r.PhysicalID, r.Selection)
 		if err != nil {
 			return res, err
 		}
@@ -376,6 +386,9 @@ func (m *Manager) CreateJob(ctx context.Context, r JobRequest) (JobResult, error
 			}
 			it := store.CompressItem{ItemID: e.ItemID, Fingerprint: e.Fingerprint, Size: e.Size, Source: "nas", FolderID: e.FolderID,
 				RelPath: e.RelPath, Priority: priority, OrderKey: e.SortTime}
+			if e.MirrorEntryID != nil {
+				it.Source, it.FolderID, it.MirrorEntryID = "blob", "", e.MirrorEntryID
+			}
 			if e.DurationMs > 0 {
 				it.DurationMs = i64(e.DurationMs)
 			}

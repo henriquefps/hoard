@@ -506,33 +506,43 @@ Changes to existing routes, all optional for clients:
 
 Added by ADR 0025, which is the reference (the recipe, the skip rules, the verification, the job model, the trash
 interplay). Additions only; Reveal never calls these routes. `features` gains `"compress"` only when the start-up check
-passed (a `hevc_nvenc` test encode, CUDA decode of it, libvmaf, exiftool: the `-nvidia` image with the GPU). Schema 12
-(`0012_compress.sql`: `compress_jobs`, `compress_items`, `video_probe`; new tables only). Phase S1 serves **`target:
-"nas"`**: library videos replaced in place through the server's write mount (`NAS_WRITE_ROOT`, `/mnt/nas-write`), the
-original moved into the folder's trash (ADR 0023, `.hoard-trash`); `"phone"` and `"backup"` answer `422
-invalid_request` (`details.reason: "target_not_supported"`) until phase S2, which also adds the four phone routes
-(`GET /v1/compress/items/{id}/output`, `POST …/replaced`, `…/restored`, `…/abandon`).
+passed (a `hevc_nvenc` test encode, CUDA decode of it, libvmaf, exiftool: the `-nvidia` image with the GPU) and at least
+one target is usable (`compress.targets`, below). Schema 12
+(`0012_compress.sql`: `compress_jobs`, `compress_items`, `video_probe`; new tables only). Three targets:
+**`"nas"`** (phase S1): library videos replaced in place through the server's write mount (`NAS_WRITE_ROOT`,
+`/mnt/nas-write`), the original moved into the folder's trash (ADR 0023, `.hoard-trash`); **`"phone"`** (phase S2): the
+caller's own phone videos from their backup (ADR 0024), the output a blob the phone downloads, writes over its file in
+place and reports; **`"backup"`** (phase S2): phone backups' videos no longer on their phone (freed or deleted),
+compressed by the server alone. A phone or backup original stays a trashed server item (its mirror entry `compressed`,
+pinned) until it is purged.
 
 `GET /v1/server` gains, with the feature or when jobs exist, `"compress": {"available", "reason" (null | "no_gpu" |
 "no_tools"), "gpu", "codecs", "vmaf", "cudaDecode", "sessions", "nasWrite", "offerAv1", "trashDays", "profiles":
 [{"id", "codec", "q", "default"?, "optIn"?}], "limits": {"maxItemsPerJob": 5000, "maxEstimate": 500, "maxBatch":
 1000}}`. A selection is `{"folders": [{"folderId", "path"?, "recursive"? (true)}], "filter"?: {"from"?, "to"?,
-"minBytes"?}}` or `{"itemIds": [...]}` (≤ 5000): live NAS video items, one copy per item (the one under the
-selection; the others are named in `otherCopies`). A compression item has a string `id`; `itemIds` of cancel, restore
+"minBytes"?}}` or `{"itemIds": [...]}` (≤ 5000): for target nas, live NAS video items, one copy per item (the one under
+the selection; the others are named in `otherCopies`). Targets phone and backup name `{"roots": [{"rootId", "path"?}],
+"filter"?}` (backup roots; `path` is a path on the root's volume inside the root, `""` the whole root; a phone target's
+roots are the caller's) or `itemIds`: a phone target takes the caller's current phone files, a backup target the files
+no longer on their phone (any phone); other videos are `skip` `not_in_target`. A compression item has a string `id`; `itemIds` of cancel, restore
 and purge take those or gallery item ids (that item's newest compression, as original or output).
 
 | Method and path | Answer |
 | --- | --- |
-| `POST /v1/compress/estimate` `{target, select, profile?, options?, cursor?}` | `200 {"items": [{"itemId", "fingerprint", "name", "folderId", "path", "size", "durationMs", "decision": "encode" \| "skip" \| "pending", "reason"?, "estSize"?, "estSaving"?, "estMs"?, "warnings"?}], "totals": {"items", "encode", "skip": {reason: n}, "size", "estSize", "estMs"}, "pending", "next"}`, 500 items a page (`cursor` = `next`). A video not probed yet is `pending` (probed in the background; `Retry-After`). Without the write mount: `503 unavailable`, reason `no_write_mount`. |
-| `POST /v1/compress/jobs` `{target, select, profile?, options?, auto?, name?, requestId}` | `201` the job with `queued`, `skipped` (by reason) and `busy` (item ids in an unfinished job, left out); `200` with the job for a `requestId` used before. `options`: `{"quality": {"mode": "floor" (default, VMAF 93) \| "fixed" \| "target" (95), "vmaf"?}, "set": "lean" (default) \| "quality"}`. `"auto": true` with one folder: the folder's "Compress automatically" (a standing job, priority 3, the default profile, never AV1: `422`), covering only videos that appear after it; `409 conflict` reason `exists` (`details.job`) when the folder has one. `409 conflict` reason `busy` (`details.itemIds`) when every video is in an unfinished job (no job made). AV1 before the admin's "Offer AV1": `422`. `503 unavailable` (`no_gpu`, `no_tools`, `no_write_mount`), `503 storage_not_configured` without a backup folder. |
+| `POST /v1/compress/estimate` `{target, select, profile?, options?, cursor?}` | `200 {"items": [{"itemId", "fingerprint", "name", "folderId", "path", "size", "durationMs", "decision": "encode" \| "skip" \| "pending", "reason"?, "estSize"?, "estSaving"?, "estMs"?, "warnings"?}], "totals": {"items", "encode", "skip": {reason: n}, "size", "estSize", "estMs"}, "pending", "next"}`, 500 items a page (`cursor` = `next`); phone and backup items carry `rootId`, `volume` and the phone `path` instead of `folderId`. A video not probed yet is `pending` (probed in the background; `Retry-After`). Target nas without the write mount: `503 unavailable`, reason `no_write_mount`. |
+| `POST /v1/compress/jobs` `{target, select, profile?, options?, auto?, name?, requestId}` | `201` the job with `queued`, `skipped` (by reason) and `busy` (item ids in an unfinished job, left out); `200` with the job for a `requestId` used before. `options`: `{"quality": {"mode": "floor" (default, VMAF 93) \| "fixed" \| "target" (95), "vmaf"?}, "set": "lean" (default) \| "quality"}`. Priorities: 1 phone, 2 nas and backup, 3 automatic. `"auto": true` with one folder (or one root): its "Compress automatically" (a standing job, priority 3, the default profile, never AV1: `422`), covering only videos that appear after it (nas: new items of a walk; phone: files the backup stores after it; backup: files backed up after it, once they are no longer on their phone); `409 conflict` reason `exists` (`details.job`) when the folder has one. `409 conflict` reason `busy` (`details.itemIds`) when every video is in an unfinished job (no job made). AV1 before the admin's "Offer AV1": `422`. `503 unavailable` (`no_gpu`, `no_tools`, `no_write_mount` for target nas), `503 storage_not_configured` without a backup folder. |
 | `GET /v1/compress/jobs?state=&auto=&cursor=&limit=` | `{"jobs": [...], "cursor", "hasMore"}`, newest first. A job: `{"id", "target", "name", "profile", "options", "select", "auto", "priority", "state" (active \| paused \| cancelled \| done), "paused", "createdAt", "finishedAt", "createdBy", "counts": {state: n}, "skipped": {reason: n}, "failed": {reason: n}, "bytes": {"original", "output", "saved", "inTrash"}, "progress": {"done", "toDo", "etaMs", "current"?: {"id", "itemId", "state", "percent"?}}}`. |
 | `GET /v1/compress/jobs/{jobId}` | One job. |
 | `PATCH /v1/compress/jobs/{jobId}` `{"paused"?, "priority"? (0–3), "auto"?: false}` | The job. `"auto": false` turns the folder's switch off: its queued items are cancelled, replaced ones stay. A finished job: `409 conflict` reason `state`. |
-| `GET /v1/compress/items?jobId=&state=&mine=&cursor=&limit=` | `{"items": [{"id", "jobId", "itemId", "fingerprint", "folderId", "path", "name", "state", "reason", "size", "estSize"?, "outSize"?, "outFingerprint"?, "q"?, "vmaf"?: {"mean", "low", "mode"}, "encodeMs"?, "verifyMs"?, "decoder"?, "progress"?, "metaSidecar", "trashPath"?, "replacedAt"?, "trashedAt"?, "purgeAfter"?, "purgedAt"?, "restoredAt"?, "logAvailable"}], "cursor", "hasMore"}`. `mine=true` (phone items) is empty before S2. |
-| `POST /v1/compress/cancel` `{"jobId"}` \| `{"itemIds"}` | `{"items": {id: {"state"} \| {"error": "not_found"}}}`: queued to ready items become `cancelled` (running processes killed, work files removed); later states are answered as they are. |
-| `POST /v1/compress/restore` `{"itemIds"}` (≤ 1000) | `{"items": {id: {"id", "state": "replacing"} \| {"error": "state" \| "not_found"}}}`. A replaced item is restored in the background (the output into the trash, the original back at its path: `restored`); a restored one is replaced again. Works without a GPU; `503 no_write_mount` without the mount. |
-| `POST /v1/compress/purge` `{"jobId"}` \| `{"itemIds"}` (≤ 1000) | Deletes the trashed file of each replaced or restored item now: `{"items": {id: {"id", "state": "purged"} \| {"error"}}}`. Works without a GPU. |
+| `GET /v1/compress/items?jobId=&state=&mine=&cursor=&limit=` | `{"items": [{"id", "jobId", "itemId", "fingerprint", "folderId", "path", "name", "state", "reason", "size", "estSize"?, "outSize"?, "outFingerprint"?, "q"?, "vmaf"?: {"mean", "low", "mode"}, "encodeMs"?, "verifyMs"?, "decoder"?, "progress"?, "metaSidecar", "trashPath"?, "replacedAt"?, "trashedAt"?, "purgeAfter"?, "purgedAt"?, "restoredAt"?, "logAvailable"}], "cursor", "hasMore"}`; `target`, `source` (`nas` \| `blob`); phone and backup items add `rootId`, `volume`, `path` (on the phone), `physicalDeviceId`, `modifiedAt` (the original's phone mtime), `sha256` (the original's), `outSha256`, and while a phone writes, `direction` (`compress` \| `restore`). `mine=true`: the phone items of the caller's phone. |
+| `POST /v1/compress/cancel` `{"jobId"}` \| `{"itemIds"}` | `{"items": {id: {"state"} \| {"error": "not_found"}}}`: queued to ready items become `cancelled` (running processes killed, work files removed, a phone output blob dropped); later states are answered as they are. |
+| `POST /v1/compress/restore` `{"itemIds"}` (≤ 1000) | `{"items": {id: {"id", "state": "replacing"} \| {"error": "state" \| "not_found"}}}`. A replaced item is restored in the background (the output into the trash, the original back at its path: `restored`); a restored one is replaced again. Phone and backup items: swapped by the server at once (`restored`, `replaced`), or, when the file is on the phone of a phone job, `replacing` until the phone reports (`…/restored`, `…/replaced`). Works without a GPU; `503 no_write_mount` without the mount when every item is a NAS one. |
+| `POST /v1/compress/purge` `{"jobId"}` \| `{"itemIds"}` (≤ 1000) | Deletes the trashed file of each replaced or restored item now: `{"items": {id: {"id", "state": "purged", "alsoKeptBy"?} \| {"error"}}}`. Phone and backup items: the kept entry and its link go, the blob too unless something keeps it (`alsoKeptBy`: `claim`, `mirror`, `record`, `compress`). Works without a GPU. |
 | `POST /v1/compress/lookup` `{"fingerprints"}` (≤ 1000) | `{"fingerprints": {fp: {"role": "original" \| "output", "id", "itemId", "state", "jobId", "profile", "purgeAfter"?}}, "missing": [...]}`. |
+| `GET /v1/compress/items/{compressItemId}/output` | A phone item's output (the caller's phone only; `ready`, or `replacing` for a restore again), `Range` supported, `ETag: "<sha256>"`, `X-Hoard-Sha256`, `X-Hoard-Fingerprint`; else `404 not_found`. A restore downloads the original through `GET /v1/originals/{fingerprint}`. |
+| `POST /v1/compress/items/{compressItemId}/replaced` `{"fingerprint", "sha256", "size", "modifiedAt"}` | The phone wrote the output at its path (fingerprint, SHA-256 and size the output's, `modifiedAt` the original's within 2 s): in one transaction the original's entry becomes `compressed` (pinned, linked under `.hoard-mirror/compressed/`) and the output takes the path; `200` the item (`replaced`). `409 conflict` reason `mismatch` (another file) or `state` (not waiting for it). The phone's backup report of the output first does the same (it answers `stored`, nothing is uploaded and nothing is a previous version); the route then answers the item as it is. |
+| `POST /v1/compress/items/{compressItemId}/restored` `{"fingerprint", "sha256", "size", "modifiedAt"}` | The phone wrote the original back (a phone restore, `replacing`): the output's entry becomes `compressed`, the original's takes the path; `200` (`restored`). Same errors. |
+| `POST /v1/compress/items/{compressItemId}/abandon` `{"reason": "verify" \| "changed" \| "gone" \| "refused"}` | `200` the item: `gone` finishes it on the server (`replaced`, or the restore done there); `verify` → `failed` `verify_phone`, `changed` → `failed` `source_changed`, `refused` → `cancelled` `refused`, the output blob dropped when nothing else keeps it; a phone restore given up on goes back to `replaced` (`restored`). `409 conflict` reason `state` when the item is not waiting for the phone. |
 
 Items: a compression's output item gains `"compressed": {"from", "fromItem", "profile", "q", "at", "original":
 "trashed" | "purged", "originalSize", "metaSidecar"}`; a trashed item whose file a compression replaced (and an output
@@ -540,9 +550,19 @@ trashed by a restore) gains `"compressedTo"` and `"replacedBy"` (the live item: 
 again, as for a tombstone, ADR 0014/0020/0016), served whole with `include=trash`; without it, its tombstone shape
 carries `replacedBy`. A purged original is a tombstone with `replacedBy`. A trash location an unfinished compression
 journal holds carries `"held": true`: clients must not empty it. `features` lists `compress` only with a working GPU and
-a usable write mount; `compress.reason` says why not (`no_gpu`, `no_tools`, `no_write_mount`, `write_mount_mismatch`,
-`write_mount_read_only`, `unstable_inode`), and `compress.attention` counts waiting journals (`stalled`,
-`stalledSince`) and originals left untracked in a trash (`untrackedTrash`). `GET /v1/originals/{fingerprint}` and the
+a usable target. `compress.targets` is `{"nas": {"ok", "reason"?}, "phone": {…}, "backup": {…}}`: every target needs the
+GPU (`no_gpu`, `no_tools`) and a backup folder (`no_backup_root`); `nas` also the write mount's gate (`no_write_mount`,
+`write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`); `POST /v1/compress/jobs` answers a target that is
+not ok with the same reason (`503 unavailable`, or `503 storage_not_configured` with reason `no_backup_root`). Hoard
+2.7.0 offers NAS jobs only when `targets.nas.ok`, Hoard 2.8.0 phone jobs when `targets.phone.ok`; the write mount is
+still added only once every device runs Hoard 2.7.0+ (it honours `held`). `compress.reason` says why the feature is off
+(the nas target's reason, else the phone's), and `compress.attention` counts waiting journals (`stalled`,
+`stalledSince`) and originals left untracked in a trash (`untrackedTrash`). A phone or backup original is trashed through a
+new item source, its kept entry: a `mirror` location with `onDevice: false` and `gone: "compressed"` (clients treat an
+unknown `gone` as `deleted`) next to its `backup` location; while a phone swap or restore of it is unfinished, that
+location carries `"held": true` too. `DELETE /v1/originals/{fingerprint}` of either side of a phone or backup compression
+that is not purged answers `409 conflict` reason `compressed` (the caller's claim is released, as for `mirror`).
+`GET /v1/originals/{fingerprint}` and the
 fingerprint lookup find a trashed original until it is purged. The server writes the NAS only through the write mount,
 for these replaces, restores and purges (ADR 0025 "Containment"); every other write rule of ADR 0023 holds.
 

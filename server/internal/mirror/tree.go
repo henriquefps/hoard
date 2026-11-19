@@ -258,9 +258,9 @@ type ManifestRow struct {
 	Size        int64
 	SHA256      string
 	Fingerprint string
-	Where       string // blob | blob-unlinked | nas:<folder name>/<path> | none | previous:<path>
+	Where       string // blob | blob-unlinked | nas:<folder name>/<path> | none | previous:<path> | compressed:<path>
 	OnDevice    bool
-	Removed     string // '' | deleted | moved | freed | replaced
+	Removed     string // "" | deleted | moved | freed | replaced | compressed
 }
 
 func field(s string) string {

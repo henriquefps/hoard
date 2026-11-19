@@ -44,6 +44,9 @@ var (
 type WriteMount struct {
 	ReadRoot, WriteRoot string
 	Link                Linker // nil: os.Root.Link
+	// Folders lists the read paths of the library's NAS folders (nil: none known): writability is probed on them, not
+	// on the mount's root, which may belong to root while the owner's folders are his.
+	Folders func() []string
 }
 
 // Available reports whether the write mount exists.
@@ -66,10 +69,38 @@ func (m *WriteMount) Usable() string {
 	if err1 != nil || err2 != nil || !sameFile(r, w) {
 		return "write_mount_mismatch"
 	}
-	if syscall.Access(m.WriteRoot, 2 /* W_OK */) != nil {
+	if !m.writable() {
 		return "write_mount_read_only"
 	}
 	return ""
+}
+
+// writable reports whether the server's user may write a library folder through the write mount: any NAS folder under
+// the read mount, at its write path; the mount's root only when no folder is known.
+func (m *WriteMount) writable() bool {
+	var dirs []string
+	if m.Folders != nil {
+		dirs = m.Folders()
+	}
+	readRoot, err := filepath.EvalSymlinks(m.ReadRoot)
+	if err != nil {
+		readRoot = m.ReadRoot
+	}
+	known := false
+	for _, d := range dirs {
+		if real, err := filepath.EvalSymlinks(d); err == nil {
+			d = real
+		}
+		rel, err := filepath.Rel(readRoot, d)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
+			continue
+		}
+		known = true
+		if syscall.Access(filepath.Join(m.WriteRoot, rel), 2 /* W_OK */) == nil {
+			return true
+		}
+	}
+	return !known && syscall.Access(m.WriteRoot, 2 /* W_OK */) == nil
 }
 
 // Folder opens the write path of a NAS folder whose read path is readDir, after proving it: the same directory

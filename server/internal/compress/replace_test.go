@@ -179,3 +179,38 @@ func TestMoveFile(t *testing.T) {
 		t.Fatal("content")
 	}
 }
+
+// Writability is probed on the library's folders, not on the mount's root: a root the server cannot write (root-owned
+// on the host) over folders it can write keeps the feature on; no writable folder turns it off.
+func TestWriteMountWritableProbesFolders(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root writes everything")
+	}
+	nas := t.TempDir()
+	photos, other := filepath.Join(nas, "Photos"), filepath.Join(nas, "Other")
+	for _, d := range []string{photos, other} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(nas, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(nas, 0o700) })
+	if p := (&WriteMount{ReadRoot: nas, WriteRoot: nas}).Usable(); p != "write_mount_read_only" {
+		t.Fatalf("no folder known, a read-only root: %q", p)
+	}
+	m := &WriteMount{ReadRoot: nas, WriteRoot: nas, Folders: func() []string { return []string{other, photos} }}
+	if p := m.Usable(); p != "" {
+		t.Fatalf("writable folders under a read-only root: %q", p)
+	}
+	for _, d := range []string{photos, other} {
+		if err := os.Chmod(d, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(d, 0o700) })
+	}
+	if p := m.Usable(); p != "write_mount_read_only" {
+		t.Fatalf("no writable folder: %q", p)
+	}
+}

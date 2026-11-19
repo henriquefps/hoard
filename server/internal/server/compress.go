@@ -57,14 +57,34 @@ func (s *Server) newCompress() *compress.Manager {
 			}
 			return ""
 		},
-		Mount:     &compress.WriteMount{ReadRoot: cfg.NasReadRoot, WriteRoot: cfg.NasWriteRoot, Link: cfg.CompressLinker},
+		Mount: &compress.WriteMount{ReadRoot: cfg.NasReadRoot, WriteRoot: cfg.NasWriteRoot, Link: cfg.CompressLinker,
+			Folders: s.nasFolderDirs},
 		FolderDir: s.nasFolderDir,
 		Prober:    &compress.Prober{FFprobe: ffprobe, Timeout: max(cfg.ProbeTimeout, 30*time.Second)},
 		Encoder:   enc, Verifier: ver, Detector: det, NVML: nvml,
 		Sessions: max(cfg.CompressSessions, 1), CPUWorkers: 2, Poll: cfg.CompressPoll,
 		Refresh:     s.refreshItems,
+		Blobs:       compressBlobs{s},
 		RequestWalk: func(ids []string) { s.indexer.RequestWalk(ids) },
 	})
+}
+
+// nasFolderDirs lists the read paths of the enabled NAS folders (the write mount's writability is probed on them).
+func (s *Server) nasFolderDirs() []string {
+	fs, err := s.store.NasFolders(context.Background())
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, f := range fs {
+		if !f.Enabled {
+			continue
+		}
+		if d, err := s.roots.Resolve(f.Path); err == nil {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // nasFolderDir resolves a NAS folder's read path.

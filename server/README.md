@@ -226,6 +226,12 @@ or with `POST /v1/compress/restore` until the trash is emptied (Hoard's Empty, i
 retention of what it trashed, 30 days, on the setup page). Nothing runs until you start a job or turn "Compress
 automatically" on for a folder.
 
+Phone videos (ADR 0025, phase S2) are compressed from their backup (ADR 0024): the output is a new blob, and Hoard
+writes it over the phone's file in place and reports it; the phone backup then holds the output at that path, and the
+original stays a trashed server item (pinned, linked under `.hoard-mirror/compressed/`) until it is emptied or the
+same retention passes. Videos no longer on the phone (freed) are compressed on the server alone: the backup's entry
+stays freed and pinned with the output's content. Neither needs the write mount.
+
 What it needs:
 
 - the **`ghcr.io/henriquefps/hoard-server:<version>-nvidia`** image (Debian, amd64 only: the driver's libraries are
@@ -421,8 +427,9 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
   mode 0600 (0400 once a phone backup links them, 0.12.0).
 - `<backup folder>/<phone name> (<8 hex digits>)/` (0.12.0, ADR 0024) mirrors a phone's backed-up folders: hard links
   into `reveal-sync/blobs/`, plus `.hoard-mirror/manifest-<root>.tsv` (every file of a folder: path, size, SHA-256,
-  fingerprint, where its bytes are, whether the phone still has it) and `.hoard-mirror/previous/` (earlier content of
-  files rewritten on the phone). The tree plus its manifests describe a phone's backup without the database. Copy it
+  fingerprint, where its bytes are, whether the phone still has it), `.hoard-mirror/previous/` (earlier content of
+  files rewritten on the phone) and `.hoard-mirror/compressed/` (0.13.0: originals of compressed phone videos, until
+  they are emptied from the trash). The tree plus its manifests describe a phone's backup without the database. Copy it
   with hard links preserved (`cp -a`, `rsync -aH`). The setup page can rename a phone's folder. The backup folder is fixed once it holds files: to move it, stop the server, move the `reveal-sync`
   folder to the new place, mount it at the same path inside the container (or update the `backupRoot` setting).
 - `/data/edits/` holds Reveal's edited previews (0.9.0, ADR 0020; one file per image, named by its SHA-256, metadata

@@ -33,7 +33,9 @@ tags:
   - name: backup
     description: Phone backup (ADR 0024, hoard-server 0.12.0).
   - name: compress
-    description: Video compression (ADR 0025, hoard-server 0.13.0). Phase S1 serves target nas.
+    description: >-
+      Video compression (ADR 0025, hoard-server 0.13.0): targets nas (the library), phone (the caller's phone files)
+      and backup (phone backups no longer on their phone).
   - name: web
     description: The web gallery's API (ADR 0018), outside /v1.
 paths:
@@ -274,7 +276,9 @@ paths:
           description: >-
             `conflict`, `details.reason` = `referenced`: a live photo record still names it; or (0.12.0, ADR 0024)
             `mirror`: a phone backup entry (current, deleted or freed) names the file. Nothing is deleted; the calling
-            device's claim on it is released, so the bytes go when the backup no longer needs them.
+            device's claim on it is released, so the bytes go when the backup no longer needs them. Or (0.13.0, ADR 0025)
+            `compressed`: a video compression keeps it (the original or output of a phone or backup compression, until
+            it is purged from the trash); the calling device's claim is released the same way.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1854,8 +1858,9 @@ paths:
       description: >-
         Informative: the job estimates again. Probes not read yet are read in the background; such a video is
         `pending` (counted in `pending`, `Retry-After` set) until a later call. At most `limits.maxEstimate` items per
-        page; `totals` cover the whole selection. Targets phone and backup are `422` (`details.reason`
-        `target_not_supported`) until phase S2. Without the write mount: `503 unavailable`, reason `no_write_mount`.
+        page; `totals` cover the whole selection. Target nas without the write mount: `503 unavailable`, reason
+        `no_write_mount`. Target phone takes the caller's own phone files (current, on the phone); target backup the
+        phone backups' files no longer on their phone; other videos are `skip` `not_in_target`.
       requestBody:
         required: true
         content:
@@ -1895,10 +1900,12 @@ paths:
       description: >-
         `201` the job with `queued`, `skipped` (counts by reason) and `busy` (item ids already in an unfinished job,
         left out); `200` with the job when `requestId` was used before. `"auto": true` with a single folder makes the
-        folder's standing job (default profile, never AV1, `422`): only videos that appear after it are compressed;
-        `409 conflict` reason `exists` (with `details.job`) when the folder has one. `409 conflict` reason `busy` when
-        every video is already in an unfinished job. `503 unavailable` reason `no_gpu`, `no_tools` or
-        `no_write_mount`; `503 storage_not_configured` without a backup folder (the work directory lives there).
+        folder's standing job (default profile, never AV1, `422`): only videos that appear after it are compressed (a
+        NAS folder: new items of the walk; a phone root, target phone: files the backup stores after it; target backup:
+        files backed up after it, once they are no longer on their phone); `409 conflict` reason `exists` (with `details.job`) when the folder has
+        one. `409 conflict` reason `busy` when every video is already in an unfinished job. `503 unavailable` reason
+        `no_gpu`, `no_tools` or `no_write_mount` (target nas); `503 storage_not_configured` without a backup folder (the
+        work directory lives there).
       requestBody:
         required: true
         content:
@@ -1982,7 +1989,7 @@ paths:
       parameters:
         - { name: jobId, in: query, schema: { $ref: "#/components/schemas/Uuid" } }
         - { name: state, in: query, schema: { type: string }, description: "Comma-separated states" }
-        - { name: mine, in: query, schema: { type: boolean }, description: "Phone items of the caller's phone (phase S2; none before)" }
+        - { name: mine, in: query, schema: { type: boolean }, description: "Phone items (target phone) of the caller's phone" }
         - { name: cursor, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer } }
       responses:
@@ -2024,6 +2031,9 @@ paths:
         original back at its path, `replacedBy` reversed by the next walk); for a restored one, the same again
         (`replaced`). Not restorable (purged, running, another file at the path): `{"error": "state"}` for that item.
         `itemIds` takes compression item ids or gallery item ids (the item's newest compression, original or output).
+        Phone and backup items (0.13.0, phase S2) are swapped by the server at once (`restored`, or `replaced` again),
+        unless the file is on the phone of a phone job: then `replacing` until the phone writes the file and reports
+        `…/restored` (or `…/replaced` for a restore again). `503 no_write_mount` only when every item is a NAS one.
       requestBody:
         required: true
         content:
@@ -2044,7 +2054,10 @@ paths:
       summary: Empty the trashed file of replaced or restored items now (0.13.0)
       description: >-
         Deletes, through the write mount, the trashed original (or the output after a restore): the item becomes
-        `purged` and the space is saved. Without a GPU this still works.
+        `purged` and the space is saved. Without a GPU this still works. Phone and backup items: the kept entry and its
+        link go, and the blob goes unless something else keeps it: then the answer's `alsoKeptBy` lists why (`claim`, a
+        device asked for it; `mirror`, a phone backup names it; `record`, a live Reveal photo record; `compress`,
+        another compression).
       requestBody:
         required: true
         content:
@@ -2092,6 +2105,99 @@ paths:
                         purgeAfter: { type: integer, format: int64 }
                   missing: { type: array, items: { $ref: "#/components/schemas/Fingerprint" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/compress/items/{compressItemId}/output:
+    get:
+      tags: [compress]
+      summary: "A phone item's output, by range (0.13.0, phase S2)"
+      description: >-
+        Only for phone items (target phone) of the caller's phone while it may need it: `ready`, or `replacing` for a
+        restore again by the phone; else `404 not_found`. `ETag` is the output's SHA-256 (quoted); `Range` and
+        `If-Range` work as for blobs. A restore downloads the original through `GET /v1/originals/{fingerprint}`.
+      parameters:
+        - { name: compressItemId, in: path, required: true, schema: { type: string }, description: "The compression item's id" }
+        - $ref: "#/components/parameters/Range"
+      responses:
+        "200":
+          description: The output
+          headers:
+            X-Hoard-Sha256: { schema: { $ref: "#/components/schemas/Sha256" } }
+            X-Hoard-Fingerprint: { schema: { $ref: "#/components/schemas/Fingerprint" } }
+          content: { application/octet-stream: { schema: { type: string, format: binary } } }
+        "206": { description: A range of the output }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /v1/compress/items/{compressItemId}/replaced:
+    post:
+      tags: [compress]
+      summary: "The phone wrote the output over its file (0.13.0, phase S2)"
+      description: >-
+        The phone reports the file now at the path: fingerprint, SHA-256 and size must be the output's and modifiedAt
+        the original's (within 2 s), else `409 conflict` reason `mismatch`. In one transaction the original's entry
+        becomes `compressed` (pinned, a trashed server item until purged) and the output takes the path; the item is
+        `replaced`. Its next backup report finds the output already stored (nothing is uploaded). A report that
+        arrived first did the same: the call then answers the item as it is. Also used for a restore again by the
+        phone (`replacing`, `direction` compress). Not waiting for it: `409 conflict` reason `state`.
+      parameters:
+        - { name: compressItemId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompressPhoneFile" }
+      responses:
+        "200": { description: The item, content: { application/json: { schema: { $ref: "#/components/schemas/CompressItem" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "`conflict` reason `mismatch` or `state`" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/compress/items/{compressItemId}/restored:
+    post:
+      tags: [compress]
+      summary: "The phone wrote the original back over its file (0.13.0, phase S2)"
+      description: >-
+        The end of a phone restore (`replacing`, `direction` restore): fingerprint, SHA-256 and size must be the
+        original's and modifiedAt the original's (within 2 s). The output's entry becomes `compressed` (the trashed
+        side), the original takes the path again; the item is `restored`.
+      parameters:
+        - { name: compressItemId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompressPhoneFile" }
+      responses:
+        "200": { description: The item, content: { application/json: { schema: { $ref: "#/components/schemas/CompressItem" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "`conflict` reason `mismatch` or `state`" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/compress/items/{compressItemId}/abandon:
+    post:
+      tags: [compress]
+      summary: "The phone gives a phone item up (0.13.0, phase S2)"
+      description: >-
+        `gone` (the file is no longer on the phone): the server finishes it as a backup item (`replaced`, or the
+        restore done on the server). `verify` (the output failed the phone's checks twice): `failed`, reason
+        `verify_phone`; `changed` (the phone file changed): `failed`, reason `source_changed`; `refused` (the owner
+        refused the system's write request): `cancelled`, reason `refused`. The output blob is dropped when nothing
+        else keeps it. A phone restore given up on (other than `gone`) goes back to `replaced` (or `restored`).
+      parameters:
+        - { name: compressItemId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, enum: [verify, changed, gone, refused] }
+      responses:
+        "200": { description: The item, content: { application/json: { schema: { $ref: "#/components/schemas/CompressItem" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "`conflict` reason `state`: the item is not waiting for the phone" }
         "422": { $ref: "#/components/responses/Unprocessable" }
 components:
   securitySchemes:
@@ -2246,16 +2352,39 @@ components:
                     id: { type: string }
                     state: { type: string }
                     error: { type: string }
+                    alsoKeptBy: { type: array, items: { type: string, enum: [claim, mirror, record, compress] }, description: "purge of a phone or backup item: why the bytes stay" }
   schemas:
+    CompressTarget:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        reason: { type: string, enum: [no_gpu, no_tools, no_backup_root, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode] }
+    CompressPhoneFile:
+      type: object
+      required: [fingerprint, sha256, size, modifiedAt]
+      properties:
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        sha256: { $ref: "#/components/schemas/Sha256" }
+        size: { type: integer, format: int64 }
+        modifiedAt: { type: integer, format: int64, description: "The file's mtime on the phone, Unix ms (the original's)" }
     CompressRequest:
       type: object
       required: [target, select]
       properties:
-        target: { type: string, enum: [nas, phone, backup], description: "0.13.0 serves nas" }
+        target: { type: string, enum: [nas, phone, backup] }
         select:
           type: object
-          description: "Either folders (with an optional filter) or itemIds"
+          description: "Either folders (target nas) or roots (targets phone and backup), with an optional filter, or itemIds"
           properties:
+            roots:
+              type: array
+              items:
+                type: object
+                required: [rootId]
+                properties:
+                  rootId: { $ref: "#/components/schemas/Uuid", description: "A phone backup root (target phone: of the caller's phone)" }
+                  path: { type: string, description: "A path on the root's volume inside the root (\"\" = the whole root)" }
             folders:
               type: array
               items:
@@ -2291,7 +2420,9 @@ components:
         fingerprint: { $ref: "#/components/schemas/Fingerprint" }
         name: { type: string }
         folderId: { $ref: "#/components/schemas/Uuid" }
-        path: { type: string }
+        rootId: { $ref: "#/components/schemas/Uuid", description: "Phone and backup targets: the backup root" }
+        volume: { type: string, description: "Phone and backup targets: the phone's volume" }
+        path: { type: string, description: "nas: relative to the folder; phone and backup: the path on the phone's volume" }
         otherCopies: { type: array, items: { type: string }, description: "The item's other NAS copies (folderId:path), left as they are" }
         durationMs: { type: integer, format: int64 }
         size: { type: integer, format: int64 }
@@ -2348,10 +2479,18 @@ components:
         jobId: { $ref: "#/components/schemas/Uuid" }
         itemId: { $ref: "#/components/schemas/Uuid", description: "The original's item when queued" }
         fingerprint: { $ref: "#/components/schemas/Fingerprint" }
-        target: { type: string }
+        target: { type: string, enum: [nas, phone, backup] }
+        source: { type: string, enum: [nas, blob] }
         folderId: { $ref: "#/components/schemas/Uuid" }
-        path: { type: string }
+        path: { type: string, description: "nas: relative to the folder; phone and backup: the path on the phone's volume" }
         name: { type: string }
+        rootId: { $ref: "#/components/schemas/Uuid", description: "Phone and backup items: the backup root" }
+        volume: { type: string }
+        physicalDeviceId: { $ref: "#/components/schemas/Uuid" }
+        modifiedAt: { type: integer, format: int64, description: "Phone and backup items: the original's mtime on the phone (Unix ms)" }
+        sha256: { $ref: "#/components/schemas/Sha256", description: "Phone and backup items: the original's" }
+        outSha256: { $ref: "#/components/schemas/Sha256", description: "Phone and backup items: the output's" }
+        direction: { type: string, enum: [compress, restore], description: "A phone item replacing: what the phone writes (the output, or the original back)" }
         state:
           type: string
           enum: [queued, estimating, skipped, encoding, verifying, failed, ready, replacing, replaced, restored, purged, cancelled]
@@ -2539,13 +2678,27 @@ components:
           type: object
           description: >-
             Video compression (ADR 0025, 0.13.0): present with a GPU, the feature or jobs. `available` (and the feature
-            `compress`) needs a working GPU and a usable write mount; `reason` says why not.
+            `compress`) needs a working GPU and at least one usable target (`targets`); `reason` says why not (the nas
+            target's reason, else the phone's). Hoard 2.7.0 offers NAS jobs only when `targets.nas.ok`; Hoard 2.8.0
+            offers phone jobs when `targets.phone.ok`.
           properties:
             available: { type: boolean }
             reason:
               type: string
               nullable: true
-              enum: [no_gpu, no_tools, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode, null]
+              enum: [no_gpu, no_tools, no_backup_root, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode, null]
+            targets:
+              type: object
+              description: >-
+                Each target's state (ADR 0025 Amendment (S2)). Every target needs the GPU (`no_gpu`, `no_tools`) and a
+                backup folder (`no_backup_root`: the work directory and the blob store live there); `nas` also the write
+                mount's gate (`no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`).
+                `POST /v1/compress/jobs` answers a target that is not ok with the same reason (`503 unavailable`, or
+                `503 storage_not_configured` for `no_backup_root`).
+              properties:
+                nas: { $ref: "#/components/schemas/CompressTarget" }
+                phone: { $ref: "#/components/schemas/CompressTarget" }
+                backup: { $ref: "#/components/schemas/CompressTarget" }
             attention:
               type: object
               description: "Journals waiting (the write mount was unavailable) since the oldest, and originals a failed replace left untracked in a trash"
@@ -2675,7 +2828,7 @@ components:
         onDevice: { type: boolean, description: "mirror: false once the phone no longer has the file" }
         gone:
           type: string
-          description: "mirror, with onDevice false: `freed` (Hoard's free up deleted it after verification) or `deleted` (deleted, trashed, or rewritten in place). Unknown values mean `deleted`."
+          description: "mirror, with onDevice false: `freed` (Hoard's free up deleted it after verification), `deleted` (deleted, trashed, or rewritten in place) or (0.13.0, ADR 0025) `compressed` (a compression's kept side: the original after a replace, on a trashed item). Unknown values mean `deleted`."
         path: { type: string, description: "nas: relative to the folder, /-separated (in a trash: the original path); mirror: relative to the phone's volume" }
         trash:
           type: string

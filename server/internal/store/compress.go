@@ -421,8 +421,10 @@ func (s *Store) CompressItem(ctx context.Context, id int64) (CompressItem, error
 type CompressItemQuery struct {
 	JobID  string
 	States []string
-	After  int64 // cursor: id
-	Limit  int
+	// PhysicalID: only the phone items of this physical device (mine=true).
+	PhysicalID string
+	After      int64 // cursor: id
+	Limit      int
 }
 
 // CompressItems lists items by id.
@@ -438,6 +440,11 @@ func (s *Store) CompressItems(ctx context.Context, q CompressItemQuery) ([]Compr
 		for _, st := range q.States {
 			args = append(args, st)
 		}
+	}
+	if q.PhysicalID != "" {
+		where = append(where, `job_id IN (SELECT id FROM compress_jobs WHERE target = 'phone') AND mirror_entry_id IN
+			(SELECT e.id FROM mirror_entries e WHERE e.physical_id = ?)`)
+		args = append(args, q.PhysicalID)
 	}
 	if q.Limit <= 0 {
 		q.Limit = 200
@@ -555,6 +562,14 @@ func (s *Store) LeaseCompressItem(ctx context.Context, maxPriority int) (Compres
 // false when the state moved on meanwhile (a cancel): nothing is written.
 func (s *Store) SaveCompressItem(ctx context.Context, it CompressItem, from ...string) (bool, error) {
 	it.UpdatedAt = s.nowMs()
+	return saveCompressItem(ctx, s.db, it, from...)
+}
+
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func saveCompressItem(ctx context.Context, db sqlExecer, it CompressItem, from ...string) (bool, error) {
 	q := `UPDATE compress_items SET sha256 = ?, size = ?, state = ?, reason = ?, priority = ?, not_before = ?, attempts = ?, est_size = ?,
 		est_ms = ?, duration_ms = ?, q = ?, out_fingerprint = ?, out_sha256 = ?, out_size = ?, vmaf_mean = ?, vmaf_low = ?, vmaf_mode = ?,
 		encode_ms = ?, verify_ms = ?, decoder = ?, meta_sidecar = ?, replace_step = ?, trash_path = ?, replaced_at = ?, trashed_at = ?,
@@ -569,7 +584,7 @@ func (s *Store) SaveCompressItem(ctx context.Context, it CompressItem, from ...s
 			args = append(args, f)
 		}
 	}
-	res, err := s.db.ExecContext(ctx, q, args...)
+	res, err := db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return false, err
 	}
@@ -615,6 +630,12 @@ func (s *Store) CancelCompressItems(ctx context.Context, jobID string, ids []int
 		}
 		now := s.nowMs()
 		for _, it := range list {
+			if it.State == CompressReady && it.Source == "blob" && it.ReplaceStep == StepServed {
+				// The phone downloaded the output and may have written it already: only its own report (or abandon)
+				// settles the item (ADR 0025 Amendment (S2), "A served output").
+				others = append(others, it)
+				continue
+			}
 			switch it.State {
 			case CompressQueued, CompressEstimating, CompressEncoding, CompressVerifying, CompressReady:
 				if _, err := tx.ExecContext(ctx, "UPDATE compress_items SET state = 'cancelled', updated_at = ? WHERE id = ?", now, it.ID); err != nil {
@@ -893,6 +914,27 @@ func (s *Store) CompressAttentionNow(ctx context.Context) (CompressAttention, er
 		(SELECT min(stalled_at) FROM compress_items WHERE state = 'replacing' AND stalled_at IS NOT NULL),
 		(SELECT count(*) FROM compress_items WHERE state = 'failed' AND trash_path IS NOT NULL)`).Scan(&a.Stalled, &a.StalledSince, &a.UntrackedTrash)
 	return a, err
+}
+
+// HeldKept lists the fingerprints of both sides of the blob compressions a phone is swapping (replacing: a restore,
+// or a restore again, by the phone): the kept entry of such an item is a held trash entry (ADR 0025, re-review N2), which
+// Hoard's Empty must leave and the server never purges.
+func (t *ItemTx) HeldKept() (map[string]bool, error) {
+	rows, err := t.tx.QueryContext(t.ctx, "SELECT fingerprint, coalesce(out_fingerprint, '') FROM compress_items WHERE source = 'blob' AND state = 'replacing'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var a, b string
+		if err := rows.Scan(&a, &b); err != nil {
+			return nil, err
+		}
+		out[a], out[b] = true, true
+	}
+	delete(out, "")
+	return out, rows.Err()
 }
 
 // HeldTrash lists, per folder, the trash paths an unfinished compression journal holds (its original or, during a

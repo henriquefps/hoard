@@ -265,6 +265,37 @@ func (s *Store) Ingest(r io.Reader, size int64, fp string, check func(sha string
 	return sha, true, nil
 }
 
+// Adopt moves a file of the backup root's filesystem into the store as the blob sha (ADR 0025: a verified compression
+// output, which the caller hashed): a hard link, then the source goes; without hard links, a rename. A blob already in
+// the store is kept as it is (its links share its inode) and the source goes. The blob is read-only (0400).
+func (s *Store) Adopt(src, sha string) error {
+	if !ValidSHA256(sha) {
+		return ErrInvalidName
+	}
+	dst := blobPath(sha)
+	if err := s.root.MkdirAll(path.Dir(dst), 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(src, 0o400); err != nil {
+		return err
+	}
+	abs := filepath.Join(s.dir, filepath.FromSlash(dst))
+	err := os.Link(src, abs)
+	switch {
+	case err == nil || errors.Is(err, fs.ErrExist):
+		if err := os.Remove(src); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	case s.Has(sha):
+		_ = os.Remove(src)
+	default:
+		if err := os.Rename(src, abs); err != nil {
+			return err
+		}
+	}
+	return s.syncDir(path.Dir(dst))
+}
+
 // HasAnyBlob reports whether the folder holds blobs (the backup root is then fixed).
 func HasAnyBlob(backupRoot string) bool {
 	entries, err := os.ReadDir(filepath.Join(backupRoot, Dir, "blobs"))

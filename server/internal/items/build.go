@@ -32,7 +32,7 @@ type Location struct {
 	Held       bool   `json:"held,omitempty"`
 	ModifiedAt int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms; mirror: the phone's
 	OnDevice   *bool  `json:"onDevice,omitempty"`   // mirror: false once the phone no longer has the file
-	Gone       string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted
+	Gone       string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted | compressed (ADR 0025)
 	SHA256     string `json:"sha256,omitempty"`     // backup: the blob
 }
 
@@ -123,7 +123,8 @@ func Build(main string, sources []Source, metas map[string]media.Meta) (Data, bo
 				if f.Name == "" || m.Name < f.Name {
 					f.Name = m.Name
 				}
-			case s.Type == SourceMirror && m.Mirror != nil:
+			case (s.Type == SourceMirror || s.Type == SourceKept) && m.Mirror != nil:
+				loc.Source = SourceMirror
 				// The phone's location, next to the backup or nas location that holds the bytes (ADR 0024).
 				mr := m.Mirror
 				on := mr.OnDevice

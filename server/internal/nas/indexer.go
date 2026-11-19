@@ -43,6 +43,9 @@ type Indexer struct {
 	// AfterWalk runs after the folders are walked, before the uploaded originals and phone backups are synced (ADR
 	// 0024: the phone backup's NAS references are checked against what the walk found).
 	AfterWalk func(context.Context)
+	// AfterBackup runs after the uploaded originals and phone backups are synced (ADR 0025: phone folders compressed
+	// automatically).
+	AfterBackup func(context.Context)
 
 	trigger chan struct{}
 	backup  chan struct{}
@@ -945,5 +948,8 @@ func (ix *Indexer) Backup(ctx context.Context) {
 	}
 	if st.Sources > 0 {
 		ix.Log.Info("items: uploaded originals synced", "sources", st.Sources, "items", st.Items)
+	}
+	if ix.AfterBackup != nil && ctx.Err() == nil {
+		ix.AfterBackup(ctx)
 	}
 }

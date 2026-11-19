@@ -419,6 +419,8 @@ func desiredLink(e store.MirrorEntry) string {
 		return mirror.TreePath(e.Volume, e.Path)
 	case store.RemovedReplaced:
 		return mirror.PreviousPath(e.Volume, e.Path, e.SHA256)
+	case store.RemovedCompressed: // ADR 0025: the kept side of a compression, until it is purged
+		return mirror.CompressedPath(e.Volume, e.Path, e.SHA256)
 	}
 	return ""
 }
@@ -525,6 +527,8 @@ func (s *Server) writeManifests(ctx context.Context) {
 			switch {
 			case r.Store == store.StoreBlob && r.RemovedReason == store.RemovedReplaced && r.Linked:
 				where = "previous:" + r.TreePath
+			case r.Store == store.StoreBlob && r.RemovedReason == store.RemovedCompressed && r.Linked:
+				where = "compressed:" + r.TreePath
 			case r.Store == store.StoreBlob && !r.Linked:
 				where = "blob-unlinked"
 			case r.Store == store.StoreNAS && r.NasPath != "":

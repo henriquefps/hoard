@@ -507,22 +507,29 @@ func TestCompressNothingMovedGoesBack(t *testing.T) {
 	}
 }
 
-// The features gate (coordinator's N2 addition): "compress" needs a GPU and a usable write mount; the object says why.
-func TestCompressFeatureNeedsTheWriteMount(t *testing.T) {
+// The features gate (ADR 0025 Amendment (S2), "Targets"): "compress" needs a GPU and at least one usable target; each
+// target says why not (nas: the write mount's gate; every target: a backup folder), and job creation answers the same.
+func TestCompressFeatureByTarget(t *testing.T) {
 	for _, c := range []struct {
-		name, reason string
-		write        func(nas string) string
+		name          string
+		backup        bool
+		write         func(nas string) string
+		feature       bool
+		nas, phone    string // reasons ("" = ok)
+		featureReason string
 	}{
-		{"missing", "no_write_mount", func(nas string) string { return filepath.Join(filepath.Dir(nas), "nas-write") }},
-		{"another directory", "write_mount_mismatch", func(nas string) string {
+		{"only the backup root", true, func(nas string) string { return filepath.Join(filepath.Dir(nas), "nas-write") }, true, "no_write_mount", "", ""},
+		{"backup root, another directory", true, func(nas string) string {
 			d := filepath.Join(filepath.Dir(nas), "elsewhere")
 			_ = os.MkdirAll(d, 0o700)
 			return d
-		}},
-		{"usable", "", func(nas string) string { return nas }},
+		}, true, "write_mount_mismatch", "", ""},
+		{"only the write mount", false, func(nas string) string { return nas }, false, "no_backup_root", "no_backup_root", "no_backup_root"},
+		{"neither", false, func(nas string) string { return filepath.Join(filepath.Dir(nas), "nas-write") }, false, "no_backup_root", "no_backup_root", "no_backup_root"},
+		{"both", true, func(nas string) string { return nas }, true, "", "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			hs := newHarnessWith(t, true, func(cfg *Config) {
+			hs := newHarnessWith(t, c.backup, func(cfg *Config) {
 				nas := filepath.Join(cfg.Mounts[0], "nas")
 				cfg.NasReadRoot, cfg.NasWriteRoot = nas, c.write(nas)
 				cfg.CompressDetector, cfg.CompressEncoder, cfg.CompressVerifier = fakeDetector{ok: true}, &fakeEncoder{}, &fakeVerifier{}
@@ -532,20 +539,46 @@ func TestCompressFeatureNeedsTheWriteMount(t *testing.T) {
 			srv := decode(t, hs.do("GET", "/v1/server", nil, bearer(key)))
 			has := strings.Contains(fmt.Sprint(srv["features"]), "compress")
 			obj := srv["compress"].(map[string]any)
-			if has != (c.reason == "") || obj["available"] != (c.reason == "") || (c.reason != "" && obj["reason"] != c.reason) {
+			targets := obj["targets"].(map[string]any)
+			reasonOf := func(k string) string {
+				tg := targets[k].(map[string]any)
+				r, _ := tg["reason"].(string)
+				if tg["ok"] != (r == "") {
+					t.Fatalf("%s: %v", k, tg)
+				}
+				return r
+			}
+			if has != c.feature || obj["available"] != c.feature || reasonOf("nas") != c.nas || reasonOf("phone") != c.phone || reasonOf("backup") != c.phone {
 				t.Fatalf("features %v, compress %v", srv["features"], obj)
 			}
+			if !c.feature && obj["reason"] != c.featureReason {
+				t.Fatalf("reason %v", obj["reason"])
+			}
 			adm := decode(t, hs.do("GET", "/admin/api/compress", nil, adminHeaders()))
-			if adm["feature"] != (c.reason == "") || adm["writeProblem"] != c.reason {
-				t.Fatalf("admin %v %v", adm["feature"], adm["writeProblem"])
+			if adm["feature"] != c.feature || adm["targets"].(map[string]any)["nas"] == nil {
+				t.Fatalf("admin %v %v", adm["feature"], adm["targets"])
+			}
+			// Job creation answers per target with the same reason.
+			for target, want := range map[string]string{"nas": c.nas, "phone": c.phone} {
+				w := hs.do("POST", "/v1/compress/jobs", map[string]any{"target": target, "requestId": "r-" + target,
+					"select": map[string]any{"itemIds": []string{"7a784c38-764f-808e-8824-e5709b10cba4"}}}, bearer(key))
+				if want == "" {
+					if w.Code == 503 {
+						t.Fatalf("%s refused: %s", target, w.Body.String())
+					}
+					continue
+				}
+				if w.Code != 503 || reason(t, w) != want {
+					t.Fatalf("%s: %d %s", target, w.Code, w.Body.String())
+				}
 			}
 		})
 	}
 }
 
 // Re-review N5: a write mount whose inode numbers are not stable (a link that comes out as another file) fails the
-// item before anything moves and turns the feature off until the next check.
-func TestCompressUnstableInodeTurnsTheFeatureOff(t *testing.T) {
+// item before anything moves and turns the nas target off until the next check.
+func TestCompressUnstableInodeTurnsTheNasTargetOff(t *testing.T) {
 	ch := compressHarness(t, true, "A.MP4")
 	ch.linker = func(r *os.Root, o, n string) error { // a "link" that is a copy: another inode
 		b, err := r.ReadFile(o)
@@ -560,13 +593,16 @@ func TestCompressUnstableInodeTurnsTheFeatureOff(t *testing.T) {
 	if it := ch.one(); it.State != store.CompressFailed || it.Reason != compress.ReasonNotWritable || ch.fp("A.MP4") != orig || len(trashDirs(t, ch.nas)) != 0 {
 		t.Fatalf("%+v %v", it, trashDirs(t, ch.nas))
 	}
-	srv := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key)))
-	if strings.Contains(fmt.Sprint(srv["features"]), "compress") || srv["compress"].(map[string]any)["reason"] != "unstable_inode" {
-		t.Fatalf("%v %v", srv["features"], srv["compress"])
+	nasTarget := func() map[string]any {
+		srv := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key)))
+		return srv["compress"].(map[string]any)["targets"].(map[string]any)["nas"].(map[string]any)
+	}
+	if tg := nasTarget(); tg["ok"] != false || tg["reason"] != "unstable_inode" {
+		t.Fatalf("%v", tg)
 	}
 	ch.linker = nil
 	ch.srv.compress.Detect(t.Context()) // "Check again"
-	if srv := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key))); !strings.Contains(fmt.Sprint(srv["features"]), "compress") {
+	if tg := nasTarget(); tg["ok"] != true {
 		t.Fatal("not back after the check")
 	}
 }
@@ -588,6 +624,20 @@ func TestCompressUntrackedTrashCounted(t *testing.T) {
 	}
 	att := decode(t, ch.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any)
 	if att["untrackedTrash"].(float64) != 1 {
+		t.Fatalf("%v", att)
+	}
+	// A walk while it is still there keeps it counted; once Hoard emptied it, the next walk stops counting it.
+	ch.walkAll()
+	ch.srv.compress.AfterWalk(t.Context())
+	if att := decode(t, ch.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any); att["untrackedTrash"].(float64) != 1 {
+		t.Fatalf("%v", att)
+	}
+	if err := os.Remove(filepath.Join(ch.nas, it.TrashPath)); err != nil {
+		t.Fatal(err)
+	}
+	ch.walkAll()
+	ch.srv.compress.AfterWalk(t.Context())
+	if att := decode(t, ch.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any); att["untrackedTrash"].(float64) != 0 {
 		t.Fatalf("%v", att)
 	}
 }

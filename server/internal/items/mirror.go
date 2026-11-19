@@ -82,11 +82,37 @@ func GroupMirror(rootPath string, members []store.MirrorMember, deviceName strin
 	return out
 }
 
+// GroupKept makes one group per entry a compression keeps (ADR 0025 "The original is a trashed server item"): its
+// fingerprint is the key, and it is served as its phone path (off the phone, gone "compressed") and its blob.
+func GroupKept(members []store.MirrorMember, deviceName string) []Group {
+	out := make([]Group, 0, len(members))
+	seen := map[string]bool{}
+	for _, e := range members {
+		name := path.Base(e.Path)
+		_, role := media.ClassifyMirror(name)
+		if role == "" || seen[e.Fingerprint] {
+			continue
+		}
+		seen[e.Fingerprint] = true
+		ref := &MirrorRef{PhysicalID: e.PhysicalID, DeviceName: deviceName, RootID: e.RootID, Volume: e.Volume, Gone: store.RemovedCompressed}
+		m := Member{Fingerprint: e.Fingerprint, Role: role, Name: name, Path: e.Path, Size: e.Size, MTime: e.ModifiedAt * 1e6, SHA256: e.SHA256, Mirror: ref}
+		out = append(out, Group{Source: SourceKept, Key: e.Fingerprint, Main: e.Fingerprint, Members: []Member{m}})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
 // SyncMirrors makes the mirror sources equal to the phone backups' member entries (ADR 0024): every root's groups,
 // and no sources for roots that are gone (purged, absorbed, merged). A group joins the live NAS item that has its main
-// file (the shot the NAS already holds), else it is an item of its main file.
+// file (the shot the NAS already holds), else it is an item of its main file. The entries compressions keep are the
+// "kept" sources (ADR 0025): one per entry, joining a live NAS or phone item that has the file, else an item of its own
+// (which is then trashed).
 func (y *Syncer) SyncMirrors(ctx context.Context) (Stats, error) {
 	members, err := y.Store.MirrorMembers(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
+	kept, err := y.Store.CompressedMembers(ctx)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -102,9 +128,14 @@ func (y *Syncer) SyncMirrors(ctx context.Context) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	old := make(map[[3]string]store.ItemSource, len(existing))
+	keptRows, err := y.Store.ItemSourcesOf(ctx, SourceKept)
+	if err != nil {
+		return Stats{}, err
+	}
+	existing = append(existing, keptRows...)
+	old := make(map[[4]string]store.ItemSource, len(existing))
 	for _, r := range existing {
-		old[[3]string{r.FolderID, r.Dir, r.Key}] = r
+		old[[4]string{r.Source, r.FolderID, r.Dir, r.Key}] = r
 	}
 	var ops []sourceOp
 	err = y.Store.ItemsTx(ctx, func(tx *store.ItemTx) error {
@@ -113,12 +144,18 @@ func (y *Syncer) SyncMirrors(ctx context.Context) (Stats, error) {
 			if name == "" {
 				name = root.DirName
 			}
-			for _, g := range GroupMirror(root.Path, members[root.ID], name) {
-				k := [3]string{root.ID, g.Dir, g.Key}
+			groups := GroupMirror(root.Path, members[root.ID], name)
+			groups = append(groups, GroupKept(kept[root.ID], name)...)
+			for _, g := range groups {
+				k := [4]string{g.Source, root.ID, g.Dir, g.Key}
 				prev, had := old[k]
 				delete(old, k)
 				target, main := ID(g.Main), g.Main
-				owner, err := tx.LiveItemWithFile(g.Main, "", SourceNAS)
+				kinds := []string{SourceNAS}
+				if g.Source == SourceKept {
+					kinds = append(kinds, SourceMirror)
+				}
+				owner, err := tx.LiveItemWithFile(g.Main, "", kinds...)
 				if err != nil {
 					return err
 				}
@@ -136,7 +173,7 @@ func (y *Syncer) SyncMirrors(ctx context.Context) (Stats, error) {
 				if err != nil {
 					return err
 				}
-				op := sourceOp{put: &store.ItemSource{Source: SourceMirror, FolderID: root.ID, Dir: g.Dir, Key: g.Key, ItemID: target, MainFP: main,
+				op := sourceOp{put: &store.ItemSource{Source: g.Source, FolderID: root.ID, Dir: g.Dir, Key: g.Key, ItemID: target, MainFP: main,
 					Signature: sig, Members: js}, affected: []string{target}}
 				if had && prev.ItemID != target {
 					op.affected = append(op.affected, prev.ItemID)

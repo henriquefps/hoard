@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -380,7 +381,7 @@ func (s *Server) handleBackupReport(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	out, err := s.store.ApplyReport(ctx, rt, entries, removed, store.ReportOptions{DeviceID: info(r).device.ID,
-		UploadLiveSince: s.store.Now().Add(-uploadLiveWindow).UnixMilli()})
+		UploadLiveSince: s.store.Now().Add(-uploadLiveWindow).UnixMilli(), CompressTrashMs: int64(s.compress.TrashDays(ctx)) * 24 * 3600 * 1000})
 	if err != nil {
 		s.internal(w, r, err)
 		return
@@ -396,6 +397,10 @@ func (s *Server) handleBackupReport(w http.ResponseWriter, r *http.Request) {
 		for _, id := range out.NasOnly {
 			s.enqueue("copy:" + strconv.FormatInt(id, 10))
 		}
+	}
+	for _, it := range out.Compressed { // ADR 0025: the report completed a compression's swap (nothing uploaded)
+		s.log.Info("compress: "+it.State, "job", it.JobID, "item", it.ID, "by", "report")
+		s.refreshItems(context.WithoutCancel(ctx), []string{it.Fingerprint, it.OutFingerprint})
 	}
 	s.indexer.TriggerBackup()
 	// Item ids: the live item that holds each file now (absent until the items pass has made it).
