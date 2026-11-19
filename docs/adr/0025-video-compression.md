@@ -69,7 +69,7 @@ The host is also the owner's desktop, where he plays games and streams (with NVE
 | Server-only phone videos | Videos already freed from the phone (or deleted there) whose backup the server holds are compressed **on the server alone**: the output becomes the mirror entry's content, the original a trashed server item. No phone step. |
 | Originals | **They go to the trash** and behave like any trashed file: listed in Trash, Empty, auto-empty after the trash's retention (30 days by default). **Restore** puts the original back **and undoes the replace**: the output goes to the trash and `replacedBy` is reversed. No confirmation step, no hold, no `.hoard-originals`. |
 | Synced copies | No folder is treated specially for Syncthing (it is no longer used; stale `.stfolder` markers are ignored). An output that reappears in a NAS folder (a sync, a copy) is recognised by the marker and the `compress_items` fingerprint pair: it joins the output's item, and the original's item follows it through `replacedBy`. |
-| Marker | Keys `dev.hfps.hoard.compressed` = `v1, <codec>-cq<q>, <yyyy-MM-dd>` in the file, and the server record `compress_items` keyed by both fingerprints (original and output). |
+| Marker | Keys `dev.hfps.hoard.compressed` (written as `com.apple.quicktime.dev.hfps.hoard.compressed`, Amendment (N4)) = `v1, <codec>-cq<q>, <yyyy-MM-dd>` in the file, and the server record `compress_items` keyed by both fingerprints (original and output). |
 | Protocol | 14 additive `/v1` routes under `/v1/compress/…`, `features: "compress"`, a `compress` object in `GET /v1/server`, items gain optional `compressed` and `compressedTo`. Reveal is not affected. |
 | UI | Hoard: "Compress videos" on a Gallery selection and a folder, the estimate, Settings › Compress videos (progress, automatic folders, history), Trash entries "Original of a compressed video". Web gallery: the same, plus a Compression view. Admin page: GPU status, sessions, pause-while-busy, the night window, the retention of server-kept originals. |
 
@@ -1209,15 +1209,21 @@ release.
 
   The compose example and the README recommend `mem_limit: 6g`; memory scales with the frame size, and 1080p/2.7K-only
   libraries need far less.
-- **Not Keys, and a Keys restore problem left open.** The camera is not written to Keys (`com.apple.quicktime.make`):
-  the recipe's ffmpeg (`-movflags use_metadata_tags`, for the marker) writes its Keys table in `moov/udta/meta`;
-  exiftool writes Keys into a second, standard `moov/meta` table, and ffmpeg's reader maps the second table's items
-  through the first table's key names (seen with ffmpeg 9.0.2: `major_brand=isom;isom;Samsung`). The same happens in
-  the S1 restore (`-tagsFromFile … -all:all`) for any source that carries Keys tags (an iPhone's
-  `com.apple.quicktime.make`/`model`/`location.ISO6709`): ffprobe then misreads them and the gate fails the item
-  (`verify_metadata`, the place or the model lost), so nothing is replaced with wrong tags, but such clips are not
-  compressed. Fixing it needs one Keys table (the marker written by exiftool, or ffmpeg's table moved): left to a
-  follow-up decision.
+- **One QuickTime Keys table.** The recipe's ffmpeg wrote its own Keys table (`-movflags use_metadata_tags`, for the
+  marker) in `moov/udta/meta`, every value a string; the restore (`-tagsFromFile … -all:all`) then wrote the source's
+  Keys into a second, standard `moov/meta` table, and ffmpeg's reader maps the second table's items through the first
+  table's key names (ffmpeg 9.0.2: `com.apple.quicktime.make=iPhone 15`, `major_brand=isom;isom;Samsung`). Every source
+  with Keys tags (an iPhone's `com.apple.quicktime.make`/`model`/`location.ISO6709`/`creationdate`, Android's
+  `com.android.version`) failed `verify_metadata`. Now ffmpeg writes no Keys (`-movflags +faststart` only, no
+  `-metadata` marker) and exiftool restores the source's Keys **typed** (Android's float `com.android.capture.fps` stays a
+  float: ffmpeg's copy would have made it the string "240.000000") as the only table, in `moov/meta`, and writes the
+  marker there in the same run (a user-defined Keys tag passed with `-config`). exiftool gives every new key outside the
+  `com.`, `samsung.` and `xiaomi.` domains Apple's namespace, so **the marker's key is now
+  `com.apple.quicktime.dev.hfps.hoard.compressed`** (same value, `v1, <codec>-cq<q>, <yyyy-MM-dd>`); the probe's rule 1
+  accepts both names (only the server reads the marker). The camera of the unwritable families goes to UserData, not
+  Keys. Checked on a synthetic iPhone-like clip (Keys make/model/location/creationdate, written by ffmpeg) in the GPU
+  test: replaced, the four values kept (exiftool writes ISO 6709 in its own number format, `+040.000` → `+40.000`),
+  the original's and the output's items with the same camera.
 - **Concurrent first replaces in one folder.** The trash probe used one fixed name (`.hoard-compress-probe`): two
   workers replacing in the same folder for the first time removed each other's probe and failed `not_writable`. Each
   probe now has a random suffix.
@@ -1228,3 +1234,6 @@ release.
   comparison; both carry their camera as ffprobe `make`/`model` and in their output items; a metadata sidecar for each
   of the eight (per-frame data in the data-track clip's only; `expectedLost` the smta and XML device tags).
   `TestGPUMemory`: two 4K HEVC 10-bit clips, CUDA decode, both replaced, 3.1 GiB peak anonymous memory for the container.
+  Re-run after the Keys change and the rebase on S2 (main 9ff82d8): nine clips (the eight above and the iPhone-like one)
+  all replaced, 108 s of video in 121 s wall; the outputs now lack nothing of the originals but the data tracks' and the
+  unwritable families' tags (HandlerVendorID came back with the single Keys table).

@@ -304,6 +304,9 @@ Before the release, runs on copies of real camera clips changed three things (AD
   filters keep seeing it; an output without the source's make or model fails `verify_metadata`. Every replaced video
   gets a metadata sidecar in `/data/compress/meta/` (the original's full exiftool tag set, the tags not restored, and
   the per-frame data when there is any); the item's log lists the tags that were not restored.
+- **One Keys table.** Videos with QuickTime Keys tags (iPhones' `com.apple.quicktime.*`, Android's) no longer fail
+  `verify_metadata`: exiftool restores the original's Keys as the file's only Keys table, and the marker is now the Keys
+  entry `com.apple.quicktime.dev.hfps.hoard.compressed` (the server reads both names).
 
 **Add the write mount (`/mnt/nas-write`) only once every device runs Hoard 2.7.0 or later.** A compression whose
 replace has to wait (the NAS went away between two steps) keeps its original in `.hoard-trash`, marked `held` on the

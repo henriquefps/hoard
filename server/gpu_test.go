@@ -125,7 +125,7 @@ func TestGPUCompression(t *testing.T) {
 		}
 		for k, v := range cl.keys {
 			// exiftool rewrites an ISO 6709 position in its own number format (+040.000 -> +40.000).
-			if got := po.Format.Tags[k]; got != v && !(strings.Contains(k, "ISO6709") && sameISO6709(v, got)) {
+			if got := po.Format.Tags[k]; got != v && (!strings.Contains(k, "ISO6709") || !sameISO6709(v, got)) {
 				t.Errorf("%s: Keys %s %q -> %q", name, k, v, got)
 			}
 		}
@@ -190,7 +190,7 @@ func TestGPUCompression(t *testing.T) {
 		}
 		if cl.camera != nil {
 			cam, _ := sc["camera"].(map[string]any)
-			if cam["make"] != cl.camera[0] || cam["model"] != cl.camera[1] || !strings.Contains(log, "camera identity not restored") {
+			if cam["make"] != cl.camera[0] || cam["model"] != cl.camera[1] || (cl.expected != nil) != strings.Contains(log, "camera identity not restored") {
 				t.Errorf("%s: sidecar camera %v", name, cam)
 			}
 		}
