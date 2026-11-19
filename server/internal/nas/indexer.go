@@ -145,6 +145,13 @@ func (ix *Indexer) signalFolders() {
 	}
 }
 
+// LastRequested is when the folder's last requested walk started (zero: none since the start).
+func (ix *Indexer) LastRequested(id string) time.Time {
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	return ix.lastAsked[id]
+}
+
 // Queued lists the folders waiting for a requested walk.
 func (ix *Indexer) Queued() []string {
 	ix.mu.Lock()

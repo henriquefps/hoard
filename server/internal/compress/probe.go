@@ -213,7 +213,7 @@ func ParseProbe(b []byte) (Probe, error) {
 		p.DurationMs = int64(math.Round(d * 1000))
 	}
 	for k, v := range o.Format.Tags {
-		if strings.EqualFold(k, Marker) {
+		if strings.EqualFold(k, Marker) || strings.EqualFold(k, MarkerKey) {
 			p.Marker = v
 		}
 	}

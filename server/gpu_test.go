@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -88,8 +89,8 @@ func TestGPUCompression(t *testing.T) {
 		}
 		po, pi := probeJSON(t, out), probeJSON(t, orig)
 		v := videoStream(po)
-		if !strings.HasPrefix(po.Format.Tags["dev.hfps.hoard.compressed"], "v1, hevc-cq") {
-			t.Errorf("%s: marker %q", name, po.Format.Tags["dev.hfps.hoard.compressed"])
+		if !strings.HasPrefix(po.Format.Tags["com.apple.quicktime.dev.hfps.hoard.compressed"], "v1, hevc-cq") {
+			t.Errorf("%s: marker %q", name, po.Format.Tags["com.apple.quicktime.dev.hfps.hoard.compressed"])
 		}
 		if v.CodecName != "hevc" || v.CodecTag != "hvc1" {
 			t.Errorf("%s: %s/%s", name, v.CodecName, v.CodecTag)
@@ -116,12 +117,19 @@ func TestGPUCompression(t *testing.T) {
 			}
 		}
 		for _, k := range []string{"creation_time", "location"} {
-			// The restore may write a second atom with the same value (ffprobe joins them with ";").
-			if v := pi.Format.Tags[k]; v != "" && !strings.Contains(";"+po.Format.Tags[k]+";", ";"+v+";") {
-				t.Errorf("%s: %s %q -> %q", name, k, v, po.Format.Tags[k])
+			// Either side may carry a key twice with the same value (ffprobe joins them with ";").
+			v, _, _ := strings.Cut(pi.Format.Tags[k], ";")
+			if v != "" && !strings.Contains(";"+po.Format.Tags[k]+";", ";"+v+";") && !sameISO6709(v, po.Format.Tags[k]) {
+				t.Errorf("%s: %s %q -> %q", name, k, pi.Format.Tags[k], po.Format.Tags[k])
 			}
 		}
-		if cl.camera != nil { // written back into UserData (ffprobe: make, model), and nowhere else
+		for k, v := range cl.keys {
+			// exiftool rewrites an ISO 6709 position in its own number format (+040.000 -> +40.000).
+			if got := po.Format.Tags[k]; got != v && !(strings.Contains(k, "ISO6709") && sameISO6709(v, got)) {
+				t.Errorf("%s: Keys %s %q -> %q", name, k, v, got)
+			}
+		}
+		if cl.camera != nil && cl.keys == nil { // written back into UserData (ffprobe: make, model), and nowhere else
 			ft := po.Format.Tags
 			if ft["make"] != cl.camera[0] || ft["model"] != cl.camera[1] {
 				t.Errorf("%s: camera tags %q %q", name, ft["make"], ft["model"])
@@ -218,6 +226,12 @@ func TestGPUCompression(t *testing.T) {
 		if o["make"] != cl.camera[0] || o["model"] != cl.camera[1] {
 			t.Errorf("%s: output item make %v model %v", name, o["make"], o["model"])
 		}
+		// The original's item (now trashed) shows the same camera when ffprobe could read it from the original.
+		if oi := c.device("GET", "items/"+orig+"?include=trash", nil, 200); oi["make"] != nil && (oi["make"] != o["make"] || oi["model"] != o["model"]) {
+			t.Errorf("%s: original item camera %v %v, output %v %v", name, oi["make"], oi["model"], o["make"], o["model"])
+		} else {
+			t.Logf("%-14s camera: original item %v %v, output item %v %v", name, oi["make"], oi["model"], o["make"], o["model"])
+		}
 	}
 	// Restore the first, purge the second.
 	c.device("POST", "compress/restore", map[string]any{"itemIds": []string{first["id"].(string)}}, 200)
@@ -258,9 +272,10 @@ func TestGPUCompression(t *testing.T) {
 type clip struct {
 	sha                                           string
 	tenBit, hdr10, pcm, vfr, dataTrack, cpuDecode bool
-	editList                                      bool     // the video's edit list hides leading frames its header counts
-	camera                                        []string // make, model only an unwritable family carries
-	expected                                      []string // the sidecar's expectedLost
+	editList                                      bool              // the video's edit list hides leading frames its header counts
+	camera                                        []string          // make, model only an unwritable family carries
+	expected                                      []string          // the sidecar's expectedLost
+	keys                                          map[string]string // QuickTime Keys the output must carry unchanged
 }
 
 // makeClips writes the synthetic clips (made in work, then copied into dst) and returns them by name.
@@ -321,6 +336,16 @@ func makeClips(t *testing.T, work, dst string) map[string]clip {
 	add("ACTION_DATA.MOV", clip{dataTrack: true}, "-i", base, "-f", "data", "-i", meta, "-map", "0", "-map", "1", "-c", "copy", "-tag:d", "gpmd", "-f", "mov")
 	// H.264 4:4:4: NVDEC cannot decode it, so the encode falls back to the CPU decoder.
 	add("SCREEN_444.MP4", clip{cpuDecode: true}, "-f", "lavfi", "-i", src, "-c:v", "libx264", "-preset", "veryfast", "-b:v", "40M", "-pix_fmt", "yuv444p")
+	// iPhone-like: the capture time, place and camera only in QuickTime Keys (ADR 0025 Amendment (N4): one Keys table).
+	iphoneKeys := map[string]string{"com.apple.quicktime.make": "Apple", "com.apple.quicktime.model": "iPhone 15 Pro",
+		"com.apple.quicktime.location.ISO6709": "+35.6586+139.7454+040.000/", "com.apple.quicktime.creationdate": "2024-05-05T10:00:00+0900"}
+	iargs := []string{"-f", "lavfi", "-i", src, "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000", "-c:v", "libx265", "-preset", "veryfast",
+		"-b:v", "40M", "-tag:v", "hvc1", "-metadata:s:v:0", "encoder=HEVC", "-x265-params", "log-level=error", "-c:a", "aac", "-shortest",
+		"-movflags", "use_metadata_tags", "-metadata", "creation_time=2024-05-05T01:00:00.000000Z"}
+	for k, v := range iphoneKeys {
+		iargs = append(iargs, "-metadata", k+"="+v)
+	}
+	add("IPHONE_KEYS.MOV", clip{camera: []string{"Apple", "iPhone 15 Pro"}, keys: iphoneKeys}, iargs...)
 	// Samsung-like (ADR 0025 Amendment (N4)): the video's edit list hides 4 leading frames its header counts (the audio
 	// longer, so the file's duration is the audio's), and the model only in an smta box.
 	sam := filepath.Join(work, "samsung-base.mp4")
@@ -886,4 +911,36 @@ func TestGPUMemory(t *testing.T) {
 	for kind, kb := range peakRSS {
 		t.Logf("  peak RSS %-12s %5d MiB", kind, kb>>10)
 	}
+}
+
+// sameISO6709 compares two ISO 6709 positions (+lat+lon[+alt]/) by value.
+func sameISO6709(a, b string) bool {
+	parse := func(s string) []float64 {
+		s, _, _ = strings.Cut(s, ";")
+		s = strings.TrimSuffix(s, "/")
+		var out []float64
+		for len(s) > 0 {
+			j := 1
+			for j < len(s) && s[j] != '+' && s[j] != '-' {
+				j++
+			}
+			f, err := strconv.ParseFloat(s[:j], 64)
+			if err != nil {
+				return nil
+			}
+			out = append(out, f)
+			s = s[j:]
+		}
+		return out
+	}
+	pa, pb := parse(a), parse(b)
+	if len(pa) < 2 || len(pa) != len(pb) {
+		return false
+	}
+	for i := range pa {
+		if math.Abs(pa[i]-pb[i]) > 1e-6 {
+			return false
+		}
+	}
+	return true
 }

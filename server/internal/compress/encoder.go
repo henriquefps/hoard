@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -93,9 +94,10 @@ func encodeArgs(r EncodeRequest, in string, cuda bool) []string {
 	if r.Probe.PCM() {
 		a = append(a, "-c:a", "aac", "-b:a", "256k")
 	}
-	a = append(a, "-fps_mode", "passthrough", "-enc_time_base:v", "demux",
-		"-metadata", fmt.Sprintf("%s=v1, %s-cq%d, %s", Marker, r.Profile.Codec, r.Q, r.Date),
-		"-movflags", "+use_metadata_tags+faststart", r.Out)
+	// No use_metadata_tags: ffmpeg would write its own Keys table (in moov/udta/meta, every value a string) and the
+	// restore a second one, which ffmpeg's reader maps through the first. exiftool restores the source's Keys, typed,
+	// as the only table, and writes the marker there (ADR 0025 Amendment (N4)).
+	a = append(a, "-fps_mode", "passthrough", "-enc_time_base:v", "demux", "-movflags", "+faststart", r.Out)
 	return a
 }
 
@@ -322,8 +324,14 @@ func (e *NvencEncoder) exiftool(ctx context.Context, r EncodeRequest) error {
 	if _, err := r.Src.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	args := []string{"-q", "-q", "-m", "-overwrite_original", "-tagsFromFile", fdInput, "-all:all", "-unsafe", "--", r.Out}
-	fmt.Fprintf(r.Log, "$ exiftool %s\n", strings.ReplaceAll(strings.ReplaceAll(strings.Join(args, " "), fdInput, "SRC"), r.Out, "OUT"))
+	cfg := filepath.Join(filepath.Dir(r.Out), "exiftool.config")
+	if err := os.WriteFile(cfg, []byte(exiftoolConfig), 0o600); err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(cfg) }()
+	args := []string{"-config", cfg, "-q", "-q", "-m", "-overwrite_original", "-tagsFromFile", fdInput, "-all:all", "-unsafe",
+		"-Keys:HoardCompressed=" + markerValue(r), "--", r.Out}
+	fmt.Fprintf(r.Log, "$ exiftool %s\n", strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.Join(args, " "), fdInput, "SRC"), r.Out, "OUT"), cfg, "CONFIG"))
 	//nolint:gosec // the configured exiftool; fixed arguments; the source is a descriptor, the output a work file
 	cmd := exec.CommandContext(ctx, e.Exiftool, args...)
 	cmd.ExtraFiles = []*os.File{r.Src}
