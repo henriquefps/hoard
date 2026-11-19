@@ -8,7 +8,14 @@ import dev.hfps.hoard.server.api.CompressBatchResult
  * server items are compressed originals ([originals]) and which trash entries an unfinished journal holds ([held]).
  */
 class TrashCompressionState(val held: HeldTrash, val originals: List<CompressedOriginal>) {
-    val index: Map<Pair<TrashPlace, String>, CompressedOriginal> = CompressedTrash.byRow(originals)
+    val index: CompressedIndex = CompressedTrash.byRow(originals)
+
+    /**
+     * What no share-side delete may touch (ADR 0025 Amendment (A1), review of #76): the held entries **and** every
+     * compressed original, which only the server deletes (its purge route, its own `trashDays`). Empty's plain rows
+     * and auto-empty are given this.
+     */
+    val protect: HeldTrash = held.plus(originals)
 
     /** Compressed originals with no trash row of a share Hoard knows: the Trash screen's server section. */
     fun serverOnly(rows: List<TrashEntryEntity>): List<CompressedOriginal> {
@@ -47,12 +54,6 @@ data class TrashSplit(
             return TrashSplit(held, compressed, plain)
         }
 
-        /** Why a purge may fall back to deleting on the share: the server cannot write the library right now. */
-        val WRITE_REASONS = setOf("no_write_mount", "write_mount_mismatch", "write_mount_read_only", "unstable_inode", "not_writable")
-
-        /** The share rows of compressed originals whose purge the server refused for a [WRITE_REASONS] reason. */
-        fun writeFallback(split: TrashSplit, failed: Map<String, String>): List<TrashEntryEntity> =
-            split.compressed.filterKeys { failed[it.itemId] in WRITE_REASONS }.values.flatten()
     }
 }
 
@@ -115,4 +116,27 @@ class CompressedTrashActions(private val routes: suspend () -> CompressRoutes?, 
     companion object {
         const val UNREACHABLE = "unreachable"
     }
+}
+
+/** What [emptyTrash] did: share rows deleted, rows of originals the server purged, and the server's answers. */
+data class TrashEmptyResult(val deleted: List<TrashEntryEntity>, val routed: List<TrashEntryEntity>, val split: TrashSplit, val server: CompressRouteOutcome)
+
+/**
+ * Empty and Delete permanently (ADR 0025 Amendment (A1), review of #76): held rows are left; plain rows are deleted on
+ * their share with [TrashCompressionState.protect] (so no compressed original can go that way, whatever matched);
+ * compressed originals go only to the server's purge route, and any refusal (no write mount, a failed safety check,
+ * `output_missing`, a busy journal) leaves them where they are.
+ */
+suspend fun emptyTrash(
+    rows: List<TrashEntryEntity>,
+    state: TrashCompressionState,
+    serverOnly: List<CompressedOriginal>,
+    actions: CompressedTrashActions,
+    deleteOnShare: suspend (List<TrashEntryEntity>, HeldTrash) -> List<TrashEntryEntity>,
+): TrashEmptyResult {
+    val split = TrashSplit.of(rows, state)
+    val deleted = deleteOnShare(split.plain, state.protect)
+    val server = actions.purge(split.compressed.keys.toList() + serverOnly, state.held)
+    val routed = split.compressed.filterKeys { it.itemId in server.done }.values.flatten()
+    return TrashEmptyResult(deleted, routed, split, server)
 }

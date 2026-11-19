@@ -720,6 +720,12 @@
     <string name="compress_exists">This folder is compressed automatically already.</string>
     <string name="compress_busy">These videos are being compressed already.</string>
     <string name="compress_none_in_selection">None of these videos can be compressed by the server (videos only on this phone come in a later version).</string>
+    <string name="compress_refused_write_mount">the server cannot write the library now</string>
+    <string name="compress_refused_not_writable">the server could not check it now</string>
+    <string name="compress_refused_output_missing">its compressed video is missing, so the original is kept</string>
+    <string name="compress_refused_busy">a compression is working on it</string>
+    <string name="compress_refused_offline">the photo server cannot be reached</string>
+    <string name="compress_refused_other">the server refused (%1$s)</string>
     <string name="compress_job_auto">Automatic</string>
     <string name="compress_job_paused">Paused</string>
     <string name="compress_job_done">Done</string>
@@ -817,8 +823,8 @@
         <item quantity="other">%1$s compressions wait for the server\'s write mount</item>
     </plurals>
     <plurals name="compress_purge_refused">
-        <item quantity="one">%1$s original stays: the server could not empty it now</item>
-        <item quantity="other">%1$s originals stay: the server could not empty them now</item>
+        <item quantity="one">%1$s original stays in the trash: %2$s</item>
+        <item quantity="other">%1$s originals stay in the trash: %2$s</item>
     </plurals>
     <plurals name="compress_restored">
         <item quantity="one">%1$s original restored</item>

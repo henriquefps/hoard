@@ -42,7 +42,9 @@ func (fakeEncoder) Sidecar(context.Context, *os.File, io.Writer, io.Writer) erro
 
 type fakeVerifier struct{}
 
-func (fakeVerifier) Check(context.Context, *os.File, string, io.Writer) error { return nil }
+func (fakeVerifier) Check(context.Context, *os.File, string, string, io.Writer) (compress.CheckResult, error) {
+	return compress.CheckResult{}, nil
+}
 
 func (fakeVerifier) VMAF(context.Context, *os.File, string, compress.Probe, io.Writer) (compress.VMAFResult, error) {
 	return compress.VMAFResult{Mean: 95, Low: 92, Mode: "full"}, nil

@@ -746,7 +746,7 @@ fun GalleryCell(
             when (compress) {
                 null -> Unit
                 dev.hfps.hoard.app.compress.CompressBadge.Compressed -> Badge(PhosphorRegular.ArrowsIn, texts.compressed, tag = "badge-compressed")
-                dev.hfps.hoard.app.compress.CompressBadge.Compressing -> Badge(PhosphorRegular.SpinnerGap, texts.compressing, tint = Color(0xFFCBD5E1), tag = "badge-compressing")
+                dev.hfps.hoard.app.compress.CompressBadge.Compressing -> Badge(PhosphorRegular.SpinnerGap, texts.compressing, tag = "badge-compressing")
             }
         }
         Row(Modifier.align(Alignment.TopEnd)) {

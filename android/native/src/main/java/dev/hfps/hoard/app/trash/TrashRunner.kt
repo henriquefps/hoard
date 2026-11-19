@@ -461,7 +461,7 @@ class TrashRunner(
         val out = ArrayList<Expired>()
         val today = today()
         for (root in roots) {
-            if (held.holdsRoot(root.serverFolderId)) continue
+            if (held.holdsRoot(root.place)) continue
             val fs = fsFor(root.place) ?: continue
             try {
                 val dir = TrashPaths.trashDir(root.path)
@@ -491,9 +491,13 @@ class TrashRunner(
                         if (mtime != null) mtime <= limitMs else own.isNotEmpty() && own.all { it.trashedAt <= limitMs }
                     }.onEach { day ->
                         val path = requireTrashPath(root.path, SharePaths.join(dir, day))
-                        if (held.holdsUnder(root.place, path)) {
+                        // The same predicate as Empty (review of #76): a held path, or a row Empty would leave.
+                        val keptRows = byDay[day].orEmpty().filter { held.holdsRow(it) }
+                        fun keep(file: String) = held.holds(root.place, file) ||
+                            keptRows.any { r -> SharePaths.rest(file.lowercase(), r.trashedPath.lowercase()) != null }
+                        if (held.holdsUnder(root.place, path) || keptRows.isNotEmpty()) {
                             // A held entry inside: every other file goes, the held ones (and their folders) stay.
-                            for (f in walk(hoard, path).filter { !held.holds(root.place, it.path) }) {
+                            for (f in walk(hoard, path).filter { !keep(it.path) }) {
                                 files++
                                 bytes += f.size
                                 if (!dryRun) deleteIfExists(hoard, f.path)
@@ -509,7 +513,7 @@ class TrashRunner(
                         }
                     }
                 }
-                val purged = rows.filter { it.dayFolder in expired && !(it.dayFolder in partial && held.holdsRow(it)) }
+                val purged = rows.filter { it.dayFolder in expired && !(it.dayFolder in partial && (held.holdsRow(it) || held.holds(root.place, it.trashedPath))) }
                 if (!dryRun) {
                     if (purged.isNotEmpty()) index.delete(purged.map { it.id })
                     index.touchRoot(root.place, root.path, root.serverFolderId, nowMs)

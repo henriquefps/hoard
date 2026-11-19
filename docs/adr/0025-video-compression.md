@@ -553,9 +553,10 @@ and culling move back. Restoring again (from the output's trash entry) swaps onc
 rename is refused by Hoard for these (the path is taken), so Hoard always uses the route for items with
 `compressedTo`.
 
-**Empty and auto-empty.** The trashed original is a trashed file like any other: Hoard's Empty and auto-empty delete it
-over SMB (ADR 0023, 30 days by default, "the shorter setting wins"), and the server deletes, through the write mount,
-the trashed files **it** made (rows in `replaced` or `restored`) once `purge_after` passes (`compress.trashDays`,
+**Empty and auto-empty.** The trashed original is listed like any trashed file, but **only the server deletes it**
+(Amendment (A1), review of #76): Hoard's Empty and Delete permanently send it to `POST /v1/compress/purge` and leave it
+when the server refuses (no write mount, a failed safety check, `output_missing`, a busy journal); Hoard's auto-empty
+never deletes it over SMB. The server deletes, through the write mount, the trashed files **it** made (rows in `replaced` or `restored`) once `purge_after` passes (`compress.trashDays`,
 default 30, the admin page) or when `POST /v1/compress/purge` asks. Either way the next walk sees the trash row gone:
 the trashed item becomes a tombstone that keeps its `replacedBy` (edits were already moved), and the row becomes
 `purged`. This is when the space is saved.
@@ -1336,19 +1337,28 @@ point is a detail the text above left open or a small deviation. E2E and tests: 
   matched to its share row through the mapping (ADR 0023 A4); its row is labelled "Original of a compressed video ·
   saves … when emptied" with its own menu: **Restore original** = `POST /v1/compress/restore` with the item's own id,
   **Delete permanently** and **Empty trash** = `POST /v1/compress/purge`. One without a share row (no mapping, a
-  backup's kept side) is listed in a section "Originals of compressed videos", with the same actions. When the server
-  refuses a purge because it cannot write the library now (`no_write_mount`, `write_mount_*`, `unstable_inode`,
-  `not_writable`), the original's share rows are deleted on the share like any trashed file (ADR 0023; the walk then
-  records the purge), held ones never; other refusals (`state`) leave it, with a message.
+  backup's kept side) is listed in a section "Originals of compressed videos", with the same actions. A share whose
+  mapping Hoard has not learned is matched by the original's `.hoard-trash/<day>/<path>`, so it too goes through the
+  routes (never a plain rename back, which would desync the journal).
+- **Only the server deletes a compressed original** (review of #76; the coordinator's decision). Empty and Delete
+  permanently send it to the purge route and nowhere else: on any refusal (`no_write_mount` for the whole request,
+  `not_writable` when the server's own safety checks failed, `output_missing`, `busy`, `state`) it stays, and the
+  screen says why ("1 original stays in the trash: the server cannot write the library now"). Auto-empty and the plain
+  rows of an Empty are deleted with a protected set that holds the held entries **and** every compressed original (by
+  mapped path, by trash tail and by item), so no share-side delete can take one even when matching failed; the server's
+  own `trashDays` purge empties them. (The first build of A1 deleted them over SMB when the server had no write mount;
+  that bypassed the server's checks, e.g. a trashed or missing output, and is removed.)
 - **The held rule (Amendment (S1) contract).** Held = a trash location with `held: true` of **any** cached item: a
   trashed one, or a live one (a replace that waits after its hard link keeps the original live at its path and in
   the trash). A share row is held when its trash path is that location through a mapping, **or** when its path from
   `.hoard-trash` on (`.hoard-trash/<day>/<path>`) is the same (a share whose mapping Hoard has not learned: keeping a
   file too many is safe). Empty, Delete permanently and auto-empty skip held rows (auto-empty empties a held day folder
   file by file around them); they are listed "Held by a compression in progress", not counted, and the Empty
-  confirmation says how many stay. Empty, auto-empty and the Trash screen's refresh sync first; when the server
-  compresses (the feature, its `compress` object, or version ≥ 0.13) and that sync fails, the held state is
-  **unknown** and every row of a trash root mapped to a NAS folder is held for that run (auto-empty skips such roots).
+  confirmation says how many stay. Empty, auto-empty and the Trash screen's refresh sync first; when that sync fails
+  (any paired server: a device that never synced since the server gained compression cannot tell from its cache), the
+  held state is **unknown** and **every share row** is held for that run, and auto-empty skips every share (fail closed:
+  a share of a server folder whose mapping is not learned cannot be told apart); local drives are not affected.
+  Auto-empty uses the same predicate as Empty: a held path, or a row Empty would leave (its item held).
 - **Upgrade.** Items cached by 2.6.x were stored without `compressed`, `compressedTo` and `held`; a change of either
   re-serves the item with a new revision, and the deployment rule (the write mount only once every device runs 2.7.0)
   means none is held before the upgrade. No re-pull.
@@ -1356,7 +1366,7 @@ point is a detail the text above left open or a small deviation. E2E and tests: 
   `compress_estimate_sizes`, `compress_estimating`, `compress_estimate_nothing`, `compress_cancel_confirm_*`,
   `compress_auto_on`, `compress_auto_off`, `compress_auto_turn_off`, `compress_auto_none`, `compress_running_title`,
   `compress_no_jobs`, `compress_totals`, `compress_trash_held`, `compress_trash_held_note`, `compress_trash_section`,
-  `compress_purge_refused`, `compress_skip_busy`, `compress_skip_other`, `compress_failed_reason_writable`,
+  `compress_purge_refused`, `compress_refused_*`, `compress_skip_busy`, `compress_skip_other`, `compress_failed_reason_writable`,
   `compress_failed_reason_other`, `compress_unavailable_backup_root`, `compress_unavailable_other`, `compress_job_*`,
   `compress_duration_*`, `compress_left_out`, `compress_started`, `compress_exists`, `compress_busy`,
   `compress_none_in_selection`, `compress_load_failed`, `compress_night_window`, `compress_av1_*`, `compress_gpu`.

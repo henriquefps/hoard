@@ -99,7 +99,7 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   Settings › Compress videos). Trash (`trash/CompressedTrash.kt`, `TrashCompression.kt`): compressed originals are
   restored and emptied through `/v1/compress/restore` and `…/purge`; **Empty, Delete permanently and auto-empty never
   delete a trash entry the server reports `held: true`** (any cached item, matched through the mapping or by its
-  `.hoard-trash/<day>/<path>`; an unknown held state leaves mapped roots alone). E2E with a fake-encoder server build:
+  `.hoard-trash/<day>/<path>`; an unknown held state leaves every share alone); compressed originals are deleted only by the server (no SMB fallback). E2E with a fake-encoder server build:
   `docs/testing/compression.md`. The phone's own replace is A2.
 - **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017; Reveal's edited previews ADR 0020): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;

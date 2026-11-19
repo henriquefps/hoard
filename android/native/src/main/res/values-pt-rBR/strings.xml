@@ -769,6 +769,12 @@
     <string name="compress_exists">Esta pasta já é comprimida automaticamente.</string>
     <string name="compress_busy">Estes vídeos já estão sendo comprimidos.</string>
     <string name="compress_none_in_selection">Nenhum destes vídeos pode ser comprimido pelo servidor (vídeos só neste celular vêm numa próxima versão).</string>
+    <string name="compress_refused_write_mount">o servidor não consegue gravar na biblioteca agora</string>
+    <string name="compress_refused_not_writable">o servidor não conseguiu verificá-lo agora</string>
+    <string name="compress_refused_output_missing">o vídeo comprimido sumiu, então o original é mantido</string>
+    <string name="compress_refused_busy">uma compressão está trabalhando nele</string>
+    <string name="compress_refused_offline">o servidor de fotos não responde</string>
+    <string name="compress_refused_other">o servidor recusou (%1$s)</string>
     <string name="compress_job_auto">Automática</string>
     <string name="compress_job_paused">Pausada</string>
     <string name="compress_job_done">Concluída</string>
@@ -887,9 +893,9 @@
         <item quantity="other">%1$s compressões aguardam a montagem de escrita do servidor</item>
     </plurals>
     <plurals name="compress_purge_refused">
-        <item quantity="one">%1$s original fica: o servidor não conseguiu esvaziá-lo agora</item>
-        <item quantity="many">%1$s originais ficam: o servidor não conseguiu esvaziá-los agora</item>
-        <item quantity="other">%1$s originais ficam: o servidor não conseguiu esvaziá-los agora</item>
+        <item quantity="one">%1$s original fica na lixeira: %2$s</item>
+        <item quantity="many">%1$s originais ficam na lixeira: %2$s</item>
+        <item quantity="other">%1$s originais ficam na lixeira: %2$s</item>
     </plurals>
     <plurals name="compress_restored">
         <item quantity="one">%1$s original restaurado</item>

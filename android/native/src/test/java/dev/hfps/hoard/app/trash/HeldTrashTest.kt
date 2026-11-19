@@ -159,17 +159,20 @@ class HeldTrashTest {
     }
 
     @Test
-    fun anUnknownHeldStateLeavesMappedRootsAlone() = runBlocking<Unit> {
+    fun anUnknownHeldStateLeavesEveryShareAlone() = runBlocking<Unit> {
         trashOnShare("2026-10-01")
         val unknown = HeldTrash(unknown = true)
         // A mapped root: nothing deleted by auto-empty or Empty while the server could not be asked.
         assertThat(runner().autoEmpty(listOf(TrashRunner.Root(share, "Videos", "nas-1")), 30, held = unknown)).isEmpty()
         assertThat(runner().empty(rows(), held = unknown)).isEmpty()
         assertThat(rows()).hasSize(3)
-        // A root no NAS folder maps (a USB drive, an unmapped share) is emptied as before.
+        // An unmapped root of a share too (review of #76: it may be a server folder whose mapping is not learned).
         nas.file("Other/.hoard-trash/2026-10-01/x.jpg", 5)
         nas.nodes["Other/.hoard-trash/2026-10-01"]!!.modified = noon(LocalDate.of(2026, 10, 1))
-        assertThat(runner().autoEmpty(listOf(TrashRunner.Root(share, "Other")), 30, held = unknown).single().files).isEqualTo(1)
+        assertThat(runner().autoEmpty(listOf(TrashRunner.Root(share, "Other")), 30, held = unknown)).isEmpty()
+        assertThat(nas.exists("Other/.hoard-trash/2026-10-01/x.jpg")).isTrue()
+        // A local drive is not a server's: emptied as before.
+        assertThat(runner().autoEmpty(listOf(TrashRunner.Root(TrashPlace("vol-1A2B"), "Other")), 30, held = unknown).single().files).isEqualTo(1)
     }
 
     @Test
@@ -183,9 +186,6 @@ class HeldTrashTest {
         assertThat(split.held.map { it.originalPath }).containsExactly("Videos/2024/held.mp4")
         assertThat(split.compressed.keys.map { it.itemId }).containsExactly("b")
         assertThat(split.plain.map { it.originalPath }).containsExactly("Videos/2024/photo.jpg")
-        // A purge the server refuses for want of its write mount falls back to the share (never for a busy item).
-        assertThat(TrashSplit.writeFallback(split, mapOf("b" to "no_write_mount")).map { it.originalPath }).containsExactly("Videos/2024/free.mp4")
-        assertThat(TrashSplit.writeFallback(split, mapOf("b" to "state"))).isEmpty()
         // Every original has a row: none is server-only.
         assertThat(state.serverOnly(rows())).isEmpty()
         // The groups: the held row is listed but not counted; the compressed one labelled.
@@ -214,6 +214,92 @@ class HeldTrashTest {
     }
 
     private fun kept(id: String, held: Boolean = false) = CompressedOriginal(id, "$id.mp4", 400, "out-$id", held, 1, emptyList())
+
+    /** A server whose purge answers every id with [error] (or throws a 503 for the whole request). */
+    private class RefusingRoutes(val error: String, val whole: Boolean = false) : CompressRoutes {
+        var purges = 0
+        override suspend fun restore(itemIds: List<String>) = itemIds.associateWith { CompressBatchResult(error = error) }
+        override suspend fun purge(itemIds: List<String>): Map<String, CompressBatchResult> {
+            purges++
+            if (whole) throw dev.hfps.hoard.server.api.ServerException(503, "unavailable", "no", reason = error)
+            return itemIds.associateWith { CompressBatchResult(error = error) }
+        }
+    }
+
+    private suspend fun stateFor(day: String) = TrashCompressionState(
+        held(day),
+        CompressedTrash.originals(listOf(original("a", "2024/held.mp4", day, held = true) to 2L, original("b", "2024/free.mp4", day) to 1L), listOf(mapping)),
+    )
+
+    private suspend fun emptyAgainst(routes: CompressRoutes, state: TrashCompressionState) =
+        emptyTrash(rows(), state, emptyList(), CompressedTrashActions({ routes })) { plain, protect -> runner().empty(plain, held = protect) }
+
+    @Test
+    fun aRefusedPurgeDeletesNothingOfTheOriginal() = runBlocking<Unit> {
+        // Review of #76: compressed originals are deleted only by the server, whatever it answers.
+        for ((reason, whole) in listOf("no_write_mount" to true, "not_writable" to false, "output_missing" to false, "busy" to false, "state" to false)) {
+            nas.nodes.keys.filter { it.startsWith("Videos/.hoard-trash") }.forEach { nas.nodes.remove(it) }
+            db.trash().all().let { all -> db.trash().delete(all.map { it.id }) }
+            trashOnShare("2026-11-19")
+            val server = RefusingRoutes(reason, whole)
+            val r = emptyAgainst(server, stateFor("2026-11-19"))
+            assertThat(server.purges).isEqualTo(1)
+            assertThat(r.server.failed).containsExactly("b", reason)
+            assertThat(r.routed).isEmpty()
+            // Only the plain photo went; the original (b) and the held one (a) are on the share with their rows.
+            assertThat(r.deleted.map { it.originalPath }).containsExactly("Videos/2024/photo.jpg")
+            assertThat(nas.filesUnder("Videos/.hoard-trash")).containsExactly(
+                "Videos/.hoard-trash/2026-11-19/2024/free.mp4", "Videos/.hoard-trash/2026-11-19/2024/held.mp4",
+            )
+            assertThat(rows().map { it.originalPath }).containsExactly("Videos/2024/free.mp4", "Videos/2024/held.mp4")
+        }
+    }
+
+    @Test
+    fun aPurgedOriginalIsTheServersDeleteNotHoards() = runBlocking<Unit> {
+        trashOnShare("2026-11-19")
+        val server = FakeRoutes()
+        val r = emptyAgainst(server, stateFor("2026-11-19"))
+        assertThat(server.purged).containsExactly("b")
+        assertThat(r.routed.map { it.originalPath }).containsExactly("Videos/2024/free.mp4")
+        // Hoard never touched the file: the server deletes it through its write mount.
+        assertThat(nas.exists("Videos/.hoard-trash/2026-11-19/2024/free.mp4")).isTrue()
+    }
+
+    @Test
+    fun autoEmptyLeavesCompressedOriginalsToTheServer() = runBlocking<Unit> {
+        trashOnShare("2026-10-01")
+        val state = stateFor("2026-10-01")
+        val expired = runner().autoEmpty(listOf(TrashRunner.Root(share, "Videos", "nas-1")), 30, held = state.protect)
+        assertThat(expired.single().files).isEqualTo(1)
+        assertThat(nas.filesUnder("Videos/.hoard-trash").filter { !it.endsWith(TrashRunner.CLOCK_FILE) }).containsExactly(
+            "Videos/.hoard-trash/2026-10-01/2024/free.mp4", "Videos/.hoard-trash/2026-10-01/2024/held.mp4",
+        )
+        assertThat(rows().map { it.originalPath }).containsExactly("Videos/2024/free.mp4", "Videos/2024/held.mp4")
+    }
+
+    @Test
+    fun autoEmptyUsesTheSamePredicateAsEmpty() = runBlocking<Unit> {
+        trashOnShare("2026-10-01")
+        // Held only through the row's server item (no path, no tail): kept by auto-empty as by Empty.
+        val byItem = HeldTrash(serverItems = setOf("srv-photo"))
+        val photo = rows().single { it.originalPath.endsWith("photo.jpg") }
+        db.trash().put(listOf(photo.copy(serverItemId = "srv-photo")))
+        runner().autoEmpty(listOf(TrashRunner.Root(share, "Videos", "nas-1")), 30, held = byItem)
+        assertThat(nas.exists("Videos/.hoard-trash/2026-10-01/2024/photo.jpg")).isTrue()
+        assertThat(nas.exists("Videos/.hoard-trash/2026-10-01/2024/free.mp4")).isFalse()
+    }
+
+    @Test
+    fun anUnmappedShareMatchesCompressedOriginalsByTheirTrashPath() = runBlocking<Unit> {
+        trashOnShare("2026-11-19")
+        // No mapping: restore and Empty still go through the server for b (review of #76), not a plain rename.
+        val state = TrashCompressionState(HeldTrash.NONE, CompressedTrash.originals(listOf(original("b", "2024/free.mp4", "2026-11-19") to 1L), emptyList()))
+        val split = TrashSplit.of(rows(), state)
+        assertThat(split.compressed.keys.map { it.itemId }).containsExactly("b")
+        assertThat(split.plain.map { it.originalPath }).containsExactly("Videos/2024/held.mp4", "Videos/2024/photo.jpg")
+        assertThat(state.protect.holds(TrashPlace("m9", "x"), "Any/.hoard-trash/2026-11-19/2024/free.mp4")).isTrue()
+    }
 
     @Test
     fun purgeOfServerKeptOriginalsSkipsHeldOnes() = runBlocking<Unit> {

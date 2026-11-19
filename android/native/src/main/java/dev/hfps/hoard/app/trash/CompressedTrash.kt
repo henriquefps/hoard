@@ -16,9 +16,9 @@ import dev.hfps.hoard.server.paths.SharePaths
  * whose mapping Hoard has not learned cannot be matched by its path, so a trash file there with the same day folder and
  * path is held too (keeping a file too many is safe; deleting a held one is not).
  *
- * [unknown]: the held state could not be refreshed from a server that lists `compress`. Then every row of a trash root
- * mapped to a NAS folder ([TrashEntryEntity.serverFolderId]) counts as held: a journal may have started since the last
- * sync, and an entry deleted under it would lose the original.
+ * [unknown]: the held state could not be refreshed from the paired server. Then every row on a share counts as held
+ * and auto-empty skips shares (review of #76: fail closed; a share of a server folder whose mapping is not learned
+ * cannot be told apart).
  */
 class HeldTrash(
     paths: Collection<Pair<TrashPlace, String>> = emptyList(),
@@ -48,16 +48,27 @@ class HeldTrash(
         return tails.any { SharePaths.rest(it, tail) != null }
     }
 
-    /** A row Empty and Delete permanently must leave. */
+    /** This plus every file of [originals] (by path, tail and item): compressed originals only the server deletes. */
+    fun plus(originals: List<CompressedOriginal>): HeldTrash = if (originals.isEmpty()) this else HeldTrash(
+        rawPaths + originals.flatMap { it.smbPaths },
+        serverItems + originals.map { it.itemId },
+        unknown,
+        rawTails + originals.flatMap { it.tails },
+    )
+
+    private val rawPaths = paths.toList()
+    private val rawTails = tails.toList()
+
+    /** A row Empty and Delete permanently must leave. Unknown state: every share row (fail closed). */
     fun holdsRow(row: TrashEntryEntity): Boolean {
-        if (unknown && row.serverFolderId != null) return true
+        if (unknown && row.share.isNotEmpty()) return true
         if (row.serverItemId != null && row.serverItemId in serverItems) return true
         if (row.trashedPath.isEmpty()) return false
         return holds(TrashPlace(row.locationId, row.share), row.trashedPath)
     }
 
-    /** A root auto-empty must not touch at all this run ([unknown] state and a root mapped to a NAS folder). */
-    fun holdsRoot(serverFolderId: String?): Boolean = unknown && serverFolderId != null
+    /** A root auto-empty must not touch at all this run: any share while the held state is [unknown]. */
+    fun holdsRoot(place: TrashPlace): Boolean = unknown && place.isSmb
 
     companion object {
         val NONE = HeldTrash()
@@ -90,7 +101,14 @@ data class CompressedOriginal(
     val since: Long,
     /** Its NAS trash files as SMB paths through a mapping (lower-case), to match the trash rows of a share. */
     val smbPaths: List<Pair<TrashPlace, String>>,
+    /** Its NAS trash files from `.hoard-trash` on: a share whose mapping is not learned is matched by these. */
+    val tails: List<String> = emptyList(),
 )
+
+/** Compressed originals by share trash path, and by `.hoard-trash/<day>/<path>` tail. */
+class CompressedIndex(val byPath: Map<Pair<TrashPlace, String>, CompressedOriginal>, val byTail: Map<String, CompressedOriginal>) {
+    fun isEmpty(): Boolean = byPath.isEmpty() && byTail.isEmpty()
+}
 
 object CompressedTrash {
     /** The SMB path of a NAS trash location through [mappings] (null when no mapping covers it). */
@@ -135,17 +153,29 @@ object CompressedTrash {
                 held = locations.any { it.held == true },
                 since = since,
                 smbPaths = locations.mapNotNull { smbPathOf(it, mappings) },
+                tails = locations.mapNotNull { it.trash },
             )
         }.sortedByDescending { it.since }
 
-    /** [originals] by the SMB trash path of each of their files (lower-case), to label and route the trash rows. */
-    fun byRow(originals: List<CompressedOriginal>): Map<Pair<TrashPlace, String>, CompressedOriginal> {
-        val out = HashMap<Pair<TrashPlace, String>, CompressedOriginal>()
-        for (o in originals) for ((place, path) in o.smbPaths) out[TrashPlace(place.locationId, place.share.lowercase()) to SharePaths.normalize(path).lowercase()] = o
-        return out
+    /** [originals] by the SMB trash path of each of their files (lower-case), and by trash tail. */
+    fun byRow(originals: List<CompressedOriginal>): CompressedIndex {
+        val paths = HashMap<Pair<TrashPlace, String>, CompressedOriginal>()
+        val tails = HashMap<String, CompressedOriginal>()
+        for (o in originals) {
+            for ((place, path) in o.smbPaths) paths[TrashPlace(place.locationId, place.share.lowercase()) to SharePaths.normalize(path).lowercase()] = o
+            for (t in o.tails) HeldTrash.tailOf(t)?.let { tails[it] = o }
+        }
+        return CompressedIndex(paths, tails)
     }
 
-    /** The compressed original a trash row is a file of, or null. */
-    fun of(row: TrashEntryEntity, index: Map<Pair<TrashPlace, String>, CompressedOriginal>): CompressedOriginal? =
-        if (row.trashedPath.isEmpty()) null else index[TrashPlace(row.locationId, row.share.lowercase()) to SharePaths.normalize(row.trashedPath).lowercase()]
+    /**
+     * The compressed original a trash row is a file of, or null: by its share path through the mapping, else by its
+     * `.hoard-trash/<day>/<path>` (a share whose mapping is not learned: it still goes through the server's routes).
+     */
+    fun of(row: TrashEntryEntity, index: CompressedIndex): CompressedOriginal? {
+        if (row.trashedPath.isEmpty() || index.isEmpty()) return null
+        index.byPath[TrashPlace(row.locationId, row.share.lowercase()) to SharePaths.normalize(row.trashedPath).lowercase()]?.let { return it }
+        if (row.share.isEmpty()) return null
+        return HeldTrash.tailOf(row.trashedPath)?.let { index.byTail[it] }
+    }
 }

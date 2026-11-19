@@ -440,8 +440,11 @@ class TrashService(private val container: AppContainer) {
     }
 
     /** What an Empty did: rows deleted, compressed originals purged by the server, entries left because they are held. */
-    data class EmptyOutcome(val rows: List<TrashEntryEntity>, val serverPurged: Int, val held: Int, val failed: Int = 0) {
+    data class EmptyOutcome(val rows: List<TrashEntryEntity>, val serverPurged: Int, val held: Int, val refused: Map<String, Int> = emptyMap()) {
         val count: Int get() = rows.size + serverPurged
+
+        /** Compressed originals the server did not empty (they stay). */
+        val failed: Int get() = refused.values.sum()
     }
 
     /**
@@ -467,42 +470,32 @@ class TrashService(private val container: AppContainer) {
     }
 
     private suspend fun purge(rows: List<TrashEntryEntity>, state: TrashCompressionState, serverOnly: List<CompressedOriginal>): EmptyOutcome {
-        val split = TrashSplit.of(rows, state)
-        val purged = ArrayList<TrashEntryEntity>()
-        for ((kind, inKind) in split.plain.groupBy { TrashKind.of(it.locationId) }) {
-            purged += backend(kind)?.empty(inKind, state.held) { cancelRequested.get() } ?: continue
+        // Compressed originals are deleted only by the server (review of #76); see [emptyTrash].
+        val r = emptyTrash(rows, state, serverOnly, compressedActions) { plain, protect ->
+            val out = ArrayList<TrashEntryEntity>()
+            for ((kind, inKind) in plain.groupBy { TrashKind.of(it.locationId) }) out += backend(kind)?.empty(inKind, protect) { cancelRequested.get() } ?: continue
+            out
         }
-        // Compressed originals: the server deletes the trashed file through its write mount (or drops a kept blob).
-        val originals = split.compressed.keys.toList() + serverOnly
-        val result = compressedActions.purge(originals, state.held)
-        val routed = split.compressed.filterKeys { it.itemId in result.done }.values.flatten()
-        if (routed.isNotEmpty()) dao.delete(routed.map { it.id })
-        // The server cannot write the library now (no write mount): its trashed files on a share are deleted there,
-        // as any trashed file (ADR 0023); held ones never (the same held state still applies).
-        val fallback = TrashSplit.writeFallback(split, result.failed)
-        val deletedHere = ArrayList<TrashEntryEntity>()
-        for ((kind, inKind) in fallback.groupBy { TrashKind.of(it.locationId) }) {
-            deletedHere += backend(kind)?.empty(inKind, state.held) { cancelRequested.get() } ?: continue
-        }
-        afterPurge(purged + routed + deletedHere)
+        if (r.routed.isNotEmpty()) dao.delete(r.routed.map { it.id })
+        afterPurge(r.deleted + r.routed)
         changed()
-        val heldCount = split.held.size + serverOnly.count { it.itemId in result.held }
-        val refused = result.failed.size - split.compressed.count { (o, rows) -> o.itemId in result.failed && rows.all { it in deletedHere } }
-        Log.i(TAG, "empty: ${purged.size} deleted, ${result.done.size} compressed originals purged, ${deletedHere.size} deleted on the share, $heldCount held, $refused refused")
-        return EmptyOutcome(purged + routed + deletedHere, (result.done - split.compressed.keys.map { it.itemId }.toSet()).size, heldCount, refused)
+        val heldCount = r.split.held.size + serverOnly.count { it.itemId in r.server.held }
+        Log.i(TAG, "empty: ${r.deleted.size} deleted, ${r.server.done.size} compressed originals purged, $heldCount held, ${r.server.failed.size} refused ${r.server.failed.values.toSet()}")
+        val serverOnlyDone = (r.server.done - r.split.compressed.keys.map { it.itemId }.toSet()).size
+        return EmptyOutcome(r.deleted + r.routed, serverOnlyDone, heldCount, r.server.failed.values.groupingBy { it }.eachCount())
     }
 
     /**
      * ADR 0025: the compressed originals and the held entries, from the server items' cache. [refresh] syncs first
-     * (Empty, auto-empty); when the paired server compresses and that sync fails, the held state is unknown and every
-     * row of a trash root mapped to a NAS folder is treated as held ([HeldTrash.unknown]).
+     * (Empty, auto-empty, the Trash screen); when that sync fails the held state is unknown and every share row is
+     * treated as held ([HeldTrash.unknown]).
      */
     suspend fun compression(refresh: Boolean): TrashCompressionState = withContext(Dispatchers.IO) {
         val gallery = runCatching { container.gallery }.getOrNull() ?: return@withContext TrashCompressionState.NONE
         val account = runCatching { gallery.db.account().get() }.getOrNull() ?: return@withContext TrashCompressionState.NONE
-        val compresses = account.has(Features.COMPRESS) || gallery.sync.compress.value != null || atLeast(account.serverVersion, 0, 13)
-        var unknown = false
-        if (refresh && compresses) unknown = !runCatching { gallery.syncNow() }.getOrDefault(false)
+        // Any failed sync with a paired server makes the held state unknown (review of #76): a device that never
+        // synced since the server gained compression cannot know from its cache that the server compresses.
+        val unknown = refresh && !runCatching { gallery.syncNow() }.getOrDefault(false)
         val mappings = runCatching { container.serverLinks.paths.mappings() }.getOrDefault(emptyList()).filter { it.serverId == account.serverId }
         val trashed = gallery.db.items().trashed().mapNotNull { row ->
             runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json) }.getOrNull()?.let { it to (row.trashedSince ?: 0L) }
@@ -511,7 +504,7 @@ class TrashService(private val container: AppContainer) {
         val liveHeld = gallery.db.items().heldJson().filter { it.id !in trashedIds }.mapNotNull { row ->
             runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json) }.getOrNull()
         }
-        TrashCompressionState(CompressedTrash.held(trashed.map { it.first } + liveHeld, mappings, unknown && compresses), CompressedTrash.originals(trashed, mappings))
+        TrashCompressionState(CompressedTrash.held(trashed.map { it.first } + liveHeld, mappings, unknown), CompressedTrash.originals(trashed, mappings))
     }
 
     /** Server-only compressed originals (no share row): Restore from the Trash screen's server section. */
@@ -605,7 +598,7 @@ class TrashService(private val container: AppContainer) {
         ensureRecovered()
         return running.withLock {
             val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
-            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true, held = compression(refresh = false).held)
+            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true, held = compression(refresh = false).protect)
             AutoEmptyPreview(expired.sumOf { it.files }, expired.sumOf { it.bytes }, expired.map { it.root.place }.distinct().size, expired.any { it.othersIncluded })
         }
     }
@@ -616,7 +609,7 @@ class TrashService(private val container: AppContainer) {
         // A clock that went back: nothing runs until it is past the newest trash time this device wrote.
         val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
         // ADR 0025: entries a compression journal holds stay (and a mapped root waits when that cannot be known).
-        val held = compression(refresh = true).held
+        val held = compression(refresh = true).protect
         val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, held = held)
         // The phone's trash: only Hoard's own rows (no consent can be shown here); Android expires the rest itself.
         val phonePurged = media?.let { m ->
@@ -690,12 +683,5 @@ class TrashService(private val container: AppContainer) {
 
         /** A restore refused because a compression journal holds the entry (ADR 0025). */
         const val HELD = "held"
-
-        /** [version] (`0.13.0`, `0.13.1-rc1`) is at least [major].[minor]. */
-        fun atLeast(version: String?, major: Int, minor: Int): Boolean {
-            val parts = version?.trim()?.removePrefix("v")?.split('.', '-')?.mapNotNull { it.toIntOrNull() } ?: return false
-            if (parts.size < 2) return false
-            return parts[0] > major || (parts[0] == major && parts[1] >= minor)
-        }
     }
 }

@@ -181,8 +181,8 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
     suspend fun restoreCompressed(rows: List<CompressedTrashRow>): Int =
         container.trash.restoreCompressed(rows.map { it.original }).done.size.also { recompute() }
 
-    suspend fun deleteCompressed(rows: List<CompressedTrashRow>): Int =
-        container.trash.purgeCompressed(rows.map { it.original }).done.size.also { recompute() }
+    suspend fun deleteCompressed(rows: List<CompressedTrashRow>): dev.hfps.hoard.app.trash.CompressRouteOutcome =
+        container.trash.purgeCompressed(rows.map { it.original }).also { recompute() }
 
     /** After an action: the server walks and rebuilds; the cache follows at the next sync, then the screen. */
     private fun recompute() {
@@ -254,7 +254,7 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             onConfirm = {
                 val o = vm.delete(d.rows)
                 toaster.show(res.getQuantityString(R.plurals.trash_purged, o.count, o.count.toString()))
-                if (o.failed > 0) toaster.show(res.getQuantityString(R.plurals.compress_purge_refused, o.failed, o.failed.toString()))
+                for ((reason, n) in o.refused) toaster.show(refusedText(res, reason, n))
             },
         )
         is TrashDialog.DeleteCompressed -> ConfirmDialog(
@@ -264,8 +264,9 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             destructive = true,
             onDismiss = { dialog = null },
             onConfirm = {
-                val n = vm.deleteCompressed(d.rows)
-                toaster.show(res.getQuantityString(R.plurals.trash_purged, n, n.toString()))
+                val o = vm.deleteCompressed(d.rows)
+                toaster.show(res.getQuantityString(R.plurals.trash_purged, o.done.size, o.done.size.toString()))
+                for ((reason, n) in o.failed.values.groupingBy { it }.eachCount()) toaster.show(refusedText(res, reason, n))
             },
         )
         TrashDialog.Empty -> ConfirmDialog(
@@ -277,7 +278,7 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             onConfirm = {
                 val o = vm.emptyAll()
                 toaster.show(res.getQuantityString(R.plurals.trash_purged, o.count, o.count.toString()))
-                if (o.failed > 0) toaster.show(res.getQuantityString(R.plurals.compress_purge_refused, o.failed, o.failed.toString()))
+                for ((reason, n) in o.refused) toaster.show(refusedText(res, reason, n))
             },
             extra = { EmptyUnreachableNote(ui) },
         )
@@ -290,6 +291,22 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
         }
         null -> Unit
     }
+}
+
+/**
+ * Why the server did not empty [n] compressed originals (ADR 0025, review of #76): they stay in the trash; only the
+ * server deletes them.
+ */
+fun refusedText(res: android.content.res.Resources, reason: String, n: Int): String {
+    val why = when (reason) {
+        "no_write_mount", "write_mount_mismatch", "write_mount_read_only", "unstable_inode" -> res.getString(R.string.compress_refused_write_mount)
+        "not_writable" -> res.getString(R.string.compress_refused_not_writable)
+        "output_missing", "live_missing" -> res.getString(R.string.compress_refused_output_missing)
+        "busy", "state" -> res.getString(R.string.compress_refused_busy)
+        dev.hfps.hoard.app.trash.CompressedTrashActions.UNREACHABLE -> res.getString(R.string.compress_refused_offline)
+        else -> res.getString(R.string.compress_refused_other, reason)
+    }
+    return res.getQuantityString(R.plurals.compress_purge_refused, n, n.toString(), why)
 }
 
 /** Empty trash leaves the places that are not reachable now: said in its confirmation (review of PR #59). */
