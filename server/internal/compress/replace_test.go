@@ -126,7 +126,8 @@ func TestReplacerContainment(t *testing.T) {
 	if st, _ := f.Stat("link.mp4", false); st.Size != 0 {
 		t.Fatal("a symlink was followed")
 	}
-	if err := f.CopyIn(outside, "/abs.mp4", "x", 0o600, time.Now()); err == nil {
+	ofi, _ := os.Stat(outside)
+	if err := f.CopyIn(outside, "/abs.mp4", "x", ofi, time.Now()); err == nil {
 		t.Fatal("wrote an absolute path")
 	}
 	if b, _ := os.ReadFile(outside); string(b) != "secret" {

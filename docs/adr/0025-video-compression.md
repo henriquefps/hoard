@@ -1003,3 +1003,23 @@ Phase S1 (hoard-server 0.13.0) as built; each point is a detail the text above l
   then the walk (original trashed with `compressedTo`/`replacedBy`, output with `compressed`), a restore, a purge and
   the walk again. Encode 41.5 s for 72 s of video (1.7× realtime with these synthetic clips), verification 145 s on 4
   CPUs (full-clip VMAF: the long pole); the image is 290 MB uncompressed.
+- **Review of the journals (PR #71).** From the trash step on, a replace or a restore never leaves `replacing` without
+  the files being looked at: an I/O error or a missing write mount keeps the row in its step with its trash path
+  (`reason: not_writable`), tried again every minute by the housekeeping and at the next start. The file at the path is
+  checked again right before the trash link and right before the rename over it (the trash entry must be the path's own
+  inode, or the path empty after a rename): a newer version written meanwhile fails the item `source_changed` and is
+  never trashed under the original's record nor overwritten; our own move is undone when that is safe (our link
+  removed, or our rename put back). A purge claims the row (`replacing`, step `purge:<state>`) like a restore, so the
+  two exclude each other, and refuses (`output_missing`) when the live side is gone from its path with no other live
+  NAS copy. After a walk, a trashed file is taken as emptied only when the item's path still exists (an unmounted share
+  is an empty directory).
+- **Metadata and decode gates.** The exiftool restore, and the per-frame sidecar when the source has a data track, are
+  gates (`verify_metadata`); so is the loss of the capture time, the place, the make or model or the rotation in the
+  metadata diff. Every output is decoded in full (`ffmpeg -xerror … -f null`, `verify_decode`); each audio and video
+  stream keeps its own duration (0.1 s, audio 0.15 s); an unknown duration fails. The `-nvidia` image gains the
+  `pcm_s16le` encoder for that decode. GPU test re-run after these changes: six clips replaced (two with capture time
+  and place, kept), 72 s of video in 85 s wall.
+- **Smaller fixes.** Trash folders get the mode of the folder that holds them (the server's umask is private); the
+  replaced file keeps the original's group when the server's user may set it; directories are fsynced after each link,
+  rename and unlink; the purge guard checks path segments; both mount paths are resolved through symlinks; a restore
+  request never blocks on a full queue; selections never pick a copy inside a `.hoard-*` folder.

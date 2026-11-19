@@ -220,6 +220,12 @@ func TestGPUCompression(t *testing.T) {
 				t.Errorf("%s: a data stream survived (%s)", name, s.CodecTag)
 			}
 		}
+		for _, k := range []string{"creation_time", "location"} {
+			// The restore may write a second atom with the same value (ffprobe joins them with ";").
+			if v := pi.Format.Tags[k]; v != "" && !strings.Contains(";"+po.Format.Tags[k]+";", ";"+v+";") {
+				t.Errorf("%s: %s %q -> %q", name, k, v, po.Format.Tags[k])
+			}
+		}
 		if cl.vfr {
 			if a, b := ptsList(t, orig), ptsList(t, out); a != b {
 				t.Errorf("%s: VFR timestamps differ", name)
@@ -339,7 +345,8 @@ func makeClips(t *testing.T, work, dst string) map[string]clip {
 	}
 	// 8-bit H.264 camera clip with PCM audio (MOV), at a camera's bitrate.
 	add("CAM_PCM.MOV", clip{pcm: true}, "-f", "lavfi", "-i", src, "-f", "lavfi", "-i", "sine=f=440:d=12:sample_rate=48000",
-		"-c:v", "libx264", "-preset", "veryfast", "-b:v", "40M", "-c:a", "pcm_s16be", "-shortest")
+		"-c:v", "libx264", "-preset", "veryfast", "-b:v", "40M", "-c:a", "pcm_s16be", "-shortest",
+		"-metadata", "creation_time=2024-05-01T10:00:00.000000Z", "-metadata", "location=+48.8584+002.2945/")
 	// 10-bit HEVC HLG, BT.2020.
 	add("DRONE_HLG.MP4", clip{tenBit: true}, "-f", "lavfi", "-i", src, "-c:v", "libx265", "-preset", "veryfast", "-b:v", "50M", "-pix_fmt", "yuv420p10le",
 		"-metadata:s:v:0", "encoder=HEVC Coding", "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc", "-tag:v", "hvc1",
@@ -350,7 +357,8 @@ func makeClips(t *testing.T, work, dst string) map[string]clip {
 		"-x265-params", fmt.Sprintf(hdr, "smpte2084")+":hdr10=1:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400")
 	// VFR: r_frame_rate 60, about 30 fps on average (every other frame and a few more dropped).
 	add("PHONE_VFR.MP4", clip{vfr: true}, "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=60:d=12", "-vf", `select='not(mod(n\,2))+eq(n\,7)+eq(n\,301)'`,
-		"-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "veryfast", "-b:v", "30M", "-video_track_timescale", "90000")
+		"-fps_mode", "passthrough", "-c:v", "libx264", "-preset", "veryfast", "-b:v", "30M", "-video_track_timescale", "90000",
+		"-metadata", "creation_time=2024-05-02T08:30:00.000000Z", "-metadata", "location=-23.5505-046.6333/")
 	// (A camera's own encoder tag: ffmpeg's "Lavc…" would make rule 2 skip the HEVC clips as an older compression.)
 	// A timed data track (GoPro-style gpmd) the recipe drops and the sidecar keeps.
 	base := filepath.Join(work, "base.mp4")

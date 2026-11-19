@@ -103,6 +103,7 @@ type verifyStream struct {
 	NbFrames          int64
 	AttachedPic       bool
 	DurationTimestamp string
+	Duration          float64 // the stream's own duration (0: unknown)
 }
 
 type verifyInfo struct {
@@ -178,6 +179,7 @@ func parseVerifyInfo(out []byte) (verifyInfo, error) {
 			RFrameRate   string            `json:"r_frame_rate"`
 			AvgFrameRate string            `json:"avg_frame_rate"`
 			NbFrames     string            `json:"nb_frames"`
+			Duration     string            `json:"duration"`
 			Transfer     string            `json:"color_transfer"`
 			Prim         string            `json:"color_primaries"`
 			Disposition  map[string]int    `json:"disposition"`
@@ -197,6 +199,7 @@ func parseVerifyInfo(out []byte) (verifyInfo, error) {
 		vs := verifyStream{Kind: s.CodecType, Codec: s.CodecName, Width: s.Width, Height: s.Height, Transfer: s.Transfer, Prim: s.Prim,
 			AttachedPic: s.Disposition["attached_pic"] == 1}
 		vs.NbFrames, _ = strconv.ParseInt(s.NbFrames, 10, 64)
+		vs.Duration, _ = strconv.ParseFloat(s.Duration, 64)
 		vs.FrameRate = rate(s.AvgFrameRate)
 		if vs.FrameRate == 0 {
 			vs.FrameRate = rate(s.RFrameRate)
@@ -259,8 +262,34 @@ func mainVideo(ss []verifyStream) (verifyStream, bool) {
 
 // compareInfo is the probe half of the checks.
 func compareInfo(a, b verifyInfo) error {
+	if a.Duration <= 0 || b.Duration <= 0 {
+		return &VerifyError{"duration", fmt.Sprintf("unknown duration (%.3f s vs %.3f s)", a.Duration, b.Duration)}
+	}
 	if math.Abs(a.Duration-b.Duration) > 0.1 {
 		return &VerifyError{"duration", fmt.Sprintf("%.3f s vs %.3f s", a.Duration, b.Duration)}
+	}
+	// Every audio and video stream keeps its own duration (an audio track cut short does not change the file's).
+	for _, kind := range []string{"video", "audio"} {
+		var da, db []float64
+		for _, s := range a.Streams {
+			if s.Kind == kind && !s.AttachedPic {
+				da = append(da, s.Duration)
+			}
+		}
+		for _, s := range b.Streams {
+			if s.Kind == kind && !s.AttachedPic {
+				db = append(db, s.Duration)
+			}
+		}
+		for i := range min(len(da), len(db)) {
+			tol := 0.1
+			if kind == "audio" {
+				tol = 0.15 // an AAC re-encode's priming and padding
+			}
+			if da[i] > 0 && db[i] > 0 && math.Abs(da[i]-db[i]) > tol {
+				return &VerifyError{"duration", fmt.Sprintf("%s stream %d: %.3f s vs %.3f s", kind, i, da[i], db[i])}
+			}
+		}
 	}
 	ka, kb := kept(a.Streams), kept(b.Streams)
 	count := func(ss []verifyStream) map[string]int {
@@ -342,8 +371,83 @@ func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io
 	} else {
 		fmt.Fprintf(log, "check: frames %d = %d\n", va.NbFrames, vb.NbFrames)
 	}
-	v.metaDiff(ctx, a, b, src, out, log)
+	// The whole output decodes without an error (spots of VMAF and equal frame counts do not prove that).
+	if _, err := v.run(ctx, 30*time.Minute, nil, nil, v.FFmpeg, "-hide_banner", "-nostdin", "-xerror", "-v", "error",
+		"-protocol_whitelist", "file", "-format_whitelist", probeFormats, "-i", out, "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"); err != nil {
+		fmt.Fprintf(log, "check: decode: %v\n", err)
+		return &VerifyError{"decode", "the output does not decode cleanly: " + err.Error()}
+	}
+	fmt.Fprintln(log, "check: full decode: ok")
+	if err := v.metaDiff(ctx, a, b, src, out, log); err != nil {
+		fmt.Fprintf(log, "check: %v\n", err)
+		return err
+	}
 	return nil
+}
+
+// keyFFTags are container tags whose loss fails the check (capture time, place, camera).
+var keyFFTags = []string{"creation_time", "location", "location-eng", "com.apple.quicktime.location.iso6709", "com.apple.quicktime.make",
+	"com.apple.quicktime.model", "com.apple.quicktime.creationdate", "make", "model"}
+
+// keyExifTags are exiftool tag names (any group) whose loss fails the check; Rotation must also keep its value.
+var keyExifTags = []string{"CreateDate", "MediaCreateDate", "TrackCreateDate", "CreationDate", "DateTimeOriginal", "GPSCoordinates",
+	"GPSLatitude", "GPSLongitude", "GPSPosition", "Make", "Model", "Rotation"}
+
+func emptyValue(v string) bool {
+	v = strings.Trim(v, `"`)
+	return v == "" || v == "null" || strings.HasPrefix(v, "0000:00:00") || v == "1970-01-01T00:00:00.000000Z"
+}
+
+// lostTags lists the key tags the source has (non-empty) and the output lacks; byName keys are tag names, values the
+// values of every group.
+func lostTags(src, out map[string][]string, names []string, sameValue map[string]bool) []string {
+	var lost []string
+	for _, n := range names {
+		have := false
+		for _, v := range src[n] {
+			have = have || !emptyValue(v)
+		}
+		if !have {
+			continue
+		}
+		ok := false
+		for _, v := range out[n] {
+			if emptyValue(v) {
+				continue
+			}
+			if !sameValue[n] {
+				ok = true
+				break
+			}
+			for _, sv := range src[n] {
+				ok = ok || sv == v
+			}
+		}
+		if !ok {
+			lost = append(lost, n)
+		}
+	}
+	return lost
+}
+
+// byTagName groups flattened values by their last path segment without the group ("/QuickTime:CreateDate" →
+// "CreateDate", "/format/tags/creation_time" → "creation_time"), lower-cased when lower.
+func byTagName(flat map[string]string, prefix string, lower bool) map[string][]string {
+	out := map[string][]string{}
+	for k, v := range flat {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		name := k[strings.LastIndex(k, "/")+1:]
+		if i := strings.LastIndex(name, ":"); i >= 0 {
+			name = name[i+1:]
+		}
+		if lower {
+			name = strings.ToLower(name)
+		}
+		out[name] = append(out[name], v)
+	}
+	return out
 }
 
 var frameCountRe = regexp.MustCompile(`"nb_read_frames":\s*"(\d+)"`)
@@ -366,18 +470,25 @@ func (v *FFVerifier) countFrames(ctx context.Context, src *os.File, path string)
 }
 
 // metaDiff writes the tag names of both files and whether their values are equal (values stay in the item's log).
-func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File, out string, log io.Writer) {
+// metaDiff writes the metadata diff to the item's log and fails when the output lost the capture time, the place, the
+// camera's make or model, or the rotation the source has.
+func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File, out string, log io.Writer) error {
 	fmt.Fprintln(log, "metadata diff (ffprobe):")
-	writeDiff(log, flatten("", a.raw), flatten("", b.raw))
+	ffa, ffb := flatten("", a.raw), flatten("", b.raw)
+	writeDiff(log, ffa, ffb)
+	lost := lostTags(byTagName(ffa, "/format/tags/", true), byTagName(ffb, "/format/tags/", true), keyFFTags, nil)
 	if v.Exiftool == "" {
 		fmt.Fprintln(log, "metadata diff (exiftool): not installed")
-		return
+		if len(lost) > 0 {
+			return &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
+		}
+		return nil
 	}
 	ea, err1 := v.run(ctx, 2*time.Minute, src, nil, v.Exiftool, "-j", "-G1", "-a", "-m", "--", fdInput)
 	eb, err2 := v.run(ctx, 2*time.Minute, nil, nil, v.Exiftool, "-j", "-G1", "-a", "-m", "--", out)
 	if err1 != nil || err2 != nil {
 		fmt.Fprintf(log, "metadata diff (exiftool): %v %v\n", err1, err2)
-		return
+		return &VerifyError{"metadata", "exiftool could not read the files"}
 	}
 	var ja, jb []map[string]any
 	_ = json.Unmarshal(ea, &ja)
@@ -391,6 +502,11 @@ func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File
 	}
 	fmt.Fprintln(log, "metadata diff (exiftool):")
 	writeDiff(log, fa, fb)
+	lost = append(lost, lostTags(byTagName(fa, "/", false), byTagName(fb, "/", false), keyExifTags, map[string]bool{"Rotation": true})...)
+	if len(lost) > 0 {
+		return &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
+	}
+	return nil
 }
 
 func flatten(prefix string, v any) map[string]string {

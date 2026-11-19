@@ -120,18 +120,22 @@ func (e *NvencEncoder) Encode(ctx context.Context, r EncodeRequest) (EncodeResul
 		}
 		return res, fmt.Errorf("%w: %w", ErrEncoder, err)
 	}
-	if e.Exiftool != "" {
-		if err := e.exiftool(ctx, r); err != nil {
-			fmt.Fprintf(r.Log, "exiftool: %v (metadata not restored)\n", err)
-			if ctx.Err() != nil {
-				return res, ctx.Err()
-			}
-		}
-	} else {
-		fmt.Fprintln(r.Log, "exiftool: not installed, metadata not restored")
+	// The metadata restore is a gate: an output whose metadata exiftool could not restore never replaces anything.
+	if e.Exiftool == "" {
+		_ = os.Remove(r.Out)
+		return res, &VerifyError{Check: "metadata", Detail: "exiftool is not installed: the metadata cannot be restored"}
 	}
+	err = e.exiftool(ctx, r)
 	// exiftool's temporary file sits next to its target, in the work directory; it may leave one on failure.
 	_ = os.Remove(r.Out + "_exiftool_tmp")
+	if err != nil {
+		_ = os.Remove(r.Out)
+		if ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+		fmt.Fprintf(r.Log, "exiftool: %v (metadata not restored)\n", err)
+		return res, &VerifyError{Check: "metadata", Detail: "exiftool could not restore the metadata: " + err.Error()}
+	}
 	if !r.SrcMTime.IsZero() {
 		if err := os.Chtimes(r.Out, r.SrcMTime, r.SrcMTime); err != nil {
 			return res, err

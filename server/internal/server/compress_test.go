@@ -35,6 +35,7 @@ type fakeEncoder struct {
 	maxRun  atomic.Int32
 	encodes atomic.Int32
 	started chan struct{}
+	sideErr error
 }
 
 func (f *fakeEncoder) Encode(ctx context.Context, r compress.EncodeRequest) (compress.EncodeResult, error) {
@@ -90,6 +91,9 @@ func (f *fakeEncoder) Encode(ctx context.Context, r compress.EncodeRequest) (com
 }
 
 func (f *fakeEncoder) Sidecar(_ context.Context, _ *os.File, out io.Writer, _ io.Writer) error {
+	if f.sideErr != nil {
+		return f.sideErr
+	}
 	zw := gzip.NewWriter(out)
 	_, _ = zw.Write([]byte(`[{"Track1:SampleTime":"0 s"}]`))
 	return zw.Close()

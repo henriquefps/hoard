@@ -67,7 +67,8 @@ RUN curl -fsSL -o vmaf.tar.gz "https://github.com/Netflix/vmaf/archive/refs/tags
 
 # FFmpeg: the default image's configuration, plus NVENC (hevc, av1), NVDEC/CUDA decoding, libvmaf, the mov muxer
 # (.mov outputs keep their container), PCM decoders (PCM audio is re-encoded to AAC) and lavfi (the start-up test
-# encode). GPL because of x264; run as separate programs.
+# encode), and the pcm_s16le encoder (the verification's full decode of audio to the null muxer). GPL because of x264; run
+# as separate programs.
 ARG FFMPEG_VERSION=9.0.2
 ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
 RUN curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
@@ -84,9 +85,9 @@ RUN curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VER
       --enable-parser=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,mjpeg,aac,ac3,mpegaudio,opus,amr \
       --enable-decoder=h264,hevc,libdav1d,av1,vp8,vp9,prores,mpeg4,mpeg2video,mjpeg,png,aac,mp3,mp2,ac3,eac3,opus,alac,amrnb,amrwb,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_f32le,wrapped_avframe,rawvideo \
       --enable-hwaccel=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg4_nvdec,mpeg2_nvdec \
-      --enable-encoder=libx264,aac,ppm,hevc_nvenc,av1_nvenc,wrapped_avframe \
+      --enable-encoder=libx264,aac,ppm,hevc_nvenc,av1_nvenc,wrapped_avframe,pcm_s16le \
       --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,h264_metadata,hevc_metadata,av1_frame_split \
-      --enable-filter=scale,zscale,tonemap,format,fps,transpose,hflip,vflip,rotate,setsar,null,anull,aresample,aformat,libvmaf,setpts,trim,select,settb,split,testsrc2,hwdownload,hwupload,scale_cuda,nullsink \
+      --enable-filter=scale,zscale,tonemap,format,fps,transpose,hflip,vflip,rotate,setsar,null,anull,aresample,aformat,libvmaf,setpts,trim,select,settb,split,testsrc2,hwdownload,hwupload,scale_cuda,nullsink,sine \
       --enable-swscale --enable-swresample --enable-avfilter --enable-shared --disable-static \
  && make -j"${JOBS:-$(nproc)}" && make install && cd .. && rm -rf ffmpeg ffmpeg.tar.xz \
  && /opt/hoard/bin/ffmpeg -hide_banner -version | head -1 \
@@ -148,6 +149,8 @@ RUN ln -s /opt/hoard/exiftool/exiftool /usr/local/bin/exiftool \
  && /opt/hoard/bin/ffmpeg -hide_banner -filters | grep -q tonemap \
  && /opt/hoard/bin/ffmpeg -hide_banner -f lavfi -i testsrc2=s=64x64:d=0.2 -f lavfi -i testsrc2=s=64x64:d=0.2 \
       -lavfi "[0:v][1:v]libvmaf=model=version=vmaf_v0.6.1" -f null - 2>&1 | grep -q "VMAF score" \
+ && /opt/hoard/bin/ffmpeg -hide_banner -v error -xerror -f lavfi -i testsrc2=s=64x64:d=0.2 -f lavfi -i sine=d=0.2 \
+      -map 0:v -map 1:a -f null - \
  && /opt/hoard/bin/ffprobe -version | head -1 \
  && exiftool -ver
 COPY --from=build /out/hoard-server /usr/local/bin/hoard-server

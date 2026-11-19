@@ -226,16 +226,22 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 	metaTmp := filepath.Join(work, "meta.json.gz")
 	it.MetaSidecar = false
 	if probe.PerFrameData() {
-		if f, err := os.Create(metaTmp); err == nil {
+		f, err := os.Create(metaTmp)
+		if err == nil {
 			err = m.cfg.Encoder.Sidecar(ctx, src, f, log)
-			f.Close()
-			if err == nil {
-				it.MetaSidecar = true
-			} else {
-				fmt.Fprintf(log, "per-frame sidecar: %v\n", err)
-				_ = os.Remove(metaTmp)
+			if cerr := f.Close(); err == nil {
+				err = cerr
 			}
 		}
+		if err != nil { // a gate: the per-frame data leaves the file, so it must be saved first
+			_ = os.Remove(metaTmp)
+			if ctx.Err() != nil {
+				return false
+			}
+			m.fail(ctx, it, ReasonVerifyMeta, log, fmt.Errorf("the per-frame metadata could not be saved: %w", err))
+			return false
+		}
+		it.MetaSidecar = true
 	}
 	ext := strings.ToLower(path.Ext(it.RelPath))
 	if ext != ".mov" {
@@ -276,7 +282,12 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 			if ctx.Err() != nil {
 				return false
 			}
-			m.fail(ctx, it, ReasonEncoder, log, err)
+			var ve *VerifyError
+			if errors.As(err, &ve) { // the metadata restore: not retried
+				m.fail(ctx, it, ve.Reason(), log, err)
+			} else {
+				m.fail(ctx, it, ReasonEncoder, log, err)
+			}
 			return false
 		}
 		decoder = r.Decoder
@@ -354,11 +365,13 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 	it.OutFingerprint, it.OutSHA256, it.OutSize = ofp, hex.EncodeToString(oh.Sum(nil)), i64(ofi.Size())
 	if it.MetaSidecar {
 		dst := m.MetaPath(ofp)
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err == nil {
-			if err := moveFile(metaTmp, dst); err != nil {
-				fmt.Fprintf(log, "per-frame sidecar: %v\n", err)
-				it.MetaSidecar = false
-			}
+		err := os.MkdirAll(filepath.Dir(dst), 0o700)
+		if err == nil {
+			err = moveFile(metaTmp, dst)
+		}
+		if err != nil { // the gate holds until the sidecar is in the data directory
+			m.fail(ctx, it, ReasonVerifyMeta, log, fmt.Errorf("the per-frame metadata could not be kept: %w", err))
+			return false
 		}
 	}
 	it.State, it.Reason = store.CompressReady, ""

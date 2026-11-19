@@ -34,6 +34,8 @@ const (
 	ReasonNoSpace       = "no_space"
 	ReasonTrashFailed   = "trash_failed"
 	ReasonVerifyQuality = "verify_quality"
+	ReasonVerifyMeta    = "verify_metadata"
+	ReasonOutputMissing = "output_missing" // a purge refused: the live side is gone, the trashed file may be the only copy
 )
 
 // Warnings of the estimate.

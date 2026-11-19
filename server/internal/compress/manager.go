@@ -73,6 +73,7 @@ type Manager struct {
 	encoding int // our encodes now
 	samples  []busySample
 	probing  map[string]bool
+	journal  map[int64]bool // items whose journal runs now (Settle)
 
 	gpu  chan struct{}
 	cpu  chan struct{}
@@ -355,6 +356,14 @@ func (m *Manager) worker(ctx context.Context) {
 
 // Housekeeping settles ready items that wait (space), purges what is due and finishes jobs.
 func (m *Manager) Housekeeping(ctx context.Context) {
+	// Journals that wait (the write mount was unavailable, an I/O error): tried again.
+	if waiting, err := m.cfg.Store.CompressItemsIn(ctx, store.CompressReplacing); err == nil {
+		for _, it := range waiting {
+			if it.NotBefore <= m.now().UnixMilli() && ctx.Err() == nil {
+				m.Settle(ctx, it)
+			}
+		}
+	}
 	ready, err := m.cfg.Store.CompressItemsIn(ctx, store.CompressReady)
 	if err == nil {
 		for _, it := range ready {

@@ -728,7 +728,8 @@ type NasVideoFile struct {
 // NasVideoFiles lists the live NAS files with a fingerprint whose live item is a video, in a folder (all folders: "")
 // under dir ("" = the whole folder; recursive false: dir itself only), or of the given items.
 func (s *Store) NasVideoFiles(ctx context.Context, folderID, dir string, recursive bool, itemIDs []string) ([]NasVideoFile, error) {
-	where := []string{"n.removed = 0", "n.origin_path IS NULL", "n.fingerprint IS NOT NULL", "n.media = 'video'", "d.enabled = 1",
+	where := []string{"n.removed = 0", "n.origin_path IS NULL", "n.trash_path IS NULL", `n.rel_path NOT LIKE '.hoard-%'`,
+		`n.rel_path NOT LIKE '%/.hoard-%'`, "n.fingerprint IS NOT NULL", "n.media = 'video'", "d.enabled = 1",
 		"i.deleted = 0", "i.trashed_at IS NULL"}
 	var args []any
 	if folderID != "" {
@@ -781,6 +782,16 @@ func (s *Store) NasFileAt(ctx context.Context, folderID, rel string) (NasFileSta
 		return st, ErrNotFound
 	}
 	return st, err
+}
+
+// LiveNasCopy reports whether a live (not trashed) indexed NAS file with this fingerprint exists other than the given
+// folder and path (a purge's last check that the trashed file is not the only copy).
+func (s *Store) LiveNasCopy(ctx context.Context, fp, folderID, rel string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM nas_files f JOIN nas_folders d ON d.id = f.folder_id
+		WHERE f.fingerprint = ? AND f.removed = 0 AND f.origin_path IS NULL AND d.enabled = 1 AND NOT (f.folder_id = ? AND f.rel_path = ?)`,
+		fp, folderID, rel).Scan(&n)
+	return n > 0, err
 }
 
 // --- the heir rule (ItemTx) ---------------------------------------------------------------------------------------

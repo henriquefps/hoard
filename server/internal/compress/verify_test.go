@@ -183,3 +183,67 @@ func TestVerifierVMAF(t *testing.T) {
 	}
 	t.Logf("spot %.2f, full %.2f, identical %.2f", spot.Mean, fs.Mean, r.Mean)
 }
+
+// Review of 0.13.0: an output that does not decode cleanly mid-clip, an audio track cut short (the file's duration
+// unchanged), lost capture time and place, and unknown durations all fail.
+func TestVerifierGates(t *testing.T) {
+	tl := needTools(t)
+	dir := t.TempDir()
+	v := &FFVerifier{FFmpeg: tl.ffmpeg, FFprobe: tl.ffprobe, Threads: 2}
+	ctx := context.Background()
+	src := tl.make(t, filepath.Join(dir, "src.mp4"), "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=10", "-f", "lavfi", "-i", "sine=f=440:d=10",
+		"-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-c:a", "aac", "-shortest",
+		"-metadata", "creation_time=2024-05-01T10:00:00.000000Z", "-metadata", "location=+48.8584+002.2945/")
+	reenc := []string{"-c:v", "libx265", "-preset", "ultrafast", "-crf", "28", "-tag:v", "hvc1", "-x265-params", "log-level=error",
+		"-fps_mode", "passthrough", "-enc_time_base:v", "demux"}
+	good := tl.make(t, filepath.Join(dir, "good.mp4"), append([]string{"-i", src, "-map", "0", "-map_metadata", "0", "-c:a", "copy"}, reenc...)...)
+	var log bytes.Buffer
+	if err := v.Check(ctx, open(t, src), good, &log); err != nil {
+		t.Fatalf("good: %v\n%s", err, log.String())
+	}
+	if !strings.Contains(log.String(), "full decode: ok") {
+		t.Fatal("no full decode in the log")
+	}
+	// Corrupted in the middle of the media data: the header, durations and frame counts are unchanged.
+	b, err := os.ReadFile(good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := bytes.Index(b, []byte("mdat"))
+	if i < 0 {
+		t.Fatal("no mdat")
+	}
+	mid := i + (len(b)-i)/2
+	for j := mid; j < mid+64<<10 && j < len(b); j++ {
+		b[j] = byte(j * 7)
+	}
+	bad := filepath.Join(dir, "corrupt.mp4")
+	if err := os.WriteFile(bad, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := checkReason(v.Check(ctx, open(t, src), bad, &bytes.Buffer{})); got != "verify_decode" {
+		t.Errorf("corrupt: %q", got)
+	}
+	// The audio stream 1 s short; the file is still 10 s long.
+	short := tl.make(t, filepath.Join(dir, "shortaudio.mp4"), append([]string{"-i", src, "-map", "0", "-map_metadata", "0", "-af", "atrim=0:8.8",
+		"-c:a", "aac"}, reenc...)...)
+	if got := checkReason(v.Check(ctx, open(t, src), short, &bytes.Buffer{})); got != "verify_duration" {
+		t.Errorf("audio short: %q", got)
+	}
+	// Capture time and place gone.
+	bare := tl.make(t, filepath.Join(dir, "bare.mp4"), append([]string{"-i", src, "-map", "0", "-map_metadata", "-1", "-c:a", "copy"}, reenc...)...)
+	log.Reset()
+	if got := checkReason(v.Check(ctx, open(t, src), bare, &log)); got != "verify_metadata" || !strings.Contains(log.String(), "creation_time") {
+		t.Errorf("metadata: %q\n%s", got, log.String())
+	}
+}
+
+func TestCompareInfoUnknownDuration(t *testing.T) {
+	v := verifyStream{Kind: "video", Width: 1, Height: 1, FrameRate: 30, BitDepth: 8}
+	if got := checkReason(compareInfo(verifyInfo{Streams: []verifyStream{v}}, verifyInfo{Streams: []verifyStream{v}})); got != "verify_duration" {
+		t.Fatalf("0 = 0 passed: %q", got)
+	}
+	if got := checkReason(compareInfo(verifyInfo{Duration: 10, Streams: []verifyStream{v}}, verifyInfo{Duration: 10, Streams: []verifyStream{v}})); got != "" {
+		t.Fatalf("equal: %q", got)
+	}
+}
