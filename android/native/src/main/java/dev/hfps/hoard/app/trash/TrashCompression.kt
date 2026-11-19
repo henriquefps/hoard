@@ -46,6 +46,13 @@ data class TrashSplit(
             }
             return TrashSplit(held, compressed, plain)
         }
+
+        /** Why a purge may fall back to deleting on the share: the server cannot write the library right now. */
+        val WRITE_REASONS = setOf("no_write_mount", "write_mount_mismatch", "write_mount_read_only", "unstable_inode", "not_writable")
+
+        /** The share rows of compressed originals whose purge the server refused for a [WRITE_REASONS] reason. */
+        fun writeFallback(split: TrashSplit, failed: Map<String, String>): List<TrashEntryEntity> =
+            split.compressed.filterKeys { failed[it.itemId] in WRITE_REASONS }.values.flatten()
     }
 }
 

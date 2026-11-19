@@ -477,11 +477,19 @@ class TrashService(private val container: AppContainer) {
         val result = compressedActions.purge(originals, state.held)
         val routed = split.compressed.filterKeys { it.itemId in result.done }.values.flatten()
         if (routed.isNotEmpty()) dao.delete(routed.map { it.id })
-        afterPurge(purged + routed)
+        // The server cannot write the library now (no write mount): its trashed files on a share are deleted there,
+        // as any trashed file (ADR 0023); held ones never (the same held state still applies).
+        val fallback = TrashSplit.writeFallback(split, result.failed)
+        val deletedHere = ArrayList<TrashEntryEntity>()
+        for ((kind, inKind) in fallback.groupBy { TrashKind.of(it.locationId) }) {
+            deletedHere += backend(kind)?.empty(inKind, state.held) { cancelRequested.get() } ?: continue
+        }
+        afterPurge(purged + routed + deletedHere)
         changed()
         val heldCount = split.held.size + serverOnly.count { it.itemId in result.held }
-        Log.i(TAG, "empty: ${purged.size} deleted, ${result.done.size} compressed originals purged, $heldCount held, ${result.failed.size} refused")
-        return EmptyOutcome(purged + routed, (result.done - split.compressed.keys.map { it.itemId }.toSet()).size, heldCount, result.failed.size)
+        val refused = result.failed.size - split.compressed.count { (o, rows) -> o.itemId in result.failed && rows.all { it in deletedHere } }
+        Log.i(TAG, "empty: ${purged.size} deleted, ${result.done.size} compressed originals purged, ${deletedHere.size} deleted on the share, $heldCount held, $refused refused")
+        return EmptyOutcome(purged + routed + deletedHere, (result.done - split.compressed.keys.map { it.itemId }.toSet()).size, heldCount, refused)
     }
 
     /**

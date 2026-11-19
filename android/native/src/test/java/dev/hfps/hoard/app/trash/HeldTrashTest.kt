@@ -183,6 +183,9 @@ class HeldTrashTest {
         assertThat(split.held.map { it.originalPath }).containsExactly("Videos/2024/held.mp4")
         assertThat(split.compressed.keys.map { it.itemId }).containsExactly("b")
         assertThat(split.plain.map { it.originalPath }).containsExactly("Videos/2024/photo.jpg")
+        // A purge the server refuses for want of its write mount falls back to the share (never for a busy item).
+        assertThat(TrashSplit.writeFallback(split, mapOf("b" to "no_write_mount")).map { it.originalPath }).containsExactly("Videos/2024/free.mp4")
+        assertThat(TrashSplit.writeFallback(split, mapOf("b" to "state"))).isEmpty()
         // Every original has a row: none is server-only.
         assertThat(state.serverOnly(rows())).isEmpty()
         // The groups: the held row is listed but not counted; the compressed one labelled.

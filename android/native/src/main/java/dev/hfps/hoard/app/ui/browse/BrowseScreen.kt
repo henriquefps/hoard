@@ -606,7 +606,8 @@ private fun HeaderMenu(location: BrowseLocation, showHidden: Boolean, nav: Brows
     val offer by container.compress.nasOffer.collectAsState()
     val machineId = location.machine?.machine?.id
     val share = location.share
-    val compressFolder by androidx.compose.runtime.produceState<dev.hfps.hoard.app.compress.CompressFolder?>(null, machineId, share, viewModel.path, offer) {
+    // Resolved when the menu opens: the folder's mapping may be learned after the folder opened.
+    val compressFolder by androidx.compose.runtime.produceState<dev.hfps.hoard.app.compress.CompressFolder?>(null, machineId, share, viewModel.path, offer, open) {
         value = if (offer != dev.hfps.hoard.server.compress.CompressOffer.Hidden && location.isSmb && machineId != null && share != null) {
             runCatching { container.compress.folderOf(machineId, share, viewModel.path) }.getOrNull()
         } else {

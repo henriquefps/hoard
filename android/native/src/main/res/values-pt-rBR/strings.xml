@@ -886,6 +886,11 @@
         <item quantity="many">%1$s compressões aguardam a montagem de escrita do servidor</item>
         <item quantity="other">%1$s compressões aguardam a montagem de escrita do servidor</item>
     </plurals>
+    <plurals name="compress_purge_refused">
+        <item quantity="one">%1$s original fica: o servidor não conseguiu esvaziá-lo agora</item>
+        <item quantity="many">%1$s originais ficam: o servidor não conseguiu esvaziá-los agora</item>
+        <item quantity="other">%1$s originais ficam: o servidor não conseguiu esvaziá-los agora</item>
+    </plurals>
     <plurals name="compress_restored">
         <item quantity="one">%1$s original restaurado</item>
         <item quantity="many">%1$s originais restaurados</item>

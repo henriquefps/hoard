@@ -158,7 +158,8 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
             try {
                 unreachable.value = container.trash.refresh()
                 val unplaced = runCatching { container.trash.registerServerTrash() }.getOrDefault(emptyList()).toSet()
-                val state = runCatching { container.trash.compression(refresh = false) }.getOrDefault(dev.hfps.hoard.app.trash.TrashCompressionState.NONE)
+                // ADR 0025: what a compression journal holds changes on the server; read it fresh for the screen.
+                val state = runCatching { container.trash.compression(refresh = true) }.getOrDefault(dev.hfps.hoard.app.trash.TrashCompressionState.NONE)
                 val compressedIds = state.originals.map { it.itemId }.toSet()
                 val trashed = container.gallery.db.items().trashed()
                 entries.value = serverTrashRows(trashed.filter { it.id in compressedIds }).associateBy { it.entry.itemId.orEmpty() }.mapValues { it.value.entry }
@@ -172,9 +173,9 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
 
     suspend fun restore(rows: List<TrashEntryEntity>): List<RestoreOutcome> = container.trash.restore(rows.map { it.id })
 
-    suspend fun delete(rows: List<TrashEntryEntity>): Int = container.trash.empty(rows.map { it.id }).count.also { recompute() }
+    suspend fun delete(rows: List<TrashEntryEntity>): dev.hfps.hoard.app.trash.TrashService.EmptyOutcome = container.trash.empty(rows.map { it.id }).also { recompute() }
 
-    suspend fun emptyAll(): Int = container.trash.emptyAll().count.also { recompute() }
+    suspend fun emptyAll(): dev.hfps.hoard.app.trash.TrashService.EmptyOutcome = container.trash.emptyAll().also { recompute() }
 
     /** Restore of compressed originals in the server section: undoes their compression (ADR 0025). */
     suspend fun restoreCompressed(rows: List<CompressedTrashRow>): Int =
@@ -251,8 +252,9 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             destructive = true,
             onDismiss = { dialog = null },
             onConfirm = {
-                val n = vm.delete(d.rows)
-                toaster.show(res.getQuantityString(R.plurals.trash_purged, n, n.toString()))
+                val o = vm.delete(d.rows)
+                toaster.show(res.getQuantityString(R.plurals.trash_purged, o.count, o.count.toString()))
+                if (o.failed > 0) toaster.show(res.getQuantityString(R.plurals.compress_purge_refused, o.failed, o.failed.toString()))
             },
         )
         is TrashDialog.DeleteCompressed -> ConfirmDialog(
@@ -273,8 +275,9 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             destructive = true,
             onDismiss = { dialog = null },
             onConfirm = {
-                val n = vm.emptyAll()
-                toaster.show(res.getQuantityString(R.plurals.trash_purged, n, n.toString()))
+                val o = vm.emptyAll()
+                toaster.show(res.getQuantityString(R.plurals.trash_purged, o.count, o.count.toString()))
+                if (o.failed > 0) toaster.show(res.getQuantityString(R.plurals.compress_purge_refused, o.failed, o.failed.toString()))
             },
             extra = { EmptyUnreachableNote(ui) },
         )

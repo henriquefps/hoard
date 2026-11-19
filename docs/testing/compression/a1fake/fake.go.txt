@@ -1,0 +1,70 @@
+// Command a1fake is hoard-server with a CPU stand-in for NVENC, for Hoard 2.7.0's emulator test (ADR 0025 phase A1,
+// docs/testing/compression.md). Never shipped: the encoder is libx264 at a low bitrate, the verifier passes, the GPU is
+// "detected" and never busy. A source whose name contains HOLD has its trash link made and then reported as an I/O
+// error, so its replace journal waits with the original in the trash: a held entry (ADR 0025 Amendment (S1)).
+package main
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/henriquefps/hoard/server/internal/compress"
+)
+
+type fakeEncoder struct{ ffmpeg string }
+
+func (f fakeEncoder) Encode(ctx context.Context, r compress.EncodeRequest) (compress.EncodeResult, error) {
+	bin := f.ffmpeg
+	if bin == "" {
+		bin = "ffmpeg"
+	}
+	cmd := exec.CommandContext(ctx, bin, "-hide_banner", "-nostdin", "-y", "-i", "/dev/fd/3", "-map", "0", "-c", "copy",
+		"-c:v:0", "libx264", "-preset", "ultrafast", "-b:v", "1M", "-metadata", "dev.hfps.hoard.compressed=v1, fake-cq28, "+r.Date,
+		"-movflags", "+use_metadata_tags+faststart", "-f", "mp4", r.Out)
+	if _, err := r.Src.Seek(0, io.SeekStart); err != nil {
+		return compress.EncodeResult{}, err
+	}
+	cmd.ExtraFiles = []*os.File{r.Src}
+	cmd.Stderr = r.Log
+	if err := cmd.Run(); err != nil {
+		return compress.EncodeResult{}, errors.Join(compress.ErrEncoder, err)
+	}
+	return compress.EncodeResult{Decoder: "cpu"}, os.Chtimes(r.Out, r.SrcMTime, r.SrcMTime)
+}
+
+func (fakeEncoder) Sidecar(context.Context, *os.File, io.Writer, io.Writer) error { return nil }
+
+type fakeVerifier struct{}
+
+func (fakeVerifier) Check(context.Context, *os.File, string, io.Writer) error { return nil }
+
+func (fakeVerifier) VMAF(context.Context, *os.File, string, compress.Probe, io.Writer) (compress.VMAFResult, error) {
+	return compress.VMAFResult{Mean: 95, Low: 92, Mode: "full"}, nil
+}
+
+type fakeDetector struct{}
+
+func (fakeDetector) Detect(context.Context) compress.GPUStatus {
+	return compress.GPUStatus{Available: true, GPU: "Fake GPU (A1 E2E)", Codecs: []string{"hevc", "av1"}, VMAF: true, CUDADecode: true, Exiftool: true}
+}
+
+type fakeNVML struct{}
+
+func (fakeNVML) Load(context.Context) (compress.GPULoad, error) { return compress.GPULoad{}, nil }
+
+// holdLinker links like the real one; for HOLD sources it then reports EIO, so the journal waits (held).
+func holdLinker(root *os.Root, oldname, newname string) error {
+	if err := root.Link(oldname, newname); err != nil {
+		return err
+	}
+	if strings.Contains(filepath.Base(oldname), "HOLD") && strings.Contains(newname, ".hoard-trash") {
+		return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: syscall.EIO}
+	}
+	return nil
+}

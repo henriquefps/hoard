@@ -816,6 +816,10 @@
         <item quantity="one">%1$s compression waits for the server\'s write mount</item>
         <item quantity="other">%1$s compressions wait for the server\'s write mount</item>
     </plurals>
+    <plurals name="compress_purge_refused">
+        <item quantity="one">%1$s original stays: the server could not empty it now</item>
+        <item quantity="other">%1$s originals stay: the server could not empty them now</item>
+    </plurals>
     <plurals name="compress_restored">
         <item quantity="one">%1$s original restored</item>
         <item quantity="other">%1$s originals restored</item>

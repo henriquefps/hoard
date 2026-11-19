@@ -1,0 +1,6 @@
+FROM alpine:3.20
+RUN apk add --no-cache samba
+RUN adduser -D -H -u 1000 hoard && (echo hoardpass; echo hoardpass) | smbpasswd -a -s hoard
+RUN printf '[global]\n server role = standalone server\n map to guest = never\n server min protocol = SMB2_02\n disable netbios = yes\n smb ports = 445\n log level = 1\n create mask = 0666\n directory mask = 0777\n[photos]\n path = /srv/photos\n read only = no\n valid users = hoard\n' > /etc/samba/smb.conf
+EXPOSE 445
+CMD ["smbd", "--foreground", "--no-process-group", "--debug-stdout"]
