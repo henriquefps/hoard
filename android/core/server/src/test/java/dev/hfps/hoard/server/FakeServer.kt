@@ -82,6 +82,10 @@ class FakeServer : AutoCloseable {
     var chunkSize = 8L shl 20
     /** `backup.maxReportEntries` of `GET /v1/server`. */
     var maxReportEntries = 1000
+    /** `GET /v1/server`'s `compress` object (ADR 0025), raw JSON; absent when null. */
+    @Volatile var compress: String? = null
+    /** `GET /v1/server`'s `version`. */
+    var version = "0.9.0"
     /** Extra routes (the phone backup's fake, ADR 0024): true when handled. Gets the raw body. */
     @Volatile var extra: ((ex: HttpExchange, path: String, query: Map<String, String>, body: ByteArray) -> Boolean)? = null
 
@@ -204,7 +208,7 @@ class FakeServer : AutoCloseable {
         if (ex.requestHeaders.getFirst("Authorization") != "Bearer $key") return send(ex, 401, """{"error":{"code":"unauthorized","message":"no"}}""")
         if (extra?.invoke(ex, path, query, raw) == true) return
         when {
-            path == "/v1/server" -> send(ex, 200, """{"serverId":"$serverId","serverName":"Fake","version":"0.9.0","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500,"chunkSize":$chunkSize},"backup":{"maxRoots":64,"maxReportEntries":$maxReportEntries,"maxVerify":500,"maxPath":1024}}""")
+            path == "/v1/server" -> send(ex, 200, """{"serverId":"$serverId","serverName":"Fake","version":"$version","api":1,"features":${features.joinToString(",", "[", "]") { "\"$it\"" }},"limits":{"maxPullLimit":500,"chunkSize":$chunkSize},"backup":{"maxRoots":64,"maxReportEntries":$maxReportEntries,"maxVerify":500,"maxPath":1024}${compress?.let { ",\"compress\":$it" } ?: ""}}""")
             path == "/v1/device" && ex.requestMethod == "PATCH" && deviceFailures > 0 -> {
                 deviceFailures--
                 send(ex, 503, """{"error":{"code":"unavailable","message":"busy"}}""")

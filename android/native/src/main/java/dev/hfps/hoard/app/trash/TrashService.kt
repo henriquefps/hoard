@@ -499,7 +499,11 @@ class TrashService(private val container: AppContainer) {
         val trashed = gallery.db.items().trashed().mapNotNull { row ->
             runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json) }.getOrNull()?.let { it to (row.trashedSince ?: 0L) }
         }
-        TrashCompressionState(CompressedTrash.held(trashed.map { it.first }, mappings, unknown && compresses), CompressedTrash.originals(trashed, mappings))
+        val trashedIds = trashed.map { it.first.id }.toHashSet()
+        val liveHeld = gallery.db.items().heldJson().filter { it.id !in trashedIds }.mapNotNull { row ->
+            runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json) }.getOrNull()
+        }
+        TrashCompressionState(CompressedTrash.held(trashed.map { it.first } + liveHeld, mappings, unknown && compresses), CompressedTrash.originals(trashed, mappings))
     }
 
     /** Server-only compressed originals (no share row): Restore from the Trash screen's server section. */

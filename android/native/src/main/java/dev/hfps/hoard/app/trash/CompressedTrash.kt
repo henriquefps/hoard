@@ -12,6 +12,10 @@ import dev.hfps.hoard.server.paths.SharePaths
  * paths (lower-case, per place) of held NAS trash locations seen through a mapping; [serverItems] the server items with
  * any held trash location (NAS or a backup's kept side).
  *
+ * [tails] are the held files' paths from their `.hoard-trash` on (`.hoard-trash/<day>/<path>`, lower-case): a share
+ * whose mapping Hoard has not learned cannot be matched by its path, so a trash file there with the same day folder and
+ * path is held too (keeping a file too many is safe; deleting a held one is not).
+ *
  * [unknown]: the held state could not be refreshed from a server that lists `compress`. Then every row of a trash root
  * mapped to a NAS folder ([TrashEntryEntity.serverFolderId]) counts as held: a journal may have started since the last
  * sync, and an entry deleted under it would lose the original.
@@ -20,23 +24,28 @@ class HeldTrash(
     paths: Collection<Pair<TrashPlace, String>> = emptyList(),
     val serverItems: Set<String> = emptySet(),
     val unknown: Boolean = false,
+    tails: Collection<String> = emptyList(),
 ) {
     private val byPlace: Map<TrashPlace, Set<String>> = paths.groupBy({ key(it.first) }, { SharePaths.normalize(it.second).lowercase() }).mapValues { it.value.toSet() }
+    private val tails: Set<String> = tails.mapNotNull { tailOf(it) }.toSet()
 
-    val empty: Boolean get() = byPlace.isEmpty() && serverItems.isEmpty() && !unknown
+    val empty: Boolean get() = byPlace.isEmpty() && serverItems.isEmpty() && !unknown && tails.isEmpty()
 
     /** A held file is exactly [path], or (a trashed folder) inside it. */
     fun holds(place: TrashPlace, path: String): Boolean {
-        val held = byPlace[key(place)] ?: return false
         val p = SharePaths.normalize(path).lowercase()
-        return p in held || held.any { SharePaths.rest(it, p) != null }
+        val held = byPlace[key(place)].orEmpty()
+        if (p in held || held.any { SharePaths.rest(it, p) != null }) return true
+        val tail = tailOf(p) ?: return false
+        return tail in tails || tails.any { SharePaths.rest(it, tail) != null }
     }
 
     /** Any held file inside [dir] (a day folder that auto-empty would delete whole). */
     fun holdsUnder(place: TrashPlace, dir: String): Boolean {
-        val held = byPlace[key(place)] ?: return false
         val d = SharePaths.normalize(dir).lowercase()
-        return held.any { SharePaths.rest(it, d) != null }
+        if (byPlace[key(place)].orEmpty().any { SharePaths.rest(it, d) != null }) return true
+        val tail = tailOf(d) ?: return false
+        return tails.any { SharePaths.rest(it, tail) != null }
     }
 
     /** A row Empty and Delete permanently must leave. */
@@ -54,6 +63,14 @@ class HeldTrash(
         val NONE = HeldTrash()
 
         private fun key(place: TrashPlace) = TrashPlace(place.locationId, place.share.lowercase())
+
+        /** `<…>/.hoard-trash/<day>/<path>` → `.hoard-trash/<day>/<path>` (lower-case); null outside a trash. */
+        fun tailOf(path: String): String? {
+            val segments = SharePaths.segments(SharePaths.normalize(path).lowercase())
+            val at = segments.indexOf(TrashPaths.DIR.lowercase())
+            if (at < 0 || at + 1 >= segments.size) return null
+            return segments.drop(at).joinToString("/")
+        }
     }
 }
 
@@ -85,19 +102,23 @@ object CompressedTrash {
         return TrashPlace(mapping.machineId, mapping.share) to SharePaths.join(mapping.smbPrefix, SharePaths.rest(trash, mapping.serverPrefix)!!)
     }
 
-    /** The held trash of [trashed] server items (decoded, `include=trash`). */
-    fun held(trashed: List<Item>, mappings: List<PathMapping>, unknown: Boolean = false): HeldTrash {
+    /**
+     * The held trash of [items] (decoded, `include=trash`): trashed ones, and live ones too (an original hard-linked
+     * into the trash while its replace waits is a trash location of a live item).
+     */
+    fun held(items: List<Item>, mappings: List<PathMapping>, unknown: Boolean = false): HeldTrash {
         val paths = ArrayList<Pair<TrashPlace, String>>()
-        val items = HashSet<String>()
-        for (item in trashed) {
+        val ids = HashSet<String>()
+        val tails = ArrayList<String>()
+        for (item in items) {
             for (loc in item.files.flatMap { it.locations }) {
                 if (loc.held != true) continue
-                items += item.id
+                ids += item.id
                 smbPathOf(loc, mappings)?.let { paths += it }
+                loc.trash?.let { tails += it }
             }
         }
-        // A live item may hold a trashed copy too (a restore moving the output): its trash locations count the same.
-        return HeldTrash(paths, items, unknown)
+        return HeldTrash(paths, ids, unknown, tails)
     }
 
     /** The compressed originals among [trashed] items (those with `compressedTo`), newest first. */
