@@ -90,6 +90,8 @@ type Manager struct {
 
 	// afterStep, in tests, runs after each journal step is written; an error stops the journal there (a crash).
 	afterStep func(step string) error
+	// beforeSwap, in tests, runs right before a swap checks its trash entry again (a pause between link and swap).
+	beforeSwap func(trash string)
 }
 
 // wideFrame is the frame size above which a verification takes every CPU slot (more than 2.7K, about 4.2 MP): a 4K
@@ -596,6 +598,9 @@ func (m *Manager) RunOnce(ctx context.Context) bool {
 // SetJournalHook sets a function run after each journal step is written; an error stops the journal there, as a crash
 // would (tests only).
 func (m *Manager) SetJournalHook(fn func(step string) error) { m.afterStep = fn }
+
+// SetSwapHook sets a function run right before a swap checks its trash entry again (tests only).
+func (m *Manager) SetSwapHook(fn func(trash string)) { m.beforeSwap = fn }
 
 // SampleGPU reads the GPU's load now (tests; the server samples every 30 s).
 func (m *Manager) SampleGPU(ctx context.Context) { m.sampleBusy(ctx) }

@@ -2841,7 +2841,8 @@ components:
           type: boolean
           description: >-
             0.13.0 (ADR 0025): this trashed file is held by an unfinished compression journal (an original whose replace
-            waits, or what a restore moved). Clients must not empty it (Empty, auto-empty) while held; absent otherwise.
+            is under way or waits, or what a restore moved; 0.13.1: from the trash link on, until the journal settles).
+            Clients must not empty it (Empty, auto-empty) while held; absent otherwise.
         modifiedAt: { type: integer, description: "nas: the file's mtime; mirror: the phone's; Unix ms" }
         sha256: { type: string, description: "backup: the uploaded blob" }
     ItemFile:
