@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.7.0 (unreleased)
+## 2.7.0 (2026-11-19)
 
 Compress your videos on the photo server: the same look in a fraction of the space, with the originals in the trash until you empty it ([ADR 0025](docs/adr/0025-video-compression.md)). Needs hoard-server 0.13.0 with its GPU image; with an older server, or one without a usable GPU, nothing changes.
 
