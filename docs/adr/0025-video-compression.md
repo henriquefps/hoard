@@ -54,9 +54,11 @@ The host is also the owner's desktop, where he plays games and streams (with NVE
 | Quality | Fixed cq 28 is the default (= the approved look). The owner picks between A (fixed), B (per-clip search to VMAF 95) and C (cq 28, lowered only when VMAF falls under a floor): "Options for the owner", recommendation **C with floor 93**. |
 | Verify | Before anything replaces anything: duration within 0.1 s, the same streams (data streams excepted) and resolution and frame rate, decoded frame count when the header counts differ, an ffprobe + exiftool metadata diff in the item's log, VMAF (full clip up to 30 s, 3 × 2 s spots above), real saving ≥ 20 %. |
 | Job model | `compress_jobs` + `compress_items` (schema 12). One GPU queue, priorities, `COMPRESS_SESSIONS` (default 1) NVENC sessions, resumable after a restart (running steps go back to queued; the replace is a journal), cancellable, a log file per item. |
-| NAS library | **The server replaces the file itself** through a second, opt-in **read-write mount** (`/mnt/nas-write`), only in NAS folders the admin enabled. The original is **hard-linked** into `<folder>/.hoard-originals/<yyyy-MM-dd>/<path>` and the verified output is **renamed** over the path: atomic, no copy of the original, the path never missing. The walk sees a new fingerprint at the same path; the old item becomes a tombstone with `replacedBy` the new one (a new heir rule reads the compression record), so edits, culling and ratings follow. |
+| NAS library | **The server replaces the file itself** through a second, opt-in **read-write mount** (`/mnt/nas-write`), only in NAS folders the admin enabled. The original is **hard-linked** into a hidden `.hoard-originals/` on the same filesystem (by default **one at the mount root**, mirroring paths, so nothing new appears inside the owner's photo folders; per NAS folder is the alternative: owner's option 5) and the verified output is **renamed** over the path: atomic, no copy of the original, the path never missing. The walk sees a new fingerprint at the same path; the old item becomes a tombstone with `replacedBy` the new one (a new heir rule reads the compression record), so edits, culling and ratings follow. |
 | Phone videos | The server compresses the backed-up original (ADR 0024) into a **new blob**; Hoard downloads it by range, verifies it, and **writes it over the phone's file in place** (same MediaStore row, name, folder, `DATE_TAKEN`, mtime) under a redo journal. The mirror keeps the original as an entry with removal reason `compressed`, pinned, until the owner confirms; the backup never uploads the output (it is already in the store) and never reports a deletion. Android 11+ with All files access. |
 | Originals | Kept until the owner confirms, per item or per job; no automatic deletion by default. A confirmation from a device (Hoard) deletes after a **7-day hold** the admin page can cancel; the web gallery's confirmation (admin session) can delete at once. "Restore original" undoes a replaced item. |
+| Synced folders | Folders that Syncthing manages (a `.stfolder` or `.stignore` in the folder or an ancestor), detected by Hoard on the phone and by the NAS walk and stored per root and folder, are **skipped by default** (`synced_folder`). A per-folder opt-in, which explains that the compressed file will replace the peer's copy, allows them. A compressed file that arrives in a NAS folder by sync is recognised by the marker and the `compress_items` fingerprint pair: its item follows through `replacedBy`, and the original, kept in the blob store, is not treated as deleted. |
+| Files in the owner's folders | Nothing new inside his photo folders by default: kept originals under one `.hoard-originals/` at the mount root, the per-frame metadata sidecar (option 3a) in the server's data directory. Both are owner's options (5, 6). |
 | Marker | Keys `dev.hfps.hoard.compressed` = `v1, <codec>-cq<q>, <yyyy-MM-dd>` in the file, and the server record `compress_items` keyed by both fingerprints (original and output). |
 | Protocol | Additive `/v1` routes under `/v1/compress/…`, `features: "compress"`, a `compress` object in `GET /v1/server`, items gain an optional `compressed` field. Reveal is not affected. |
 | UI | Hoard: Gallery selection and Settings › "Compress videos" (estimate preview, progress, ready to confirm, history). Web gallery: the same on a selection or a folder, and a Compression view. Admin page: GPU status, sessions, writable folders, the hold. |
@@ -179,6 +181,7 @@ needs a file and its row is missing, one ffprobe run (`PROBE_WORKERS`, `PROBE_TI
 | 4 | estimated saving < 20 % | `small_saving` | Estimate below. |
 | — | HDR `dolby-vision` | `dolby_vision` | Its RPU cannot be kept (default; owner may allow). |
 | — | a live Reveal `photo` or `version` record names a member's fingerprint (`originalNamed`) | `reveal_record` | Reveal has no rule for a replaced video; the item stays as it is. |
+| — | under a Syncthing-managed directory, unless opted in; a `.sync-conflict-` sibling | `synced_folder`, `sync_conflict` | A replace propagates to every peer ("Synced folders"). |
 | — | trashed (ADR 0023), in a `.hoard-*` folder, or already in an unfinished job | `trashed`, `busy` | |
 | 5 | after encoding: **real saving < 20 %** (output file vs source file) | `small_saving` (state `skipped`, output discarded) | Catches estimate errors such as high-motion 60 fps (estimated 80 %, real 56 %, still kept) and anything rule 3 misses. |
 
@@ -242,7 +245,8 @@ thumbnail images, `©too`, `Xtra`, `fsid`) is kept. **Lost for good** (no tool w
 The old script loses all of this and more. What Hoard's and the web gallery's info panels show today comes from
 `file_meta` (capture time, make/model for photos, duration, codec, fps, bit depth, HDR, rotation, audio): after a
 compression they show the new codec and the same everything else; make and model of videos were never read, so
-nothing visible disappears. Owner's option 3 decides whether the per-frame data is saved as a sidecar.
+nothing visible disappears. Owner's option 3 decides whether the per-frame data is saved as a sidecar, and option 6 where (by default not next to
+the output: that would be a new file inside his folders).
 
 ## The job model
 
@@ -300,6 +304,21 @@ CREATE UNIQUE INDEX compress_items_active ON compress_items (fingerprint)
     WHERE state NOT IN ('skipped', 'failed', 'cancelled', 'confirmed', 'restored');
 
 CREATE TABLE video_probe (fingerprint TEXT PRIMARY KEY, version INTEGER NOT NULL, data TEXT NOT NULL) STRICT;
+
+CREATE TABLE synced_dirs (              -- Syncthing-managed directories ("Synced folders")
+    scope    TEXT NOT NULL,             -- 'mirror' (a phone root) | 'nas' (a NAS folder)
+    owner_id TEXT NOT NULL,             -- root id or NAS folder id
+    path     TEXT NOT NULL,             -- relative to the volume (mirror) or the folder (nas); '' = all of it
+    tool     TEXT NOT NULL,             -- 'syncthing'
+    seen_at  INTEGER NOT NULL,
+    PRIMARY KEY (scope, owner_id, path)) STRICT, WITHOUT ROWID;
+
+CREATE TABLE compress_propagations (    -- an output that arrived in a NAS folder by sync
+    item_id   INTEGER NOT NULL REFERENCES compress_items (id),
+    folder_id TEXT NOT NULL,
+    rel_path  TEXT NOT NULL,
+    seen_at   INTEGER NOT NULL,
+    PRIMARY KEY (item_id, folder_id, rel_path)) STRICT, WITHOUT ROWID;
 ```
 
 Additive only (no existing table changes meaning; `server/testdata/compat/` keeps opening; no index on an existing
@@ -426,18 +445,19 @@ ADR 0023 kept the NAS read-only for the server: every move is Hoard's over SMB. 
 mount of the same host directory, `/mnt/nas-write` (configurable `NAS_WRITE_ROOT`), is used **only** by
 `compress.Replacer`, and only for NAS folders whose admin setting "Compression may replace files here" is on
 (`nas_folders` gains no column: a `settings` row `compress.writableFolders`). The server maps a folder's read path to
-its write path by the same relative path, then proves it: it creates and removes `.hoard-originals/.probe` there and
+its write path by the same relative path, then proves it: it creates and removes a probe file in the kept-originals root that folder would use (below) and
 checks that the directory under the write path is the same as the one under `/mnt/nas` (same `st_dev`/`st_ino`). A
 folder that fails is not writable (the admin page says why: not mounted, permission denied, another filesystem).
 
 **Ownership on disk.** The server runs as uid 65532. To rename files in the owner's directories it needs write
 permission on them; files it writes are owned by its uid. The documented setup runs the `-nvidia` container as the
 library owner's uid:gid (`user: "1000:1000"`), so replaced files keep their owner; the alternative is group-writable
-directories with the server's gid. Mode bits are copied from the original. Open question 7.
+directories with the server's gid. Mode bits are copied from the original. Open question 10.
 
-**Containment.** All writes go through an `os.Root` opened on the folder's write path (no `..`, no symlink out), from
+**Containment.** All writes go through an `os.Root` opened on the folder's write path and one on its kept-originals root (no `..`, no symlink
+out), from
 `rel_path` in the database (never a request path), and only these operations exist: create
-`.hoard-originals/…` directories, create a hidden temporary file next to the target, hard-link the original into
+directories under the kept-originals root, create a hidden temporary file next to the target, hard-link the original into
 `.hoard-originals`, rename the temporary file over the target, unlink a kept original (confirm), rename a kept original
 back (restore). Nothing else in the server opens the write mount (a test greps for it).
 
@@ -449,11 +469,11 @@ back (restore). Nothing else in the server opens the write mount (a test greps f
 2. `copy`: the verified output is copied into `<dir>/.<name>.hoard-compress-<item id>` (a dot name: the walk and Hoard
    never list it), `fsync`ed, read back and checked by SHA-256, its mode set to the original's, its mtime to the
    original's (`os.Chtimes`).
-3. `keep`: the original is **hard-linked** to `<folder>/.hoard-originals/<yyyy-MM-dd>/<rel_path>` (`-2`, `-3` when
-   taken). The path never goes missing and no byte is copied. When linking fails (`EXDEV`: a sub-tree on another
-   filesystem; `EPERM`: no hard links), the kept copy goes into `<dir>/.hoard-originals/<yyyy-MM-dd>/<name>` on the
-   file's own filesystem instead; if that fails too, the item fails (`keep_failed`) and the temporary file is removed.
-   Never a copy, never a delete.
+3. `keep`: the original is **hard-linked** into the kept-originals root (below) at `<yyyy-MM-dd>/<path>` (`-2`, `-3`
+   when taken). The path never goes missing and no byte is copied. When linking fails (`EXDEV`: the root is on another
+   filesystem than this file; `EPERM`: no hard links), the item fails (`keep_failed`), the temporary file is removed
+   and the original is untouched. Never a copy, never a delete. A `.hoard-originals` at the NAS folder's root is used
+   instead only where the owner allowed option 5 (a) for that folder.
 4. `swap`: `rename(<temporary>, <rel_path>)`: atomic; readers (Samba, the walk) see the old or the new file.
 5. `done`: `replaced`, `original_path` set; a walk of the folder is requested (`Indexer.RequestWalk`).
 
@@ -461,6 +481,24 @@ back (restore). Nothing else in the server opens the write mount (a test greps f
 not a live file and its item does not stay alive. It is self-describing like the trash (`<day>/<original path>`), so
 the kept originals survive a lost database and can be put back by hand. Hoard's Files shows it only with "Show hidden
 files" and refuses "Move to trash" inside it, as for `.hoard-trash`.
+
+**Where the kept originals live** (owner's option 5). The owner does not want apps to create files in his NAS folders
+(the reason XMP sidecars are export-only, ADR 0011); he accepted `.hoard-trash` for the trash (ADR 0023, at the
+mapping's root, which is the NAS folder's root on the server). Kept originals are a new hidden folder of the same kind,
+so where they go is his choice:
+
+| | (a) per NAS folder | (b) one at the mount root (recommended) |
+| --- | --- | --- |
+| Path | `<NAS folder>/.hoard-originals/<yyyy-MM-dd>/<path in the folder>` (next to `.hoard-trash`) | `<root>/.hoard-originals/<yyyy-MM-dd>/<NAS folder path from the root>/<path in the folder>` |
+| How the root is found | the NAS folder's own root | from the NAS folder upwards to the write mount's root (`/mnt/nas-write`), the **highest directory on the folder's filesystem** (same `st_dev`), as ADR 0023 picks the trash root that still holds the file. Normally the mount root itself (= the share root when the share exports the same directory). Stored per NAS folder (`settings` row `compress.originalsRoots`) and checked again before each replace. |
+| Visible in his folders (SMB, Finder with hidden files shown, Lightroom, backup tools) | yes: one hidden folder in each enabled folder | no: only at the mount or share root, outside the photo folders |
+| Other tools | a tool covering the folder with hidden files (a sync, a backup job) copies the kept originals too: their space doubles on the other side | the same only for tools covering the whole mount; a sync or backup of one photo folder never picks them up |
+| Restore by hand | the folder's tree, without its name | the full path from the root, folder name included: self-describing without the database |
+| Mount boundaries | always the file's filesystem when the folder is one filesystem | a folder on another filesystem than the mount root (a bind mount, a pool member) gets the highest same-filesystem directory, which may be the folder itself or a directory inside it (then (b) degrades to (a) for that folder, and the admin page says so before it is enabled). When that directory is **not writable** (permissions, a read-only export), the folder is not offered for compression ("kept originals cannot be stored on this folder's disk"). Never a copy across filesystems. |
+
+Recommended: **(b)**: his photo folders stay as they are, and the original stays on the same filesystem (instant, no
+bytes copied, hard links). (a) remains a per-folder choice he can allow where (b) is impossible or where he prefers the
+originals next to the photos.
 
 **What the walk and the items do.** The walk sees the path with another size (mtime is the original's), re-reads its
 fingerprint and metadata (ffprobe): the file is the output. The original's item loses its main file and dies in
@@ -494,6 +532,10 @@ A phone job's items are files of the caller's own phone that the backup holds (A
 caller's physical device, `on_device = 1`, `store` `blob` or `nas`). The server reads the original from the store (or
 the NAS copy) by fingerprint, as previews do (`previews.Config.Open`), and:
 
+- **The original is in the store first.** When the entry's `store` is `nas` (the phone's file is a reference to a NAS
+  copy, ADR 0024), the server ingests that NAS copy into the blob store before the item can become `ready` (the checked
+  ingest of ADR 0024's "server's own NAS copy"; the entry becomes `blob`). The original then never depends on a NAS
+  file that a sync or a library job may replace later.
 - **The output becomes a blob**: the verified work file is ingested by `blobstore` (renamed into
   `reveal-sync/blobs/<sha>` on the same filesystem, mode `0400`), with an `originals` row for its fingerprint, no
   device claim (`blobs.device_id` null), and is **not linked** into the phone's tree yet. State `ready`.
@@ -524,6 +566,55 @@ the NAS copy) by fingerprint, as previews do (`previews.Config.Open`), and:
   (rows of `compress_phone` not `reported`), and the compression worker abandons an item whose file is gone (`gone`).
 - If the content is also on the NAS (`store = 'nas'`), the phone job still only replaces the phone's file. The NAS
   copy is the library's: a library job decides about it.
+
+### Synced folders (Syncthing)
+
+The owner's phone camera-drone folder holds a `.stfolder`: Syncthing syncs it to another device (possibly the NAS, or a
+folder the server indexes). Replacing a file in a synced folder replaces it on every peer: the compressed file
+overwrites the peer's original, or the peer keeps it in `.stversions` (when its versioning is on), or a concurrent
+change there makes a `.sync-conflict-…` file. If the peer is an indexed NAS folder, the walk also sees a new
+fingerprint at the same path, racing the phone flow's mirror and blob steps.
+
+**Detection.**
+
+- **Phone (Hoard)**: a directory is synced when it or an ancestor up to the volume root holds `.stfolder` (a
+  directory) or `.stignore` (a file). Hoard checks names only (All files access, `java.io.File`) in `BackupWorker`'s
+  listing pass and before an estimate, and stores the result per backup root in `gallery.db` 6 (`backup_roots.synced`:
+  the synced directory prefixes relative to the volume, with the tool). It sends them with the root:
+  `PATCH /v1/backup/roots/{rootId}` gains `"synced": [{"path": "<volume-relative dir>", "tool": "syncthing"}]`
+  (additive; `[]` when none; without All files access nothing is sent and the root reads `"synced": null`, unknown).
+- **NAS (server walk)**: the walk lists every directory anyway; it notes a `.stfolder` or `.stignore` entry by name
+  (dot names are still not walked into), and at the start of a folder's walk checks the folder's ancestors up to
+  `/mnt/nas`. Stored in a new schema 12 table, `synced_dirs (scope 'mirror' | 'nas', owner_id (root id or NAS folder
+  id), path, tool, seen_at)`, replaced by each walk or root update; shown on the admin page and as `synced` on NAS
+  folders and in `GET /v1/backup/roots`. Only Syncthing's markers for now, in a constant (`compress.SyncMarkers`) that
+  can grow without a protocol change.
+
+**Default: skip.** A video under a synced directory is skipped with reason `synced_folder` on both targets. Each synced
+directory can be opted in (`compress.syncedOptIn`, per root path or NAS folder path, from Hoard's Settings › Compress
+videos or the web gallery) after a sheet that says: "This folder is synced by Syncthing. The compressed file will
+replace the copy on every synced device; their original is kept only if that device keeps versions. Restoring the
+original syncs back too." Even when opted in, a file with a `.sync-conflict-` sibling of the same stem is skipped
+(`sync_conflict`), and conflict copies are never compressed. Unknown (`synced: null`) counts as not synced and the
+estimate warns that the folder could not be checked (`sync_unknown`).
+
+**A compressed file arriving by sync** (an opted-in phone folder synced into a NAS folder, or a NAS job in a folder
+synced to the phone) is recognised by content, never by who wrote it:
+
+- **In a NAS folder**: the walk reads the new file's fingerprint and probe. When the fingerprint is the
+  `out_fingerprint` of a `compress_items` row in `ready`, `replacing`, `replaced` or `confirmed` (the marker confirms
+  it; a marker without a matching row only means `already_compressed`), the file joins **the output's item** (its id
+  derives from the same fingerprint: the same item, not a new one), and the heir rule gives the original's item
+  `replacedBy`, also while the row is still `ready`/`replacing` (the sync can beat the phone's report). The extra
+  location is recorded (`compress_propagations (compress item, folder_id, rel_path, seen_at)`) and shown as "also
+  replaced in <folder> by sync". The original is not lost or treated as deleted: it is in the blob store (phone jobs
+  ingest it first, above) or in `.hoard-originals` (NAS jobs), and a mirror entry that referenced the NAS copy already
+  points at the blob, so ADR 0024's "a reference lost its only copy" warning does not fire. Whatever the peer kept in
+  `.stversions` is outside Hoard: not walked, not counted, not deleted by a confirmation (the admin page says so).
+- **On the phone** (a NAS job in a folder synced to the phone): Syncthing rewrites the phone's file (a new MediaStore
+  row, its own temporary file and rename). Hoard's next backup run reports a rewrite at the path with the output's
+  fingerprint; the server applies "Order does not matter": the old entry becomes `compressed` and pinned, nothing is
+  uploaded, no removal.
 
 ## Phone replace flow (Hoard)
 
@@ -642,7 +733,8 @@ phone must do the replace). Items outside the target are answered `skip` with `n
 
 At most `maxEstimate` items per page (`next` cursor). An item whose probe is not done yet is `"decision":
 "pending"` and counted in `pending` (the client asks again after `Retry-After`); probes run in the background.
-`warnings`: `hdr10plus`, `dolby_vision` (with the skip), `per_frame_metadata` (a `djmd`/`dbgi`/`rtmd` track or
+`warnings`: `hdr10plus`, `dolby_vision` (with the skip), `synced_folder` (with the skip, or the opt-in's reminder),
+`sync_unknown`, `per_frame_metadata` (a `djmd`/`dbgi`/`rtmd` track or
 NRTM/`smta` box will be lost), `pcm_audio`, `av1_playback`.
 
 ### Jobs
@@ -710,7 +802,8 @@ String keys (`values/strings.xml` and `values-pt-rBR/strings.xml`; plurals with 
 `compress_ready_summary` (plural), `compress_confirm`, `compress_confirm_hold`, `compress_restore`,
 `compress_restore_summary` (plural), `compress_history_title`, `compress_saved`, `compress_failed_reason_verify`,
 `compress_failed_reason_changed`, `compress_failed_reason_space`, `compress_failed_reason_encoder`,
-`compress_phone_waiting_permission`, `compress_phone_needs_all_files`, `compress_phone_needs_android11`,
+`compress_phone_waiting_permission`, `compress_skip_synced` (plural), `compress_synced_optin_title`,
+`compress_synced_optin_body`, `compress_synced_optin_action`, `compress_warn_sync_unknown`, `compress_propagated`, `compress_phone_needs_all_files`, `compress_phone_needs_android11`,
 `compress_badge_compressed`, `compress_badge_original_kept`, `compress_badge_compressing`, `compress_unavailable_gpu`.
 
 ### Web gallery and admin page
@@ -722,7 +815,8 @@ String keys (`values/strings.xml` and `values-pt-rBR/strings.xml`; plurals with 
   `compress.action`, `compress.estimate.*` (`summary`, `pending`, `skipped`, `warnings`), `compress.profile.*`,
   `compress.quality.*` (`fixed`, `floor`, `target`), `compress.jobs.*` (`progress`, `eta`, `pause`, `resume`,
   `cancel`), `compress.ready.*` (`title`, `confirm`, `deleteNow`, `restore`, `hold`), `compress.history.*`,
-  `compress.item.*` (`vmaf`, `log`, `reason.*`), `compress.unavailable.*` (`noGpu`, `noTools`).
+  `compress.item.*` (`vmaf`, `log`, `reason.*`), `compress.unavailable.*` (`noGpu`, `noTools`), `compress.synced.*` (`skipped`, `optIn`, `optInBody`, `unknown`,
+  `propagated`, `stversions`), `compress.originalsRoot.*` (`mountRoot`, `perFolder`, `notWritable`).
 - **Admin page** (`internal/server/web`): a Compression section: GPU status (detected, driver, encoders, VMAF, CUDA
   decode, last check), sessions, "Pause while the GPU is busy", window, the writable folders (each with its check
   result), the confirm hold, pending deletions (cancel), the PCM and sidecar defaults; the Storage tab gains kept
@@ -748,11 +842,11 @@ Each phase is one PR with its tests, shippable alone.
 
 | Phase | PR | Contents | Tests |
 | --- | --- | --- | --- |
-| S1 | hoard-server 0.13.0 | Schema 12; `internal/compress`: `Prober` (`video_probe`), `Estimator` and skip rules, `Queue` (lease, priorities, sessions, yield, window, restart), an `Encoder` interface (`NvencEncoder`: ffmpeg + exiftool + mtime; CUDA-decode retry), `Verifier` (ffprobe checks, metadata diff, VMAF full/spot), `Replacer` (write mount, journal, `.hoard-originals`, restore, confirm), the heir rule in `items.Syncer.rebuild`, `compressed` on items, `Open` falling back to kept originals; `/v1/compress/*` for `target: "nas"`, estimate, lookup; GPU detection, `features`; the `-nvidia` image and compose/README; admin page section; ADR 0013 section, `openapi.yaml`, `v1-routes.txt`. | Go with a **fake encoder** (copies a synthetic file and rewrites bytes; a slow one for cancel and restart): every state transition, restart in each state, cancel, priorities, sessions, yield (a fake NVML), space checks; skip rules on synthetic probe JSON (marker, `Lavc`, bpp, DV, Reveal record); estimate maths; the replace journal killed after each step and settled; `EXDEV`/`EPERM` fallbacks (an injected linker); a changed source refused; the walk + heir rule (edits and culling follow `replacedBy`; restore reverses it); `.hoard-originals` not walked; `GET /v1/originals` of a kept original; `os.Root` containment; Verifier with real ffmpeg on lavfi clips made with libx264/libx265 (CPU, seconds): duration, stream, rotation, HDR side data, frame-count mismatch, VMAF spot vs full; `TestRevealProtocolContract`, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir`, `TestMigrationsNeedNoTempDir` unchanged. **GPU integration test** (opt-in `HOARD_GPU_TEST=1`, run on the GPU host in the `-nvidia` container): the recipe on synthetic 8-bit, 10-bit HLG/PQ and VFR clips, the marker, the cap, HDR bit-exact, CUDA-decode fallback. |
-| S2 | hoard-server 0.13.x | Phone jobs: `target: "phone"`, output blobs, ownership rule 5, the `compressed` mirror reason and its transaction (route or report first), `GroupMirror` skipping it, output/replaced/restored/abandon routes, `409 compressed` on `DELETE /v1/originals`. | Go: both orders of report and `/replaced`; nothing uploaded; no removal; ownership across Reveal delete, purge, confirm with another claim; free-up verify of the output; restore reversing items. |
+| S1 | hoard-server 0.13.0 | Schema 12; `internal/compress`: `Prober` (`video_probe`), `Estimator` and skip rules, `Queue` (lease, priorities, sessions, yield, window, restart), an `Encoder` interface (`NvencEncoder`: ffmpeg + exiftool + mtime; CUDA-decode retry), `Verifier` (ffprobe checks, metadata diff, VMAF full/spot), `Replacer` (write mount, journal, `.hoard-originals`, restore, confirm), the heir rule in `items.Syncer.rebuild`, `compressed` on items, `Open` falling back to kept originals; `/v1/compress/*` for `target: "nas"`, estimate, lookup; GPU detection, `features`; the `-nvidia` image and compose/README; admin page section; ADR 0013 section, `openapi.yaml`, `v1-routes.txt`. | Go with a **fake encoder** (copies a synthetic file and rewrites bytes; a slow one for cancel and restart): every state transition, restart in each state, cancel, priorities, sessions, yield (a fake NVML), space checks; skip rules on synthetic probe JSON (marker, `Lavc`, bpp, DV, Reveal record); estimate maths; the replace journal killed after each step and settled; `EXDEV`/`EPERM` fallbacks (an injected linker); a changed source refused; the walk + heir rule (edits and culling follow `replacedBy`; restore reverses it); `.hoard-originals` not walked; the kept-originals root (mount root found by `st_dev`, a folder on another filesystem, a root not writable, option (a) per folder); Syncthing markers in a folder and in an ancestor (`synced_dirs`), the `synced_folder` skip and opt-in, a `.sync-conflict-` sibling; an output appearing by sync in another NAS folder joins the output's item with `replacedBy` while the row is `ready`; `GET /v1/originals` of a kept original; `os.Root` containment; Verifier with real ffmpeg on lavfi clips made with libx264/libx265 (CPU, seconds): duration, stream, rotation, HDR side data, frame-count mismatch, VMAF spot vs full; `TestRevealProtocolContract`, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir`, `TestMigrationsNeedNoTempDir` unchanged. **GPU integration test** (opt-in `HOARD_GPU_TEST=1`, run on the GPU host in the `-nvidia` container): the recipe on synthetic 8-bit, 10-bit HLG/PQ and VFR clips, the marker, the cap, HDR bit-exact, CUDA-decode fallback. |
+| S2 | hoard-server 0.13.x | Phone jobs: `target: "phone"`, output blobs, ownership rule 5, the `compressed` mirror reason and its transaction (route or report first), `GroupMirror` skipping it, output/replaced/restored/abandon routes, `409 compressed` on `DELETE /v1/originals`. | Go: the NAS-referenced original ingested before `ready`; `synced` on root `PATCH`; both orders of report and `/replaced`, and a sync-propagated output in an indexed NAS folder before either; nothing uploaded; no removal; ownership across Reveal delete, purge, confirm with another claim; free-up verify of the output; restore reversing items. |
 | S3 | hoard-server 0.13.x | Web gallery: Compress on selection/folder, the Compression view, logs; strings `en` + `pt-BR`. | `bun run lint/typecheck/test/e2e` with a synthetic library and the fake encoder (a server flag only tests can set). |
 | A1 | Hoard 2.7.0 | Library jobs from Hoard: `compress` in models, Gallery selection → estimate → job, Settings › Compress videos (progress, ready to confirm, history), badges, lookup. | JVM: the sheet's model against a fake server, Roborazzi goldens; emulator against a local hoard-server container with the fake encoder (`docs/testing/compression.md`). |
-| A2 | Hoard 2.8.0 | Phone replace: `gallery.db` 6, `CompressPlan`, `CompressDownloader`, `CompressEngine`, `CompressWorker`, `PhoneCompress` (consent, in-place write, mtime, scan, `DATE_TAKEN`), restore, `FreeUpPlan` exclusion. | JVM: `CompressPlan` (every journal state after a kill), the downloader (resume, `If-Range`, short body, 404), engine against a fake server; migration 5 → 6. Emulator (debug id, local container with a real or fake encoder): synthetic camera videos in `DCIM/Camera`, backed up, compressed, replaced in place: same `_ID`, name, `DATE_TAKEN`, mtime, `IS_FAVORITE`; the process killed during `writing` and redone; the backup's next run uploads nothing and reports no removal; consent refused; restore; free up after a compression. Never on the owner's phone. |
+| A2 | Hoard 2.8.0 | Phone replace: `gallery.db` 6, `CompressPlan`, `CompressDownloader`, `CompressEngine`, `CompressWorker`, `PhoneCompress` (consent, in-place write, mtime, scan, `DATE_TAKEN`), restore, `FreeUpPlan` exclusion. | JVM: `CompressPlan` (every journal state after a kill), the downloader (resume, `If-Range`, short body, 404), engine against a fake server; migration 5 → 6. Emulator (debug id, local container with a real or fake encoder): synthetic camera videos in `DCIM/Camera`, backed up, compressed, replaced in place: same `_ID`, name, `DATE_TAKEN`, mtime, `IS_FAVORITE`; the process killed during `writing` and redone; the backup's next run uploads nothing and reports no removal; consent refused; restore; free up after a compression; a root under a `.stfolder` skipped until opted in. Never on the owner's phone. |
 
 S1 ships alone (the default image keeps working without a GPU). S2 needs S1; A1 needs S1; A2 needs S2. The owner's
 library can be compressed after S1 from the web gallery (S3) or Hoard (A1); the phone folder after A2.
@@ -781,22 +875,36 @@ Each with a recommendation; the ADR assumes the recommended one until answered.
 2. **PCM audio** (the ZV-E10's 1536 kb/s): copy as is (lossless, `ipcm` in MP4, 14–16 % of the output, Android
    playback unverified) vs AAC-LC 256k (about 2.5 %, plays everywhere). **Recommended: AAC 256k.**
 3. **Lost per-frame tracks** (DJI `djmd`/`dbgi`, Sony `rtmd` + NRTM XML, Samsung `smta`): (a) an `exiftool -ee3 -j`
-   JSON sidecar kept next to the output (`<name>.hoard-meta.json`, a few hundred KB; the walk ignores it), (b) keep the
+   JSON sidecar (a few hundred KB per file; where it is kept: option 6), (b) keep the
    original (no compression for such files), (c) accept the loss as the old script did. **Recommended: (a)**, cheap
    and searchable later; (c) if you never used the telemetry.
 4. **AV1** (`av1_nvenc`, 14–22 % smaller than HEVC at equal VMAF): opt-in per job only after you check playback on
    your phone, tablet and TV. **Recommended: offer it as opt-in, HEVC stays the default.**
 
+5. **Where kept originals live on the NAS** (a new hidden folder either way): (a) `.hoard-originals` in each NAS
+   folder, next to `.hoard-trash`; (b) one `.hoard-originals` at the mount root mirroring `<folder>/<path>`, on the same
+   filesystem (hard links still work); a folder on another filesystem uses its highest same-filesystem directory, and
+   is not offered when that is not writable. **Recommended: (b)**, with (a) allowed per folder where you prefer it.
+   Trade-offs in "Where the kept originals live".
+6. **Where the per-frame sidecar of option 3 (a) lives**: (a) next to the output in your folder (`<name>.hoard-meta.json`;
+   visible to every tool, a new file in your folders), (b) next to the kept original inside `.hoard-originals` (hidden,
+   but it goes with the original at confirmation unless moved, and phone outputs have no such folder), (c) the server's
+   data directory, `<data dir>/compress/meta/<output fingerprint>.json`, keyed by content (survives confirmation,
+   moves and renames; backed up with `/data`; downloadable from the web gallery's item panel). **Recommended: (c).**
+7. **Synced folders** (Syncthing): skip by default with a per-folder opt-in that explains the propagation
+   (recommended), or warn and compress? Where does the phone's drone folder sync to (a NAS folder the server indexes,
+   another device), and should compression ever touch synced folders?
+
 ## Open questions
 
-5. The lean option set replaces your draft's multipass/lookahead/b-frames/AQ (measured 0.5–4.7 % less efficient and
+8. The lean option set replaces your draft's multipass/lookahead/b-frames/AQ (measured 0.5–4.7 % less efficient and
    AQ +17 % size). Keep lean, or compare banding by eye on a few flat-sky clips first?
-6. Dolby Vision sources: skip (default), or allow with the base layer only?
-7. The `-nvidia` container runs as your library's uid:gid so replaced files keep their owner: acceptable, or
-   group-writable folders instead?
-8. Which NAS folders may compression replace files in (none by default)?
-9. Confirm hold for confirmations from Hoard: 7 days? And should "Delete kept originals after N days" ever be on?
-10. GPU sharing: one session, "pause while the GPU is busy" on; a night window too?
-11. Phone videos already freed from the phone (server-only): compress them on the server (blob replaced, no phone
+9. Dolby Vision sources: skip (default), or allow with the base layer only?
+10. The `-nvidia` container runs as your library's uid:gid so replaced files keep their owner: acceptable, or
+    group-writable folders instead?
+11. Which NAS folders may compression replace files in (none by default)?
+12. Confirm hold for confirmations from Hoard: 7 days? And should "Delete kept originals after N days" ever be on?
+13. GPU sharing: one session, "pause while the GPU is busy" on; a night window too?
+14. Phone videos already freed from the phone (server-only): compress them on the server (blob replaced, no phone
     step) in a later phase, or never?
-12. A standing rule "compress new phone videos once backed up" (needs a confirmation per batch anyway), or jobs only?
+15. A standing rule "compress new phone videos once backed up" (needs a confirmation per batch anyway), or jobs only?
