@@ -43,6 +43,22 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # GPU video compression (ADR 0025, 0.13.0; README "GPU compression"): use the -nvidia image instead, run as the owner
+  # of the NAS files, give it the GPU (CDI) and a second, read-write mount of the NAS directory. Replace the service
+  # above's image and add:
+  #
+  #   image: ghcr.io/henriquefps/hoard-server:latest-nvidia
+  #   user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-1000}"   # the owner of the NAS files (chown data and backup to it)
+  #   devices:
+  #     - nvidia.com/gpu=all                              # NVIDIA container toolkit, CDI
+  #   environment:
+  #     - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility # "video" is required for NVENC/NVDEC
+  #     - COMPRESS_SESSIONS=1
+  #   volumes:
+  #     - ${NAS_DIR:-/srv/photos}:/mnt/nas-write          # compression's replaces and trash moves only (opt-in)
+  #   cpus: "4"                                         # VMAF and exiftool run on the CPU
+  #   mem_limit: 2g
+
   # Optional: reach the server from anywhere over HTTPS through a Cloudflare Tunnel. Devices sync through
   # it with their keys; the setup page stays LAN-only unless you allow it on the Status page.
   # CLOUDFLARE_TUNNEL_TOKEN comes from your secret vault at run time, never from a file in the repository.

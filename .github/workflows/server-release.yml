@@ -83,3 +83,12 @@ jobs:
             --label org.opencontainers.image.source=https://github.com/henriquefps/hoard \
             --label org.opencontainers.image.licenses=AGPL-3.0-or-later \
             -t ghcr.io/henriquefps/hoard-server:${{ steps.v.outputs.version }} -t ghcr.io/henriquefps/hoard-server:latest .
+
+      - name: Image -nvidia (linux/amd64; ADR 0025, GPU compression)
+        run: |
+          docker buildx build --push --platform linux/amd64 -f Dockerfile.nvidia \
+            --cache-from type=gha,scope=hoard-server-nvidia --cache-to type=gha,scope=hoard-server-nvidia,mode=max \
+            --build-arg VERSION=${{ steps.v.outputs.version }} --build-arg COMMIT=${GITHUB_SHA::7} \
+            --label org.opencontainers.image.source=https://github.com/henriquefps/hoard \
+            --label org.opencontainers.image.licenses=AGPL-3.0-or-later \
+            -t ghcr.io/henriquefps/hoard-server:${{ steps.v.outputs.version }}-nvidia -t ghcr.io/henriquefps/hoard-server:latest-nvidia .

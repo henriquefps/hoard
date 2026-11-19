@@ -58,6 +58,13 @@ Flags (each falls back to the environment variable in brackets):
                           [PREVIEW_BACKLOG] (default image,proxy)
   --full-cache-mb int     disk kept for the web gallery's full-resolution stills of RAW and HEIF
                           photos, made on demand [FULL_CACHE_MB] (default 4096)
+  --nas-read-root string  the read-only NAS mount the write mount mirrors [NAS_READ_ROOT] (default /mnt/nas)
+  --nas-write-root string the read-write mount of the same NAS directory, used only to replace compressed videos
+                          and move their originals into the trash [NAS_WRITE_ROOT] (default /mnt/nas-write)
+  --compress-sessions int GPU encodes at a time, 1 to 3 [COMPRESS_SESSIONS] (default 1)
+  --vmaf-threads int      threads of one VMAF run [VMAF_THREADS] (default 4)
+  --exiftool string       exiftool, for compression's metadata [EXIFTOOL] (default exiftool in PATH)
+  --nvidia-smi string     nvidia-smi, for the GPU's load [NVIDIA_SMI] (default nvidia-smi in PATH)
   --trust-tailscale-serve accept LAN/Tailscale-only pages (web gallery, setup page) proxied by
                           "tailscale serve" on this host [TRUST_TAILSCALE_SERVE=1] (default off)
 
@@ -125,6 +132,8 @@ type options struct {
 	previewsDir, vips, ffmpeg, previewBacklog                     string
 	previewWorkers, proxyWorkers, previewThreads, fullCacheMB     int
 	trustTailscaleServe                                           bool
+	nasReadRoot, nasWriteRoot, exiftool, nvidiaSMI                string
+	compressSessions, vmafThreads                                 int
 }
 
 // intOption reads an integer flag whose default comes from an environment variable.
@@ -173,11 +182,16 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 		name, env string
 		def       int
 	}{{&o.previewWorkers, "preview-workers", "PREVIEW_WORKERS", 2}, {&o.proxyWorkers, "proxy-workers", "PROXY_WORKERS", 1},
-		{&o.previewThreads, "preview-threads", "PREVIEW_THREADS", 2}, {&o.fullCacheMB, "full-cache-mb", "FULL_CACHE_MB", 4096}} {
+		{&o.previewThreads, "preview-threads", "PREVIEW_THREADS", 2}, {&o.fullCacheMB, "full-cache-mb", "FULL_CACHE_MB", 4096},
+		{&o.compressSessions, "compress-sessions", "COMPRESS_SESSIONS", 1}, {&o.vmafThreads, "vmaf-threads", "VMAF_THREADS", 4}} {
 		if err := intOption(fs, opt.dst, opt.name, opt.env, opt.def); err != nil {
 			return o, err
 		}
 	}
+	fs.StringVar(&o.nasReadRoot, "nas-read-root", envOr("NAS_READ_ROOT", "/mnt/nas"), "")
+	fs.StringVar(&o.nasWriteRoot, "nas-write-root", envOr("NAS_WRITE_ROOT", "/mnt/nas-write"), "")
+	fs.StringVar(&o.exiftool, "exiftool", envOr("EXIFTOOL", "exiftool"), "")
+	fs.StringVar(&o.nvidiaSMI, "nvidia-smi", envOr("NVIDIA_SMI", "nvidia-smi"), "")
 	trust, err := strconv.ParseBool(envOr("TRUST_TAILSCALE_SERVE", "0"))
 	if err != nil {
 		return o, fmt.Errorf("TRUST_TAILSCALE_SERVE: %w", err)
@@ -200,6 +214,9 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	}
 	if o.previewWorkers < 1 || o.previewWorkers > 16 || o.proxyWorkers < 1 || o.proxyWorkers > 8 || o.previewThreads < 1 || o.previewThreads > 32 {
 		return o, fmt.Errorf("--preview-workers must be 1 to 16, --proxy-workers 1 to 8, --preview-threads 1 to 32")
+	}
+	if o.compressSessions < 1 || o.compressSessions > 3 || o.vmafThreads < 1 || o.vmafThreads > 64 {
+		return o, fmt.Errorf("--compress-sessions must be 1 to 3, --vmaf-threads 1 to 64")
 	}
 	if o.fullCacheMB < 64 {
 		return o, fmt.Errorf("--full-cache-mb must be at least 64")
@@ -285,7 +302,9 @@ func serve(args []string, stderr io.Writer) int {
 		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout,
 		PreviewsDir: previewsDir, EditsDir: filepath.Join(dir, "edits"), Vips: o.vips, FFmpeg: o.ffmpeg, PreviewWorkers: o.previewWorkers, ProxyWorkers: o.proxyWorkers,
 		PreviewThreads: o.previewThreads, PreviewBacklog: backlog, FullCacheBytes: int64(o.fullCacheMB) << 20,
-		TrustTailscaleServe: o.trustTailscaleServe, TailscaleServePeers: peers}, st)
+		TrustTailscaleServe: o.trustTailscaleServe, TailscaleServePeers: peers,
+		NasReadRoot: o.nasReadRoot, NasWriteRoot: o.nasWriteRoot, CompressSessions: o.compressSessions, VMAFThreads: o.vmafThreads,
+		Exiftool: o.exiftool, NvidiaSMI: o.nvidiaSMI}, st)
 	if err != nil {
 		logger.Error("cannot start", "err", err)
 		return 1

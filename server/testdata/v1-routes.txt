@@ -24,3 +24,14 @@ PATCH /v1/backup/roots/{rootId}
 DELETE /v1/backup/roots/{rootId}
 POST /v1/backup/report
 POST /v1/backup/verify
+# Added since, frozen the same way (ADR 0025, hoard-server 0.13.0):
+POST /v1/compress/estimate
+POST /v1/compress/jobs
+GET /v1/compress/jobs
+GET /v1/compress/jobs/{jobId}
+PATCH /v1/compress/jobs/{jobId}
+GET /v1/compress/items
+POST /v1/compress/cancel
+POST /v1/compress/restore
+POST /v1/compress/purge
+POST /v1/compress/lookup

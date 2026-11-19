@@ -314,6 +314,11 @@ func (ix *Indexer) All(ctx context.Context) {
 	ix.Backup(ctx)
 }
 
+// Rebuild recomputes the given items now (ADR 0025: a compression's state change moves its heir rule).
+func (ix *Indexer) Rebuild(ctx context.Context, ids []string) (int, error) {
+	return ix.syncer(ctx).Rebuild(ctx, ids)
+}
+
 func (ix *Indexer) syncer(ctx context.Context) *items.Syncer {
 	names := map[string]string{}
 	if folders, err := ix.Store.NasFolders(ctx); err == nil {

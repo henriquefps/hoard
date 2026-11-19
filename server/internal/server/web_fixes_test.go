@@ -86,7 +86,7 @@ func TestWebFullCacheBound(t *testing.T) {
 	}
 	// Serve the RAW's again: it becomes the most recent.
 	later := time.Now().Add(time.Second)
-	hs.st.Now = func() time.Time { return later }
+	hs.st.SetNow(func() time.Time { return later })
 	expect(t, hs.do("GET", "/web/items/"+ids["RAWONLY.ARW"]+"/full", nil, webLocal(), withCookie(c)), 200, "")
 	rows, _ = hs.st.PreviewsByAge(t.Context(), previews.JobFull)
 	if rows[0].ItemID != ids["LIVE.HEIC"] {

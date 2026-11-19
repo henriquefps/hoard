@@ -25,12 +25,15 @@ type Location struct {
 	DeviceName       string `json:"deviceName,omitempty"`
 	RootID           string `json:"rootId,omitempty"`
 	Volume           string `json:"volume,omitempty"`
-	Path             string `json:"path,omitempty"`       // nas: relative to the folder, '/'-separated (in a trash: the original path)
-	Trash            string `json:"trash,omitempty"`      // nas, in a trash (ADR 0023): where the file is now, relative to the folder
-	ModifiedAt       int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms; mirror: the phone's
-	OnDevice         *bool  `json:"onDevice,omitempty"`   // mirror: false once the phone no longer has the file
-	Gone             string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted
-	SHA256           string `json:"sha256,omitempty"`     // backup: the blob
+	Path             string `json:"path,omitempty"`  // nas: relative to the folder, '/'-separated (in a trash: the original path)
+	Trash            string `json:"trash,omitempty"` // nas, in a trash (ADR 0023): where the file is now, relative to the folder
+	// Held (ADR 0025, re-review N2): an unfinished compression journal holds this trashed file (an original whose
+	// replace waits, or what a restore moved). Hoard's Empty and auto-empty leave it, and so does the server.
+	Held       bool   `json:"held,omitempty"`
+	ModifiedAt int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms; mirror: the phone's
+	OnDevice   *bool  `json:"onDevice,omitempty"`   // mirror: false once the phone no longer has the file
+	Gone       string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted
+	SHA256     string `json:"sha256,omitempty"`     // backup: the blob
 }
 
 func sameLocation(a, b Location) bool {
@@ -75,6 +78,24 @@ type Data struct {
 	Video           *media.Video   `json:"video,omitempty"`
 	Motion          *Motion        `json:"motion,omitempty"`
 	Files           []File         `json:"files"`
+	// Video compression (ADR 0025). Compressed: on an output item, its record. CompressedTo and ReplacedBy: on a
+	// trashed item whose file a compression replaced (or, after a restore, the trashed output), the live item that took
+	// it over (the heir rule): edits, culling and clients follow it as for a tombstone's replacedBy.
+	Compressed   *Compressed `json:"compressed,omitempty"`
+	CompressedTo string      `json:"compressedTo,omitempty"`
+	ReplacedBy   string      `json:"replacedBy,omitempty"`
+}
+
+// Compressed is the "compressed" object of an output item (ADR 0025 "What the walk and the items do").
+type Compressed struct {
+	From         string `json:"from"`     // the original's fingerprint
+	FromItem     string `json:"fromItem"` // the original's item
+	Profile      string `json:"profile"`
+	Q            int    `json:"q"`
+	At           int64  `json:"at"`       // when the output replaced the original (ms)
+	Original     string `json:"original"` // trashed | purged
+	OriginalSize int64  `json:"originalSize"`
+	MetaSidecar  bool   `json:"metaSidecar"`
 }
 
 // Build computes an item from its sources and the stored metadata of its files (ADR 0014 "Items"). ok is false when

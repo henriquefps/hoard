@@ -186,13 +186,59 @@ func (y *Syncer) apply(ctx context.Context, ops []sourceOp) (Stats, error) {
 	return st, nil
 }
 
-// rebuild recomputes items from their sources: live items first, then tombstones (which then can name the item that
-// took their main file over, "replacedBy"). An item whose every source is a trash is trashed (ADR 0023), not a
-// tombstone: it keeps its id, edits, previews and culling.
+// Rebuild recomputes the given items from their sources in one transaction: what a compression's state change needs
+// (ADR 0025: the heir rule and the "compressed" object depend on compress_items, not only on sources).
+func (y *Syncer) Rebuild(ctx context.Context, ids []string) (int, error) {
+	n := 0
+	err := y.Store.ItemsTx(ctx, func(tx *store.ItemTx) error {
+		var err error
+		n, err = y.rebuild(tx, ids)
+		return err
+	})
+	return n, err
+}
+
+// rebuild recomputes items from their sources: live items first, then trashed ones and tombstones (which then can name
+// the item that took their main file over, "replacedBy"). An item whose every source is a trash is trashed (ADR 0023),
+// not a tombstone: it keeps its id, edits, previews and culling; when a compression replaced its file (ADR 0025, the
+// heir rule) it also names the live item that took it over. A live video item that is a compression's output (or an
+// original a restore brought back) adds the other side's item to the rebuild, so the link is made whichever side the
+// walk sees first.
 func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 	n := 0
 	var dead []string
+	type trashedItem struct {
+		id, main string
+		d        Data
+	}
+	var trashedLater []trashedItem
+	held := map[string]map[string]bool{} // folder -> trash paths an unfinished compression journal holds
+	markHeld := func(d *Data) error {
+		for i := range d.Files {
+			for j := range d.Files[i].Locations {
+				l := &d.Files[i].Locations[j]
+				if l.Trash == "" {
+					continue
+				}
+				h, ok := held[l.FolderID]
+				if !ok {
+					var err error
+					if h, err = tx.HeldTrash(l.FolderID); err != nil {
+						return err
+					}
+					held[l.FolderID] = h
+				}
+				l.Held = h[l.Trash]
+			}
+		}
+		return nil
+	}
+	queued := make(map[string]bool, len(ids))
 	for _, id := range ids {
+		queued[id] = true
+	}
+	for i := 0; i < len(ids); i++ {
+		id := ids[i]
 		rows, err := tx.SourcesOf(id)
 		if err != nil {
 			return n, err
@@ -237,26 +283,86 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 			dead = append(dead, id)
 			continue
 		}
-		js, err := json.Marshal(d)
+		if err := markHeld(&d); err != nil {
+			return n, err
+		}
+		if trashed && d.Kind == KindVideo { // after the live ones: its heir may be one of them
+			trashedLater = append(trashedLater, trashedItem{id, main, d})
+			continue
+		}
+		if trashed {
+			if err := y.write(tx, id, main, d, true, &n); err != nil {
+				return n, err
+			}
+			continue
+		}
+		if d.Kind == KindVideo {
+			links, err := tx.CompressLinks(main)
+			if err != nil {
+				return n, err
+			}
+			d.Compressed = compressedOf(main, links)
+			for _, l := range links { // the other side of each link is rebuilt too
+				for _, other := range []string{ID(l.Fingerprint), l.ItemID, ID(l.OutFingerprint)} {
+					if other != "" && !queued[other] {
+						queued[other] = true
+						ids = append(ids, other)
+					}
+				}
+			}
+		}
+		if err := y.write(tx, id, main, d, false, &n); err != nil {
+			return n, err
+		}
+	}
+	for _, t := range trashedLater {
+		heir := ""
+		if t.d.Kind == KindVideo {
+			var err error
+			if heir, err = compressHeir(tx, t.id, t.main); err != nil {
+				return n, err
+			}
+		}
+		before, err := tx.ItemReplacedBy(t.id)
 		if err != nil {
 			return n, err
 		}
-		files := make([]store.ItemFile, 0, len(d.Files))
-		for _, f := range d.Files {
-			files = append(files, store.ItemFile{Fingerprint: f.Fingerprint, Role: f.Role})
-		}
-		changed, err := tx.WriteItemState(id, main, d.Kind, d.SortTime, js, files, trashed)
-		if err != nil {
+		t.d.ReplacedBy, t.d.CompressedTo = heir, heir
+		if err := y.write(tx, t.id, t.main, t.d, true, &n); err != nil {
 			return n, err
 		}
-		if changed {
-			n++
+		if heir != "" && heir != before {
+			// As for a tombstone's replacedBy: its edits move, its culling goes along and its record is sent again
+			// naming the heir (ADR 0025 "What the walk and the items do").
+			if err := tx.MoveEdits(t.id, heir); err != nil {
+				return n, err
+			}
+			if err := tx.CarryCulling(t.id, heir); err != nil {
+				return n, err
+			}
+			if err := tx.TouchCulling(t.id); err != nil {
+				return n, err
+			}
 		}
 	}
 	for _, id := range dead {
 		tomb := []byte("{}")
 		heir := "" // the live item that took the shot over: its culling moves there (ADR 0016)
-		if main, err := tx.ItemMain(id); err == nil && main != "" {
+		main, err := tx.ItemMain(id)
+		if err != nil {
+			return n, err
+		}
+		if main != "" {
+			// A compression's original (or a restored output) purged from the trash, or replaced at its path by a copy of
+			// the output: its heir is the other side's live item (ADR 0025).
+			if other, err := compressHeir(tx, id, main); err != nil {
+				return n, err
+			} else if other != "" {
+				tomb, _ = json.Marshal(map[string]string{"replacedBy": other})
+				heir = other
+			}
+		}
+		if heir == "" && main != "" {
 			if other, err := tx.LiveItemWithFile(main, id, ""); err == nil && other != "" {
 				tomb, _ = json.Marshal(map[string]string{"replacedBy": other})
 				heir = other
@@ -298,4 +404,66 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+func (y *Syncer) write(tx *store.ItemTx, id, main string, d Data, trashed bool, n *int) error {
+	js, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	files := make([]store.ItemFile, 0, len(d.Files))
+	for _, f := range d.Files {
+		files = append(files, store.ItemFile{Fingerprint: f.Fingerprint, Role: f.Role})
+	}
+	changed, err := tx.WriteItemState(id, main, d.Kind, d.SortTime, js, files, trashed)
+	if changed {
+		*n++
+	}
+	return err
+}
+
+// compressHeir is the heir rule (ADR 0025): an item whose main file is the original of a compression that replaced it
+// (ready, replacing, replaced or purged) is taken over by the live item holding the output; an item whose main file is
+// the output of a restored compression is taken over by the live item holding the original again.
+func compressHeir(tx *store.ItemTx, id, main string) (string, error) {
+	links, err := tx.CompressLinks(main)
+	if err != nil {
+		return "", err
+	}
+	for _, l := range links {
+		var other string
+		switch {
+		case l.Fingerprint == main && l.State != store.CompressRestored:
+			other = l.OutFingerprint
+		case l.OutFingerprint == main && l.State == store.CompressRestored:
+			other = l.Fingerprint
+		default:
+			continue
+		}
+		heir, err := tx.LiveItemWithFile(other, id, "")
+		if err != nil {
+			return "", err
+		}
+		if heir != "" {
+			return heir, nil
+		}
+	}
+	return "", nil
+}
+
+// compressedOf builds the "compressed" object of an output item from its record: the newest replaced or purged
+// compression whose output is main.
+func compressedOf(main string, links []store.CompressLink) *Compressed {
+	for _, l := range links {
+		if l.OutFingerprint != main || (l.State != store.CompressReplaced && l.State != store.CompressPurged) {
+			continue
+		}
+		c := &Compressed{From: l.Fingerprint, FromItem: l.ItemID, Profile: l.Profile, Q: l.Q, At: l.ReplacedAt, Original: "trashed",
+			OriginalSize: l.Size, MetaSidecar: l.MetaSidecar}
+		if l.State == store.CompressPurged {
+			c.Original = "purged"
+		}
+		return c
+	}
+	return nil
 }

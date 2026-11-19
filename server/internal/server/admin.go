@@ -69,7 +69,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	authed("POST /admin/api/nas", s.handleAddNas)
 	authed("DELETE /admin/api/nas/{id}", s.handleRemoveNas)
 	authed("POST /admin/api/nas/reindex", s.handleReindex)
-	s.routesAdminBackup(authed) // phone backups (ADR 0024)
+	s.routesAdminBackup(authed)   // phone backups (ADR 0024)
+	s.routesAdminCompress(authed) // video compression (ADR 0025)
 }
 
 // adminAllowed: the setup page answers direct LAN/Tailscale requests, or any request once the admin allowed proxies.
@@ -321,9 +322,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	head, _ := s.store.HeadRev(ctx)
+	// Video compression that needs the owner's eye (ADR 0025): journals waiting, originals left untracked in a trash.
+	att, _ := s.store.CompressAttentionNow(ctx)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.cfg.Version, "serverId": s.serverID, "counts": counts, "blobs": blobs, "revision": head,
-		"storageConfigured": s.blobStore() != nil, "indexing": s.indexer.Running(), "folderErrors": folderErrors,
+		"storageConfigured": s.blobStore() != nil, "indexing": s.indexer.Running(), "folderErrors": folderErrors, "compressAttention": att,
 		"errors": s.recentErrors(), "settings": s.settings(ctx), "direct": s.localRequest(r),
 	})
 }

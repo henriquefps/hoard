@@ -71,6 +71,17 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/backup/roots/{rootId}", s.device(s.handleBackupRootStop))
 	mux.HandleFunc("POST /v1/backup/report", s.device(s.handleBackupReport))
 	mux.HandleFunc("POST /v1/backup/verify", s.device(s.handleBackupVerify))
+	// Video compression (ADR 0025, hoard-server 0.13.0): additions.
+	mux.HandleFunc("POST /v1/compress/estimate", s.device(s.handleCompressEstimate))
+	mux.HandleFunc("POST /v1/compress/jobs", s.device(s.handleCompressJobCreate))
+	mux.HandleFunc("GET /v1/compress/jobs", s.device(s.handleCompressJobs))
+	mux.HandleFunc("GET /v1/compress/jobs/{jobId}", s.device(s.handleCompressJob))
+	mux.HandleFunc("PATCH /v1/compress/jobs/{jobId}", s.device(s.handleCompressJobUpdate))
+	mux.HandleFunc("GET /v1/compress/items", s.device(s.handleCompressItems))
+	mux.HandleFunc("POST /v1/compress/cancel", s.device(s.handleCompressCancel))
+	mux.HandleFunc("POST /v1/compress/restore", s.device(s.handleCompressRestore))
+	mux.HandleFunc("POST /v1/compress/purge", s.device(s.handleCompressPurge))
+	mux.HandleFunc("POST /v1/compress/lookup", s.device(s.handleCompressLookup))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -175,12 +186,17 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	// Phone backup (ADR 0024, 0.12.0): its limits, next to "limits" like "previews".
 	out["backup"] = map[string]any{"maxRoots": backupMaxRoots, "maxReportEntries": backupMaxReport, "maxVerify": backupMaxVerify,
 		"maxPath": mirror.MaxPath}
+	// Video compression (ADR 0025, 0.13.0): present with the feature or with jobs.
+	if s.compress.FeatureAvailable() || s.compress.Available() || s.compressHasJobs(r.Context()) {
+		out["compress"] = s.compressInfo(r.Context())
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
 // when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews), "items-by-path" (ADR 0014, 0.10.0),
-// "trash" (ADR 0023, 0.11.0), "backup" (ADR 0024, 0.12.0).
+// "trash" (ADR 0023, 0.11.0), "backup" (ADR 0024, 0.12.0), "compress" (ADR 0025, 0.13.0, when a hevc_nvenc test encode
+// passed).
 func (s *Server) features() []string {
 	f := []string{"items", "items-by-path"}
 	if s.prev != nil {
@@ -190,7 +206,11 @@ func (s *Server) features() []string {
 	if s.prev != nil {
 		f = append(f, "edits")
 	}
-	return append(f, "trash", "backup")
+	f = append(f, "trash", "backup")
+	if s.compress != nil && s.compress.FeatureAvailable() { // a GPU and a usable write mount (ADR 0025 Amendment (S1))
+		f = append(f, "compress")
+	}
+	return f
 }
 
 // handleDeviceList lists the paired devices that are not revoked: id, name and platform only (the app names the device

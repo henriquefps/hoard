@@ -502,6 +502,50 @@ Changes to existing routes, all optional for clients:
   another physical device, its backup moves with it (a root of the same volume and path is merged: the newer file
   wins a path).
 
+## Video compression (hoard-server 0.13.0)
+
+Added by ADR 0025, which is the reference (the recipe, the skip rules, the verification, the job model, the trash
+interplay). Additions only; Reveal never calls these routes. `features` gains `"compress"` only when the start-up check
+passed (a `hevc_nvenc` test encode, CUDA decode of it, libvmaf, exiftool: the `-nvidia` image with the GPU). Schema 12
+(`0012_compress.sql`: `compress_jobs`, `compress_items`, `video_probe`; new tables only). Phase S1 serves **`target:
+"nas"`**: library videos replaced in place through the server's write mount (`NAS_WRITE_ROOT`, `/mnt/nas-write`), the
+original moved into the folder's trash (ADR 0023, `.hoard-trash`); `"phone"` and `"backup"` answer `422
+invalid_request` (`details.reason: "target_not_supported"`) until phase S2, which also adds the four phone routes
+(`GET /v1/compress/items/{id}/output`, `POST …/replaced`, `…/restored`, `…/abandon`).
+
+`GET /v1/server` gains, with the feature or when jobs exist, `"compress": {"available", "reason" (null | "no_gpu" |
+"no_tools"), "gpu", "codecs", "vmaf", "cudaDecode", "sessions", "nasWrite", "offerAv1", "trashDays", "profiles":
+[{"id", "codec", "q", "default"?, "optIn"?}], "limits": {"maxItemsPerJob": 5000, "maxEstimate": 500, "maxBatch":
+1000}}`. A selection is `{"folders": [{"folderId", "path"?, "recursive"? (true)}], "filter"?: {"from"?, "to"?,
+"minBytes"?}}` or `{"itemIds": [...]}` (≤ 5000): live NAS video items, one copy per item (the one under the
+selection; the others are named in `otherCopies`). A compression item has a string `id`; `itemIds` of cancel, restore
+and purge take those or gallery item ids (that item's newest compression, as original or output).
+
+| Method and path | Answer |
+| --- | --- |
+| `POST /v1/compress/estimate` `{target, select, profile?, options?, cursor?}` | `200 {"items": [{"itemId", "fingerprint", "name", "folderId", "path", "size", "durationMs", "decision": "encode" \| "skip" \| "pending", "reason"?, "estSize"?, "estSaving"?, "estMs"?, "warnings"?}], "totals": {"items", "encode", "skip": {reason: n}, "size", "estSize", "estMs"}, "pending", "next"}`, 500 items a page (`cursor` = `next`). A video not probed yet is `pending` (probed in the background; `Retry-After`). Without the write mount: `503 unavailable`, reason `no_write_mount`. |
+| `POST /v1/compress/jobs` `{target, select, profile?, options?, auto?, name?, requestId}` | `201` the job with `queued`, `skipped` (by reason) and `busy` (item ids in an unfinished job, left out); `200` with the job for a `requestId` used before. `options`: `{"quality": {"mode": "floor" (default, VMAF 93) \| "fixed" \| "target" (95), "vmaf"?}, "set": "lean" (default) \| "quality"}`. `"auto": true` with one folder: the folder's "Compress automatically" (a standing job, priority 3, the default profile, never AV1: `422`), covering only videos that appear after it; `409 conflict` reason `exists` (`details.job`) when the folder has one. `409 conflict` reason `busy` (`details.itemIds`) when every video is in an unfinished job (no job made). AV1 before the admin's "Offer AV1": `422`. `503 unavailable` (`no_gpu`, `no_tools`, `no_write_mount`), `503 storage_not_configured` without a backup folder. |
+| `GET /v1/compress/jobs?state=&auto=&cursor=&limit=` | `{"jobs": [...], "cursor", "hasMore"}`, newest first. A job: `{"id", "target", "name", "profile", "options", "select", "auto", "priority", "state" (active \| paused \| cancelled \| done), "paused", "createdAt", "finishedAt", "createdBy", "counts": {state: n}, "skipped": {reason: n}, "failed": {reason: n}, "bytes": {"original", "output", "saved", "inTrash"}, "progress": {"done", "toDo", "etaMs", "current"?: {"id", "itemId", "state", "percent"?}}}`. |
+| `GET /v1/compress/jobs/{jobId}` | One job. |
+| `PATCH /v1/compress/jobs/{jobId}` `{"paused"?, "priority"? (0–3), "auto"?: false}` | The job. `"auto": false` turns the folder's switch off: its queued items are cancelled, replaced ones stay. A finished job: `409 conflict` reason `state`. |
+| `GET /v1/compress/items?jobId=&state=&mine=&cursor=&limit=` | `{"items": [{"id", "jobId", "itemId", "fingerprint", "folderId", "path", "name", "state", "reason", "size", "estSize"?, "outSize"?, "outFingerprint"?, "q"?, "vmaf"?: {"mean", "low", "mode"}, "encodeMs"?, "verifyMs"?, "decoder"?, "progress"?, "metaSidecar", "trashPath"?, "replacedAt"?, "trashedAt"?, "purgeAfter"?, "purgedAt"?, "restoredAt"?, "logAvailable"}], "cursor", "hasMore"}`. `mine=true` (phone items) is empty before S2. |
+| `POST /v1/compress/cancel` `{"jobId"}` \| `{"itemIds"}` | `{"items": {id: {"state"} \| {"error": "not_found"}}}`: queued to ready items become `cancelled` (running processes killed, work files removed); later states are answered as they are. |
+| `POST /v1/compress/restore` `{"itemIds"}` (≤ 1000) | `{"items": {id: {"id", "state": "replacing"} \| {"error": "state" \| "not_found"}}}`. A replaced item is restored in the background (the output into the trash, the original back at its path: `restored`); a restored one is replaced again. Works without a GPU; `503 no_write_mount` without the mount. |
+| `POST /v1/compress/purge` `{"jobId"}` \| `{"itemIds"}` (≤ 1000) | Deletes the trashed file of each replaced or restored item now: `{"items": {id: {"id", "state": "purged"} \| {"error"}}}`. Works without a GPU. |
+| `POST /v1/compress/lookup` `{"fingerprints"}` (≤ 1000) | `{"fingerprints": {fp: {"role": "original" \| "output", "id", "itemId", "state", "jobId", "profile", "purgeAfter"?}}, "missing": [...]}`. |
+
+Items: a compression's output item gains `"compressed": {"from", "fromItem", "profile", "q", "at", "original":
+"trashed" | "purged", "originalSize", "metaSidecar"}`; a trashed item whose file a compression replaced (and an output
+trashed by a restore) gains `"compressedTo"` and `"replacedBy"` (the live item: edits move and culling records are sent
+again, as for a tombstone, ADR 0014/0020/0016), served whole with `include=trash`; without it, its tombstone shape
+carries `replacedBy`. A purged original is a tombstone with `replacedBy`. A trash location an unfinished compression
+journal holds carries `"held": true`: clients must not empty it. `features` lists `compress` only with a working GPU and
+a usable write mount; `compress.reason` says why not (`no_gpu`, `no_tools`, `no_write_mount`, `write_mount_mismatch`,
+`write_mount_read_only`, `unstable_inode`), and `compress.attention` counts waiting journals (`stalled`,
+`stalledSince`) and originals left untracked in a trash (`untrackedTrash`). `GET /v1/originals/{fingerprint}` and the
+fingerprint lookup find a trashed original until it is purged. The server writes the NAS only through the write mount,
+for these replaces, restores and purges (ADR 0025 "Containment"); every other write rule of ADR 0023 holds.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |

@@ -435,9 +435,9 @@ func TestBackupMoveRenameRewriteDeleteRestore(t *testing.T) {
 	hs.report(pixel, root, []map[string]any{fileEntry("DCIM/c.jpg", c, true)}, nil)
 	hs.report(pixel, root, nil, []map[string]any{{"path": "DCIM/c.jpg", "reason": "moved"}})
 	now := time.Now()
-	hs.st.Now = func() time.Time { return now.Add(25 * time.Hour) }
+	hs.st.SetNow(func() time.Time { return now.Add(25 * time.Hour) })
 	hs.srv.settleMoves(t.Context())
-	hs.st.Now = time.Now
+	hs.st.SetNow(time.Now)
 	if e := hs.entryAt(pixel, "DCIM/c.jpg"); e.RemovedReason != store.RemovedDeleted || e.OnDevice || !hs.linkedTo(ph, "DCIM/c.jpg", sum(c)) {
 		t.Fatalf("%+v", e)
 	}
@@ -516,10 +516,10 @@ func TestUploadWaitLiveAndStalled(t *testing.T) {
 	}
 	// Stalled (no chunk for 10 minutes): nobody waits.
 	now := time.Now()
-	hs.st.Now = func() time.Time { return now.Add(11 * time.Minute) }
+	hs.st.SetNow(func() time.Time { return now.Add(11 * time.Minute) })
 	w = hs.do("POST", "/v1/uploads", wait, bearer(hoard.key))
 	expect(t, w, 201, "")
-	hs.st.Now = time.Now
+	hs.st.SetNow(time.Now)
 	if u, _ := hs.st.UploadUnclaimed(t.Context(), decode(t, w)["uploadId"].(string)); !u {
 		t.Fatal("claim false not recorded")
 	}
@@ -616,10 +616,10 @@ func TestBackupVerify(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(hs.nas, "o.jpg"), later, later); err != nil {
 		t.Fatal(err)
 	}
-	hs.st.Now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) } // the last hash is too old
+	hs.st.SetNow(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }) // the last hash is too old
 	ask(v("DCIM/o.jpg", other))
 	hs.drain()
-	hs.st.Now = time.Now
+	hs.st.SetNow(time.Now)
 	r := ask(v("DCIM/o.jpg", other))
 	if r[0]["verified"] != "no" || r[0]["reason"] != "changed_on_nas" {
 		t.Fatalf("%v", r)
@@ -705,11 +705,11 @@ func TestBackupRevokeAndClaimMerge(t *testing.T) {
 		t.Fatalf("%v", roots)
 	}
 	soon := time.Now()
-	hs.st.Now = func() time.Time { return soon.Add(8 * 24 * time.Hour) }
+	hs.st.SetNow(func() time.Time { return soon.Add(8 * 24 * time.Hour) })
 	if r := decode(t, hs.do("GET", "/v1/backup/roots", nil, bearer(tablet.key)))["roots"].([]any); r[0].(map[string]any)["active"] != false {
 		t.Fatalf("%v", r)
 	}
-	hs.st.Now = time.Now
+	hs.st.SetNow(time.Now)
 
 	// A new Hoard on another physical device backs up the same folder, then claims the old phone: its backup moves
 	// there and merges (the newer file wins a path).
@@ -746,11 +746,11 @@ func TestBackupRevokeAndClaimMerge(t *testing.T) {
 	}
 	// 8 days later without a report: inactive (Reveal takes the folder back).
 	now := time.Now()
-	hs.st.Now = func() time.Time { return now.Add(8 * 24 * time.Hour) }
+	hs.st.SetNow(func() time.Time { return now.Add(8 * 24 * time.Hour) })
 	if r := decode(t, hs.do("GET", "/v1/device", nil, bearer(fresh.key)))["physicalDevice"].(map[string]any)["backup"].(map[string]any)["roots"].([]any); r[0].(map[string]any)["active"] != false {
 		t.Fatalf("%v", r)
 	}
-	hs.st.Now = time.Now
+	hs.st.SetNow(time.Now)
 	// A physical device whose last device moved away keeps its row while it has a backup; here it moved, so it goes.
 	if ok, _ := hs.st.PhysicalExists(context.Background(), old.physical); !ok {
 		t.Fatal("physical device gone")
@@ -1034,7 +1034,7 @@ func TestBackupVerifyMaxAge(t *testing.T) {
 	expect(t, hs.do("PUT", "/admin/api/backup/settings", map[string]any{"keepNasCopies": false}, adminHeaders()), 200, "")
 	hs.walkAll()
 	hs.report(pixel, root, []map[string]any{fileEntry("DCIM/b.jpg", blob, true), fileEntry("DCIM/n.jpg", nas, true)}, nil)
-	t.Cleanup(func() { hs.st.Now = time.Now })
+	t.Cleanup(func() { hs.st.SetNow(time.Now) })
 
 	ask := func(maxAge any, entries ...map[string]any) []map[string]any {
 		t.Helper()
@@ -1057,7 +1057,7 @@ func TestBackupVerifyMaxAge(t *testing.T) {
 	hour := time.Hour.Milliseconds()
 	at := func(r map[string]any) int64 { return int64(r["verifiedAt"].(float64)) }
 	start := time.Now()
-	clock := func(d time.Duration) { hs.st.Now = func() time.Time { return start.Add(d) } }
+	clock := func(d time.Duration) { hs.st.SetNow(func() time.Time { return start.Add(d) }) }
 
 	// A first re-hash exists, now.
 	ask(nil, vb, vn)
