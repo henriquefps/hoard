@@ -1104,8 +1104,10 @@ the text above left open or a small deviation.
 - **Automatic phone folders.** `"auto": true` with one root: target phone (the caller's root) appends, after each items
   pass of the backup (the indexer's `AfterBackup`), the videos whose entries were created since the switch and are
   stored (`blob` or `nas`) and on the phone; a replace's output is never appended (its fingerprint is a record's).
-  Target backup (the web gallery's switch on a phone backup) appends the videos that left their phone (freed or
-  deleted) since the switch: a video still on the phone is never compressed on the server alone.
+  Target backup (the web gallery's switch on a phone backup) takes, the same way, only videos whose entries were
+  created since the switch (new recordings) and that are no longer on the phone (freed or deleted): a video still on
+  the phone is never compressed on the server alone, and a video backed up before the switch that is freed later is
+  not new (on demand only; coordinator's ruling).
 - **Items in the answers.** Compression items gain `target` (from the job) and `source`; phone and backup items add
   `rootId`, `volume`, `path` (on the phone), `physicalDeviceId`, `modifiedAt`, `sha256` (the original's), `outSha256`
   and, while a phone writes, `direction`. Estimate rows of phone and backup targets carry `rootId`, `volume` and the

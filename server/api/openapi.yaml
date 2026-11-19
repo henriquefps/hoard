@@ -1902,7 +1902,7 @@ paths:
         left out); `200` with the job when `requestId` was used before. `"auto": true` with a single folder makes the
         folder's standing job (default profile, never AV1, `422`): only videos that appear after it are compressed (a
         NAS folder: new items of the walk; a phone root, target phone: files the backup stores after it; target backup:
-        files that leave their phone after it); `409 conflict` reason `exists` (with `details.job`) when the folder has
+        files backed up after it, once they are no longer on their phone); `409 conflict` reason `exists` (with `details.job`) when the folder has
         one. `409 conflict` reason `busy` when every video is already in an unfinished job. `503 unavailable` reason
         `no_gpu`, `no_tools` or `no_write_mount` (target nas); `503 storage_not_configured` without a backup folder (the
         work directory lives there).
