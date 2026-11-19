@@ -120,6 +120,11 @@ data class GalleryUi(
     val dismissed: Set<String> = emptySet(),
     /** Phones with a backup on the server (ADR 0024 A2): the Devices button shows when there is one. */
     val devices: List<dev.hfps.hoard.app.gallery.BackupDevice> = emptyList(),
+    /** ADR 0025: "Compress videos" on a selection (library videos), and on a backup's place (server-only videos). */
+    val compressSelection: Boolean = false,
+    val compressBackup: Boolean = false,
+    /** Item id → "Compressed" / "Compressing" badge. */
+    val compressBadges: Map<String, dev.hfps.hoard.app.compress.CompressBadge> = emptyMap(),
 )
 
 /** Tab 1 (ADR 0021): one grid of the phone's shots and the server's items, newest first. */
@@ -137,6 +142,10 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     val open by vm.open.collectAsStateWithLifecycle()
     val lastViewed by vm.lastViewed.collectAsStateWithLifecycle()
     val devices by vm.devices.collectAsStateWithLifecycle()
+    val nasOffer by container.compress.nasOffer.collectAsStateWithLifecycle()
+    val backupOffer by container.compress.backupOffer.collectAsStateWithLifecycle()
+    val compressBadges by container.compress.badges.collectAsStateWithLifecycle()
+    var compressing by remember { mutableStateOf<dev.hfps.hoard.app.ui.compress.CompressRequest?>(null) }
     var filters by remember { mutableStateOf(false) }
     var devicesOpen by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf<List<GalleryEntry>?>(null) }
@@ -154,8 +163,31 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshPermission() }
     val askMedia = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refreshPermission() }
 
+    // The "Compressing" badges follow each sync (the jobs run on the server).
+    LaunchedEffect(status.running) { if (!status.running) container.compress.refreshCompressing() }
+    val hidden = dev.hfps.hoard.server.compress.CompressOffer.Hidden
     GalleryContent(
-        ui = GalleryUi(layout, filter, columns, permission, account, status, total, dismissed, devices),
+        ui = GalleryUi(
+            layout, filter, columns, permission, account, status, total, dismissed, devices,
+            compressSelection = nasOffer != hidden || backupOffer != hidden,
+            compressBackup = backupOffer != hidden,
+            compressBadges = compressBadges,
+        ),
+        onCompress = {
+            val chosen = layout?.entries.orEmpty().filter { it.key in selection.keys }
+            screenScope.launch {
+                val (parts, left) = container.compress.partsOf(chosen)
+                compressing = dev.hfps.hoard.app.ui.compress.CompressRequest(parts, left)
+            }
+        },
+        onCompressWhere = {
+            val where = filter.where
+            if (where != null) {
+                screenScope.launch {
+                    compressing = dev.hfps.hoard.app.ui.compress.CompressRequest(listOfNotNull(container.compress.backupPartOf(where)))
+                }
+            }
+        },
         thumbs = container.gallery.thumbs,
         grid = grid,
         onOpenSettings = onOpenSettings,
@@ -179,6 +211,9 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
         onClearWhere = { vm.setWhere(null) },
         onSaveToDevice = { saving = layout?.entries.orEmpty().filter { it.key in selection.keys } },
     )
+    compressing?.let { request ->
+        dev.hfps.hoard.app.ui.compress.CompressSheet(container, request, onDismiss = { compressing = null }, onStarted = { selection = dev.hfps.hoard.app.gallery.GallerySelection() })
+    }
     if (devicesOpen) DevicesSheet(devices, filter.where, onPick = vm::setWhere, onDismiss = { devicesOpen = false })
     saving?.let { chosen ->
         SaveToDeviceSheet(container, chosen, onDismiss = { saving = null }, onSaved = { selection = dev.hfps.hoard.app.gallery.GallerySelection() })
@@ -276,6 +311,9 @@ fun GalleryContent(
     onClearWhere: () -> Unit = {},
     /** Save the selected server shots to this device (ADR 0024 A2). */
     onSaveToDevice: (() -> Unit)? = null,
+    /** ADR 0025: compress the selected videos; compress the shown backup place's videos. */
+    onCompress: () -> Unit = {},
+    onCompressWhere: () -> Unit = {},
 ) {
     var searching by remember { mutableStateOf(ui.filter.query.isNotEmpty()) }
     var goTo by remember { mutableStateOf(false) }
@@ -290,6 +328,7 @@ fun GalleryContent(
                     onSelectAll = { onSelection(selection.all(ui.layout?.entries.orEmpty().map { it.key })) },
                     onMoveToTrash = onMoveToTrash,
                     onSaveToDevice = onSaveToDevice?.takeIf { ui.account != null },
+                    onCompress = onCompress.takeIf { ui.compressSelection && selectedVideos(ui, selection) },
                 )
             } else if (searching) {
                 SearchBar(filter.query, onQuery = onQuery, onClose = {
@@ -320,7 +359,7 @@ fun GalleryContent(
     ) {
         Column(Modifier.fillMaxSize()) {
             Banner(ui.account, ui.status, ui.dismissed, onPair = onPair, onSettings = onOpenSettings, onDismiss = onDismiss)
-            ui.filter.where?.let { WhereBar(it, onClearWhere) }
+            ui.filter.where?.let { WhereBar(it, onClearWhere, onCompress = onCompressWhere.takeIf { ui.compressBackup }) }
             val current = ui.layout
             when {
                 current == null -> Box(Modifier.fillMaxSize()) {
@@ -351,6 +390,7 @@ fun GalleryContent(
                         selection = selection,
                         onSelection = onSelection,
                         wherePhone = ui.filter.where?.physicalId,
+                        compressBadges = ui.compressBadges,
                     )
                 }
             }
@@ -362,7 +402,7 @@ fun GalleryContent(
 
 /** The top bar while selecting (ADR 0023): the count, Select all (the filtered list), Move to trash. */
 @Composable
-private fun SelectionBar(count: Int, onClear: () -> Unit, onSelectAll: () -> Unit, onMoveToTrash: () -> Unit, onSaveToDevice: (() -> Unit)? = null) {
+private fun SelectionBar(count: Int, onClear: () -> Unit, onSelectAll: () -> Unit, onMoveToTrash: () -> Unit, onSaveToDevice: (() -> Unit)? = null, onCompress: (() -> Unit)? = null) {
     HfpsTopBar(
         title = androidx.compose.ui.res.pluralStringResource(R.plurals.gallery_selected, count, count.toString()),
         onBack = onClear,
@@ -370,9 +410,14 @@ private fun SelectionBar(count: Int, onClear: () -> Unit, onSelectAll: () -> Uni
     ) {
         HfpsIconButton(PhosphorRegular.CheckSquare, stringResource(R.string.gallery_select_all), onSelectAll, modifier = Modifier.testTag("gallery-select-all"))
         if (onSaveToDevice != null) HfpsIconButton(PhosphorRegular.DownloadSimple, stringResource(R.string.save_device), onSaveToDevice, modifier = Modifier.testTag("gallery-save-device"))
+        if (onCompress != null) HfpsIconButton(PhosphorRegular.ArrowsIn, stringResource(R.string.compress_action_selection), onCompress, modifier = Modifier.testTag("gallery-compress"))
         HfpsIconButton(PhosphorRegular.Trash, stringResource(R.string.gallery_move_to_trash), onMoveToTrash, modifier = Modifier.testTag("gallery-move-to-trash"))
     }
 }
+
+/** The selection holds a server video (ADR 0025: "Compress videos" shows only then). */
+private fun selectedVideos(ui: GalleryUi, selection: dev.hfps.hoard.app.gallery.GallerySelection): Boolean =
+    ui.layout?.entries.orEmpty().any { it.key in selection.keys && it.kind == Kind.Video && it.itemId != null }
 
 @Composable
 private fun SearchBar(query: String, onQuery: (String) -> Unit, onClose: () -> Unit) {
@@ -450,6 +495,8 @@ fun GalleryGrid(
     onSelection: (dev.hfps.hoard.app.gallery.GallerySelection) -> Unit = {},
     /** The phone whose backup the grid shows (ADR 0024 A2): the "Deleted from the phone" badge is about it. */
     wherePhone: String? = null,
+    /** ADR 0025: item id → "Compressed" / "Compressing". */
+    compressBadges: Map<String, dev.hfps.hoard.app.compress.CompressBadge> = emptyMap(),
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -537,6 +584,7 @@ fun GalleryGrid(
                         selected = key in selection.keys,
                         onLongPress = { onSelection(selection.toggle(key)) },
                         offPhone = dev.hfps.hoard.app.gallery.Mirrors.offPhone(cell.entry.mirrors, wherePhone),
+                        compress = cell.entry.itemId?.let { compressBadges[it] },
                     )
                 }
             }
@@ -612,6 +660,7 @@ class CellTexts(
     val device: String, val server: String, val both: String, val motion: String, val raw: String, val edited: String, val picked: String, val rejected: String,
     val backupWaiting: String = "", val backupUploading: String = "", val backupPaused: String = "", val backupFailed: String = "",
     val offPhone: String = "", val freed: String = "",
+    val compressed: String = "", val compressing: String = "",
 )
 
 @Composable
@@ -622,6 +671,7 @@ fun rememberCellTexts() = CellTexts(
     stringResource(R.string.gallery_badge_backup_waiting), stringResource(R.string.gallery_badge_backup_uploading),
     stringResource(R.string.gallery_badge_backup_paused), stringResource(R.string.gallery_badge_backup_failed),
     stringResource(R.string.gallery_badge_off_phone), stringResource(R.string.gallery_badge_freed),
+    stringResource(R.string.compress_badge_compressed), stringResource(R.string.compress_badge_compressing),
 )
 
 @Composable
@@ -637,6 +687,8 @@ fun GalleryCell(
     onLongPress: (() -> Unit)? = null,
     /** A backed-up shot no longer on its phone (ADR 0024 A2). */
     offPhone: dev.hfps.hoard.app.gallery.OffPhone? = null,
+    /** ADR 0025: a compressed output whose original is in the trash, or a video being compressed. */
+    compress: dev.hfps.hoard.app.compress.CompressBadge? = null,
 ) {
     val image: ImageBitmap? by produceState(thumbs.peek(entry, px), thumbs.key(entry, px)) {
         if (value == null) value = thumbs.load(entry, px)
@@ -690,6 +742,11 @@ fun GalleryCell(
                 null -> Unit
                 dev.hfps.hoard.app.gallery.OffPhone.Deleted -> Badge(PhosphorRegular.DeviceMobileSlash, texts.offPhone, tint = Color(0xFFFFC53D), tag = "badge-off-phone")
                 dev.hfps.hoard.app.gallery.OffPhone.Freed -> Badge(PhosphorRegular.DeviceMobileSlash, texts.freed, tag = "badge-freed")
+            }
+            when (compress) {
+                null -> Unit
+                dev.hfps.hoard.app.compress.CompressBadge.Compressed -> Badge(PhosphorRegular.ArrowsIn, texts.compressed, tag = "badge-compressed")
+                dev.hfps.hoard.app.compress.CompressBadge.Compressing -> Badge(PhosphorRegular.SpinnerGap, texts.compressing, tag = "badge-compressing")
             }
         }
         Row(Modifier.align(Alignment.TopEnd)) {

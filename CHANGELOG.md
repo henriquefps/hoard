@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.7.0 (unreleased)
+
+Compress your videos on the photo server: the same look in a fraction of the space, with the originals in the trash until you empty it ([ADR 0025](docs/adr/0025-video-compression.md)). Needs hoard-server 0.13.0 with its GPU image; with an older server, or one without a usable GPU, nothing changes.
+
+- **Compress videos.** Select videos in the Gallery, or open a library folder in Files and choose **Compress videos in this folder** (⋮). A sheet says what happens (the server replaces the files in your library; phone backups no longer on a phone are compressed on the server), lets you pick **Same look** or **Smaller**, and shows the server's estimate: "129 of 312 videos · 29.1 GB → about 5.6 GB · about 35 min", with what is skipped and why ("180 already compressed by an older tool", "2 already efficient"). **AV1** appears only once it is turned on on the server.
+- **Originals go to the trash.** Each compressed video's original waits in the Trash, marked "Original of a compressed video · saves 412 MB when emptied". **Restore original** puts it back and moves the compressed one to the trash; **Delete permanently** and **Empty trash** free the space. A video the server is still working on is shown as "Held by a compression in progress": emptying the trash, by hand or automatically, never deletes it, and it is not counted in what emptying frees.
+- **Compress automatically** (⋮ on a library folder, off until you turn it on): new videos in that folder are compressed after the server finds them; you can also compress the ones already there.
+- **Settings › Photo server › Compress videos**: space saved and still in the trash, compressions in progress with their progress (Pause, Resume, Cancel), the folders compressed automatically (each with its switch), and the history.
+- **Gallery badges**: "Compressed" while the original is in the trash, "Compressing" while the server works on a video.
+- When the server cannot compress (no GPU, the library not writable for it), the sheet says why instead of starting.
+- Compressing videos that are only on this phone comes in 2.8.0.
+
 ## 2.6.0 (2026-11-18)
 
 Free up space on the phone: what the server holds and has just checked leaves the phone, oldest first, after you see it and Android asks you ([ADR 0024](docs/adr/0024-phone-backup.md), "Free up space"). Android 11 and later; needs hoard-server 0.12.0.

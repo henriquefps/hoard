@@ -68,6 +68,20 @@ class SyncEngine(
     private val _status = MutableStateFlow(SyncStatus())
     val status: StateFlow<SyncStatus> = _status
 
+    private val _compress = MutableStateFlow<dev.hfps.hoard.server.api.CompressInfo?>(null)
+
+    /**
+     * `GET /v1/server`'s `compress` object (ADR 0025) as of the last sync or [noteServerInfo]: which compression
+     * targets are usable. Kept in memory (the next sync refreshes it); null before one, or when the server has none.
+     */
+    val compress: StateFlow<dev.hfps.hoard.server.api.CompressInfo?> = _compress
+
+    /** A fresh `GET /v1/server` read elsewhere (the compression screens): its features and `compress` object. */
+    suspend fun noteServerInfo(info: dev.hfps.hoard.server.api.ServerInfo) {
+        _compress.value = info.compress
+        db.account().setServerInfo(info.features.joinToString(","), info.serverName, info.version)
+    }
+
     @Volatile private var cachedApi: ServerApi? = null
 
     /** The API of the paired server (null when not paired). */
@@ -164,7 +178,10 @@ class SyncEngine(
     }
 
     /** Forgets the server: the key, the cache and the queue for it (local decisions on device items stay). */
-    suspend fun unpair() = mutex.withLock { clearAll() }
+    suspend fun unpair() = mutex.withLock {
+        _compress.value = null
+        clearAll()
+    }
 
     /** Drops the cached items and records; the next sync pulls from the start (the queue stays). */
     suspend fun clearCache() = mutex.withLock {
@@ -249,6 +266,7 @@ class SyncEngine(
             try {
                 val info = api.server()
                 db.account().setServerInfo(info.features.joinToString(","), info.serverName, info.version)
+                _compress.value = info.compress
                 val culling = Features.CULLING in info.features
                 // Rule 6: `culling` is declared before the first culling push (a push without it would let the server
                 // bridge records again); a failed declaration is retried on the next sync, and nothing is pushed until then.

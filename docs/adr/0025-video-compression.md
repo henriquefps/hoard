@@ -553,9 +553,10 @@ and culling move back. Restoring again (from the output's trash entry) swaps onc
 rename is refused by Hoard for these (the path is taken), so Hoard always uses the route for items with
 `compressedTo`.
 
-**Empty and auto-empty.** The trashed original is a trashed file like any other: Hoard's Empty and auto-empty delete it
-over SMB (ADR 0023, 30 days by default, "the shorter setting wins"), and the server deletes, through the write mount,
-the trashed files **it** made (rows in `replaced` or `restored`) once `purge_after` passes (`compress.trashDays`,
+**Empty and auto-empty.** The trashed original is listed like any trashed file, but **only the server deletes it**
+(Amendment (A1), review of #76): Hoard's Empty and Delete permanently send it to `POST /v1/compress/purge` and leave it
+when the server refuses (no write mount, a failed safety check, `output_missing`, a busy journal); Hoard's auto-empty
+never deletes it over SMB. The server deletes, through the write mount, the trashed files **it** made (rows in `replaced` or `restored`) once `purge_after` passes (`compress.trashDays`,
 default 30, the admin page) or when `POST /v1/compress/purge` asks. Either way the next walk sees the trash row gone:
 the trashed item becomes a tombstone that keeps its `replacedBy` (edits were already moved), and the row becomes
 `purged`. This is when the space is saved.
@@ -1300,3 +1301,74 @@ release.
   - *GPU test re-run* (2026-11-19, the build host's RTX 4080, driver 620, a locally built `-nvidia` image as a non-root
     uid on temporary directories, synthetic clips only): the nine clips all `replaced` at cq 28 (VMAF 96.0–96.7), every
     check confirming the marker and the camera by value; 108 s of video in 121 s wall.
+
+## Amendment (A1)
+
+Phase A1 (Hoard 2.7.0: library and backup jobs, Settings › Compress videos, badges, the Trash screen) as built; each
+point is a detail the text above left open or a small deviation. E2E and tests: `docs/testing/compression.md`.
+
+- **The gate.** Every compression action shows only with the feature `compress`; a library action needs
+  `compress.targets.nas.ok`, a backup action `targets.backup.ok` (`CompressGate`, `:core:server` `compress/`); a target
+  that is not ok shows the server's reason in the sheet instead of the estimate. The phone target is never offered
+  (A2). Settings › Compress videos is listed with the feature **and** while the server still sends its `compress`
+  object without it (a GPU that went away, jobs left), so their history stays reachable; restore and purge need no GPU.
+  The `compress` object is kept in memory from each sync's `GET /v1/server` (no `gallery.db` change in A1).
+- **Where the actions are.** A Gallery selection holding server videos (its videos with a live NAS file make a `nas`
+  part, those whose every phone copy is off the phone a `backup` part; the rest, on this phone only or uploads, is
+  counted as left out; one sheet, one job per part); a Files folder of a share a stored mapping covers (ADR 0022:
+  "Compress videos in this folder" and "Compress automatically" in its ⋮ menu); a Gallery › Devices place (the
+  where-bar's action: the phone's backup roots under that place, `target: "backup"`). The viewer's menu and Settings ›
+  Backup's folder rows have no action in A1 (the phone target comes with A2).
+- **The sheet** reads every estimate page (warnings come from the pages, totals from the server), asks again after
+  `Retry-After` while probes are pending (at most 15 times), and allows Start while some videos are still pending
+  (the job estimates again). "Compress automatically" is the same sheet in its automatic form: the default profile
+  (never AV1), the count of videos already there as "Also compress the N videos already there" (a second, one-off job),
+  and **Turn off** when the folder's standing job exists (`PATCH … {"auto": false}`).
+- **Settings › Compress videos**: totals ("saved" = purged, "in the trash"), `attention.stalled`, the GPU name, whether
+  AV1 is offered, jobs in progress (progress, the current item's percent, ETA, Pause/Resume, Cancel with a
+  confirmation), automatic folders with their switch, history (done/cancelled, saved, in the trash, skipped and failed
+  by reason). The night window, "Offer AV1" and GPU sharing are the setup page's settings (no `/v1` route sets them):
+  Hoard shows them, read-only. Restore of one item is the Trash screen's (the history says so).
+- **Badges.** "Compressed": a live item whose `compressed.original` is `trashed` (read from the cached items' JSON).
+  "Compressing": the original items of unfinished compression items (`GET /v1/compress/items?state=queued,…`), read
+  after each sync and each job started. `POST /v1/compress/lookup` is in `ServerApi` (tested) but the screens do not
+  need it: the cached items carry `compressedTo` and `compressed`.
+- **The Trash screen.** A compressed original (a trashed item with `compressedTo`, original or restored output) is
+  matched to its share row through the mapping (ADR 0023 A4); its row is labelled "Original of a compressed video ·
+  saves … when emptied" with its own menu: **Restore original** = `POST /v1/compress/restore` with the item's own id,
+  **Delete permanently** and **Empty trash** = `POST /v1/compress/purge`. One without a share row (no mapping, a
+  backup's kept side) is listed in a section "Originals of compressed videos", with the same actions. A share whose
+  mapping Hoard has not learned is matched by the original's `.hoard-trash/<day>/<path>`, so it too goes through the
+  routes (never a plain rename back, which would desync the journal).
+- **Only the server deletes a compressed original** (review of #76; the coordinator's decision). Empty and Delete
+  permanently send it to the purge route and nowhere else: on any refusal (`no_write_mount` for the whole request,
+  `not_writable` when the server's own safety checks failed, `output_missing`, `busy`, `state`) it stays, and the
+  screen says why ("1 original stays in the trash: the server cannot write the library now"). Auto-empty and the plain
+  rows of an Empty are deleted with a protected set that holds the held entries **and** every compressed original (by
+  mapped path, by trash tail and by item), so no share-side delete can take one even when matching failed; the server's
+  own `trashDays` purge empties them. (The first build of A1 deleted them over SMB when the server had no write mount;
+  that bypassed the server's checks, e.g. a trashed or missing output, and is removed.)
+- **The held rule (Amendment (S1) contract).** Held = a trash location with `held: true` of **any** cached item: a
+  trashed one, or a live one (a replace that waits after its hard link keeps the original live at its path and in
+  the trash). A share row is held when its trash path is that location through a mapping, **or** when its path from
+  `.hoard-trash` on (`.hoard-trash/<day>/<path>`) is the same (a share whose mapping Hoard has not learned: keeping a
+  file too many is safe). Empty, Delete permanently and auto-empty skip held rows (auto-empty empties a held day folder
+  file by file around them); they are listed "Held by a compression in progress", not counted, and the Empty
+  confirmation says how many stay. Empty, auto-empty and the Trash screen's refresh sync first; when that sync fails
+  (any paired server: a device that never synced since the server gained compression cannot tell from its cache), the
+  held state is **unknown** and **every share row** is held for that run, and auto-empty skips every share (fail closed:
+  a share of a server folder whose mapping is not learned cannot be told apart); local drives are not affected.
+  Auto-empty uses the same predicate as Empty: a held path, or a row Empty would leave (its item held).
+- **Upgrade.** Items cached by 2.6.x were stored without `compressed`, `compressedTo` and `held`; a change of either
+  re-serves the item with a new revision, and the deployment rule (the write mount only once every device runs 2.7.0)
+  means none is held before the upgrade. No re-pull.
+- **Strings** follow the list above with these additions: `compress_settings_summary`, `compress_action_backup`,
+  `compress_estimate_sizes`, `compress_estimating`, `compress_estimate_nothing`, `compress_cancel_confirm_*`,
+  `compress_auto_on`, `compress_auto_off`, `compress_auto_turn_off`, `compress_auto_none`, `compress_running_title`,
+  `compress_no_jobs`, `compress_totals`, `compress_trash_held`, `compress_trash_held_note`, `compress_trash_section`,
+  `compress_purge_refused`, `compress_refused_*`, `compress_skip_busy`, `compress_skip_other`, `compress_failed_reason_writable`,
+  `compress_failed_reason_other`, `compress_unavailable_backup_root`, `compress_unavailable_other`, `compress_job_*`,
+  `compress_duration_*`, `compress_left_out`, `compress_started`, `compress_exists`, `compress_busy`,
+  `compress_none_in_selection`, `compress_load_failed`, `compress_night_window`, `compress_av1_*`, `compress_gpu`.
+  The phone-only keys (`compress_target_phone`, `compress_warn_other_backup_apps`, `compress_phone_*`) come with A2.
+- **Icon**: Phosphor `arrows-in` (added to `android/scripts/icons/icons.txt`).

@@ -53,6 +53,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -599,10 +600,37 @@ private fun HeaderMenu(location: BrowseLocation, showHidden: Boolean, nav: Brows
     val res = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
-    val settings = (context.applicationContext as dev.hfps.hoard.app.HoardApplication).container.appSettings
+    val container = (context.applicationContext as dev.hfps.hoard.app.HoardApplication).container
+    val settings = container.appSettings
+    // ADR 0025: a share folder a mapping places on the server can be compressed there (when the server offers it).
+    val offer by container.compress.nasOffer.collectAsState()
+    val machineId = location.machine?.machine?.id
+    val share = location.share
+    // Resolved when the menu opens: the folder's mapping may be learned after the folder opened.
+    val compressFolder by androidx.compose.runtime.produceState<dev.hfps.hoard.app.compress.CompressFolder?>(null, machineId, share, viewModel.path, offer, open) {
+        value = if (offer != dev.hfps.hoard.server.compress.CompressOffer.Hidden && location.isSmb && machineId != null && share != null) {
+            runCatching { container.compress.folderOf(machineId, share, viewModel.path) }.getOrNull()
+        } else {
+            null
+        }
+    }
+    var compressing by remember { mutableStateOf<dev.hfps.hoard.app.ui.compress.CompressRequest?>(null) }
+    compressing?.let { request -> dev.hfps.hoard.app.ui.compress.CompressSheet(container, request, onDismiss = { compressing = null }) }
     Box {
         HfpsIconButton(PhosphorRegular.DotsThreeVertical, stringResource(R.string.t_common_more), { open = true })
         DropdownMenu(open, { open = false }, containerColor = HfpsTheme.colors.card) {
+            compressFolder?.let { folder ->
+                val part = dev.hfps.hoard.app.compress.CompressPart(dev.hfps.hoard.server.api.Compress.TARGET_NAS, folder.select)
+                MenuItem(stringResource(R.string.compress_action_folder), PhosphorRegular.ArrowsIn, {
+                    open = false
+                    compressing = dev.hfps.hoard.app.ui.compress.CompressRequest(listOf(part))
+                }, modifier = Modifier.testTag("browse-compress-folder"))
+                MenuItem(stringResource(R.string.compress_auto_title), PhosphorRegular.ArrowsClockwise, {
+                    open = false
+                    compressing = dev.hfps.hoard.app.ui.compress.CompressRequest(listOf(part), autoFolder = folder)
+                }, modifier = Modifier.testTag("browse-compress-auto"))
+                HorizontalDivider(color = HfpsTheme.colors.hairline)
+            }
             MenuItem(
                 stringResource(R.string.t_browse_show_hidden),
                 if (showHidden) PhosphorRegular.EyeSlash else PhosphorRegular.Eye,

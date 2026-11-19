@@ -258,6 +258,14 @@ interface ItemDao {
     @Query("DELETE FROM server_item_mirrors")
     suspend fun clearMirrors()
 
+    /** Live items that may be a compression's output (ADR 0025: the Gallery's "Compressed" badge reads their JSON). */
+    @Query("SELECT id, json FROM server_items WHERE trashed_since IS NULL AND json LIKE '%\"compressed\"%'")
+    fun observeCompressedJson(): Flow<List<ItemJsonRow>>
+
+    /** Items (live or trashed) with a trash location an unfinished compression journal holds (ADR 0025 `held`). */
+    @Query("SELECT id, json FROM server_items WHERE json LIKE '%\"held\":true%'")
+    suspend fun heldJson(): List<ItemJsonRow>
+
     /** Replaces items (their member files and mirror locations) and drops tombstones, in one transaction. */
     @Transaction
     suspend fun apply(live: List<ServerItemEntity>, files: List<ServerItemFileEntity>, gone: List<String>, mirrors: List<ServerItemMirrorEntity> = emptyList()) {

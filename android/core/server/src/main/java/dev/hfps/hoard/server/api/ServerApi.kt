@@ -135,6 +135,65 @@ class ServerApi(
             Dated(ServerJson.decodeFromString(BackupVerifyResponse.serializer(), it.readText()), it.date())
         }
 
+    // --- Video compression (ADR 0025, hoard-server 0.13.0, feature `compress`) ----------------------------------------
+
+    /**
+     * `POST /v1/compress/estimate`: one page (`next` for the following). Videos whose probe is not read yet are
+     * `pending`; the answer's `Retry-After` is in [CompressEstimate.retryAfterSeconds]. `503 unavailable` with a reason
+     * when the target is not usable.
+     */
+    fun compressEstimate(request: CompressEstimateRequest): CompressEstimate =
+        request("POST", "/v1/compress/estimate", ServerJson.encodeToString(CompressEstimateRequest.serializer(), request)).use {
+            val retry = it.conn.getHeaderField("Retry-After")?.toLongOrNull()
+            ServerJson.decodeFromString(CompressEstimate.serializer(), it.readText()).copy(retryAfterSeconds = retry)
+        }
+
+    /**
+     * `POST /v1/compress/jobs`: `201` the job (`200` when [CompressJobCreate.requestId] was used before). `409 conflict`
+     * reason `exists` (a folder compressed automatically already) or `busy`; `503` when the target is not usable.
+     */
+    fun createCompressJob(request: CompressJobCreate): CompressJob =
+        send("POST", "/v1/compress/jobs", request, CompressJobCreate.serializer(), CompressJob.serializer())
+
+    /** Jobs, newest first; [auto] `true` lists the folders compressed automatically. */
+    fun compressJobs(state: String? = null, auto: Boolean? = null, cursor: String? = null, limit: Int = 50): CompressJobsPage {
+        val q = StringBuilder("/v1/compress/jobs?limit=$limit")
+        state?.let { q.append("&state=${enc(it)}") }
+        auto?.let { q.append("&auto=$it") }
+        if (!cursor.isNullOrEmpty()) q.append("&cursor=${enc(cursor)}")
+        return get(q.toString(), CompressJobsPage.serializer())
+    }
+
+    fun compressJob(jobId: String): CompressJob = get("/v1/compress/jobs/${enc(jobId)}", CompressJob.serializer())
+
+    /** Pause or resume a job, or turn a folder's "Compress automatically" off (`auto = false`). */
+    fun patchCompressJob(jobId: String, patch: CompressJobPatch): CompressJob =
+        send("PATCH", "/v1/compress/jobs/${enc(jobId)}", patch, CompressJobPatch.serializer(), CompressJob.serializer())
+
+    /** `GET /v1/compress/items`: [states] comma-separated. */
+    fun compressItems(jobId: String? = null, states: String? = null, cursor: String? = null, limit: Int = 200): CompressItemsPage {
+        val q = StringBuilder("/v1/compress/items?limit=$limit")
+        jobId?.let { q.append("&jobId=${enc(it)}") }
+        states?.let { q.append("&state=${enc(it)}") }
+        if (!cursor.isNullOrEmpty()) q.append("&cursor=${enc(cursor)}")
+        return get(q.toString(), CompressItemsPage.serializer())
+    }
+
+    fun compressCancel(batch: CompressBatch): CompressBatchAnswer =
+        send("POST", "/v1/compress/cancel", batch, CompressBatch.serializer(), CompressBatchAnswer.serializer())
+
+    /** Undo compressions: ids of compression items or gallery items (the item's newest compression). */
+    fun compressRestore(itemIds: List<String>): CompressBatchAnswer =
+        send("POST", "/v1/compress/restore", CompressBatch(itemIds = itemIds), CompressBatch.serializer(), CompressBatchAnswer.serializer())
+
+    /** Empties the trashed file of replaced or restored items now (the space is saved). */
+    fun compressPurge(itemIds: List<String>): CompressBatchAnswer =
+        send("POST", "/v1/compress/purge", CompressBatch(itemIds = itemIds), CompressBatch.serializer(), CompressBatchAnswer.serializer())
+
+    /** Which fingerprints (≤ 1000) are a compression's original or output. */
+    fun compressLookup(fingerprints: List<String>): CompressLookup =
+        send("POST", "/v1/compress/lookup", CompressLookupRequest(fingerprints), CompressLookupRequest.serializer(), CompressLookup.serializer())
+
     // --- Chunked uploads (ADR 0013 "Blobs") --------------------------------------------------------------------------
 
     fun createUpload(request: UploadCreate): UploadState =

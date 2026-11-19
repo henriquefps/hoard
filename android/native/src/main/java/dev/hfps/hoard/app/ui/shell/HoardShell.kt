@@ -266,7 +266,14 @@ fun HoardShell(container: AppContainer) {
                                     onThemeMode = settings::setThemeMode,
                                     onPalette = settings::setPalette,
                                     onOpenLicences = { navController.navigate(LicencesRoute) },
-                                    server = { dev.hfps.hoard.app.ui.server.ServerSettingsSection(container, onPair = { navController.navigate(PairRoute) }, onBackup = { navController.navigate(BackupRoute) }) },
+                                    server = {
+                                        dev.hfps.hoard.app.ui.server.ServerSettingsSection(
+                                            container,
+                                            onPair = { navController.navigate(PairRoute) },
+                                            onBackup = { navController.navigate(BackupRoute) },
+                                            onCompress = { navController.navigate(CompressRoute) { launchSingleTop = true } },
+                                        )
+                                    },
                                     files = { FilesSettingsSection() },
                                     culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
                                     trash = { dev.hfps.hoard.app.ui.trash.TrashSettingsSection(container, onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } }) },
@@ -279,6 +286,13 @@ fun HoardShell(container: AppContainer) {
                             }
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
                             composable<TrashRoute> { dev.hfps.hoard.app.ui.trash.TrashScreen(container, onBack = { navController.popBackStack() }) }
+                            composable<CompressRoute> {
+                                dev.hfps.hoard.app.ui.compress.CompressSettingsScreen(
+                                    container,
+                                    onBack = { navController.popBackStack() },
+                                    onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } },
+                                )
+                            }
                             composable<BackupRoute> {
                                 dev.hfps.hoard.app.ui.backup.BackupScreen(
                                     container,

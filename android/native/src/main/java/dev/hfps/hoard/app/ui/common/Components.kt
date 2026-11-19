@@ -324,11 +324,13 @@ fun MenuItem(
     enabled: Boolean = true,
     destructive: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     val color = if (destructive) HfpsTheme.colors.destructive else HfpsTheme.colors.foreground
     DropdownMenuItem(
         text = { Text(text, style = HfpsTheme.typography.body) },
         onClick = onClick,
+        modifier = modifier,
         enabled = enabled,
         leadingIcon = icon?.let { { Icon(it, null, Modifier.size(20.dp)) } },
         trailingIcon = trailing,

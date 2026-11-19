@@ -67,7 +67,7 @@ private val CACHE_CHOICES = listOf(256L, 1024L, 4096L)
  * folders, unpair.
  */
 @Composable
-fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup: () -> Unit = {}) {
+fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup: () -> Unit = {}, onCompress: () -> Unit = {}) {
     val repo = container.gallery
     val account by repo.account.collectAsState(initial = null)
     val status by repo.sync.status.collectAsState()
@@ -149,6 +149,7 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup:
         HfpsRowDivider(Modifier.padding(start = 54.dp))
         // The phone backup (ADR 0024): its summary, opening Settings › Backup.
         dev.hfps.hoard.app.ui.backup.BackupSettingsRow(container, onBackup)
+        dev.hfps.hoard.app.ui.compress.CompressSettingsRow(container, onCompress)
         HfpsRowDivider(Modifier.padding(start = 54.dp))
         HfpsListRow(
             title = stringResource(R.string.server_cache),

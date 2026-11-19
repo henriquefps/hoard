@@ -145,7 +145,7 @@ private fun FolderRow(folder: DeviceFolder, selected: Boolean, numbers: NumberFo
 
 /** Above the grid while it shows part of a phone's backup: where, and a way back to everything. */
 @Composable
-fun WhereBar(where: Where, onClear: () -> Unit) {
+fun WhereBar(where: Where, onClear: () -> Unit, onCompress: (() -> Unit)? = null) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(12.dp)).background(HfpsTheme.colors.card).padding(start = 12.dp).testTag("gallery-where"),
         verticalAlignment = Alignment.CenterVertically,
@@ -159,6 +159,8 @@ fun WhereBar(where: Where, onClear: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 10.dp),
         )
+        // ADR 0025: this backup's videos no longer on the phone, compressed on the server (target backup).
+        if (onCompress != null) HfpsIconButton(PhosphorRegular.ArrowsIn, stringResource(R.string.compress_action_backup), onCompress, modifier = Modifier.testTag("gallery-where-compress"))
         HfpsIconButton(PhosphorRegular.X, stringResource(R.string.gallery_where_clear), onClear, modifier = Modifier.testTag("gallery-where-clear"))
     }
 }

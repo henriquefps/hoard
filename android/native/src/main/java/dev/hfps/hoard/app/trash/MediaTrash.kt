@@ -269,10 +269,10 @@ class MediaStoreTrashBackend(
         return out
     }
 
-    override suspend fun empty(entries: List<TrashEntryEntity>, cancelled: () -> Boolean): List<TrashEntryEntity> {
+    override suspend fun empty(entries: List<TrashEntryEntity>, held: HeldTrash, cancelled: () -> Boolean): List<TrashEntryEntity> {
         val purged = ArrayList<TrashEntryEntity>()
         val live = ArrayList<Pair<TrashEntryEntity, MediaRow>>()
-        for (e in entries.filter { it.state == TrashStates.TRASHED && it.mediaUri != null }) {
+        for (e in entries.filter { it.state == TrashStates.TRASHED && it.mediaUri != null && !held.holdsRow(it) }) {
             val row = runCatching { ops.get(e.mediaUri!!) }.getOrNull()
             when {
                 // Already deleted (Android's 30 days, or elsewhere): nothing left to delete.

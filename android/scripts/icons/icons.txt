@@ -130,3 +130,5 @@ device-mobile-slash
 sim-card
 # Free up space (ADR 0024 A3)
 broom
+# Video compression (ADR 0025 A1)
+arrows-in
