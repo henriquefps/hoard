@@ -421,8 +421,10 @@ func (s *Store) CompressItem(ctx context.Context, id int64) (CompressItem, error
 type CompressItemQuery struct {
 	JobID  string
 	States []string
-	After  int64 // cursor: id
-	Limit  int
+	// PhysicalID: only the phone items of this physical device (mine=true).
+	PhysicalID string
+	After      int64 // cursor: id
+	Limit      int
 }
 
 // CompressItems lists items by id.
@@ -438,6 +440,10 @@ func (s *Store) CompressItems(ctx context.Context, q CompressItemQuery) ([]Compr
 		for _, st := range q.States {
 			args = append(args, st)
 		}
+	}
+	if q.PhysicalID != "" {
+		where = append(where, "job_id IN (SELECT id FROM compress_jobs WHERE target = 'phone' AND physical_id = ?)")
+		args = append(args, q.PhysicalID)
 	}
 	if q.Limit <= 0 {
 		q.Limit = 200
@@ -555,6 +561,14 @@ func (s *Store) LeaseCompressItem(ctx context.Context, maxPriority int) (Compres
 // false when the state moved on meanwhile (a cancel): nothing is written.
 func (s *Store) SaveCompressItem(ctx context.Context, it CompressItem, from ...string) (bool, error) {
 	it.UpdatedAt = s.nowMs()
+	return saveCompressItem(ctx, s.db, it, from...)
+}
+
+type sqlExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func saveCompressItem(ctx context.Context, db sqlExecer, it CompressItem, from ...string) (bool, error) {
 	q := `UPDATE compress_items SET sha256 = ?, size = ?, state = ?, reason = ?, priority = ?, not_before = ?, attempts = ?, est_size = ?,
 		est_ms = ?, duration_ms = ?, q = ?, out_fingerprint = ?, out_sha256 = ?, out_size = ?, vmaf_mean = ?, vmaf_low = ?, vmaf_mode = ?,
 		encode_ms = ?, verify_ms = ?, decoder = ?, meta_sidecar = ?, replace_step = ?, trash_path = ?, replaced_at = ?, trashed_at = ?,
@@ -569,7 +583,7 @@ func (s *Store) SaveCompressItem(ctx context.Context, it CompressItem, from ...s
 			args = append(args, f)
 		}
 	}
-	res, err := s.db.ExecContext(ctx, q, args...)
+	res, err := db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return false, err
 	}

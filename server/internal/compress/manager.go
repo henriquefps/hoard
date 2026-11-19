@@ -55,6 +55,8 @@ type Config struct {
 	Refresh func(ctx context.Context, fps []string)
 	// RequestWalk asks for a walk of the folders (the replace's last step).
 	RequestWalk func(folderIDs []string)
+	// Blobs serves the phone and backup targets (phase S2); nil: those items cannot run.
+	Blobs BlobHost
 	// Poll is how often idle workers look for work (default 5 s); BusyEvery how often the GPU is read (30 s).
 	Poll, BusyEvery time.Duration
 	// Now (tests).
@@ -322,6 +324,7 @@ func (m *Manager) Start(ctx context.Context) {
 	if err := m.Recover(ctx); err != nil {
 		m.log.Error("compress: recover", "err", err)
 	}
+	m.recoverBlobs(ctx)
 	for range m.cfg.Sessions + m.cfg.CPUWorkers {
 		m.wg.Add(1)
 		go func() { defer m.wg.Done(); m.worker(ctx) }()
@@ -406,6 +409,7 @@ func (m *Manager) Housekeeping(ctx context.Context) {
 		}
 		m.purgeNow(ctx, ids, "auto")
 	}
+	m.housekeepBlobs(ctx)
 	_ = m.cfg.Store.FinishCompressJobs(ctx)
 	m.sweepLogs()
 }
@@ -456,6 +460,7 @@ func (m *Manager) Cancel(ctx context.Context, jobID string, ids []int64) ([]stor
 	for _, it := range cancelled {
 		if it.State == store.CompressCancelled {
 			m.removeWork(it.ID)
+			m.dropOutput(ctx, it) // a phone output nobody will fetch (ADR 0025)
 		}
 	}
 	if jobID != "" {

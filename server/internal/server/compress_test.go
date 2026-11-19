@@ -700,9 +700,12 @@ func TestCompressSkipsThroughJob(t *testing.T) {
 	w = ch.do("POST", "/v1/compress/jobs", map[string]any{"target": "nas", "requestId": "again", "select": map[string]any{"itemIds": []string{ch.itemOf("C.MP4")}}},
 		bearer(ch.key))
 	expect(t, w, 409, "conflict")
-	// Targets of phase S2, AV1 not offered, bad selections.
-	expect(t, ch.do("POST", "/v1/compress/estimate", map[string]any{"target": "phone", "select": map[string]any{"itemIds": []string{ch.itemOf("C.MP4")}}}, bearer(ch.key)),
-		422, "invalid_request")
+	// A NAS video is not in the phone target (phase S2), AV1 not offered, bad selections.
+	w = ch.do("POST", "/v1/compress/estimate", map[string]any{"target": "phone", "select": map[string]any{"itemIds": []string{ch.itemOf("C.MP4")}}}, bearer(ch.key))
+	expect(t, w, 200, "")
+	if it := decode(t, w)["items"].([]any)[0].(map[string]any); it["decision"] != "skip" || it["reason"] != "not_in_target" {
+		t.Fatalf("phone target %v", it)
+	}
 	expect(t, ch.do("POST", "/v1/compress/jobs", map[string]any{"target": "nas", "requestId": "av1", "profile": "av1-cq34",
 		"select": map[string]any{"itemIds": []string{ch.itemOf("C.MP4")}}}, bearer(ch.key)), 422, "invalid_request")
 	expect(t, ch.do("POST", "/v1/compress/estimate", map[string]any{"target": "nas", "select": map[string]any{"folders": []any{map[string]any{"folderId": ch.folder,

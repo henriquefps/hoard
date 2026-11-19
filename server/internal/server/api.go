@@ -82,6 +82,10 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/compress/restore", s.device(s.handleCompressRestore))
 	mux.HandleFunc("POST /v1/compress/purge", s.device(s.handleCompressPurge))
 	mux.HandleFunc("POST /v1/compress/lookup", s.device(s.handleCompressLookup))
+	mux.HandleFunc("GET /v1/compress/items/{compressItemId}/output", s.device(s.handleCompressOutput))
+	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/replaced", s.device(s.handleCompressPhoneReport(true)))
+	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/restored", s.device(s.handleCompressPhoneReport(false)))
+	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/abandon", s.device(s.handleCompressAbandon))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -619,6 +623,9 @@ func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrMirror): // ADR 0024: a phone backup keeps it; the caller's claim was released
 		fail(w, r, http.StatusConflict, "conflict", "A phone backup holds this file; it stays on the server.", map[string]any{"reason": "mirror"})
+		return
+	case errors.Is(err, store.ErrCompressed): // ADR 0025 rule 5: a compression keeps it until the purge; the claim was released
+		fail(w, r, http.StatusConflict, "conflict", "A video compression keeps this file until it is emptied from the trash.", map[string]any{"reason": "compressed"})
 		return
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, r, http.StatusNotFound, "not_found", "No uploaded original with this fingerprint.", nil)

@@ -12,11 +12,13 @@ import (
 	"github.com/henriquefps/hoard/server/internal/compress"
 	"github.com/henriquefps/hoard/server/internal/fingerprint"
 	"github.com/henriquefps/hoard/server/internal/items"
+	"github.com/henriquefps/hoard/server/internal/mirror"
 	"github.com/henriquefps/hoard/server/internal/store"
 )
 
-// Video compression (ADR 0025, hoard-server 0.13.0): additions under /v1 that Reveal never calls. Phase S1 serves
-// target "nas"; "phone" and "backup" arrive with phase S2.
+// Video compression (ADR 0025, hoard-server 0.13.0): additions under /v1 that Reveal never calls. Targets "nas" (the
+// library, phase S1), "phone" (the caller's phone files) and "backup" (phone backups no longer on their phone; phase
+// S2).
 
 const (
 	compressMaxItemsPerJob = 5000
@@ -67,11 +69,7 @@ type compressRequest struct {
 func (s *Server) parseCompressRequest(w http.ResponseWriter, r *http.Request, req compressRequest) (compress.Selection, compress.Profile, json.RawMessage, bool) {
 	var sel compress.Selection
 	switch req.Target {
-	case "nas":
-	case "phone", "backup":
-		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "This server compresses NAS videos only (target nas); phone and backup targets come later.",
-			map[string]any{"reason": "target_not_supported"})
-		return sel, compress.Profile{}, nil, false
+	case compress.TargetNAS, compress.TargetPhone, compress.TargetBackup:
 	default:
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "target is nas, phone or backup.", nil)
 		return sel, compress.Profile{}, nil, false
@@ -84,8 +82,15 @@ func (s *Server) parseCompressRequest(w http.ResponseWriter, r *http.Request, re
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", err.Error()+".", nil)
 		return sel, compress.Profile{}, nil, false
 	}
-	if len(sel.Roots) > 0 {
+	if len(sel.Roots) > 0 && req.Target == compress.TargetNAS {
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "roots are for phone and backup targets.", nil)
+		return sel, compress.Profile{}, nil, false
+	}
+	if len(sel.Folders) > 0 && req.Target != compress.TargetNAS {
+		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "folders are NAS folders (target nas); phone and backup targets name roots.", nil)
+		return sel, compress.Profile{}, nil, false
+	}
+	if !s.validRoots(w, r, req.Target, sel.Roots) {
 		return sel, compress.Profile{}, nil, false
 	}
 	for _, f := range sel.Folders {
@@ -132,7 +137,12 @@ func (s *Server) parseCompressRequest(w http.ResponseWriter, r *http.Request, re
 func estimateItemJSON(e compress.EstimateItem) map[string]any {
 	m := map[string]any{"itemId": e.ItemID, "decision": e.Decision}
 	if e.Fingerprint != "" {
-		m["fingerprint"], m["name"], m["size"], m["folderId"], m["path"] = e.Fingerprint, path.Base(e.RelPath), e.Size, e.FolderID, e.RelPath
+		m["fingerprint"], m["name"], m["size"], m["path"] = e.Fingerprint, path.Base(e.RelPath), e.Size, e.RelPath
+		if e.MirrorEntryID != nil {
+			m["rootId"], m["volume"] = e.RootID, e.Volume
+		} else {
+			m["folderId"] = e.FolderID
+		}
 	}
 	if e.DurationMs > 0 {
 		m["durationMs"] = e.DurationMs
@@ -168,7 +178,7 @@ func (s *Server) handleCompressEstimate(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if p := s.compress.WriteProblem(); p != "" {
+	if p := s.compress.WriteProblem(); p != "" && req.Target == compress.TargetNAS {
 		unavailable(w, r, p, "NAS videos cannot be replaced on this server: "+p+" (NAS_WRITE_ROOT, README \"GPU compression\").")
 		return
 	}
@@ -181,7 +191,7 @@ func (s *Server) handleCompressEstimate(w http.ResponseWriter, r *http.Request) 
 		}
 		start = n
 	}
-	cands, err := s.compress.Resolve(r.Context(), sel)
+	cands, err := s.compress.ResolveTarget(r.Context(), req.Target, info(r).device.PhysicalID, sel)
 	if err != nil {
 		s.internal(w, r, err)
 		return
@@ -242,7 +252,7 @@ func (s *Server) handleCompressJobCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if req.Auto {
-		if len(sel.Folders) != 1 || len(sel.ItemIDs) > 0 || sel.Filter != nil {
+		if len(sel.Folders)+len(sel.Roots) != 1 || len(sel.ItemIDs) > 0 || sel.Filter != nil {
 			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "auto takes a single folder.", nil)
 			return
 		}
@@ -263,22 +273,28 @@ func (s *Server) handleCompressJobCreate(w http.ResponseWriter, r *http.Request)
 		fail(w, r, http.StatusServiceUnavailable, "storage_not_configured", "Choose a backup folder on the setup page first.", nil)
 		return
 	}
-	if p := s.compress.WriteProblem(); p != "" {
+	if p := s.compress.WriteProblem(); p != "" && req.Target == compress.TargetNAS {
 		unavailable(w, r, p, "NAS videos cannot be replaced on this server: "+p+" (NAS_WRITE_ROOT, README \"GPU compression\").")
 		return
 	}
 	// The selection as stored: an automatic folder is matched on it (one switch per folder).
-	if req.Auto {
+	if req.Auto && len(sel.Folders) == 1 {
 		rec := true
 		f := sel.Folders[0]
 		if f.Recursive != nil {
 			rec = *f.Recursive
 		}
 		sel = compress.Selection{Folders: []compress.SelFolder{{FolderID: f.FolderID, Path: f.Path, Recursive: &rec}}}
+	} else if req.Auto {
+		sel = compress.Selection{Roots: []compress.SelFolder{{RootID: sel.Roots[0].RootID, Path: sel.Roots[0].Path}}}
+	}
+	physical := ""
+	if req.Target == compress.TargetPhone {
+		physical = info(r).device.PhysicalID
 	}
 	raw, _ := json.Marshal(sel)
 	res, err := s.compress.CreateJob(r.Context(), compress.JobRequest{Target: req.Target, Selection: sel, RawSel: raw, Profile: prof,
-		Options: opts, Auto: req.Auto, Name: req.Name, RequestID: req.RequestID, CreatedBy: info(r).device.ID})
+		Options: opts, Auto: req.Auto, Name: req.Name, RequestID: req.RequestID, CreatedBy: info(r).device.ID, PhysicalID: physical})
 	if errors.Is(err, compress.ErrExists) {
 		jobs, _ := s.store.AutoCompressJobs(r.Context(), req.Target)
 		details := map[string]any{"reason": "exists"}
@@ -583,9 +599,8 @@ func (s *Server) handleCompressItems(w http.ResponseWriter, r *http.Request) {
 	if st := q.Get("state"); st != "" {
 		iq.States = strings.Split(st, ",")
 	}
-	if q.Get("mine") == "true" { // phone items of the caller's phone: none before phase S2
-		writeJSON(w, http.StatusOK, map[string]any{"items": []any{}, "cursor": nil, "hasMore": false})
-		return
+	if q.Get("mine") == "true" { // phone items of the caller's phone
+		iq.PhysicalID = info(r).device.PhysicalID
 	}
 	if c := q.Get("cursor"); c != "" {
 		n, err := strconv.ParseInt(c, 10, 64)
@@ -606,10 +621,7 @@ func (s *Server) handleCompressItems(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
-	out := make([]map[string]any, 0, len(list))
-	for _, it := range list {
-		out = append(out, s.compressItemJSON(it))
-	}
+	out := s.compressItemsJSON(r.Context(), list)
 	var next any
 	if more && len(list) > 0 {
 		next = strconv.FormatInt(list[len(list)-1].ID, 10)
@@ -722,7 +734,7 @@ func (s *Server) handleCompressCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": res})
 }
 
-func (s *Server) answerBatch(w http.ResponseWriter, req compressBatch, ids map[string]int64, answers []compress.RestoreAnswer) {
+func (s *Server) answerBatch(w http.ResponseWriter, req compressBatch, ids map[string]int64, answers []compress.RestoreAnswer, kept map[int64][]string) {
 	byID := map[int64]compress.RestoreAnswer{}
 	for _, a := range answers {
 		byID[a.ID] = a
@@ -747,6 +759,9 @@ func (s *Server) answerBatch(w http.ResponseWriter, req compressBatch, ids map[s
 		if a.State != "" {
 			v["state"] = a.State
 		}
+		if k := kept[n]; len(k) > 0 {
+			v["alsoKeptBy"] = k
+		}
 		if a.Error != "" {
 			v["error"] = a.Error
 		}
@@ -760,24 +775,20 @@ func (s *Server) handleCompressRestore(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.compress.NasWrite() {
-		unavailable(w, r, "no_write_mount", "The server has no write mount for NAS folders (NAS_WRITE_ROOT).")
-		return
-	}
 	var list []int64
 	for _, n := range ids {
 		list = append(list, n)
 	}
-	s.answerBatch(w, req, ids, s.compress.Restore(r.Context(), list))
+	if !s.compress.NasWrite() && !s.anyBlobItem(r.Context(), list) {
+		unavailable(w, r, "no_write_mount", "The server has no write mount for NAS folders (NAS_WRITE_ROOT).")
+		return
+	}
+	s.answerBatch(w, req, ids, s.compress.RestoreItems(r.Context(), list), nil)
 }
 
 func (s *Server) handleCompressPurge(w http.ResponseWriter, r *http.Request) {
 	req, ids, ok := s.readBatch(w, r, true)
 	if !ok {
-		return
-	}
-	if !s.compress.NasWrite() {
-		unavailable(w, r, "no_write_mount", "The server has no write mount for NAS folders (NAS_WRITE_ROOT).")
 		return
 	}
 	var list []int64
@@ -797,7 +808,100 @@ func (s *Server) handleCompressPurge(w http.ResponseWriter, r *http.Request) {
 			list = append(list, n)
 		}
 	}
-	s.answerBatch(w, req, ids, s.compress.Purge(r.Context(), list))
+	if !s.compress.NasWrite() && !s.anyBlobItem(r.Context(), list) && len(list) > 0 {
+		unavailable(w, r, "no_write_mount", "The server has no write mount for NAS folders (NAS_WRITE_ROOT).")
+		return
+	}
+	answers, kept := s.compress.PurgeItems(r.Context(), list)
+	s.answerBatch(w, req, ids, answers, kept)
+}
+
+// anyBlobItem reports whether one of the compression items is a phone or backup item (they need no write mount).
+func (s *Server) anyBlobItem(ctx context.Context, ids []int64) bool {
+	for _, id := range ids {
+		if it, err := s.store.CompressItem(ctx, id); err == nil && it.Source == "blob" {
+			return true
+		}
+	}
+	return false
+}
+
+// validRoots checks the roots of a phone or backup selection: mirror roots (a phone target's of the caller's own
+// phone), each path a path on the root's volume inside the root.
+func (s *Server) validRoots(w http.ResponseWriter, r *http.Request, target string, roots []compress.SelFolder) bool {
+	for i, sr := range roots {
+		if !uuidPattern.MatchString(sr.RootID) {
+			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "rootId is a phone backup root id.", map[string]any{"index": i})
+			return false
+		}
+		rt, err := s.store.MirrorRoot(r.Context(), sr.RootID)
+		if errors.Is(err, store.ErrNotFound) || err == nil && target == compress.TargetPhone && rt.PhysicalID != info(r).device.PhysicalID {
+			fail(w, r, http.StatusNotFound, "not_found", "No such backup root (of this phone, for target phone).", map[string]any{"rootId": sr.RootID})
+			return false
+		}
+		if err != nil {
+			s.internal(w, r, err)
+			return false
+		}
+		p, err := mirror.CleanPath(sr.Path, true)
+		if err != nil || p != sr.Path || (p != "" && !mirror.Within(rt.Path, p)) {
+			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "A root's path is a path on its volume inside the root (\"\" = the whole root).",
+				map[string]any{"index": i})
+			return false
+		}
+	}
+	return true
+}
+
+// compressItemsJSON serves compression items with their job's target and, for phone and backup items, the phone file
+// they replace (root, volume, path), the original's SHA-256 and the output's (what the phone checks).
+func (s *Server) compressItemsJSON(ctx context.Context, list []store.CompressItem) []map[string]any {
+	targets := map[string]string{}
+	var eids []int64
+	for _, it := range list {
+		if _, ok := targets[it.JobID]; !ok {
+			if j, err := s.store.CompressJob(ctx, it.JobID); err == nil {
+				targets[it.JobID] = j.Target
+			}
+		}
+		if it.MirrorEntryID != nil {
+			eids = append(eids, *it.MirrorEntryID)
+		}
+	}
+	entries := map[int64]store.MirrorEntry{}
+	if es, err := s.store.MirrorEntries(ctx, eids); err == nil {
+		for _, e := range es {
+			entries[e.ID] = e
+		}
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, it := range list {
+		m := s.compressItemJSON(it)
+		if t := targets[it.JobID]; t != "" {
+			m["target"] = t
+		}
+		if it.Source == "blob" {
+			if it.SHA256 != "" {
+				m["sha256"] = it.SHA256
+			}
+			if it.OutSHA256 != "" {
+				m["outSha256"] = it.OutSHA256
+			}
+			if it.ReplaceStep == store.StepRestorePhone || it.ReplaceStep == store.StepReswapPhone {
+				m["direction"] = map[bool]string{true: "restore", false: "compress"}[it.ReplaceStep == store.StepRestorePhone]
+			}
+			if it.MirrorEntryID != nil {
+				if e, ok := entries[*it.MirrorEntryID]; ok {
+					m["rootId"], m["volume"], m["path"], m["name"], m["physicalDeviceId"] = e.RootID, e.Volume, e.Path, path.Base(e.Path), e.PhysicalID
+					m["modifiedAt"] = e.ModifiedAt
+				} else if it.RelPath != "" {
+					m["path"], m["name"] = it.RelPath, path.Base(it.RelPath)
+				}
+			}
+		}
+		out = append(out, m)
+	}
+	return out
 }
 
 func (s *Server) handleCompressLookup(w http.ResponseWriter, r *http.Request) {

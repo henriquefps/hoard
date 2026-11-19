@@ -207,7 +207,12 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		s.log.Warn("first run: open the setup page from your network and enter this one-time setup code", "setupCode", s.setupCode)
 	}
 	s.indexer = &nas.Indexer{Store: st, Roots: s.roots, Log: s.log, Interval: cfg.NasInterval,
-		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob, AfterWalk: s.afterWalk}
+		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob, AfterWalk: s.afterWalk,
+		AfterBackup: func(ctx context.Context) {
+			if s.compress != nil {
+				s.compress.AfterBackup(ctx)
+			}
+		}}
 	if !s.indexer.Prober.Available() {
 		s.log.Warn("ffprobe not found: videos are indexed, their metadata is read once it is installed")
 	}

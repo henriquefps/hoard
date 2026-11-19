@@ -64,10 +64,11 @@ func (s *Server) handleAdminCompress(w http.ResponseWriter, r *http.Request) {
 		list = append(list, s.jobJSON(ctx, j))
 	}
 	recent, _, _ := s.store.CompressItems(ctx, store.CompressItemQuery{After: 0, Limit: 1000})
-	items := []map[string]any{}
-	for i := len(recent) - 1; i >= 0 && len(items) < 50; i-- {
-		items = append(items, s.compressItemJSON(recent[i]))
+	var last []store.CompressItem
+	for i := len(recent) - 1; i >= 0 && len(last) < 50; i-- {
+		last = append(last, recent[i])
 	}
+	items := s.compressItemsJSON(ctx, last)
 	att, err := s.store.CompressAttentionNow(ctx)
 	if err != nil {
 		s.internal(w, r, err)

@@ -98,11 +98,17 @@ func (y *Syncer) SyncBackup(ctx context.Context, originals []store.UploadedOrigi
 	for _, r := range existing {
 		old[r.Key] = r
 	}
+	// A blob a compression holds out of the gallery (an output not on the phone yet, a kept side) is no backup item of
+	// its own (ADR 0025): the kept source shows the kept side.
+	hidden, err := y.Store.CompressBlobHidden(ctx)
+	if err != nil {
+		return Stats{}, err
+	}
 	var ops []sourceOp
 	err = y.Store.ItemsTx(ctx, func(tx *store.ItemTx) error {
 		for _, o := range originals {
 			role := roles[o.Fingerprint]
-			if role == "" {
+			if role == "" || hidden[o.Fingerprint] {
 				continue
 			}
 			prev, had := old[o.Fingerprint]
@@ -199,7 +205,8 @@ func (y *Syncer) Rebuild(ctx context.Context, ids []string) (int, error) {
 }
 
 // rebuild recomputes items from their sources: live items first, then trashed ones and tombstones (which then can name
-// the item that took their main file over, "replacedBy"). An item whose every source is a trash is trashed (ADR 0023),
+// the item that took their main file over, "replacedBy"). An item whose every source is a trash (or a compression's
+// kept side, ADR 0025) is trashed (ADR 0023),
 // not a tombstone: it keeps its id, edits, previews and culling; when a compression replaced its file (ADR 0025, the
 // heir rule) it also names the live item that took it over. A live video item that is a compression's output (or an
 // original a restore brought back) adds the other side's item to the rebuild, so the link is made whichever side the
@@ -252,7 +259,7 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		hasMain := false
 		trashed := len(rows) > 0
 		for _, r := range rows {
-			trashed = trashed && r.Source == SourceTrash
+			trashed = trashed && (r.Source == SourceTrash || r.Source == SourceKept)
 			var ms []Member
 			if err := json.Unmarshal(r.Members, &ms); err != nil {
 				return n, err

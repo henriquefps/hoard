@@ -125,7 +125,11 @@ func (m *Manager) process(parent context.Context, it store.CompressItem) {
 	}
 	m.log.Info("compress: item", "job", it.JobID, "item", it.ID, "state", it.State, "reason", it.Reason, "ms", time.Since(start).Milliseconds())
 	if res && it.State == store.CompressReady {
-		m.replaceReady(parent, it)
+		if it.Source == "blob" {
+			m.blobReady(parent, it)
+		} else {
+			m.replaceReady(parent, it)
+		}
 	}
 }
 
@@ -154,11 +158,7 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 	}
 	prof, _ := ProfileByID(j.Profile)
 	opts, _ := ParseOptions(j.Options)
-	if it.Source != "nas" {
-		m.fail(ctx, it, ReasonNotInTarget, log, errors.New("phone and backup items arrive with phase S2"))
-		return false
-	}
-	src, fi, err := m.openNas(ctx, *it)
+	src, fi, err := m.openSource(ctx, *it)
 	if err != nil {
 		if ctx.Err() != nil {
 			return false
@@ -170,7 +170,7 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 		m.fail(ctx, it, reason, log, err)
 		return false
 	}
-	defer src.Close()
+	defer func() { src.Close() }()
 	probe, err := m.ProbeOf(ctx, it.Fingerprint, src)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -194,6 +194,24 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 		return false
 	}
 	it.EstSize, it.EstMs = i64(est.EstSize), i64(est.EstMs)
+	if it.Source == "blob" { // a phone's original that is a NAS reference goes into the store first (ADR 0025)
+		nsrc, nfi, err := m.ensureBlob(ctx, *it, src, fi, log)
+		if err != nil {
+			if ctx.Err() != nil {
+				return false
+			}
+			reason := ReasonUnreadable
+			if errors.Is(err, ErrChanged) {
+				reason = ReasonSourceChanged
+			}
+			m.fail(ctx, it, reason, log, err)
+			return false
+		}
+		if nsrc != src {
+			src.Close()
+			src, fi = nsrc, nfi
+		}
+	}
 	fmt.Fprintf(log, "estimate: %d -> about %d bytes (%.0f %%), %d ms; probe %s %dx%d %d-bit %.3f fps, %d b/s, bpp %.3f, warnings %v\n",
 		it.Size, est.EstSize, est.EstSaving*100, est.EstMs, probe.Codec, probe.Width, probe.Height, probe.BitDepth, probe.AvgFrameRate,
 		probe.BitRate, probe.BPP(), est.Warnings)
@@ -376,6 +394,9 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 			m.fail(ctx, it, ReasonVerifyMeta, log, fmt.Errorf("the per-frame metadata could not be kept: %w", err))
 			return false
 		}
+	}
+	if it.Source == "blob" { // the output becomes a blob (ADR 0025 "The output becomes a blob")
+		return m.readyBlob(ctx, it, out, log)
 	}
 	it.State, it.Reason = store.CompressReady, ""
 	return m.save(ctx, it, store.CompressVerifying)

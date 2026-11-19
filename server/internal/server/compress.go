@@ -63,6 +63,7 @@ func (s *Server) newCompress() *compress.Manager {
 		Encoder:   enc, Verifier: ver, Detector: det, NVML: nvml,
 		Sessions: max(cfg.CompressSessions, 1), CPUWorkers: 2, Poll: cfg.CompressPoll,
 		Refresh:     s.refreshItems,
+		Blobs:       compressBlobs{s},
 		RequestWalk: func(ids []string) { s.indexer.RequestWalk(ids) },
 	})
 }
