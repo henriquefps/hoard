@@ -266,6 +266,11 @@ everything else; make and model of videos were never read, so nothing visible di
 
 ### Tables (schema 12, `0012_compress.sql`)
 
+Schema 12 changed in place before the release (S1/S2 follow-ups: `stalled_at`, `kept_entry_id` were added to the
+unreleased `0012_compress.sql`, see Amendment (S2)): a throwaway data directory created from `main` since #71 has the
+old shape under the same version and must be recreated. Released 0.12.x (schema 11) is unaffected: it migrates to the
+final schema 12.
+
 ```sql
 CREATE TABLE compress_jobs (
     id           TEXT PRIMARY KEY,          -- UUID
@@ -1274,3 +1279,21 @@ release.
   Re-run after the Keys change and the rebase on S2 (main 9ff82d8): nine clips (the eight above and the iPhone-like one)
   all replaced, 108 s of video in 121 s wall; the outputs now lack nothing of the originals but the data tracks' and the
   unwritable families' tags (HandlerVendorID came back with the single Keys table).
+- **Last pre-tag review (of #74).** Five gates tightened, each with a test (`final_test.go`):
+  - *The per-frame data is never cut short.* The `exiftool -ee3` output was kept through a writer that dropped
+    everything past 512 MiB and reported success; the sidecar then embedded broken JSON and still counted as kept, so a
+    long 4K60 drone clip would have lost the tail of its telemetry once the original was purged. Now the writer fails
+    at the cap (no sidecar, the item fails `verify_metadata`, the original stays), and both the per-frame file (before
+    the encode) and the final sidecar (before it is moved to `compress/meta/`) are parse-checked as one JSON value,
+    streamed, never held in memory.
+  - *The edit-list deferral covers the main video only.* Only the main video stream (the first non-cover one) is
+    decoded to settle a header-duration difference; any other video stream whose header duration differs fails
+    `verify_duration` as before.
+  - *Every check confirms the marker.* The job passes the marker its encode wrote (`v1, <codec>-cq<q>, <date>`) to the
+    verifier, which reads it from the output's ffprobe format tags (either key name); missing or different fails
+    `verify_metadata`.
+  - *The camera by value.* The gate compares the source's make and model with the output's (trimmed, case-insensitive;
+    the output's camera, or a `Make`/`Model` tag in any group), not just their presence: a different model fails
+    `verify_metadata`. This replaces the "by presence" rule above.
+  - *exiftool's JSON must parse.* A read of the source or the output whose JSON does not parse (a read cut at the
+    tools' 32 MiB stdout cap) fails `verify_metadata` instead of comparing empty tag sets.

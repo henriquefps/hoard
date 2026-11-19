@@ -48,8 +48,9 @@ type VMAFResult struct {
 // Verifier checks an output against its source before anything is replaced (ADR 0025 "Checks").
 type Verifier interface {
 	// Check compares the two files' streams, picture and duration (and frames when the headers differ), writes the
-	// metadata diff to log and answers what the metadata sidecar keeps.
-	Check(ctx context.Context, src *os.File, out string, log io.Writer) (CheckResult, error)
+	// metadata diff to log and answers what the metadata sidecar keeps. marker, when not "", is the value the output's
+	// marker must have (every job passes it).
+	Check(ctx context.Context, src *os.File, out, marker string, log io.Writer) (CheckResult, error)
 	// VMAF scores the output against the source.
 	VMAF(ctx context.Context, src *os.File, out string, p Probe, log io.Writer) (VMAFResult, error)
 }
@@ -289,8 +290,8 @@ func compareInfo(a, b verifyInfo) error {
 	if math.Abs(a.Duration-b.Duration) > 0.1 {
 		return &VerifyError{"duration", fmt.Sprintf("%.3f s vs %.3f s", a.Duration, b.Duration)}
 	}
-	// Every audio and video stream keeps its own duration (an audio track cut short does not change the file's). A
-	// video stream's header duration is only deferred: the decoded video decides.
+	// Every audio and video stream keeps its own duration (an audio track cut short does not change the file's). The
+	// main video stream's header duration is only deferred: its decoded video decides.
 	deferred := ""
 	for _, kind := range []string{"video", "audio"} {
 		var da, db []float64
@@ -311,7 +312,8 @@ func compareInfo(a, b verifyInfo) error {
 			}
 			if da[i] > 0 && db[i] > 0 && math.Abs(da[i]-db[i]) > tol {
 				detail := fmt.Sprintf("%s stream %d: %.3f s vs %.3f s", kind, i, da[i], db[i])
-				if kind == "audio" {
+				// Only the main video (the first) is decoded to settle it: any other video stream must agree as is.
+				if kind == "audio" || i > 0 {
 					return &VerifyError{"duration", detail}
 				}
 				if deferred == "" {
@@ -371,7 +373,7 @@ func compareInfo(a, b verifyInfo) error {
 }
 
 // Check implements Verifier.
-func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io.Writer) (CheckResult, error) {
+func (v *FFVerifier) Check(ctx context.Context, src *os.File, out, marker string, log io.Writer) (CheckResult, error) {
 	a, err := v.probe(ctx, src, "")
 	if err != nil {
 		return CheckResult{}, fmt.Errorf("probe source: %w", err)
@@ -448,7 +450,7 @@ func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io
 		}
 	}
 	fmt.Fprintln(log, "check: full decode: ok")
-	res, err := v.metaDiff(ctx, a, b, src, out, log)
+	res, err := v.metaDiff(ctx, a, b, src, out, marker, log)
 	if err != nil {
 		fmt.Fprintf(log, "check: %v\n", err)
 		return CheckResult{}, err
@@ -603,16 +605,24 @@ func (v *FFVerifier) countFrames(ctx context.Context, src *os.File, path string)
 }
 
 // metaDiff writes the metadata diff to the item's log and fails when the output lost the capture time, the place, the
-// camera's make or model (the source's from any family, the output's in any group) or the rotation the source has.
+// camera's make or model (the source's from any family, the same value in any group of the output), the rotation the
+// source has, or, when marker is not "", the marker (ADR 0025 "Marker").
 // Tags exiftool cannot write back into a re-encoded MP4 are listed as not restored (the metadata sidecar keeps them);
 // the camera of the known unwritable families is carried in UserData by the encoder's restore.
-func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File, out string, log io.Writer) (CheckResult, error) {
+func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File, out, marker string, log io.Writer) (CheckResult, error) {
 	var res CheckResult
 	res.FFprobe, _ = json.Marshal(a.raw)
 	fmt.Fprintln(log, "metadata diff (ffprobe):")
 	ffa, ffb := flatten("", a.raw), flatten("", b.raw)
 	writeDiff(log, ffa, ffb)
 	lost := lostTags(byTagName(ffa, "/format/tags/", true), byTagName(ffb, "/format/tags/", true), keyFFTags, nil)
+	if marker != "" {
+		if got := markerOf(b.raw); got != marker {
+			fmt.Fprintf(log, "marker: %q, want %q\n", got, marker)
+			return res, &VerifyError{"metadata", fmt.Sprintf("the output's marker is %q, want %q", got, marker)}
+		}
+		fmt.Fprintf(log, "marker: %s\n", marker)
+	}
 	if v.Exiftool == "" {
 		fmt.Fprintln(log, "metadata diff (exiftool): not installed")
 		if len(lost) > 0 {
@@ -627,8 +637,11 @@ func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File
 		return res, &VerifyError{"metadata", "exiftool could not read the files"}
 	}
 	var ja, jb []map[string]any
-	_ = json.Unmarshal(ea, &ja)
-	_ = json.Unmarshal(eb, &jb)
+	err1, err2 = json.Unmarshal(ea, &ja), json.Unmarshal(eb, &jb)
+	if err1 != nil || err2 != nil { // a read cut at the 32 MiB cap, or not exiftool's JSON: nothing to compare
+		fmt.Fprintf(log, "metadata diff (exiftool): unreadable output: %v %v\n", err1, err2)
+		return res, &VerifyError{"metadata", "exiftool's output could not be read"}
+	}
 	ta, tb := map[string]any{}, map[string]any{}
 	if len(ja) > 0 {
 		ta = ja[0]
@@ -653,6 +666,18 @@ func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File
 		return res, &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
 	}
 	return res, nil
+}
+
+// markerOf reads the marker from ffprobe's format tags (either name, as ParseProbe).
+func markerOf(raw map[string]any) string {
+	format, _ := raw["format"].(map[string]any)
+	tags, _ := format["tags"].(map[string]any)
+	for k, v := range tags {
+		if s, ok := v.(string); ok && (strings.EqualFold(k, Marker) || strings.EqualFold(k, MarkerKey)) {
+			return s
+		}
+	}
+	return ""
 }
 
 // unwritableCamera is the camera identity of the families exiftool reads but cannot write back into a re-encoded MP4
@@ -707,18 +732,33 @@ func exifGate(src, out map[string]any) gateResult {
 	}
 	sort.Strings(g.NotRestored)
 	sort.Strings(g.Expected)
-	// The gate: key tags by name in any group; the camera by presence, the source's from any family.
+	// The gate: key tags by name in any group; the camera by value (trimmed, any case), the source's from any family.
 	g.Lost = lostTags(byTagName(flatten("", src), "/", false), byTagName(flatten("", out), "/", false), keyExifTags,
 		map[string]bool{"Rotation": true})
 	g.Make, g.Model = cameraOf(src)
 	omk, omodel := cameraOf(out)
-	if g.Make != "" && omk == "" {
+	if g.Make != "" && !sameCamera(g.Make, omk, out, "Make") {
 		g.Lost = append(g.Lost, "Make")
 	}
-	if g.Model != "" && omodel == "" {
+	if g.Model != "" && !sameCamera(g.Model, omodel, out, "Model") {
 		g.Lost = append(g.Lost, "Model")
 	}
 	return g
+}
+
+// sameCamera reports whether the output keeps the source's camera make or model value (trimmed, any case): as the
+// output's camera, or as a tag of that name in any of its groups.
+func sameCamera(want, got string, out map[string]any, name string) bool {
+	want = strings.TrimSpace(want)
+	if strings.EqualFold(want, strings.TrimSpace(got)) {
+		return true
+	}
+	for k, v := range out {
+		if _, n := splitTag(k); n == name && v != nil && strings.EqualFold(want, strings.TrimSpace(fmt.Sprint(v))) {
+			return true
+		}
+	}
+	return false
 }
 
 // cameraOf reads the camera's make and model from exiftool tags: Make/Model in any group (writable groups first), else

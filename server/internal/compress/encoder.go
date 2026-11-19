@@ -360,13 +360,17 @@ func (e *NvencEncoder) Sidecar(ctx context.Context, src *os.File, out io.Writer,
 	cmd.ExtraFiles = []*os.File{src}
 	cmd.Env = toolEnv()
 	zw := gzip.NewWriter(out)
-	cmd.Stdout = &limited{w: zw, n: 512 << 20}
+	stdout := &capped{w: zw, n: perFrameCap}
+	cmd.Stdout = stdout
 	errTail := &tail{n: 8 << 10}
 	cmd.Stderr = errTail
 	fmt.Fprintln(log, "$ exiftool -ee3 -j -G3 -a -m -- SRC")
 	err := cmd.Run()
 	if s := errTail.String(); s != "" {
 		fmt.Fprint(log, s)
+	}
+	if stdout.over { // never a truncated copy: the item fails verify_metadata and the original stays
+		return fmt.Errorf("the per-frame metadata is over %d MiB: %w", perFrameCap>>20, errCapped)
 	}
 	if cerr := zw.Close(); err == nil {
 		err = cerr

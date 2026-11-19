@@ -292,7 +292,7 @@ original; a trashed item's tombstone shape for older clients carries `replacedBy
 them. **Back up `data/` before upgrading**: 0.12.x refuses a schema-12 database. To compress, switch to the `-nvidia`
 image as described above (it runs as the library owner's uid: chown `data/` and the backup folder to it first).
 
-Before the release, runs on copies of real camera clips changed three things (ADR 0025 "Amendment (N4)"):
+Before the release, runs on copies of real camera clips changed these things (ADR 0025 "Amendment (N4)"):
 
 - **Memory.** Give the `-nvidia` container `mem_limit: 6g` (the earlier example's `2g` let the kernel kill ffmpeg on
   2.7K and 4K clips); see "Memory" above for the measured figures. A verification above 2.7K now takes both CPU slots,
@@ -301,12 +301,20 @@ Before the release, runs on copies of real camera clips changed three things (AD
   only the video stream's header duration differs, the decoded frames of both files decide.
 - **Camera and metadata sidecar.** A camera only Samsung's `smta` or Sony's NRTM XML carried (exiftool cannot write
   those back) is written to the output's UserData make/model, so Hoard's, Reveal's and the web gallery's camera
-  filters keep seeing it; an output without the source's make or model fails `verify_metadata`. Every replaced video
+  filters keep seeing it; an output without the source's make or model (the same values, any case) fails
+  `verify_metadata`. Every replaced video
   gets a metadata sidecar in `/data/compress/meta/` (the original's full exiftool tag set, the tags not restored, and
   the per-frame data when there is any); the item's log lists the tags that were not restored.
 - **One Keys table.** Videos with QuickTime Keys tags (iPhones' `com.apple.quicktime.*`, Android's) no longer fail
   `verify_metadata`: exiftool restores the original's Keys as the file's only Keys table, and the marker is now the Keys
-  entry `com.apple.quicktime.dev.hfps.hoard.compressed` (the server reads both names).
+  entry `com.apple.quicktime.dev.hfps.hoard.compressed` (the server reads both names); every check confirms that the
+  output carries it.
+- **Per-frame data over 512 MiB.** A clip whose per-frame metadata (uncompressed) is over 512 MiB fails
+  `verify_metadata` and keeps its original, instead of a truncated sidecar.
+
+Developer note: schema 12 changed in place before the release (`compress_items.stalled_at` and `kept_entry_id` were
+added to the unreleased `0012_compress.sql`). A throwaway data directory created from `main` since #71 has the old
+shape under the same version: recreate it. Production 0.12.x (schema 11) is unaffected.
 
 **Add the write mount (`/mnt/nas-write`) only once every device runs Hoard 2.7.0 or later.** A compression whose
 replace has to wait (the NAS went away between two steps) keeps its original in `.hoard-trash`, marked `held` on the

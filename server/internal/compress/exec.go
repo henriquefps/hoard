@@ -1,6 +1,8 @@
 package compress
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -45,6 +47,27 @@ func (l *limited) Write(p []byte) (int, error) {
 		return n, err
 	}
 	return len(p), nil
+}
+
+// errCapped is what a capped writer answers once a write would pass its cap.
+var errCapped = errors.New("output over the size limit")
+
+// capped is a writer that fails at its cap instead of dropping the rest: what it keeps must be whole (the per-frame
+// metadata, ADR 0025 Amendment (N4)).
+type capped struct {
+	w    io.Writer
+	n    int64
+	over bool
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if int64(len(p)) > c.n {
+		c.over = true
+		return 0, fmt.Errorf("%w (%d bytes)", errCapped, c.n)
+	}
+	n, err := c.w.Write(p)
+	c.n -= int64(n)
+	return n, err
 }
 
 // tail keeps the last n bytes written (ffmpeg's stderr in the item's log).
