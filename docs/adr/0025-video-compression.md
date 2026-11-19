@@ -1127,6 +1127,24 @@ the text above left open or a small deviation.
   probed only when no folder is known. `compress.attention.untrackedTrash` reflects the files still there: after a walk,
   a failed replace's original that is gone from the trash (Hoard emptied it) loses its `trash_path`, unless the folder
   looks unmounted.
+- **Review of #72.**
+  - *New since the switch* (automatic phone and backup folders) means the entry **and its shot's item** were first seen
+    since the switch: a row the backup makes again for an old video (the phone moved the file, a root stopped and added
+    again, a claim merging another phone's older backup) keeps its item's first-seen time, so it is not new. The root
+    identifies the phone (it moves with a claimed backup).
+  - *A served output.* Once the phone downloaded a `ready` item's output (`GET …/output`, recorded as the step
+    `phone:served`) it may have written it already: a cancel (of the item or its job) answers its state and leaves it
+    `ready` with its output, and only the phone settles it (`…/replaced`, its backup report, or `…/abandon`). An output
+    never served is cancelled and dropped as before.
+  - *A renamed video.* A swap finds the live side where the phone keeps it now: the item's path, else the phone's entry
+    with that content that holds a path (moved or renamed on the phone); the kept side comes back at that path. A backup
+    report completes a swap at any path of the phone. A restore that finds the live side nowhere answers
+    `live_missing` and restarts the retention instead of letting the trashed side be purged by an old date.
+  - *Abandon `gone`* leaves the path's new owner off the phone (`deleted`), not a file the phone would have.
+  - *Retention.* A phone restore given up on (abandon other than `gone`) restarts `purge_after`.
+  - *Hidden blobs.* While a phone or backup compression is `replaced`, its original's fingerprint makes no `backup`
+    item anywhere (a Reveal upload of the same bytes shows only as the trashed kept item until the purge); the bytes
+    stay (rule 5), and after the purge a claimed upload is a backup item again.
 - **Items in the answers.** Compression items gain `target` (from the job) and `source`; phone and backup items add
   `rootId`, `volume`, `path` (on the phone), `physicalDeviceId`, `modifiedAt`, `sha256` (the original's), `outSha256`
   and, while a phone writes, `direction`. Estimate rows of phone and backup targets carry `rootId`, `volume` and the

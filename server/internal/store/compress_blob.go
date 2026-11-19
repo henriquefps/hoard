@@ -42,9 +42,8 @@ type MirrorVideoQuery struct {
 	RootID   string
 	Path     string // a path on the volume inside the root ("" = the whole root)
 	ItemIDs  []string
-	// CreatedSince, RemovedSince (ms, 0 = any): entries created (or removed from the phone) at or after.
+	// CreatedSince (ms, 0 = any): entries whose row and item were both first seen at or after it.
 	CreatedSince int64
-	RemovedSince int64
 }
 
 // MirrorVideos lists the entries of a query whose bytes the server has (stored, or a NAS reference) and whose live item
@@ -70,12 +69,10 @@ func (s *Store) MirrorVideos(ctx context.Context, q MirrorVideoQuery) ([]MirrorV
 		args = append(args, q.Path, likeEscape(q.Path)+"/%")
 	}
 	if q.CreatedSince > 0 {
-		where = append(where, "e.created_at >= ?")
-		args = append(args, q.CreatedSince)
-	}
-	if q.RemovedSince > 0 {
-		where = append(where, "e.removed_at >= ?")
-		args = append(args, q.RemovedSince)
+		// New in the backup: the entry and the shot's item both appeared since. A row the backup made again for an old
+		// file (a moved or re-added path, a merge) keeps its item's first-seen time, which items never move forward.
+		where = append(where, "e.created_at >= ?", "i.created_at >= ?")
+		args = append(args, q.CreatedSince, q.CreatedSince)
 	}
 	if len(q.ItemIDs) > 0 {
 		where = append(where, "f.item_id IN ("+placeholders(len(q.ItemIDs))+")")
@@ -156,6 +153,55 @@ type CompressSwapIn struct {
 	DeviceID string
 	// TrashMs is how long the trashed side is kept before the server purges it.
 	TrashMs int64
+	// OwnerID: the entry that holds the live side (a backup report's path); 0 = found by the item (its path, else the
+	// phone's entry with that content, wherever the phone moved it).
+	OwnerID int64
+	// Gone: the phone said the file is no longer there (abandon "gone"): the new owner is off the phone (deleted)
+	// unless the entry already says why it left.
+	Gone bool
+}
+
+// liveOwnerTx is the entry holding a blob compression's live side (liveFP): the item's own path first, else the
+// phone's entry with that content that holds a path (the phone renamed or moved the file), on the phone first.
+func liveOwnerTx(ctx context.Context, tx *sql.Tx, orig MirrorEntry, liveFP string, hint int64) (MirrorEntry, error) {
+	if hint != 0 {
+		if e, err := entryTx(ctx, tx, hint); err == nil && e.OwnsPath() && e.Fingerprint == liveFP && e.PhysicalID == orig.PhysicalID {
+			return e, nil
+		}
+	}
+	if e, err := ownerAt(ctx, tx, orig.PhysicalID, orig.Volume, orig.Path); err == nil && e.Fingerprint == liveFP {
+		return e, nil
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return e, err
+	}
+	return scanMirrorEntry(tx.QueryRowContext(ctx, "SELECT "+mirrorEntryCols+" FROM mirror_entries e WHERE e.physical_id = ? AND e.fingerprint = ? AND "+
+		ownsPathSQL+" ORDER BY e.on_device DESC, e.id DESC LIMIT 1", orig.PhysicalID, liveFP))
+}
+
+// CompressLiveOwner is the entry holding a replaced (the output) or restored (the original) blob compression's live
+// side now, wherever the phone moved it.
+func (s *Store) CompressLiveOwner(ctx context.Context, id int64) (MirrorEntry, error) {
+	var out MirrorEntry
+	err := s.tx(ctx, func(tx *sql.Tx) error {
+		it, err := compressItemTx(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if it.MirrorEntryID == nil {
+			return ErrNotFound
+		}
+		orig, err := entryTx(ctx, tx, *it.MirrorEntryID)
+		if err != nil {
+			return err
+		}
+		live := it.Fingerprint
+		if it.State == CompressReplaced {
+			live = it.OutFingerprint
+		}
+		out, err = liveOwnerTx(ctx, tx, orig, live, 0)
+		return err
+	})
+	return out, err
 }
 
 // CompressSwapOut is what a swap changed.
@@ -214,18 +260,18 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 			return out, ErrCompressMismatch
 		}
 	}
-	owner, err := ownerAt(ctx, tx, orig.PhysicalID, orig.Volume, orig.Path)
-	if err != nil && !errors.Is(err, ErrNotFound) {
-		return out, err
-	}
-	if err == nil && owner.Fingerprint == newFP && it.State == final { // the same report again
+	if it.State == final && !contains(in.From, final) { // the same report again
 		return out, nil
 	}
 	if !contains(in.From, it.State) {
 		return out, ErrConflict
 	}
-	if errors.Is(err, ErrNotFound) || owner.Fingerprint != liveFP {
+	owner, err := liveOwnerTx(ctx, tx, orig, liveFP, in.OwnerID)
+	if errors.Is(err, ErrNotFound) {
 		return out, ErrCompressPath
+	}
+	if err != nil {
+		return out, err
 	}
 	onDevice, reason, pinned, removedAt, modified, by := owner.OnDevice, nullString(owner.RemovedReason), 0, owner.RemovedAt, owner.ModifiedAt, owner.ReportedBy
 	if err := tx.QueryRowContext(ctx, "SELECT pinned FROM mirror_entries WHERE id = ?", owner.ID).Scan(&pinned); err != nil {
@@ -240,17 +286,20 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 	}
 	if p := in.Phone; p != nil {
 		onDevice, reason, pinned, removedAt, modified = true, nil, 0, nil, p.ModifiedAt
+	} else if in.Gone && owner.OnDevice { // the path is empty on the phone now: the new owner is not there either
+		onDevice, reason, pinned, removedAt = false, RemovedDeleted, 0, &now
 	}
 	if in.DeviceID != "" {
 		by = in.DeviceID
 	}
 	var kept int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM mirror_entries WHERE physical_id = ? AND volume = ? AND path = ? AND fingerprint = ?
-		AND removed_reason = 'compressed' ORDER BY id DESC LIMIT 1`, orig.PhysicalID, orig.Volume, orig.Path, newFP).Scan(&kept)
+	err = tx.QueryRowContext(ctx, `SELECT id FROM mirror_entries WHERE physical_id = ? AND fingerprint = ?
+		AND removed_reason = 'compressed' ORDER BY (volume = ? AND path = ?) DESC, id DESC LIMIT 1`, orig.PhysicalID, newFP, owner.Volume, owner.Path).Scan(&kept)
 	switch {
-	case err == nil:
-		if _, err := tx.ExecContext(ctx, `UPDATE mirror_entries SET root_id = ?, on_device = ?, removed_reason = ?, removed_at = ?, pinned = ?,
-			modified_at = ?, reported_by = ?, updated_at = ? WHERE id = ?`, owner.RootID, onDevice, reason, removedAt, pinned, modified, by, now, kept); err != nil {
+	case err == nil: // the kept side comes back, at the path the live side holds now (the phone may have moved it)
+		if _, err := tx.ExecContext(ctx, `UPDATE mirror_entries SET volume = ?, path = ?, root_id = ?, on_device = ?, removed_reason = ?, removed_at = ?,
+			pinned = ?, modified_at = ?, reported_by = ?, updated_at = ? WHERE id = ?`, owner.Volume, owner.Path, owner.RootID, onDevice, reason, removedAt,
+			pinned, modified, by, now, kept); err != nil {
 			return out, err
 		}
 	case errors.Is(err, sql.ErrNoRows):
@@ -258,7 +307,7 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 			on_device, removed_at, removed_reason, pinned, verified_sha256, verified_at, reported_by, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'blob', ?, ?, ?, ?, (SELECT nullif(result, '') FROM blob_verifications WHERE sha256 = ?),
 			(SELECT verified_at FROM blob_verifications WHERE sha256 = ? AND result != ''), ?, ?, ?) RETURNING id`,
-			orig.PhysicalID, orig.Volume, orig.Path, owner.RootID, newFP, newSHA, newSize, modified, onDevice, removedAt, reason, pinned,
+			orig.PhysicalID, owner.Volume, owner.Path, owner.RootID, newFP, newSHA, newSize, modified, onDevice, removedAt, reason, pinned,
 			newSHA, newSHA, by, now, now).Scan(&kept); err != nil {
 			return out, err
 		}
@@ -286,9 +335,10 @@ func ptr(v int64) *int64 { return &v }
 // not matter"): the path's owner is the side being replaced and the reported file the other side. ok is false when
 // the rewrite is an ordinary one.
 func compressRewriteTx(ctx context.Context, tx *sql.Tx, owner MirrorEntry, e ReportEntry) (CompressItem, bool, bool, error) {
+	// Any path of the phone: it may have moved the file since the item was queued.
 	rows, err := tx.QueryContext(ctx, `SELECT `+compressItemCols+` FROM compress_items WHERE source = 'blob' AND state IN ('ready', 'replacing')
-		AND mirror_entry_id IN (SELECT id FROM mirror_entries WHERE physical_id = ? AND volume = ? AND path = ?) ORDER BY id DESC`,
-		owner.PhysicalID, owner.Volume, owner.Path)
+		AND (fingerprint = ?1 OR out_fingerprint = ?1) AND mirror_entry_id IN (SELECT id FROM mirror_entries WHERE physical_id = ?2) ORDER BY id DESC`,
+		owner.Fingerprint, owner.PhysicalID)
 	if err != nil {
 		return CompressItem{}, false, false, err
 	}
@@ -313,8 +363,10 @@ func compressRewriteTx(ctx context.Context, tx *sql.Tx, owner MirrorEntry, e Rep
 }
 
 // The journal steps of a phone restore and a phone restore again (the phone writes the file; ADR 0025 "Restore
-// original").
+// original"), and the mark of a ready phone item whose output the phone downloaded (StepServed: it may have replaced
+// its file already, so the item is no longer cancelled; Amendment (S2), "A served output").
 const (
+	StepServed       = "phone:served"
 	StepRestorePhone = "restore:phone"
 	StepReswapPhone  = "reswap:phone"
 )
@@ -548,7 +600,7 @@ func compressRewrite(ctx context.Context, tx *sql.Tx, had bool, owner MirrorEntr
 	}
 	res, err := compressSwapTx(ctx, tx, it, CompressSwapIn{ID: it.ID, ToOutput: toOut, From: []string{CompressReady, CompressReplacing},
 		Phone: &PhoneFile{Fingerprint: e.Fingerprint, SHA256: e.SHA256, Size: e.Size, ModifiedAt: e.ModifiedAt}, DeviceID: opt.DeviceID,
-		TrashMs: trash}, now)
+		TrashMs: trash, OwnerID: owner.ID}, now)
 	switch {
 	case errors.Is(err, ErrCompressMismatch), errors.Is(err, ErrCompressPath), errors.Is(err, ErrConflict):
 		return nil, nil

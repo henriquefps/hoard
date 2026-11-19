@@ -34,8 +34,12 @@ const (
 	AbandonRefused = "refused"
 )
 
-// ReasonVerifyPhone: the phone could not verify the downloaded output twice.
-const ReasonVerifyPhone = "verify_phone"
+// ReasonVerifyPhone: the phone could not verify the downloaded output twice. ReasonLiveMissing: a restore found the
+// live side nowhere in the phone's backup.
+const (
+	ReasonVerifyPhone = "verify_phone"
+	ReasonLiveMissing = "live_missing"
+)
 
 // BlobHost is what the server gives the manager for phone and backup targets: the blob store, the NAS copies of ADR
 // 0024 and the mirror tree.
@@ -192,15 +196,6 @@ func (m *Manager) entryOf(ctx context.Context, it store.CompressItem) (store.Mir
 	return es[0], nil
 }
 
-// pathOwner is the entry that holds a blob item's phone path now.
-func (m *Manager) pathOwner(ctx context.Context, it store.CompressItem) (store.MirrorEntry, error) {
-	e, err := m.entryOf(ctx, it)
-	if err != nil {
-		return e, err
-	}
-	return m.cfg.Store.MirrorEntryAt(ctx, e.PhysicalID, e.Volume, e.Path)
-}
-
 // blobReady settles a ready blob item: a backup item (or a phone item whose file is no longer on the phone) is
 // swapped by the server now; a phone item waits for its phone.
 func (m *Manager) blobReady(ctx context.Context, it store.CompressItem) {
@@ -209,19 +204,32 @@ func (m *Manager) blobReady(ctx context.Context, it store.CompressItem) {
 		return
 	}
 	if j.Target == TargetPhone {
-		if e, err := m.entryOf(ctx, it); err != nil || e.OnDevice {
-			return // the phone replaces its file (CompressWorker)
+		// The original wherever the phone keeps it now: on the phone, the phone replaces it (CompressWorker); not found
+		// (the phone moved or replaced it and has not reported yet), the item waits for the phone's report or abandon.
+		if e, err := m.cfg.Store.CompressLiveOwner(ctx, it.ID); err != nil || e.OnDevice {
+			return
 		}
 	}
 	_, _ = m.serverSwap(ctx, it, true, []string{store.CompressReady}) // a failure is in the item and its log
 }
 
+// MarkServed records that the phone downloaded a ready item's output: from then on the phone may have written it, so
+// only the phone's report or abandon settles the item (a cancel answers its state; Amendment (S2), "A served output").
+func (m *Manager) MarkServed(ctx context.Context, it store.CompressItem) {
+	if it.State != store.CompressReady || it.ReplaceStep == store.StepServed {
+		return
+	}
+	it.ReplaceStep = store.StepServed
+	m.save(ctx, &it, store.CompressReady)
+}
+
 // serverSwap runs the swap with no phone step. A path that holds another file fails the item (source_changed) when it
 // was ready, and leaves a restore where it was.
-func (m *Manager) serverSwap(ctx context.Context, it store.CompressItem, toOutput bool, from []string) (store.CompressItem, error) {
+func (m *Manager) serverSwap(ctx context.Context, it store.CompressItem, toOutput bool, from []string, gone ...bool) (store.CompressItem, error) {
 	log := m.openLog(it)
 	defer func() { _ = log.Close() }()
-	res, err := m.cfg.Store.CompressSwap(context.WithoutCancel(ctx), store.CompressSwapIn{ID: it.ID, ToOutput: toOutput, From: from, TrashMs: m.trashMs(ctx)})
+	res, err := m.cfg.Store.CompressSwap(context.WithoutCancel(ctx), store.CompressSwapIn{ID: it.ID, ToOutput: toOutput, From: from, TrashMs: m.trashMs(ctx),
+		Gone: len(gone) > 0 && gone[0]})
 	switch {
 	case errors.Is(err, store.ErrCompressPath) && it.State == store.CompressReady:
 		fmt.Fprintln(log, "replace: the backup's path holds another file now")
@@ -321,7 +329,7 @@ func (m *Manager) Abandon(ctx context.Context, it store.CompressItem, reason str
 	switch {
 	case it.State == store.CompressReady:
 		if reason == AbandonGone {
-			return m.serverSwap(ctx, it, true, []string{store.CompressReady})
+			return m.serverSwap(ctx, it, true, []string{store.CompressReady}, true)
 		}
 		state, r := store.CompressFailed, ReasonVerifyPhone
 		switch reason {
@@ -340,13 +348,15 @@ func (m *Manager) Abandon(ctx context.Context, it store.CompressItem, reason str
 	case it.State == store.CompressReplacing && (it.ReplaceStep == store.StepRestorePhone || it.ReplaceStep == store.StepReswapPhone):
 		toOutput := it.ReplaceStep == store.StepReswapPhone
 		if reason == AbandonGone {
-			return m.serverSwap(ctx, it, toOutput, []string{store.CompressReplacing})
+			return m.serverSwap(ctx, it, toOutput, []string{store.CompressReplacing}, true)
 		}
 		back := store.CompressReplaced
 		if toOutput {
 			back = store.CompressRestored
 		}
 		it.State, it.Reason, it.ReplaceStep, it.StalledAt = back, reason, "", nil
+		// The retention starts again: an abandoned restore never makes an already due trashed side go at once.
+		it.PurgeAfter = i64(m.now().UnixMilli() + m.trashMs(ctx))
 		if !m.save(ctx, &it, store.CompressReplacing) {
 			return it, store.ErrConflict
 		}
@@ -397,7 +407,7 @@ func (m *Manager) restoreBlob(ctx context.Context, it store.CompressItem) Restor
 	if err != nil {
 		return RestoreAnswer{ID: it.ID, State: it.State, Error: "state"}
 	}
-	owner, err := m.pathOwner(ctx, it)
+	owner, err := m.cfg.Store.CompressLiveOwner(ctx, it.ID)
 	if err == nil && owner.OnDevice && j.Target == TargetPhone {
 		prev := it.State
 		it.State, it.Reason, it.ReplaceStep, it.StalledAt = store.CompressReplacing, "", store.StepRestorePhone, nil
@@ -412,6 +422,14 @@ func (m *Manager) restoreBlob(ctx context.Context, it store.CompressItem) Restor
 		return RestoreAnswer{ID: it.ID, State: store.CompressReplacing}
 	}
 	res, err := m.serverSwap(ctx, it, toOutput, []string{it.State})
+	if errors.Is(err, store.ErrCompressPath) {
+		// The live side is nowhere in the backup now (deleted from it): the restore cannot swap, and the trashed side
+		// is kept for another retention rather than purged by an old date.
+		prev := it.State
+		it.Reason, it.PurgeAfter = ReasonLiveMissing, i64(m.now().UnixMilli()+m.trashMs(ctx))
+		m.save(ctx, &it, prev)
+		return RestoreAnswer{ID: it.ID, State: it.State, Error: ReasonLiveMissing}
+	}
 	if err != nil {
 		return RestoreAnswer{ID: it.ID, State: it.State, Error: "state"}
 	}
@@ -638,9 +656,9 @@ func (m *Manager) candidates(ctx context.Context, list []store.MirrorVideo, sel 
 	return out, nil
 }
 
-// AfterBackup runs after the phone backups' items pass: phone folders compressed automatically get the videos the
-// backup stored since the switch was turned on (entries created since, still on the phone), and phone backups
-// compressed automatically on the server the videos that left their phone since (freed or deleted).
+// AfterBackup runs after the phone backups' items pass: folders compressed automatically get the videos new in their
+// backup since the switch was turned on: a phone folder those still on the phone, a phone backup compressed on the
+// server those no longer on it (freed or deleted).
 func (m *Manager) AfterBackup(ctx context.Context) {
 	if m.cfg.Blobs == nil {
 		return
@@ -664,12 +682,10 @@ func (m *Manager) autoAppendMirror(ctx context.Context, j store.CompressJob) err
 	if json.Unmarshal(j.Selection, &sel) != nil || len(sel.Roots) != 1 {
 		return nil
 	}
-	q := store.MirrorVideoQuery{OnDevice: j.Target == TargetPhone, RootID: sel.Roots[0].RootID, Path: sel.Roots[0].Path}
-	if j.Target == TargetPhone {
-		q.PhysicalID, q.CreatedSince = j.PhysicalID, j.CreatedAt
-	} else {
-		q.RemovedSince = j.CreatedAt
-	}
+	// Only videos new in the folder's backup since the switch (the coordinator's rule, Amendment (S2)): a video backed up
+	// before it is never taken automatically, even once it leaves the phone. The root identifies the phone (it moves
+	// with a claimed backup, ADR 0017).
+	q := store.MirrorVideoQuery{OnDevice: j.Target == TargetPhone, RootID: sel.Roots[0].RootID, Path: sel.Roots[0].Path, CreatedSince: j.CreatedAt}
 	list, err := m.cfg.Store.MirrorVideos(ctx, q)
 	if err != nil {
 		return err

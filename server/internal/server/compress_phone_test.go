@@ -607,8 +607,9 @@ func TestCompressBackupFreed(t *testing.T) {
 	}
 }
 
-// "Compress automatically" on a phone folder: only videos the backup stores after the switch (not the output of a
-// replace); on a phone backup (target backup): videos that leave the phone after the switch.
+// "Compress automatically" on a phone folder: only videos new in the folder's backup since the switch (not the output
+// of a replace); on a phone backup (target backup): only videos new since the switch that are no longer on the phone. A
+// video backed up before the switch is never taken automatically, even once freed (the owner's rule, review B1).
 func TestCompressAutomaticPhoneFolder(t *testing.T) {
 	p := newPhoneH(t)
 	old, fresh := phoneVideo(51), phoneVideo(52)
@@ -640,19 +641,25 @@ func TestCompressAutomaticPhoneFolder(t *testing.T) {
 		t.Fatalf("the output was appended: %d items", n)
 	}
 
-	// The server-side switch on the phone's backup: the old video leaves the phone after it.
+	// The server-side switch on the phone's backup: the old video freed after it is not new; a video recorded after it,
+	// then freed, is.
 	p.jobAs(p.key, "backup", sel, map[string]any{"auto": true})
 	time.Sleep(5 * time.Millisecond)
-	p.report(p.ph, p.root, nil, []map[string]any{{"path": "DCIM/old.mp4", "reason": "freed"}})
+	later := phoneVideo(53)
+	p.backUp("DCIM/later.mp4", later)
+	p.report(p.ph, p.root, nil, []map[string]any{{"path": "DCIM/old.mp4", "reason": "freed"}, {"path": "DCIM/later.mp4", "reason": "freed"}})
 	p.index()
 	var got *store.CompressItem
 	for _, x := range p.items() {
-		if x.Fingerprint == fingerprint.Bytes(old) {
+		switch x.Fingerprint {
+		case fingerprint.Bytes(old):
+			t.Fatal("a video backed up before the switch was appended once freed")
+		case fingerprint.Bytes(later):
 			got = &x
 		}
 	}
 	if got == nil {
-		t.Fatal("the freed video was not appended")
+		t.Fatal("the new freed video was not appended")
 	}
 	p.runAll()
 	if s := p.item(got.ID).State; s != store.CompressReplaced {
@@ -662,6 +669,55 @@ func TestCompressAutomaticPhoneFolder(t *testing.T) {
 	expect(t, p.do("PATCH", "/v1/compress/jobs/"+job["id"].(string), map[string]any{"auto": false}, bearer(p.ph.key)), 200, "")
 	if s := p.item(it.ID).State; s != store.CompressReplaced {
 		t.Fatalf("%s", s)
+	}
+}
+
+// Review S3: rows the backup makes again for old videos are not new to an automatic folder: a file moved on the phone
+// (a new entry for an old shot), a root stopped and added again (its files reported again), and a claim that merges
+// another phone's older backup into the folder.
+func TestCompressAutomaticIgnoresRecreatedRows(t *testing.T) {
+	p := newPhoneH(t)
+	a, b, c := phoneVideo(81), phoneVideo(82), phoneVideo(83)
+	p.backUp("DCIM/a.mp4", a)
+	p.backUp("DCIM/b.mp4", b)
+	// Another phone (new hardware) backed up c before the switch.
+	tablet := p.phone("Pixel 9", "hoard")
+	root2 := p.addRoot(tablet, "primary", "DCIM", 201)["id"].(string)
+	uploadFor(t, p.harness, tablet.key, c, false)
+	p.report(tablet, root2, []map[string]any{fileEntry("DCIM/c.mp4", c, true)}, nil)
+	p.probe(fingerprint.Bytes(c))
+	p.index()
+	sel := map[string]any{"roots": []any{map[string]any{"rootId": p.root}}}
+	p.jobAs(p.ph.key, "phone", sel, map[string]any{"auto": true})
+	time.Sleep(5 * time.Millisecond)
+
+	// a moves on the phone: a new row for an old shot.
+	p.report(p.ph, p.root, []map[string]any{fileEntry("DCIM/Moved/a.mp4", a, true)}, []map[string]any{{"path": "DCIM/a.mp4", "reason": "moved"}})
+	// The root stopped and added again; the phone reports its files again.
+	w := p.do("DELETE", "/v1/backup/roots/"+p.root, nil, bearer(p.ph.key))
+	if w.Code != 200 && w.Code != 204 {
+		t.Fatalf("stop: %d %s", w.Code, w.Body.String())
+	}
+	if again := p.addRoot(p.ph, "primary", "DCIM", 200)["id"]; again != p.root {
+		t.Fatalf("re-added root %v", again)
+	}
+	p.report(p.ph, p.root, []map[string]any{fileEntry("DCIM/b.mp4", b, true), fileEntry("DCIM/Moved/a.mp4", a, true)}, nil)
+	// The phone is replaced by new hardware that claims it: c's backup merges into the folder.
+	expect(t, p.do("POST", "/admin/api/devices/"+p.ph.id+"/revoke", nil, adminHeaders()), 200, "")
+	expect(t, p.do("POST", "/v1/device/claim", map[string]any{"physicalDeviceId": p.ph.physical}, bearer(tablet.key)), 200, "")
+	p.index()
+	if es, _ := p.st.MirrorEntriesOfRoot(t.Context(), p.root); func() bool {
+		for _, e := range es {
+			if e.Fingerprint == fingerprint.Bytes(c) && e.RemovedReason == "" {
+				return false
+			}
+		}
+		return true
+	}() {
+		t.Fatal("the claim did not merge the tablet's file into the folder")
+	}
+	if list := p.items(); len(list) != 0 {
+		t.Fatalf("old videos appended: %+v", list)
 	}
 }
 
@@ -802,5 +858,142 @@ func TestCompressPhoneRestoreHeldAndStalled(t *testing.T) {
 		if l["held"] == true {
 			t.Fatalf("held after the restore: %v", l)
 		}
+	}
+}
+
+// Review S1: once the phone downloaded an output it may have written it, so a cancel leaves the item ready (answered
+// with its state) and the output stays; the late …/replaced, or the backup report first, completes the swap.
+func TestCompressServedOutputIsNotCancelled(t *testing.T) {
+	p := newPhoneH(t)
+	a, b := phoneVideo(91), phoneVideo(92)
+	p.backUp("DCIM/A.mp4", a)
+	p.backUp("DCIM/B.mp4", b)
+	p.index()
+	p.jobAs(p.ph.key, "phone", map[string]any{"roots": []any{map[string]any{"rootId": p.root}}}, nil)
+	p.runAll()
+	byFP := map[string]store.CompressItem{}
+	for _, it := range p.items() {
+		byFP[it.Fingerprint] = it
+		expect(t, p.do("GET", fmt.Sprintf("/v1/compress/items/%d/output", it.ID), nil, bearer(p.ph.key)), 200, "")
+	}
+	ia, ib := byFP[fingerprint.Bytes(a)], byFP[fingerprint.Bytes(b)]
+	// The user cancels the job while the phone's reports are lost.
+	w := p.do("POST", "/v1/compress/cancel", map[string]any{"jobId": ia.JobID}, bearer(p.ph.key))
+	expect(t, w, 200, "")
+	for _, it := range []store.CompressItem{ia, ib} {
+		if got := p.item(it.ID); got.State != store.CompressReady || !exists(p.blobFile(it.OutSHA256)) {
+			t.Fatalf("a served output was cancelled: %+v", got)
+		}
+	}
+	// The late route.
+	expect(t, p.do("POST", fmt.Sprintf("/v1/compress/items/%d/replaced", ia.ID), p.outBody(ia), bearer(p.ph.key)), 200, "")
+	if p.item(ia.ID).State != store.CompressReplaced {
+		t.Fatal("the late report did not complete the swap")
+	}
+	// The backup report first.
+	res := p.report(p.ph, p.root, []map[string]any{p.outEntry("DCIM/B.mp4", ib)}, nil)
+	if st := states(res); st[0] != "stored" || p.item(ib.ID).State != store.CompressReplaced {
+		t.Fatalf("report %v, item %+v", res, p.item(ib.ID))
+	}
+	p.noPreviousVersions()
+	// An output never served is still cancelled (and dropped).
+	c := phoneVideo(93)
+	p.backUp("DCIM/C.mp4", c)
+	p.index()
+	p.jobAs(p.ph.key, "phone", map[string]any{"roots": []any{map[string]any{"rootId": p.root, "path": "DCIM/C.mp4"}}}, nil)
+	p.runAll()
+	var ic store.CompressItem
+	for _, it := range p.items() {
+		if it.Fingerprint == fingerprint.Bytes(c) {
+			ic = it
+		}
+	}
+	expect(t, p.do("POST", "/v1/compress/cancel", map[string]any{"itemIds": []string{fmt.Sprint(ic.ID)}}, bearer(p.ph.key)), 200, "")
+	if p.item(ic.ID).State != store.CompressCancelled || exists(p.blobFile(ic.OutSHA256)) {
+		t.Fatalf("%+v", p.item(ic.ID))
+	}
+}
+
+// Review S2: the phone renames a compressed video; restore follows it to its new path (by the phone, then, once freed,
+// on the server), and restore again too.
+func TestCompressRestoreFollowsARename(t *testing.T) {
+	p := newPhoneH(t)
+	orig := phoneVideo(101)
+	p.backUp("DCIM/V.mp4", orig)
+	p.index()
+	p.jobAs(p.ph.key, "phone", map[string]any{"roots": []any{map[string]any{"rootId": p.root}}}, nil)
+	p.runAll()
+	it := p.one()
+	id := fmt.Sprint(it.ID)
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/replaced", p.outBody(it), bearer(p.ph.key)), 200, "")
+	const moved = "DCIM/Trip/V.mp4"
+	p.report(p.ph, p.root, []map[string]any{p.outEntry(moved, it)}, []map[string]any{{"path": "DCIM/V.mp4", "reason": "moved"}})
+
+	// The phone restores it at its new path.
+	w := p.do("POST", "/v1/compress/restore", map[string]any{"itemIds": []string{id}}, bearer(p.ph.key))
+	expect(t, w, 200, "")
+	if a := decode(t, w)["items"].(map[string]any)[id].(map[string]any); a["state"] != "replacing" {
+		t.Fatalf("restore %v", a)
+	}
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/restored", p.origBody(it), bearer(p.ph.key)), 200, "")
+	if e := p.entryAt(p.ph, moved); e.Fingerprint != it.Fingerprint || !e.OnDevice || !p.linkedTo(p.ph.physical, moved, it.SHA256) {
+		t.Fatalf("restored entry %+v", e)
+	}
+	// Restore again by the phone, at the same new path.
+	expect(t, p.do("POST", "/v1/compress/restore", map[string]any{"itemIds": []string{id}}, bearer(p.ph.key)), 200, "")
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/replaced", p.outBody(it), bearer(p.ph.key)), 200, "")
+	// Freed at its new path: the restore is the server's.
+	p.report(p.ph, p.root, nil, []map[string]any{{"path": moved, "reason": "freed"}})
+	w = p.do("POST", "/v1/compress/restore", map[string]any{"itemIds": []string{id}}, bearer(p.ph.key))
+	if a := decode(t, w)["items"].(map[string]any)[id].(map[string]any); a["state"] != "restored" {
+		t.Fatalf("server restore %v", a)
+	}
+	if e := p.entryAt(p.ph, moved); e.Fingerprint != it.Fingerprint || e.RemovedReason != store.RemovedFreed {
+		t.Fatalf("%+v", e)
+	}
+	p.noPreviousVersions()
+}
+
+// Review S4: abandon "gone" finishes the item on the server, and the path's new owner is off the phone (deleted), not
+// a file the phone would have.
+func TestCompressAbandonGoneIsOffThePhone(t *testing.T) {
+	p := newPhoneH(t)
+	v := phoneVideo(111)
+	p.backUp("DCIM/G.mp4", v)
+	p.index()
+	p.jobAs(p.ph.key, "phone", map[string]any{"roots": []any{map[string]any{"rootId": p.root}}}, nil)
+	p.runAll()
+	it := p.one()
+	w := p.do("POST", fmt.Sprintf("/v1/compress/items/%d/abandon", it.ID), map[string]any{"reason": "gone"}, bearer(p.ph.key))
+	expect(t, w, 200, "")
+	if decode(t, w)["state"] != "replaced" {
+		t.Fatal(w.Body.String())
+	}
+	e := p.entryAt(p.ph, "DCIM/G.mp4")
+	if e.Fingerprint != it.OutFingerprint || e.OnDevice || e.RemovedReason != store.RemovedDeleted {
+		t.Fatalf("%+v", e)
+	}
+}
+
+// Review nit: a phone restore given up on restarts the retention, so an already due trashed side is not purged at once.
+func TestCompressAbandonedRestoreKeepsTheTrash(t *testing.T) {
+	p := newPhoneH(t)
+	ctx := t.Context()
+	v := phoneVideo(121)
+	p.backUp("DCIM/K.mp4", v)
+	p.index()
+	p.jobAs(p.ph.key, "phone", map[string]any{"roots": []any{map[string]any{"rootId": p.root}}}, nil)
+	p.runAll()
+	it := p.one()
+	id := fmt.Sprint(it.ID)
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/replaced", p.outBody(it), bearer(p.ph.key)), 200, "")
+	later := time.Now().Add(31 * 24 * time.Hour)
+	p.st.SetNow(func() time.Time { return later })
+	defer p.st.SetNow(time.Now)
+	expect(t, p.do("POST", "/v1/compress/restore", map[string]any{"itemIds": []string{id}}, bearer(p.ph.key)), 200, "")
+	expect(t, p.do("POST", "/v1/compress/items/"+id+"/abandon", map[string]any{"reason": "verify"}, bearer(p.ph.key)), 200, "")
+	p.srv.compress.Housekeeping(ctx)
+	if got := p.item(it.ID); got.State != store.CompressReplaced || *got.PurgeAfter <= later.UnixMilli() || !exists(p.blobFile(it.SHA256)) {
+		t.Fatalf("%+v", got)
 	}
 }

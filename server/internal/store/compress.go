@@ -630,6 +630,12 @@ func (s *Store) CancelCompressItems(ctx context.Context, jobID string, ids []int
 		}
 		now := s.nowMs()
 		for _, it := range list {
+			if it.State == CompressReady && it.Source == "blob" && it.ReplaceStep == StepServed {
+				// The phone downloaded the output and may have written it already: only its own report (or abandon)
+				// settles the item (ADR 0025 Amendment (S2), "A served output").
+				others = append(others, it)
+				continue
+			}
 			switch it.State {
 			case CompressQueued, CompressEstimating, CompressEncoding, CompressVerifying, CompressReady:
 				if _, err := tx.ExecContext(ctx, "UPDATE compress_items SET state = 'cancelled', updated_at = ? WHERE id = ?", now, it.ID); err != nil {

@@ -125,6 +125,7 @@ func (s *Server) handleCompressOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+	s.compress.MarkServed(r.Context(), it)
 	h := w.Header()
 	h.Set("X-Hoard-Sha256", it.OutSHA256)
 	h.Set("X-Hoard-Fingerprint", it.OutFingerprint)
