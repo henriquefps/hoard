@@ -476,16 +476,18 @@ func TestNasWalkRoute(t *testing.T) {
 	if at <= float64(time.Now().UnixMilli()) {
 		t.Fatalf("not deferred %s", w.Body.String())
 	}
+	before := hs.srv.indexer.LastRequested(folderID)
+	if before.IsZero() || before.Add(2*time.Second).UnixMilli() != int64(at) {
+		t.Fatalf("deferred to %v, the last requested walk started %v", at, before)
+	}
 	for range 5 { // more requests while it waits change nothing (one walk)
 		expect(t, hs.do("POST", "/v1/nas/walk", map[string]any{"folders": []string{folderID}}, bearer(key)), 202, "")
 	}
-	time.Sleep(300 * time.Millisecond)
-	if f, _ := hs.st.NasFolder(ctx, folderID); f.FileCount != 1 {
-		t.Fatalf("walked again within the budget: %+v", f)
-	}
 	wait(2)
-	if time.Now().UnixMilli() < int64(at) {
-		t.Fatal("walked before the time it announced")
+	// Within the budget nothing walked: the walk that saw B started at or after the time announced (the indexer's own
+	// record of when it started a requested walk, not a wall-clock sleep).
+	if started := hs.srv.indexer.LastRequested(folderID); started.UnixMilli() < int64(at) {
+		t.Fatalf("walked again within the budget: started %v, announced %v", started.UnixMilli(), int64(at))
 	}
 
 	// Per device: a burst, then 429 with Retry-After.

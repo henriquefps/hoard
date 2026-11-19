@@ -96,5 +96,24 @@ func ParseOptions(raw json.RawMessage) (Options, error) {
 	return o, nil
 }
 
-// Marker is the metadata key written into every output.
+// Marker is the metadata key of every output's marker. exiftool writes it into the output's QuickTime Keys, where it
+// gets Apple's namespace (MarkerKey, ADR 0025 Amendment (N4)); a probe accepts both.
 const Marker = "dev.hfps.hoard.compressed"
+
+// MarkerKey is the Keys entry the marker is written as: exiftool prefixes every key outside the com., samsung. and
+// xiaomi. domains with com.apple.quicktime.
+const MarkerKey = "com.apple.quicktime." + Marker
+
+// markerValue is the marker of an encode: v1, <codec>-cq<q>, <yyyy-MM-dd>.
+func markerValue(r EncodeRequest) string {
+	return fmt.Sprintf("v1, %s-cq%d, %s", r.Profile.Codec, r.Q, r.Date)
+}
+
+// exiftoolConfig names the marker for exiftool (a user-defined Keys tag, HoardCompressed).
+const exiftoolConfig = `%Image::ExifTool::UserDefined = (
+    'Image::ExifTool::QuickTime::Keys' => {
+        '` + Marker + `' => { Name => 'HoardCompressed' },
+    },
+);
+1;
+`

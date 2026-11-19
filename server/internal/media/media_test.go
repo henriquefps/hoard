@@ -202,6 +202,16 @@ func TestParseProbe(t *testing.T) {
 		*c.UTC != time.Date(2024, 5, 1, 1, 0, 0, 0, time.UTC).UnixMilli() {
 		t.Fatalf("%+v", c)
 	}
+	// The camera a compression wrote back (ADR 0025 Amendment (N4)): UserData ©mak/©mod, as ffprobe shows them after
+	// `exiftool -UserData:Make= -UserData:Model=`.
+	for _, tg := range []map[string]string{
+		{"make": "Samsung", "make-eng": "Samsung", "model": "SM-S918B", "model-eng": "SM-S918B", "encoder": "Lavf63.1.102"},
+		{"make": "Samsung", "model": "SM-S918B"},
+	} {
+		if m := VideoMeta(v, tg, "mp4"); m.Make != "Samsung" || m.Model != "SM-S918B" {
+			t.Fatalf("camera from %v: %q %q", tg, m.Make, m.Model)
+		}
+	}
 	// creation_time only (UTC), with Samsung's offset tag.
 	c := videoCapture(map[string]string{"creation_time": "2024-05-01T01:00:00.000000Z", "com.samsung.android.utc_offset": "+0900"})
 	if c.Local != "2024-05-01T10:00:00" || c.Offset != "+09:00" || *c.UTC != time.Date(2024, 5, 1, 1, 0, 0, 0, time.UTC).UnixMilli() {

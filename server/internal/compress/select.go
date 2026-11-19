@@ -510,7 +510,7 @@ func (m *Manager) autoAppend(ctx context.Context) error {
 	return nil
 }
 
-// SidecarAvailable reports whether the per-frame sidecar of an output is on disk.
+// SidecarAvailable reports whether the metadata sidecar of an output is on disk.
 func (m *Manager) SidecarAvailable(outFP string) bool {
 	_, err := os.Stat(m.MetaPath(outFP))
 	return err == nil

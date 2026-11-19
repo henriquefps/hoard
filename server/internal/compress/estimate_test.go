@@ -176,12 +176,15 @@ func TestEncodeArgs(t *testing.T) {
 	for _, want := range []string{"-hwaccel cuda -noautorotate -i SRC", "-map 0 -map -0:d -map_metadata 0 -map_chapters 0 -c copy",
 		"-c:v:0 hevc_nvenc -rc vbr -cq 26 -b:v:0 0 -maxrate:v:0 51000000 -bufsize:v:0 102000000", "-preset p7 -tune hq -tag:v:0 hvc1",
 		"-pix_fmt p010le -profile:v:0 main10", "-fps_mode passthrough -enc_time_base:v demux",
-		"-metadata dev.hfps.hoard.compressed=v1, hevc-cq26, 2026-11-19", "-movflags +use_metadata_tags+faststart /w/out.mp4"} {
+		"-fps_mode passthrough -enc_time_base:v demux -movflags +faststart /w/out.mp4"} {
 		if !strings.Contains(a, want) {
 			t.Errorf("missing %q in %s", want, a)
 		}
 	}
-	for _, not := range []string{"aq", "multipass", "-c:a aac", "lookahead"} {
+	if markerValue(r) != "v1, hevc-cq26, 2026-11-19" {
+		t.Errorf("marker %q", markerValue(r))
+	}
+	for _, not := range []string{"aq", "multipass", "-c:a aac", "lookahead", "use_metadata_tags", "-metadata"} {
 		if strings.Contains(a, not) {
 			t.Errorf("unexpected %q", not)
 		}
@@ -200,7 +203,7 @@ func TestEncodeArgs(t *testing.T) {
 	av1, _ := ProfileByID("av1-cq34")
 	r.Profile, r.Q = av1, 34
 	a = strings.Join(encodeArgs(r, "SRC", true), " ")
-	if !strings.Contains(a, "-c:v:0 av1_nvenc") || strings.Contains(a, "hvc1") || !strings.Contains(a, "av1-cq34") {
+	if !strings.Contains(a, "-c:v:0 av1_nvenc") || strings.Contains(a, "hvc1") || markerValue(r) != "v1, av1-cq34, 2026-11-19" {
 		t.Errorf("av1: %s", a)
 	}
 }

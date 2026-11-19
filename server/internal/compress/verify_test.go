@@ -69,6 +69,8 @@ func checkReason(err error) string {
 	return ""
 }
 
+func reasonOf(_ CheckResult, err error) string { return checkReason(err) }
+
 func TestVerifierChecks(t *testing.T) {
 	tl := needTools(t)
 	dir := t.TempDir()
@@ -79,7 +81,7 @@ func TestVerifierChecks(t *testing.T) {
 	good := tl.make(t, filepath.Join(dir, "good.mp4"), "-i", src, "-map", "0", "-c:a", "copy", "-c:v", "libx265", "-preset", "ultrafast", "-crf", "28",
 		"-tag:v", "hvc1", "-x265-params", "log-level=error", "-fps_mode", "passthrough", "-enc_time_base:v", "demux")
 	var log bytes.Buffer
-	if err := v.Check(ctx, open(t, src), good, &log); err != nil {
+	if _, err := v.Check(ctx, open(t, src), good, &log); err != nil {
 		t.Fatalf("good: %v\n%s", err, log.String())
 	}
 	if !strings.Contains(log.String(), "metadata diff (ffprobe):") || !strings.Contains(log.String(), "codec_name") {
@@ -101,7 +103,7 @@ func TestVerifierChecks(t *testing.T) {
 	for _, c := range cases {
 		out := tl.make(t, filepath.Join(dir, strings.ReplaceAll(c.name, " ", "_")+".mp4"), c.args...)
 		log.Reset()
-		if got := checkReason(v.Check(ctx, open(t, src), out, &log)); got != c.want {
+		if got := reasonOf(v.Check(ctx, open(t, src), out, &log)); got != c.want {
 			t.Errorf("%s: %q, want %s\n%s", c.name, got, c.want, log.String())
 		}
 	}
@@ -126,13 +128,13 @@ func TestVerifierHDRSideData(t *testing.T) {
 	// Same metadata: ok. Other mastering values: picture.
 	same := tl.make(t, filepath.Join(dir, "same.mp4"), "-i", src, "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
 		"-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-x265-params", hdr, "-tag:v", "hvc1")
-	if err := v.Check(context.Background(), open(t, src), same, &bytes.Buffer{}); err != nil {
+	if _, err := v.Check(context.Background(), open(t, src), same, &bytes.Buffer{}); err != nil {
 		t.Fatalf("same HDR metadata: %v", err)
 	}
 	other := tl.make(t, filepath.Join(dir, "other.mp4"), "-f", "lavfi", "-i", "testsrc2=s=640x360:r=30:d=3", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
 		"-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc", "-tag:v", "hvc1",
 		"-x265-params", strings.Replace(hdr, "max-cll=1000,400", "max-cll=600,200", 1))
-	if got := checkReason(v.Check(context.Background(), open(t, src), other, &bytes.Buffer{})); got != "verify_picture" {
+	if got := reasonOf(v.Check(context.Background(), open(t, src), other, &bytes.Buffer{})); got != "verify_picture" {
 		t.Fatalf("other CLL: %q", got)
 	}
 }
@@ -200,7 +202,7 @@ func TestVerifierGates(t *testing.T) {
 		"-fps_mode", "passthrough", "-enc_time_base:v", "demux"}
 	good := tl.make(t, filepath.Join(dir, "good.mp4"), append([]string{"-i", src, "-map", "0", "-map_metadata", "0", "-c:a", "copy"}, reenc...)...)
 	var log bytes.Buffer
-	if err := v.Check(ctx, open(t, src), good, &log); err != nil {
+	if _, err := v.Check(ctx, open(t, src), good, &log); err != nil {
 		t.Fatalf("good: %v\n%s", err, log.String())
 	}
 	if !strings.Contains(log.String(), "full decode: ok") {
@@ -223,19 +225,19 @@ func TestVerifierGates(t *testing.T) {
 	if err := os.WriteFile(bad, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := checkReason(v.Check(ctx, open(t, src), bad, &bytes.Buffer{})); got != "verify_decode" {
+	if got := reasonOf(v.Check(ctx, open(t, src), bad, &bytes.Buffer{})); got != "verify_decode" {
 		t.Errorf("corrupt: %q", got)
 	}
 	// The audio stream 1 s short; the file is still 10 s long.
 	short := tl.make(t, filepath.Join(dir, "shortaudio.mp4"), append([]string{"-i", src, "-map", "0", "-map_metadata", "0", "-af", "atrim=0:8.8",
 		"-c:a", "aac"}, reenc...)...)
-	if got := checkReason(v.Check(ctx, open(t, src), short, &bytes.Buffer{})); got != "verify_duration" {
+	if got := reasonOf(v.Check(ctx, open(t, src), short, &bytes.Buffer{})); got != "verify_duration" {
 		t.Errorf("audio short: %q", got)
 	}
 	// Capture time and place gone.
 	bare := tl.make(t, filepath.Join(dir, "bare.mp4"), append([]string{"-i", src, "-map", "0", "-map_metadata", "-1", "-c:a", "copy"}, reenc...)...)
 	log.Reset()
-	if got := checkReason(v.Check(ctx, open(t, src), bare, &log)); got != "verify_metadata" || !strings.Contains(log.String(), "creation_time") {
+	if got := reasonOf(v.Check(ctx, open(t, src), bare, &log)); got != "verify_metadata" || !strings.Contains(log.String(), "creation_time") {
 		t.Errorf("metadata: %q\n%s", got, log.String())
 	}
 }
@@ -298,7 +300,7 @@ func TestVerifierDamagedLastAudioFrame(t *testing.T) {
 	// The source has the damage; the output copies it.
 	out := tl.make(t, filepath.Join(dir, "out.mp4"), append([]string{"-i", damaged}, reenc...)...)
 	var log bytes.Buffer
-	if err := v.Check(ctx, open(t, damaged), out, &log); err != nil {
+	if _, err := v.Check(ctx, open(t, damaged), out, &log); err != nil {
 		t.Fatalf("inherited damage failed the check: %v\n%s", err, log.String())
 	}
 	if !strings.Contains(log.String(), "the source's audio has the same damage") {
@@ -307,7 +309,7 @@ func TestVerifierDamagedLastAudioFrame(t *testing.T) {
 	// A clean source; only the output is damaged.
 	out2 := tl.make(t, filepath.Join(dir, "out2.mp4"), append([]string{"-i", clean}, reenc...)...)
 	damageLastAudioFrame(t, tl, out2)
-	if got := checkReason(v.Check(ctx, open(t, clean), out2, &bytes.Buffer{})); got != "verify_decode" {
+	if got := reasonOf(v.Check(ctx, open(t, clean), out2, &bytes.Buffer{})); got != "verify_decode" {
 		t.Fatalf("damage only in the output: %q", got)
 	}
 }

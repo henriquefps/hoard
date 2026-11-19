@@ -103,12 +103,26 @@ type fakeVerifier struct {
 	mu    sync.Mutex
 	vmaf  map[int]float64 // by q; default 95
 	check error
+	// hold keeps each Check running that long; active and maxActive count the verifications at once.
+	hold                      time.Duration
+	active, maxActive, checks atomic.Int32
 }
 
-func (v *fakeVerifier) Check(context.Context, *os.File, string, io.Writer) error {
+func (v *fakeVerifier) Check(context.Context, *os.File, string, io.Writer) (compress.CheckResult, error) {
+	v.checks.Add(1)
+	n := v.active.Add(1)
+	defer v.active.Add(-1)
+	for {
+		m := v.maxActive.Load()
+		if n <= m || v.maxActive.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	time.Sleep(v.hold)
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.check
+	return compress.CheckResult{Exiftool: []byte(`{"Samsung:SamsungModel":"SM-S918B"}`), NotRestored: []string{"Samsung:SamsungModel"},
+		Expected: []string{"Samsung:SamsungModel"}, Make: "Samsung", Model: "SM-S918B"}, v.check
 }
 
 func (v *fakeVerifier) VMAF(_ context.Context, _ *os.File, out string, _ compress.Probe, _ io.Writer) (compress.VMAFResult, error) {
@@ -163,6 +177,7 @@ func compressHarness(t *testing.T, gpu bool, paths ...string) *cHarness {
 	hs := newHarnessWith(t, true, func(c *Config) {
 		nas := filepath.Join(c.Mounts[0], "nas")
 		c.NasReadRoot, c.NasWriteRoot = nas, nas
+		c.EditsDir = filepath.Join(t.TempDir(), "edits") // the data directory (compress/logs, compress/meta) is its parent
 		c.CompressEncoder, c.CompressVerifier, c.CompressDetector, c.CompressNVML = ch.enc, ch.ver, fakeDetector{ok: gpu}, ch.nvml
 		c.CompressPoll = 10 * time.Millisecond
 		c.CompressLinker = func(r *os.Root, o, n string) error {
@@ -363,6 +378,12 @@ func TestCompressNASFlow(t *testing.T) {
 	c, _ := oi["compressed"].(map[string]any)
 	if c == nil || c["from"] != origFP || c["fromItem"] != orig || c["original"] != "trashed" || c["profile"] != "hevc-cq28" || c["q"].(float64) != 28 {
 		t.Fatalf("output item %v", oi)
+	}
+	// The metadata sidecar, for every replaced video (no per-frame data here).
+	sc := readSidecar(t, ch.srv.compress.MetaPath(it.OutFingerprint))
+	if sc["version"] != 2.0 || sc["original"].(map[string]any)["fingerprint"] != origFP || sc["perFrame"] != nil ||
+		sc["exiftool"].(map[string]any)["Samsung:SamsungModel"] != "SM-S918B" || fmt.Sprint(sc["expectedLost"]) != "[Samsung:SamsungModel]" {
+		t.Fatalf("sidecar %v", sc)
 	}
 	tomb := getItem(t, ch.harness, ch.key, orig, "")
 	if tomb["deleted"] != true || tomb["replacedBy"] != out || len(tomb) != 6 {
@@ -979,4 +1000,74 @@ func TestCompressAdmin(t *testing.T) {
 	}
 	// Device keys never reach the setup page (from outside the network it does not answer at all).
 	expect(t, ch.do("GET", "/admin/api/compress", nil, bearer(ch.key)), 404, "")
+}
+
+func readSidecar(t *testing.T, p string) map[string]any {
+	t.Helper()
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatalf("no metadata sidecar: %v", err)
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.NewDecoder(zr).Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// A verification above 2.7K takes every CPU slot (ADR 0025 Amendment (N4)): two 4K items never verify at once, two
+// 1080p items do.
+func TestCompressWideVerificationTakesEveryCPUSlot(t *testing.T) {
+	for _, c := range []struct {
+		name          string
+		width, height int
+		want          int32
+	}{{"1080p", 1920, 1080, 2}, {"4K", 3840, 2160, 1}} {
+		t.Run(c.name, func(t *testing.T) {
+			ch := compressHarness(t, true, "v/a.MP4", "v/b.MP4", "v/c.MP4")
+			ctx := t.Context()
+			p := testProbe
+			p.Width, p.Height, p.BitRate, p.DurationMs, p.NbFrames = c.width, c.height, 32_000_000, 2000, 60 // 8 MB in 2 s
+			b, _ := json.Marshal(p)
+			for _, rel := range []string{"v/a.MP4", "v/b.MP4", "v/c.MP4"} {
+				if err := ch.st.PutVideoProbe(ctx, ch.fp(rel), compress.ProbeVersion, b); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ch.ver.hold = 300 * time.Millisecond
+			ch.job(map[string]any{"folders": []any{map[string]any{"folderId": ch.folder, "path": "v"}}}, nil)
+			runCtx, stop := context.WithCancel(ctx)
+			defer stop()
+			ch.srv.compress.Start(runCtx)
+			deadline := time.Now().Add(20 * time.Second)
+			for {
+				done := 0
+				for _, it := range ch.items() {
+					if it.State == store.CompressReplaced || it.State == store.CompressFailed || it.State == store.CompressSkipped {
+						done++
+					}
+				}
+				if done == 3 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("not settled: %+v", ch.items())
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			stop()
+			ch.srv.compress.Wait()
+			if n := ch.ver.checks.Load(); n < 2 {
+				t.Fatalf("%d verifications", n)
+			}
+			if got := ch.ver.maxActive.Load(); got != c.want {
+				t.Fatalf("%d verifications at once, want %d", got, c.want)
+			}
+		})
+	}
 }

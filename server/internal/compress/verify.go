@@ -28,6 +28,16 @@ func (e *VerifyError) Error() string { return "verify_" + e.Check + ": " + e.Det
 // Reason is the item's failure reason.
 func (e *VerifyError) Reason() string { return "verify_" + e.Check }
 
+// CheckResult is what a passed Check learned of the source's metadata: the metadata sidecar keeps it (ADR 0025
+// Amendment (N4)).
+type CheckResult struct {
+	Exiftool    json.RawMessage // the source's `exiftool -a -G1 -j` object (nil without exiftool)
+	FFprobe     json.RawMessage // the source's ffprobe -show_format -show_streams
+	NotRestored []string        // Group:Tag names of the source missing from the output
+	Expected    []string        // the part of NotRestored in a known unwritable family (camera identity)
+	Make, Model string          // the camera, from any group (an unwritable one too)
+}
+
 // VMAFResult is a quality score.
 type VMAFResult struct {
 	Mean float64
@@ -37,9 +47,9 @@ type VMAFResult struct {
 
 // Verifier checks an output against its source before anything is replaced (ADR 0025 "Checks").
 type Verifier interface {
-	// Check compares the two files' streams, picture and duration (and frames when the headers differ) and writes
-	// the metadata diff to log.
-	Check(ctx context.Context, src *os.File, out string, log io.Writer) error
+	// Check compares the two files' streams, picture and duration (and frames when the headers differ), writes the
+	// metadata diff to log and answers what the metadata sidecar keeps.
+	Check(ctx context.Context, src *os.File, out string, log io.Writer) (CheckResult, error)
 	// VMAF scores the output against the source.
 	VMAF(ctx context.Context, src *os.File, out string, p Probe, log io.Writer) (VMAFResult, error)
 }
@@ -260,7 +270,18 @@ func mainVideo(ss []verifyStream) (verifyStream, bool) {
 	return verifyStream{}, false
 }
 
-// compareInfo is the probe half of the checks.
+// videoDurationDeferred is compareInfo's answer when everything matched but a video stream's header duration: an MP4
+// edit list can hide leading frames that the header still counts (a Samsung VFR clip: 607 frames / 20.216 s in the
+// header, 603 decoded / 20.083 s, both CPU and CUDA). Check then compares the decoded video instead (ADR 0025
+// Amendment (N4)).
+type videoDurationDeferred struct{ detail string }
+
+func (e *videoDurationDeferred) Error() string {
+	return "video stream header duration differs: " + e.detail
+}
+
+// compareInfo is the probe half of the checks. When the only difference is a video stream's header duration, it
+// answers *videoDurationDeferred, after every other check passed.
 func compareInfo(a, b verifyInfo) error {
 	if a.Duration <= 0 || b.Duration <= 0 {
 		return &VerifyError{"duration", fmt.Sprintf("unknown duration (%.3f s vs %.3f s)", a.Duration, b.Duration)}
@@ -268,7 +289,9 @@ func compareInfo(a, b verifyInfo) error {
 	if math.Abs(a.Duration-b.Duration) > 0.1 {
 		return &VerifyError{"duration", fmt.Sprintf("%.3f s vs %.3f s", a.Duration, b.Duration)}
 	}
-	// Every audio and video stream keeps its own duration (an audio track cut short does not change the file's).
+	// Every audio and video stream keeps its own duration (an audio track cut short does not change the file's). A
+	// video stream's header duration is only deferred: the decoded video decides.
+	deferred := ""
 	for _, kind := range []string{"video", "audio"} {
 		var da, db []float64
 		for _, s := range a.Streams {
@@ -287,7 +310,13 @@ func compareInfo(a, b verifyInfo) error {
 				tol = 0.15 // an AAC re-encode's priming and padding
 			}
 			if da[i] > 0 && db[i] > 0 && math.Abs(da[i]-db[i]) > tol {
-				return &VerifyError{"duration", fmt.Sprintf("%s stream %d: %.3f s vs %.3f s", kind, i, da[i], db[i])}
+				detail := fmt.Sprintf("%s stream %d: %.3f s vs %.3f s", kind, i, da[i], db[i])
+				if kind == "audio" {
+					return &VerifyError{"duration", detail}
+				}
+				if deferred == "" {
+					deferred = detail
+				}
 			}
 		}
 	}
@@ -335,38 +364,64 @@ func compareInfo(a, b verifyInfo) error {
 	case va.CLL != vb.CLL:
 		return &VerifyError{"picture", "HDR10 content light level differs"}
 	}
+	if deferred != "" {
+		return &videoDurationDeferred{deferred}
+	}
 	return nil
 }
 
 // Check implements Verifier.
-func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io.Writer) error {
+func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io.Writer) (CheckResult, error) {
 	a, err := v.probe(ctx, src, "")
 	if err != nil {
-		return fmt.Errorf("probe source: %w", err)
+		return CheckResult{}, fmt.Errorf("probe source: %w", err)
 	}
 	b, err := v.probe(ctx, nil, out)
 	if err != nil {
-		return &VerifyError{"streams", "the output cannot be read: " + err.Error()}
+		return CheckResult{}, &VerifyError{"streams", "the output cannot be read: " + err.Error()}
 	}
-	if err := compareInfo(a, b); err != nil {
+	var deferred *videoDurationDeferred
+	if err := compareInfo(a, b); errors.As(err, &deferred) {
+		fmt.Fprintf(log, "check: %v: comparing the decoded video\n", err)
+	} else if err != nil {
 		fmt.Fprintf(log, "check: %v\n", err)
-		return err
+		return CheckResult{}, err
+	} else {
+		fmt.Fprintln(log, "check: duration, streams, picture: ok")
 	}
-	fmt.Fprintln(log, "check: duration, streams, picture: ok")
 	va, _ := mainVideo(a.Streams)
 	vb, _ := mainVideo(b.Streams)
-	if va.NbFrames != vb.NbFrames {
+	if deferred != nil {
+		// The decoded video of both: the same frame count and the same span (first frame's start to the last one's end).
+		sa, err := v.decodedVideo(ctx, src, "", a.Duration)
+		if err != nil {
+			return CheckResult{}, fmt.Errorf("decode source frames: %w", err)
+		}
+		sb, err := v.decodedVideo(ctx, nil, out, b.Duration)
+		if err != nil {
+			return CheckResult{}, &VerifyError{"frames", "the output cannot be decoded: " + err.Error()}
+		}
+		fmt.Fprintf(log, "check: header frames %d vs %d, decoded %d vs %d, decoded span %.3f s vs %.3f s\n", va.NbFrames, vb.NbFrames,
+			sa.Frames, sb.Frames, sa.Span, sb.Span)
+		if sa.Frames != sb.Frames || math.Abs(sa.Span-sb.Span) > 0.1 {
+			err := &VerifyError{"duration", fmt.Sprintf("%s; decoded %d frames / %.3f s vs %d / %.3f s", deferred.detail, sa.Frames, sa.Span,
+				sb.Frames, sb.Span)}
+			fmt.Fprintf(log, "check: %v\n", err)
+			return CheckResult{}, err
+		}
+		fmt.Fprintln(log, "check: duration (decoded), streams, picture: ok")
+	} else if va.NbFrames != vb.NbFrames {
 		fa, err := v.countFrames(ctx, src, "")
 		if err != nil {
-			return fmt.Errorf("count source frames: %w", err)
+			return CheckResult{}, fmt.Errorf("count source frames: %w", err)
 		}
 		fb, err := v.countFrames(ctx, nil, out)
 		if err != nil {
-			return &VerifyError{"frames", "the output cannot be decoded: " + err.Error()}
+			return CheckResult{}, &VerifyError{"frames", "the output cannot be decoded: " + err.Error()}
 		}
 		fmt.Fprintf(log, "check: header frames %d vs %d, decoded %d vs %d\n", va.NbFrames, vb.NbFrames, fa, fb)
 		if fa != fb {
-			return &VerifyError{"frames", fmt.Sprintf("%d decoded frames vs %d", fa, fb)}
+			return CheckResult{}, &VerifyError{"frames", fmt.Sprintf("%d decoded frames vs %d", fa, fb)}
 		}
 	} else {
 		fmt.Fprintf(log, "check: frames %d = %d\n", va.NbFrames, vb.NbFrames)
@@ -377,7 +432,7 @@ func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io
 	timeout := 10*time.Minute + time.Duration(b.Duration*10*float64(time.Second))
 	if err := v.decode(ctx, timeout, nil, out, "0:v:0"); err != nil {
 		fmt.Fprintf(log, "check: decode: %v\n", err)
-		return &VerifyError{"decode", "the output's video does not decode cleanly: " + err.Error()}
+		return CheckResult{}, &VerifyError{"decode", "the output's video does not decode cleanly: " + err.Error()}
 	}
 	hasAudio := false
 	for _, st := range b.Streams {
@@ -387,17 +442,67 @@ func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io
 		if err := v.decode(ctx, timeout, nil, out, "0:a"); err != nil {
 			if serr := v.decode(ctx, timeout, src, "", "0:a"); serr == nil {
 				fmt.Fprintf(log, "check: decode audio: %v\n", err)
-				return &VerifyError{"decode", "the output's audio does not decode cleanly: " + err.Error()}
+				return CheckResult{}, &VerifyError{"decode", "the output's audio does not decode cleanly: " + err.Error()}
 			}
 			fmt.Fprintf(log, "check: decode audio: %v (the source's audio has the same damage: kept)\n", err)
 		}
 	}
 	fmt.Fprintln(log, "check: full decode: ok")
-	if err := v.metaDiff(ctx, a, b, src, out, log); err != nil {
+	res, err := v.metaDiff(ctx, a, b, src, out, log)
+	if err != nil {
 		fmt.Fprintf(log, "check: %v\n", err)
-		return err
+		return CheckResult{}, err
 	}
-	return nil
+	return res, nil
+}
+
+// decodedSpan is the decoded main video of a file: its frame count and the time from the first frame's start to the
+// last frame's end.
+type decodedSpan struct {
+	Frames int64
+	Span   float64
+}
+
+// decodedVideo decodes the main video stream (src as descriptor 3, else path) and measures it.
+func (v *FFVerifier) decodedVideo(ctx context.Context, src *os.File, path string, duration float64) (decodedSpan, error) {
+	in := path
+	if src != nil {
+		in = fdInput
+	}
+	timeout := 10*time.Minute + time.Duration(duration*10*float64(time.Second))
+	out, err := v.run(ctx, timeout, src, nil, v.FFprobe, "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", probeFormats,
+		"-select_streams", "V:0", "-show_entries", "frame=best_effort_timestamp_time,duration_time", "-print_format", "csv=p=0", in)
+	if err != nil {
+		return decodedSpan{}, err
+	}
+	return parseDecodedSpan(out)
+}
+
+// parseDecodedSpan reads ffprobe's "best_effort_timestamp_time,duration_time" lines.
+func parseDecodedSpan(b []byte) (decodedSpan, error) {
+	var d decodedSpan
+	first, end := math.Inf(1), math.Inf(-1)
+	for line := range strings.Lines(string(b)) {
+		fields := strings.Split(strings.TrimSpace(line), ",")
+		if len(fields) == 0 || fields[0] == "" {
+			continue
+		}
+		d.Frames++
+		t, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil { // N/A: counted, no time
+			continue
+		}
+		dur := 0.0
+		if len(fields) > 1 {
+			dur, _ = strconv.ParseFloat(fields[1], 64)
+		}
+		first, end = math.Min(first, t), math.Max(end, t+dur)
+	}
+	if d.Frames == 0 || math.IsInf(first, 0) {
+		return d, errors.New("no decoded frame")
+	}
+	d.Span = end - first
+	return d, nil
 }
 
 // decode decodes the mapped streams of a file (src as descriptor 3, else path) to nothing, stopping at the first error.
@@ -407,7 +512,8 @@ func (v *FFVerifier) decode(ctx context.Context, timeout time.Duration, src *os.
 		in = fdInput
 	}
 	_, err := v.run(ctx, timeout, src, nil, v.FFmpeg, "-hide_banner", "-nostdin", "-xerror", "-v", "error",
-		"-protocol_whitelist", "file", "-format_whitelist", probeFormats, "-i", in, "-map", mapping, "-f", "null", "-")
+		"-protocol_whitelist", "file", "-format_whitelist", probeFormats, "-threads", strconv.Itoa(max(v.Threads, 1)), "-i", in,
+		"-map", mapping, "-f", "null", "-")
 	return err
 }
 
@@ -415,9 +521,10 @@ func (v *FFVerifier) decode(ctx context.Context, timeout time.Duration, src *os.
 var keyFFTags = []string{"creation_time", "location", "location-eng", "com.apple.quicktime.location.iso6709", "com.apple.quicktime.make",
 	"com.apple.quicktime.model", "com.apple.quicktime.creationdate", "make", "model"}
 
-// keyExifTags are exiftool tag names (any group) whose loss fails the check; Rotation must also keep its value.
+// keyExifTags are exiftool tag names (any group) whose loss fails the check; Rotation must also keep its value. The
+// camera is gated by presence (cameraOf, any family) in exifGate.
 var keyExifTags = []string{"CreateDate", "MediaCreateDate", "TrackCreateDate", "CreationDate", "DateTimeOriginal", "GPSCoordinates",
-	"GPSLatitude", "GPSLongitude", "GPSPosition", "Make", "Model", "Rotation"}
+	"GPSLatitude", "GPSLongitude", "GPSPosition", "Rotation"}
 
 func emptyValue(v string) bool {
 	v = strings.Trim(v, `"`)
@@ -495,10 +602,13 @@ func (v *FFVerifier) countFrames(ctx context.Context, src *os.File, path string)
 	return strconv.ParseInt(string(m[1]), 10, 64)
 }
 
-// metaDiff writes the tag names of both files and whether their values are equal (values stay in the item's log).
 // metaDiff writes the metadata diff to the item's log and fails when the output lost the capture time, the place, the
-// camera's make or model, or the rotation the source has.
-func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File, out string, log io.Writer) error {
+// camera's make or model (the source's from any family, the output's in any group) or the rotation the source has.
+// Tags exiftool cannot write back into a re-encoded MP4 are listed as not restored (the metadata sidecar keeps them);
+// the camera of the known unwritable families is carried in UserData by the encoder's restore.
+func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File, out string, log io.Writer) (CheckResult, error) {
+	var res CheckResult
+	res.FFprobe, _ = json.Marshal(a.raw)
 	fmt.Fprintln(log, "metadata diff (ffprobe):")
 	ffa, ffb := flatten("", a.raw), flatten("", b.raw)
 	writeDiff(log, ffa, ffb)
@@ -506,33 +616,163 @@ func (v *FFVerifier) metaDiff(ctx context.Context, a, b verifyInfo, src *os.File
 	if v.Exiftool == "" {
 		fmt.Fprintln(log, "metadata diff (exiftool): not installed")
 		if len(lost) > 0 {
-			return &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
+			return res, &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
 		}
-		return nil
+		return res, nil
 	}
 	ea, err1 := v.run(ctx, 2*time.Minute, src, nil, v.Exiftool, "-j", "-G1", "-a", "-m", "--", fdInput)
 	eb, err2 := v.run(ctx, 2*time.Minute, nil, nil, v.Exiftool, "-j", "-G1", "-a", "-m", "--", out)
 	if err1 != nil || err2 != nil {
 		fmt.Fprintf(log, "metadata diff (exiftool): %v %v\n", err1, err2)
-		return &VerifyError{"metadata", "exiftool could not read the files"}
+		return res, &VerifyError{"metadata", "exiftool could not read the files"}
 	}
 	var ja, jb []map[string]any
 	_ = json.Unmarshal(ea, &ja)
 	_ = json.Unmarshal(eb, &jb)
-	fa, fb := map[string]string{}, map[string]string{}
+	ta, tb := map[string]any{}, map[string]any{}
 	if len(ja) > 0 {
-		fa = flatten("", ja[0])
+		ta = ja[0]
 	}
 	if len(jb) > 0 {
-		fb = flatten("", jb[0])
+		tb = jb[0]
 	}
+	res.Exiftool, _ = json.Marshal(ta)
 	fmt.Fprintln(log, "metadata diff (exiftool):")
-	writeDiff(log, fa, fb)
-	lost = append(lost, lostTags(byTagName(fa, "/", false), byTagName(fb, "/", false), keyExifTags, map[string]bool{"Rotation": true})...)
-	if len(lost) > 0 {
-		return &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
+	writeDiff(log, flatten("", ta), flatten("", tb))
+	g := exifGate(ta, tb)
+	res.NotRestored, res.Expected, res.Make, res.Model = g.NotRestored, g.Expected, g.Make, g.Model
+	if len(g.NotRestored) > 0 {
+		fmt.Fprintf(log, "metadata not restored (%d, kept in the metadata sidecar): %s\n", len(g.NotRestored), strings.Join(g.NotRestored, ", "))
 	}
-	return nil
+	if len(g.Expected) > 0 {
+		fmt.Fprintf(log, "camera identity not restored as such (exiftool cannot write it back; carried in UserData Make and Model): %s\n",
+			strings.Join(g.Expected, ", "))
+	}
+	lost = append(lost, g.Lost...)
+	if len(lost) > 0 {
+		return res, &VerifyError{"metadata", "lost: " + strings.Join(lost, ", ")}
+	}
+	return res, nil
+}
+
+// unwritableCamera is the camera identity of the families exiftool reads but cannot write back into a re-encoded MP4
+// (ADR 0025 Amendment (N4)): Samsung's `smta` box (group Samsung) and Sony's NRTM XML (group XML). Their loss as such
+// is expected; their values go to UserData Make/Model (NvencEncoder.restoreCamera).
+var unwritableCamera = map[string][]string{
+	"Samsung": {"SamsungModel", "Make", "Model"},
+	"XML":     {"DeviceManufacturer", "DeviceModelName", "Make", "Model"},
+}
+
+// notTags are exiftool groups that describe the file or the tool, not the video's metadata.
+var notTags = map[string]bool{"ExifTool": true, "File": true, "System": true, "Composite": true, "SourceFile": true}
+
+type gateResult struct {
+	Lost        []string // key tags (by name) or the camera's make/model gone: the gate fails
+	NotRestored []string // every Group:Tag of the source missing from the output
+	Expected    []string // NotRestored entries in unwritableCamera
+	Make, Model string
+}
+
+func splitTag(k string) (group, name string) {
+	if i := strings.IndexByte(k, ':'); i >= 0 {
+		return k[:i], k[i+1:]
+	}
+	return "", k
+}
+
+func unwritable(k string) bool {
+	group, name := splitTag(k)
+	for _, n := range unwritableCamera[group] {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+// exifGate classifies the source's exiftool tags (`-a -G1 -j` objects) against the output's.
+func exifGate(src, out map[string]any) gateResult {
+	var g gateResult
+	for k := range src {
+		group, _ := splitTag(k)
+		if notTags[group] {
+			continue
+		}
+		if _, ok := out[k]; !ok {
+			g.NotRestored = append(g.NotRestored, k)
+			if unwritable(k) {
+				g.Expected = append(g.Expected, k)
+			}
+		}
+	}
+	sort.Strings(g.NotRestored)
+	sort.Strings(g.Expected)
+	// The gate: key tags by name in any group; the camera by presence, the source's from any family.
+	g.Lost = lostTags(byTagName(flatten("", src), "/", false), byTagName(flatten("", out), "/", false), keyExifTags,
+		map[string]bool{"Rotation": true})
+	g.Make, g.Model = cameraOf(src)
+	omk, omodel := cameraOf(out)
+	if g.Make != "" && omk == "" {
+		g.Lost = append(g.Lost, "Make")
+	}
+	if g.Model != "" && omodel == "" {
+		g.Lost = append(g.Lost, "Model")
+	}
+	return g
+}
+
+// cameraOf reads the camera's make and model from exiftool tags: Make/Model in any group (writable groups first), else
+// Sony's XML device, else Samsung's smta model (make "Samsung").
+func cameraOf(tags map[string]any) (mk, model string) {
+	str := func(k string) string {
+		v, ok := tags[k]
+		if !ok || v == nil {
+			return ""
+		}
+		var s string
+		if t, ok := v.(string); ok {
+			s = t
+		} else {
+			s = fmt.Sprint(v)
+		}
+		s = strings.TrimSpace(s)
+		if emptyValue(s) {
+			return ""
+		}
+		return s
+	}
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { // writable groups first, then by name
+		ui, uj := unwritable(keys[i]), unwritable(keys[j])
+		if ui != uj {
+			return !ui
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		_, name := splitTag(k)
+		if name == "Make" && mk == "" {
+			mk = str(k)
+		}
+		if name == "Model" && model == "" {
+			model = str(k)
+		}
+	}
+	if mk == "" {
+		mk = str("XML:DeviceManufacturer")
+	}
+	if model == "" {
+		model = str("XML:DeviceModelName")
+	}
+	if model == "" {
+		if model = str("Samsung:SamsungModel"); model != "" && mk == "" {
+			mk = "Samsung"
+		}
+	}
+	return mk, model
 }
 
 func flatten(prefix string, v any) map[string]string {
@@ -656,8 +896,11 @@ func (v *FFVerifier) vmafRange(ctx context.Context, src *os.File, out string, p 
 	graph := fmt.Sprintf("[0:v:0]%s+0.005/TB[dist];[1:v:0]%s[ref];[dist][ref]libvmaf=model=version=%s:n_threads=%d:log_fmt=json:log_path=/dev/stdout",
 		prep, prep, vmafModel(p), threads)
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-protocol_whitelist", "file", "-format_whitelist", probeFormats}
-	args = append(append(append(args, "-noautorotate"), seek...), "-i", out)
-	args = append(append(append(args, "-noautorotate"), seek...), "-i", fdInput)
+	// Decoder threads capped at VMAF_THREADS on both inputs: frame-threaded decoding otherwise sizes to the host's cores
+	// (a 4K 10-bit HEVC pair took 0.9 GiB more on 16 cores, at the same speed; ADR 0025 Amendment (N4)).
+	dt := []string{"-threads", strconv.Itoa(threads), "-noautorotate"}
+	args = append(append(append(args, dt...), seek...), "-i", out)
+	args = append(append(append(args, dt...), seek...), "-i", fdInput)
 	args = append(args, "-filter_complex", graph, "-an", "-sn", "-dn", "-f", "null", "-")
 	timeout := 10*time.Minute + time.Duration(p.DurationMs)*time.Millisecond*10
 	fmt.Fprintf(log, "$ ffmpeg %s\n", strings.ReplaceAll(strings.ReplaceAll(strings.Join(args, " "), fdInput, "SRC"), out, "OUT"))

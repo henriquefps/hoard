@@ -218,7 +218,9 @@ database, so going back to 0.4.0 means restoring that copy.
 
 hoard-server can compress the library's videos on an NVIDIA GPU (ADR 0025): HEVC with NVENC at the look of the owner's
 old script (cq 28, re-encoded at cq 26 or 24 only when VMAF falls under 93), 10-bit kept, HDR10 static metadata kept,
-PCM audio to AAC 256k, the file's metadata restored with exiftool, per-frame camera data (DJI, Sony) saved as JSON in
+PCM audio to AAC 256k, the file's metadata restored with exiftool (a camera only Samsung's `smta` or Sony's XML carried
+is written back as the file's make/model), and a metadata sidecar of every replaced video (the original's full tag
+set, what could not be restored, per-frame camera data of DJI, Sony and GoPro clips) saved as JSON in
 `<data dir>/compress/meta/`. Every output is verified (duration, streams, picture, frames, metadata diff, VMAF ≥ 92,
 at least 20 % smaller) before it replaces anything. The replaced original goes to the **trash** (ADR 0023: the
 nearest `.hoard-trash` of the folder, by a hard link, so the path never goes missing): restore it from Hoard's Trash
@@ -262,8 +264,16 @@ services:
       - ${NAS_DIR:-/srv/photos}:/mnt/nas:ro            # indexed read-only, as before
       - ${NAS_DIR:-/srv/photos}:/mnt/nas-write         # compression's replaces and trash moves only
     cpus: "4"            # VMAF and exiftool run on the CPU
-    mem_limit: 2g
+    mem_limit: 6g        # 4K sources; see "Memory" below
 ```
+
+**Memory.** It scales with the frame size of the videos being compressed. Measured in the `-nvidia` image on synthetic
+4K HEVC 10-bit clips with CUDA decode (`TestGPUMemory`), peak memory per process: the encode (CUDA decode + NVENC)
+2.0–2.1 GiB, VMAF 2.9–3.0 GiB, the full-decode check 0.45 GiB, exiftool and ffprobe under 0.1 GiB, the server 0.1 GiB. A
+verification above 2.7K takes both CPU slots, so the worst case is one 4K encode next to one 4K verification, about
+5 GiB: hence `6g`. Libraries with 1080p or 2.7K videos only need far less (two verifications at a time, each a fraction
+of the 4K figures). Below what the videos need the kernel kills ffmpeg (a 4K encode then falls back to CPU decode, a
+failed verification fails the item); the retry only partly hides it.
 
 `runtime: nvidia` or `deploy.resources.reservations.devices` (`driver: nvidia`, `capabilities: [gpu, video]`) do the
 same with older toolkits. At start (and every 10 minutes while it fails) the server lists ffmpeg's encoders, makes a
@@ -281,6 +291,22 @@ directory. Items gain optional fields (`compressed` on an output, `compressedTo`
 original; a trashed item's tombstone shape for older clients carries `replacedBy`): released Hoard and Reveal ignore
 them. **Back up `data/` before upgrading**: 0.12.x refuses a schema-12 database. To compress, switch to the `-nvidia`
 image as described above (it runs as the library owner's uid: chown `data/` and the backup folder to it first).
+
+Before the release, runs on copies of real camera clips changed three things (ADR 0025 "Amendment (N4)"):
+
+- **Memory.** Give the `-nvidia` container `mem_limit: 6g` (the earlier example's `2g` let the kernel kill ffmpeg on
+  2.7K and 4K clips); see "Memory" above for the measured figures. A verification above 2.7K now takes both CPU slots,
+  and VMAF and the decode check use `VMAF_THREADS` decoder threads, so memory no longer grows with the host's cores.
+- **Edit lists.** A clip whose MP4 edit list hides leading frames (Samsung VFR) no longer fails `verify_duration`: when
+  only the video stream's header duration differs, the decoded frames of both files decide.
+- **Camera and metadata sidecar.** A camera only Samsung's `smta` or Sony's NRTM XML carried (exiftool cannot write
+  those back) is written to the output's UserData make/model, so Hoard's, Reveal's and the web gallery's camera
+  filters keep seeing it; an output without the source's make or model fails `verify_metadata`. Every replaced video
+  gets a metadata sidecar in `/data/compress/meta/` (the original's full exiftool tag set, the tags not restored, and
+  the per-frame data when there is any); the item's log lists the tags that were not restored.
+- **One Keys table.** Videos with QuickTime Keys tags (iPhones' `com.apple.quicktime.*`, Android's) no longer fail
+  `verify_metadata`: exiftool restores the original's Keys as the file's only Keys table, and the marker is now the Keys
+  entry `com.apple.quicktime.dev.hfps.hoard.compressed` (the server reads both names).
 
 **Add the write mount (`/mnt/nas-write`) only once every device runs Hoard 2.7.0 or later.** A compression whose
 replace has to wait (the NAS went away between two steps) keeps its original in `.hoard-trash`, marked `held` on the
@@ -441,8 +467,9 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
 - Nothing is ever written to a NAS folder (XMP sidecars there are read, never written), except through the optional
   write mount of GPU compression (0.13.0): a verified output over its original, the original into `.hoard-trash`, and
   back on restore.
-- `/data/compress/` holds compression's item logs (`logs/<job>/<item>.log`, kept 90 days) and the per-frame camera
-  data of compressed videos (`meta/<xx>/<fingerprint>.json.gz`): back it up with the rest of `data/`.
+- `/data/compress/` holds compression's item logs (`logs/<job>/<item>.log`, kept 90 days) and the metadata sidecar of
+  every replaced video (`meta/<xx>/<fingerprint>.json.gz`: the original's tags, what was not restored, per-frame camera
+  data): back it up with the rest of `data/`.
 - Logs never contain keys, tokens, passwords, file names or paths of photos.
 
 ## Releases

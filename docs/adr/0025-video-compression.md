@@ -69,7 +69,7 @@ The host is also the owner's desktop, where he plays games and streams (with NVE
 | Server-only phone videos | Videos already freed from the phone (or deleted there) whose backup the server holds are compressed **on the server alone**: the output becomes the mirror entry's content, the original a trashed server item. No phone step. |
 | Originals | **They go to the trash** and behave like any trashed file: listed in Trash, Empty, auto-empty after the trash's retention (30 days by default). **Restore** puts the original back **and undoes the replace**: the output goes to the trash and `replacedBy` is reversed. No confirmation step, no hold, no `.hoard-originals`. |
 | Synced copies | No folder is treated specially for Syncthing (it is no longer used; stale `.stfolder` markers are ignored). An output that reappears in a NAS folder (a sync, a copy) is recognised by the marker and the `compress_items` fingerprint pair: it joins the output's item, and the original's item follows it through `replacedBy`. |
-| Marker | Keys `dev.hfps.hoard.compressed` = `v1, <codec>-cq<q>, <yyyy-MM-dd>` in the file, and the server record `compress_items` keyed by both fingerprints (original and output). |
+| Marker | Keys `dev.hfps.hoard.compressed` (written as `com.apple.quicktime.dev.hfps.hoard.compressed`, Amendment (N4)) = `v1, <codec>-cq<q>, <yyyy-MM-dd>` in the file, and the server record `compress_items` keyed by both fingerprints (original and output). |
 | Protocol | 14 additive `/v1` routes under `/v1/compress/…`, `features: "compress"`, a `compress` object in `GET /v1/server`, items gain optional `compressed` and `compressedTo`. Reveal is not affected. |
 | UI | Hoard: "Compress videos" on a Gallery selection and a folder, the estimate, Settings › Compress videos (progress, automatic folders, history), Trash entries "Original of a compressed video". Web gallery: the same, plus a Compression view. Admin page: GPU status, sessions, pause-while-busy, the night window, the retention of server-kept originals. |
 
@@ -1195,3 +1195,82 @@ the text above left open or a small deviation.
   the server, purge by `trashDays`), `TestCompressAutomaticPhoneFolder` (new stored videos only, not outputs; the
   backup target's freed videos), `TestCompressPhoneNasReferenceAndAbandon` (the NAS copy ingested first; abandon
   verify, gone, refused; cancel). The encoder path did not change, so the GPU test was not re-run.
+
+## Amendment (N4)
+
+Pre-release findings of hoard-server 0.13.0 on copies of real camera clips (DJI Osmo Nano, DJI Pocket 3 H.264 and HEVC
+10-bit, Samsung 1080p VFR and 4K, Sony ZV-E10 with PCM; 5 of 6 replaced at q 28, VMAF 95.6–99.9), fixed before the
+release.
+
+- **Duration check and MP4 edit lists.** A Samsung VFR clip failed `verify_duration`: its edit list hides leading frames
+  that the video stream's header still counts (607 frames / 20.216 s in the header, 603 decoded by both the CPU and
+  CUDA decoders); the output, encoded from the decoded frames, is 603 frames / 20.083 s (0.133 s over the 0.1 s
+  tolerance), while the file's and the audio's durations agree (20.352 s). The rule is now: the file's duration and each
+  audio stream's are compared as before; when only a **video stream's header duration** differs, every other probe
+  check still runs and the decoded video decides: `ffprobe -show_entries frame=best_effort_timestamp_time,duration_time`
+  on both sides, the same frame count and the same span (first frame's start to the last frame's end) within 0.1 s, else
+  `verify_duration`. Tested on a synthetic H.264 MP4 whose edit list was moved 4 frames later (header 240 frames / 8.0 s,
+  decoded 236 / 7.867 s): it passes, and an output cut 0.5 s short with the audio whole still fails.
+- **Camera identity.** exiftool reads but cannot write back Samsung's `smta` (`Samsung:SamsungModel`) and Sony's NRTM XML
+  (`XML:DeviceManufacturer`, `XML:DeviceModelName`): the camera disappeared from those files without notice (the gate's
+  key tags did not name them). Now:
+  - the encoder's metadata restore reads the source's camera (Make/Model in any group, writable groups first; else
+    Sony's XML device; else Samsung's smta model, make "Samsung") and, when the restored output has none, writes it to
+    **QuickTime UserData** (`©mak`/`©mod`): ffprobe then shows `make`/`model`, exiftool `UserData:Make`/`Model`, and the
+    server's indexer (`media.VideoMeta`) fills the item's `make`/`model` from them. A failed write is `verify_metadata`;
+  - the gate checks the camera **by presence**, like the capture time and the place: if the source has a make (or a
+    model) in any family, the output must have one in some group, else `verify_metadata`. The two families above are a
+    documented list (`unwritableCamera` in `verify.go`) whose own tags are *expected* not to come back; they are
+    reported, not failed;
+  - the item's log lists every `Group:Tag` of the source the output lacks ("metadata not restored") and, apart, the
+    camera tags of the unwritable families ("camera identity not restored as such"). Values stay in the log file.
+  A side effect: the original of such a clip had no make/model in its item (ffprobe cannot read `smta` or the NRTM XML);
+  its compressed output has them.
+- **The metadata sidecar, for every replaced video.** The per-frame sidecar becomes the metadata sidecar, written for
+  every replaced video at the same path (`<data dir>/compress/meta/<hex[0:2]>/<hex>.json.gz`, the output fingerprint):
+  one gzip JSON object, `{"version": 2, "original": {fingerprint, sha256, size}, "output": {fingerprint, sha256, size},
+  "camera": {make, model}, "notRestored": [...], "expectedLost": [...], "exiftool": {the source's exiftool -a -G1 -j
+  object}, "ffprobe": {the source's -show_format -show_streams}, "perFrame": [exiftool -ee3 -j -G3 -a, only with a data
+  track]}`. It is a gate (`verify_metadata` when it cannot be kept). `metaSidecar` (items and `GET /v1/compress/items`)
+  keeps its meaning: per-frame data saved. No schema change.
+- **Memory.** `mem_limit: 2g` let the kernel kill ffmpeg (a 2.7K 10-bit portrait encode; a 4K CUDA decode, which then
+  fell back to the CPU). Measured in the `-nvidia` image (`TestGPUMemory`, opt-in `HOARD_GPU_MEM=1`; RTX 4080, `--cpus
+  4` on a 16-core host, synthetic 4K HEVC 10-bit 12 s clips, CUDA decode), peak RSS per process: the encode (CUDA
+  decode + NVENC) 2.0–2.1 GiB; VMAF 3.9 GiB, the full-decode check 1.0 GiB, the server 0.1 GiB. Two changes:
+  - VMAF's two inputs and the full-decode check decode with `-threads VMAF_THREADS`: frame-threaded HEVC decoding sized
+    itself to the host's cores (VMAF 3.9 → 2.9–3.0 GiB, the decode check 1.0 → 0.45 GiB, same speed), so memory no longer
+    depends on the host;
+  - a verification of a source larger than 2.7K (more than 2720 × 1530 pixels) takes **every CPU slot**, so two 4K
+    VMAFs never run at once (two 4K clips: 5.7 GiB for the container before, 3.1 GiB after, in `TestGPUMemory`). The worst case is one
+    encode next to one 4K verification, about 5 GiB; 1080p and 2.7K sources still verify two at a time.
+
+  The compose example and the README recommend `mem_limit: 6g`; memory scales with the frame size, and 1080p/2.7K-only
+  libraries need far less.
+- **One QuickTime Keys table.** The recipe's ffmpeg wrote its own Keys table (`-movflags use_metadata_tags`, for the
+  marker) in `moov/udta/meta`, every value a string; the restore (`-tagsFromFile … -all:all`) then wrote the source's
+  Keys into a second, standard `moov/meta` table, and ffmpeg's reader maps the second table's items through the first
+  table's key names (ffmpeg 9.0.2: `com.apple.quicktime.make=iPhone 15`, `major_brand=isom;isom;Samsung`). Every source
+  with Keys tags (an iPhone's `com.apple.quicktime.make`/`model`/`location.ISO6709`/`creationdate`, Android's
+  `com.android.version`) failed `verify_metadata`. Now ffmpeg writes no Keys (`-movflags +faststart` only, no
+  `-metadata` marker) and exiftool restores the source's Keys **typed** (Android's float `com.android.capture.fps` stays a
+  float: ffmpeg's copy would have made it the string "240.000000") as the only table, in `moov/meta`, and writes the
+  marker there in the same run (a user-defined Keys tag passed with `-config`). exiftool gives every new key outside the
+  `com.`, `samsung.` and `xiaomi.` domains Apple's namespace, so **the marker's key is now
+  `com.apple.quicktime.dev.hfps.hoard.compressed`** (same value, `v1, <codec>-cq<q>, <yyyy-MM-dd>`); the probe's rule 1
+  accepts both names (only the server reads the marker). The camera of the unwritable families goes to UserData, not
+  Keys. Checked on a synthetic iPhone-like clip (Keys make/model/location/creationdate, written by ffmpeg) in the GPU
+  test: replaced, the four values kept (exiftool writes ISO 6709 in its own number format, `+040.000` → `+40.000`),
+  the original's and the output's items with the same camera.
+- **Concurrent first replaces in one folder.** The trash probe used one fixed name (`.hoard-compress-probe`): two
+  workers replacing in the same folder for the first time removed each other's probe and failed `not_writable`. Each
+  probe now has a random suffix.
+- **GPU test re-run** (2026-11-19, the build host's RTX 4080, driver 620, the `-nvidia` image as a non-root uid on
+  temporary directories, synthetic clips only): the six S1 clips plus a Samsung-like clip (edit list hiding 4 leading
+  frames, audio longer than the video, the model only in `smta`) and a Sony-like one (the device only in an NRTM XML
+  `moov/meta` box), all eight `replaced` at cq 28 (VMAF 96.0–96.7); the Samsung-like clip passed through the decoded
+  comparison; both carry their camera as ffprobe `make`/`model` and in their output items; a metadata sidecar for each
+  of the eight (per-frame data in the data-track clip's only; `expectedLost` the smta and XML device tags).
+  `TestGPUMemory`: two 4K HEVC 10-bit clips, CUDA decode, both replaced, 3.1 GiB peak anonymous memory for the container.
+  Re-run after the Keys change and the rebase on S2 (main 9ff82d8): nine clips (the eight above and the iPhone-like one)
+  all replaced, 108 s of video in 121 s wall; the outputs now lack nothing of the originals but the data tracks' and the
+  unwritable families' tags (HandlerVendorID came back with the single Keys table).

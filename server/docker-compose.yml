@@ -57,7 +57,7 @@ services:
   #   volumes:
   #     - ${NAS_DIR:-/srv/photos}:/mnt/nas-write          # compression's replaces and trash moves only (opt-in)
   #   cpus: "4"                                         # VMAF and exiftool run on the CPU
-  #   mem_limit: 2g
+  #   mem_limit: 6g                                     # 4K sources (README "Memory"); 1080p/2.7K need far less
 
   # Optional: reach the server from anywhere over HTTPS through a Cloudflare Tunnel. Devices sync through
   # it with their keys; the setup page stays LAN-only unless you allow it on the Status page.

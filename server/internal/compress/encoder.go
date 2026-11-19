@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +36,7 @@ type EncodeResult struct {
 }
 
 // Encoder makes the output of one source (ADR 0025 "The recipe"): the encode, the metadata restore and the mtime. The
-// per-frame sidecar is a separate call, made once before the first encode.
+// per-frame part of the metadata sidecar is a separate call, made once before the first encode.
 type Encoder interface {
 	Encode(ctx context.Context, r EncodeRequest) (EncodeResult, error)
 	// Sidecar writes the per-frame metadata of src as gzip JSON (exiftool -ee3 -j -G3 -a).
@@ -92,9 +94,10 @@ func encodeArgs(r EncodeRequest, in string, cuda bool) []string {
 	if r.Probe.PCM() {
 		a = append(a, "-c:a", "aac", "-b:a", "256k")
 	}
-	a = append(a, "-fps_mode", "passthrough", "-enc_time_base:v", "demux",
-		"-metadata", fmt.Sprintf("%s=v1, %s-cq%d, %s", Marker, r.Profile.Codec, r.Q, r.Date),
-		"-movflags", "+use_metadata_tags+faststart", r.Out)
+	// No use_metadata_tags: ffmpeg would write its own Keys table (in moov/udta/meta, every value a string) and the
+	// restore a second one, which ffmpeg's reader maps through the first. exiftool restores the source's Keys, typed,
+	// as the only table, and writes the marker there (ADR 0025 Amendment (N4)).
+	a = append(a, "-fps_mode", "passthrough", "-enc_time_base:v", "demux", "-movflags", "+faststart", r.Out)
 	return a
 }
 
@@ -135,6 +138,16 @@ func (e *NvencEncoder) Encode(ctx context.Context, r EncodeRequest) (EncodeResul
 		}
 		fmt.Fprintf(r.Log, "exiftool: %v (metadata not restored)\n", err)
 		return res, &VerifyError{Check: "metadata", Detail: "exiftool could not restore the metadata: " + err.Error()}
+	}
+	err = e.restoreCamera(ctx, r)
+	_ = os.Remove(r.Out + "_exiftool_tmp")
+	if err != nil {
+		_ = os.Remove(r.Out)
+		if ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+		fmt.Fprintf(r.Log, "exiftool: %v (camera not written)\n", err)
+		return res, &VerifyError{Check: "metadata", Detail: "exiftool could not write the camera: " + err.Error()}
 	}
 	if !r.SrcMTime.IsZero() {
 		if err := os.Chtimes(r.Out, r.SrcMTime, r.SrcMTime); err != nil {
@@ -222,6 +235,88 @@ func readProgress(r io.Reader, durationMs int64, report func(float64)) {
 	}
 }
 
+// restoreCamera writes the source's camera into the output's QuickTime UserData (©mak/©mod: ffprobe's make/model,
+// exiftool's UserData:Make/Model) when the restore left the output without one: the families exiftool reads but cannot
+// write back (Samsung's smta model, Sony's NRTM XML device) would otherwise lose it, and Hoard's, Reveal's and the web
+// gallery's camera filters read it from the file (ADR 0025 Amendment (N4)). Not Keys: exiftool would add a second
+// Keys table (moov/meta) next to ffmpeg's (moov/udta/meta), and ffmpeg's reader maps the second one's items through
+// the first table.
+func (e *NvencEncoder) restoreCamera(ctx context.Context, r EncodeRequest) error {
+	st, err := readExif(ctx, e.Exiftool, r.Src, "")
+	if err != nil {
+		return err
+	}
+	mk, model := cameraOf(st)
+	if mk == "" && model == "" {
+		return nil
+	}
+	ot, err := readExif(ctx, e.Exiftool, nil, r.Out)
+	if err != nil {
+		return err
+	}
+	omk, omodel := cameraOf(ot)
+	var args, wrote []string
+	if mk != "" && omk == "" {
+		args = append(args, "-UserData:Make="+mk)
+		wrote = append(wrote, "make")
+	}
+	if model != "" && omodel == "" {
+		args = append(args, "-UserData:Model="+model)
+		wrote = append(wrote, "model")
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	args = append(append([]string{"-q", "-q", "-m", "-overwrite_original"}, args...), "--", r.Out)
+	fmt.Fprintf(r.Log, "$ exiftool -UserData:… -- OUT (the camera's %s, from tags exiftool cannot write back)\n", strings.Join(wrote, " and "))
+	//nolint:gosec // the configured exiftool; tag assignments built here, values as single arguments; the output a work file
+	cmd := exec.CommandContext(ctx, e.Exiftool, args...)
+	cmd.Env = toolEnv()
+	errTail := &tail{n: 8 << 10}
+	cmd.Stderr, cmd.Stdout = errTail, errTail
+	err = cmd.Run()
+	if s := errTail.String(); s != "" {
+		fmt.Fprint(r.Log, s)
+	}
+	return err
+}
+
+// readExif reads `exiftool -j -G1 -a -m` of a file (src as descriptor 3, else path) as its tag object.
+func readExif(ctx context.Context, exiftool string, src *os.File, path string) (map[string]any, error) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	in := path
+	if src != nil {
+		in = fdInput
+		if _, err := src.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+	}
+	//nolint:gosec // the configured exiftool; fixed arguments; a descriptor or a work file
+	cmd := exec.CommandContext(ctx, exiftool, "-j", "-G1", "-a", "-m", "--", in)
+	if src != nil {
+		cmd.ExtraFiles = []*os.File{src}
+	}
+	cmd.Env = toolEnv()
+	var out bytes.Buffer
+	cmd.Stdout = &limited{w: &out, n: 32 << 20}
+	errTail := &tail{n: 8 << 10}
+	cmd.Stderr = errTail
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%w: %s", err, lastLine(errTail.String()))
+	}
+	var objs []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &objs); err != nil {
+		return nil, err
+	}
+	if len(objs) == 0 {
+		return map[string]any{}, nil
+	}
+	return objs[0], nil
+}
+
 // exiftool copies every tag of the source onto the output (ADR 0025: "-all:all -unsafe").
 func (e *NvencEncoder) exiftool(ctx context.Context, r EncodeRequest) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -229,8 +324,14 @@ func (e *NvencEncoder) exiftool(ctx context.Context, r EncodeRequest) error {
 	if _, err := r.Src.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	args := []string{"-q", "-q", "-m", "-overwrite_original", "-tagsFromFile", fdInput, "-all:all", "-unsafe", "--", r.Out}
-	fmt.Fprintf(r.Log, "$ exiftool %s\n", strings.ReplaceAll(strings.ReplaceAll(strings.Join(args, " "), fdInput, "SRC"), r.Out, "OUT"))
+	cfg := filepath.Join(filepath.Dir(r.Out), "exiftool.config")
+	if err := os.WriteFile(cfg, []byte(exiftoolConfig), 0o600); err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(cfg) }()
+	args := []string{"-config", cfg, "-q", "-q", "-m", "-overwrite_original", "-tagsFromFile", fdInput, "-all:all", "-unsafe",
+		"-Keys:HoardCompressed=" + markerValue(r), "--", r.Out}
+	fmt.Fprintf(r.Log, "$ exiftool %s\n", strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(strings.Join(args, " "), fdInput, "SRC"), r.Out, "OUT"), cfg, "CONFIG"))
 	//nolint:gosec // the configured exiftool; fixed arguments; the source is a descriptor, the output a work file
 	cmd := exec.CommandContext(ctx, e.Exiftool, args...)
 	cmd.ExtraFiles = []*os.File{r.Src}
