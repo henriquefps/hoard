@@ -940,3 +940,66 @@ change):
 ## Open questions
 
 None left. The AV1 profile stays hidden until the owner reports his playback check (admin page "Offer AV1").
+
+## Amendment (S1)
+
+Phase S1 (hoard-server 0.13.0) as built; each point is a detail the text above left open or a small deviation.
+
+- **Routes.** S1 routes the ten routes of `target: "nas"` (`estimate`, `jobs` ×4, `items`, `cancel`, `restore`,
+  `purge`, `lookup`); `server/testdata/v1-routes.txt` gains those ten now and the four phone routes (`items/{id}/output`,
+  `…/replaced`, `…/restored`, `…/abandon`) with S2. Until then `target: "phone"` and `"backup"` answer `422
+  invalid_request`, `details.reason: "target_not_supported"`, and `GET /v1/compress/items?mine=true` is empty.
+- **Ids.** A compression item has a string `id` (the `compress_items` row), distinct from `itemId` (the gallery item it
+  was queued for). `cancel`, `restore` and `purge` take either in `itemIds` (a gallery item id means that item's
+  newest compression, as original or output), so Hoard's Trash screen can restore an item with `compressedTo` by its own
+  id. `lookup` answers `id` too.
+- **Job answers.** Busy videos (in an unfinished job) do not fail the job: `201` lists them in `busy`; `409 conflict`
+  reason `busy` only when every video is busy, and then no job is made. Videos the rules skip are recorded as `skipped`
+  rows of the job (they count in its `skipped`); videos outside the target are only answered.
+- **The write mount's mapping.** `NAS_READ_ROOT` (default `/mnt/nas`) names the read-only mount that `NAS_WRITE_ROOT`
+  mirrors: a folder's write path is its read path relative to `NAS_READ_ROOT`, under `NAS_WRITE_ROOT`, proven by
+  `st_dev`/`st_ino`. A folder outside `NAS_READ_ROOT` is `not_writable`.
+- **The heir rule's other side.** A trashed output after a restore carries `compressedTo` too (the original's live
+  item), so "restore again" is offered the same way; `compressed` is on outputs in `replaced` and `purged` only. A live
+  output rebuilt by the indexer rebuilds its original's item in the same transaction (and the reverse), so the link is
+  made whichever side a walk sees first; a state change of a record (restore, purge) rebuilds both items at once.
+- **CUDA decode.** For a source NVDEC cannot decode (H.264 4:4:4, some 4:2:2), ffmpeg itself falls back to CPU decode
+  and exits 0 (it logs "Failed setup for format cuda"): the item records `decoder: "cpu"` and the log says so; the
+  explicit retry without `-hwaccel cuda` stays for a run that fails.
+- **Per-frame sidecar.** Made when the probe shows a timed data track other than `tmcd` (DJI `djmd`/`dbgi`, Sony `rtmd`,
+  GoPro `gpmd`, …). Vendor boxes without a track (Samsung `smta`) are not seen by ffprobe: no sidecar for them; their
+  content stays in the trashed original until the purge. Path: `<data dir>/compress/meta/<hex[0:2]>/<hex>.json.gz`, the
+  hex being the output fingerprint without `v1:`.
+- **Pause while busy.** Another process's NVENC session is judged on the latest reading (sessions beyond ours);
+  utilization over 50 % counts for a minute, and only readings taken while none of our encodes ran.
+- **Queue workers.** Sessions + 2 workers lease items; the GPU slot (`COMPRESS_SESSIONS`) is taken for the encode only
+  (the state becomes `encoding` then) and a CPU slot (2) for the checks and VMAF, so verification overlaps the next
+  encode.
+- **Verification details.** HDR10 mastering display and content light level are compared from the stream's side data,
+  else from its first frame's (HEVC SEI, as x265 and phones write them). VMAF spots seek both inputs (`-ss`/`-t`), the
+  distorted stream shifted +5 ms in the filter graph. libvmaf's CUDA path was not measured in S1: VMAF runs on the CPU
+  (`VMAF_THREADS`).
+- **A purge by Hoard.** After each walk the server stats the trash path of its `replaced` and `restored` rows (through
+  the read mount); a file gone makes the row `purged`.
+- **Space.** A NAS replace needs the output's size + 64 MiB free on the NAS filesystem; otherwise the item stays `ready`
+  with `reason: no_space` and is tried again after 10 minutes.
+- **The trash day folder** gets `-2`, `-3`, … when the file's path already exists in that day folder.
+- **Admin page.** Compression is its own tab (GPU status with "Check again", the write mount, sessions, the settings,
+  the accounting, recent jobs and items); an item's log is served at `GET /admin/api/compress/items/{id}/log` (admin
+  session only).
+- **Image.** `Dockerfile.nvidia`: Debian trixie-slim; FFmpeg 9.0.2 with nv-codec-headers 13.0.19.0 (driver 570 or
+  newer), libvmaf 3.2.1 with its built-in models, exiftool 13.64, all pinned by SHA-256; amd64 only. Its tools stage
+  comes first so the legacy builder (no BuildKit) builds it before the Go stage. `TestMigrationsNeedNoTempDir` drops
+  schema 12's tables too when it puts the database back to schema 8 (as 0.12.0 did for its own), and expects 12.
+- **Per-frame sidecar's move.** The work directory (backup volume) and the data directory are separate filesystems in
+  the compose layout: the sidecar is renamed when it can be, else copied (fsynced) and removed.
+- **GPU integration test** (`HOARD_GPU_TEST=1 go test -run TestGPU -v .` in `server/`, 2026-11-19, the build host's RTX
+  4080, driver 620, the `-nvidia` image run as a non-root uid with `--device nvidia.com/gpu=all`, read-only root,
+  temporary data, backup and NAS directories, one NVENC session next to the desktop's): six synthetic 12 s 1080p clips
+  (H.264 + PCM in MOV, HEVC 10-bit HLG, HEVC 10-bit PQ with mastering display and CLL, H.264 VFR at r 60 / avg ~30,
+  H.264 with a `gpmd` data track, H.264 4:4:4) all `replaced` at cq 28 (VMAF 96.0–96.7, 1 % low 93.9–94.6, 305 → 56 MB),
+  marker present, Main 10 and HLG/PQ kept, HDR10 metadata bit-exact, VFR packet timestamps identical, PCM → AAC, data
+  tracks dropped, the cap following r ÷ avg, the sidecar in `<data>/compress/meta`, the 4:4:4 clip decoded on the CPU;
+  then the walk (original trashed with `compressedTo`/`replacedBy`, output with `compressed`), a restore, a purge and
+  the walk again. Encode 41.5 s for 72 s of video (1.7× realtime with these synthetic clips), verification 145 s on 4
+  CPUs (full-clip VMAF: the long pole); the image is 290 MB uncompressed.

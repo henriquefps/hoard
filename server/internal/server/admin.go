@@ -69,7 +69,8 @@ func (s *Server) routesAdmin(mux *http.ServeMux) {
 	authed("POST /admin/api/nas", s.handleAddNas)
 	authed("DELETE /admin/api/nas/{id}", s.handleRemoveNas)
 	authed("POST /admin/api/nas/reindex", s.handleReindex)
-	s.routesAdminBackup(authed) // phone backups (ADR 0024)
+	s.routesAdminBackup(authed)   // phone backups (ADR 0024)
+	s.routesAdminCompress(authed) // video compression (ADR 0025)
 }
 
 // adminAllowed: the setup page answers direct LAN/Tailscale requests, or any request once the admin allowed proxies.

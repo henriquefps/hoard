@@ -262,7 +262,8 @@ func followReplaced(ctx context.Context, tx rowQueryer, id string, derived bool)
 		var tomb struct {
 			ReplacedBy string `json:"replacedBy"`
 		}
-		if !deleted || json.Unmarshal([]byte(data), &tomb) != nil || tomb.ReplacedBy == "" {
+		// A tombstone's replacedBy, or a trashed item's (ADR 0025: a compressed video's original); a live item has none.
+		if json.Unmarshal([]byte(data), &tomb) != nil || tomb.ReplacedBy == "" {
 			return id, nil
 		}
 		id = tomb.ReplacedBy
@@ -407,7 +408,7 @@ func (s *Store) fillCulling(ctx context.Context, recs []CullRecord) error {
 			return err
 		}
 		//nolint:gosec // placeholders only; the ids are arguments
-		rows, err = s.db.QueryContext(ctx, "SELECT id FROM items WHERE deleted = 1 AND id IN ("+placeholders(len(part))+")", args...)
+		rows, err = s.db.QueryContext(ctx, "SELECT id FROM items WHERE (deleted = 1 OR trashed_at IS NOT NULL) AND id IN ("+placeholders(len(part))+")", args...)
 		if err != nil {
 			return err
 		}

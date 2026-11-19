@@ -32,6 +32,8 @@ tags:
   - name: devices
   - name: backup
     description: Phone backup (ADR 0024, hoard-server 0.12.0).
+  - name: compress
+    description: Video compression (ADR 0025, hoard-server 0.13.0). Phase S1 serves target nas.
   - name: web
     description: The web gallery's API (ADR 0018), outside /v1.
 paths:
@@ -1845,6 +1847,252 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { description: "`not_found`: a root that is unknown or another physical device's (`details.index`)" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/compress/estimate:
+    post:
+      tags: [compress]
+      summary: "What a job over a selection would do (0.13.0): per video encode or skip, sizes, time, warnings"
+      description: >-
+        Informative: the job estimates again. Probes not read yet are read in the background; such a video is
+        `pending` (counted in `pending`, `Retry-After` set) until a later call. At most `limits.maxEstimate` items per
+        page; `totals` cover the whole selection. Targets phone and backup are `422` (`details.reason`
+        `target_not_supported`) until phase S2. Without the write mount: `503 unavailable`, reason `no_write_mount`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompressRequest" }
+      responses:
+        "200":
+          description: The estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, totals, pending, next]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CompressEstimateItem" }
+                  totals:
+                    type: object
+                    properties:
+                      items: { type: integer }
+                      encode: { type: integer }
+                      skip: { type: object, additionalProperties: { type: integer } }
+                      size: { type: integer, format: int64 }
+                      estSize: { type: integer, format: int64 }
+                      estMs: { type: integer, format: int64 }
+                  pending: { type: integer }
+                  next: { type: string, nullable: true, description: "The cursor of the next page (send it as `cursor`)" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503": { description: "`unavailable` with `details.reason` `no_write_mount`" }
+  /v1/compress/jobs:
+    post:
+      tags: [compress]
+      summary: "Start a job (0.13.0): compress a selection, or turn on a folder's \"Compress automatically\" (auto)"
+      description: >-
+        `201` the job with `queued`, `skipped` (counts by reason) and `busy` (item ids already in an unfinished job,
+        left out); `200` with the job when `requestId` was used before. `"auto": true` with a single folder makes the
+        folder's standing job (default profile, never AV1, `422`): only videos that appear after it are compressed;
+        `409 conflict` reason `exists` (with `details.job`) when the folder has one. `409 conflict` reason `busy` when
+        every video is already in an unfinished job. `503 unavailable` reason `no_gpu`, `no_tools` or
+        `no_write_mount`; `503 storage_not_configured` without a backup folder (the work directory lives there).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/CompressRequest" }
+                - type: object
+                  required: [requestId]
+                  properties:
+                    auto: { type: boolean }
+                    name: { type: string, maxLength: 200 }
+                    requestId: { type: string, maxLength: 128 }
+      responses:
+        "200": { description: The job made for this requestId, content: { application/json: { schema: { $ref: "#/components/schemas/CompressJob" } } } }
+        "201": { description: The job, content: { application/json: { schema: { $ref: "#/components/schemas/CompressJob" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "`conflict`, `details.reason` `exists` or `busy`" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503": { description: "`unavailable` (`no_gpu`, `no_tools`, `no_write_mount`) or `storage_not_configured`" }
+    get:
+      tags: [compress]
+      summary: Jobs, newest first, with counts, bytes and progress (0.13.0)
+      parameters:
+        - { name: state, in: query, schema: { type: string, enum: [active, paused, cancelled, done] } }
+        - { name: auto, in: query, schema: { type: boolean }, description: "true: the folders compressed automatically" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 100 } }
+      responses:
+        "200":
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs, cursor, hasMore]
+                properties:
+                  jobs: { type: array, items: { $ref: "#/components/schemas/CompressJob" } }
+                  cursor: { type: string, nullable: true }
+                  hasMore: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/compress/jobs/{jobId}:
+    get:
+      tags: [compress]
+      summary: One job (0.13.0)
+      parameters:
+        - { name: jobId, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
+      responses:
+        "200": { description: The job, content: { application/json: { schema: { $ref: "#/components/schemas/CompressJob" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [compress]
+      summary: Pause or resume a job, change its priority, or turn a folder's "Compress automatically" off (0.13.0)
+      description: >-
+        `paused`: a paused job's items are not leased (running ones finish). `priority` 0–3 applies to its queued items.
+        `"auto": false` turns the folder's switch off: its queued items are cancelled, replaced ones stay replaced.
+      parameters:
+        - { name: jobId, in: path, required: true, schema: { $ref: "#/components/schemas/Uuid" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                paused: { type: boolean }
+                priority: { type: integer, minimum: 0, maximum: 3 }
+                auto: { type: boolean, enum: [false] }
+      responses:
+        "200": { description: The job, content: { application/json: { schema: { $ref: "#/components/schemas/CompressJob" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: "`conflict` reason `state`: the job is finished" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/compress/items:
+    get:
+      tags: [compress]
+      summary: The videos of jobs, by id (0.13.0)
+      parameters:
+        - { name: jobId, in: query, schema: { $ref: "#/components/schemas/Uuid" } }
+        - { name: state, in: query, schema: { type: string }, description: "Comma-separated states" }
+        - { name: mine, in: query, schema: { type: boolean }, description: "Phone items of the caller's phone (phase S2; none before)" }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, cursor, hasMore]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/CompressItem" } }
+                  cursor: { type: string, nullable: true }
+                  hasMore: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /v1/compress/cancel:
+    post:
+      tags: [compress]
+      summary: Cancel a job or items before their replace (0.13.0)
+      description: >-
+        Every queued to ready item becomes `cancelled` (running ffmpeg and VMAF processes are killed, work files
+        removed); items already replacing or replaced are answered with their state (Restore is the undo).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompressBatch" }
+      responses:
+        "200": { $ref: "#/components/responses/CompressBatchAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/compress/restore:
+    post:
+      tags: [compress]
+      summary: Undo compressions (0.13.0)
+      description: >-
+        For each replaced item: `replacing` now, then `restored` in the background (the output into the trash, the
+        original back at its path, `replacedBy` reversed by the next walk); for a restored one, the same again
+        (`replaced`). Not restorable (purged, running, another file at the path): `{"error": "state"}` for that item.
+        `itemIds` takes compression item ids or gallery item ids (the item's newest compression, original or output).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemIds]
+              properties:
+                itemIds: { type: array, maxItems: 1000, items: { type: string } }
+      responses:
+        "200": { $ref: "#/components/responses/CompressBatchAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503": { description: "`unavailable` reason `no_write_mount`" }
+  /v1/compress/purge:
+    post:
+      tags: [compress]
+      summary: Empty the trashed file of replaced or restored items now (0.13.0)
+      description: >-
+        Deletes, through the write mount, the trashed original (or the output after a restore): the item becomes
+        `purged` and the space is saved. Without a GPU this still works.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CompressBatch" }
+      responses:
+        "200": { $ref: "#/components/responses/CompressBatchAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "503": { description: "`unavailable` reason `no_write_mount`" }
+  /v1/compress/lookup:
+    post:
+      tags: [compress]
+      summary: Which fingerprints are a compression's original or output (0.13.0; badges and Trash labels)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprints]
+              properties:
+                fingerprints: { type: array, maxItems: 1000, items: { $ref: "#/components/schemas/Fingerprint" } }
+      responses:
+        "200":
+          description: Per fingerprint
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [fingerprints, missing]
+                properties:
+                  fingerprints:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      required: [role, id, itemId, state, jobId, profile]
+                      properties:
+                        role: { type: string, enum: [original, output] }
+                        id: { type: string, description: the compression item }
+                        itemId: { $ref: "#/components/schemas/Uuid" }
+                        state: { type: string }
+                        jobId: { $ref: "#/components/schemas/Uuid" }
+                        profile: { type: string }
+                        purgeAfter: { type: integer, format: int64 }
+                  missing: { type: array, items: { $ref: "#/components/schemas/Fingerprint" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
 components:
   securitySchemes:
     deviceKey:
@@ -1982,7 +2230,152 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    CompressBatchAnswer:
+      description: "Per requested id (or per item of the job): `{\"id\", \"state\"}`, or `{\"error\": \"not_found\" | \"state\" | \"not_writable\" | \"path_taken\"}`"
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    state: { type: string }
+                    error: { type: string }
   schemas:
+    CompressRequest:
+      type: object
+      required: [target, select]
+      properties:
+        target: { type: string, enum: [nas, phone, backup], description: "0.13.0 serves nas" }
+        select:
+          type: object
+          description: "Either folders (with an optional filter) or itemIds"
+          properties:
+            folders:
+              type: array
+              items:
+                type: object
+                required: [folderId]
+                properties:
+                  folderId: { $ref: "#/components/schemas/Uuid" }
+                  path: { type: string, description: "A sub-folder, relative, '/'-separated" }
+                  recursive: { type: boolean, default: true }
+            filter:
+              type: object
+              properties:
+                from: { type: integer, format: int64 }
+                to: { type: integer, format: int64 }
+                minBytes: { type: integer, format: int64 }
+            itemIds: { type: array, maxItems: 5000, items: { $ref: "#/components/schemas/Uuid" } }
+        profile: { type: string, enum: [hevc-cq28, hevc-cq30, av1-cq34], default: hevc-cq28 }
+        options:
+          type: object
+          properties:
+            quality:
+              type: object
+              properties:
+                mode: { type: string, enum: [floor, fixed, target], default: floor }
+                vmaf: { type: number, description: "floor: 93 (default); target: 95" }
+            set: { type: string, enum: [lean, quality], default: lean }
+        cursor: { type: string, description: "estimate: the next page" }
+    CompressEstimateItem:
+      type: object
+      required: [itemId, decision]
+      properties:
+        itemId: { $ref: "#/components/schemas/Uuid" }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        name: { type: string }
+        folderId: { $ref: "#/components/schemas/Uuid" }
+        path: { type: string }
+        otherCopies: { type: array, items: { type: string }, description: "The item's other NAS copies (folderId:path), left as they are" }
+        durationMs: { type: integer, format: int64 }
+        size: { type: integer, format: int64 }
+        decision: { type: string, enum: [encode, skip, pending] }
+        reason:
+          type: string
+          enum: [not_video, unreadable, already_compressed, older_compression, efficient, small_saving, dolby_vision, reveal_record,
+            sync_artifact, trashed, busy, not_in_target, not_writable]
+        estSize: { type: integer, format: int64 }
+        estSaving: { type: number }
+        estMs: { type: integer, format: int64 }
+        warnings: { type: array, items: { type: string, enum: [hdr10plus, per_frame_metadata, pcm_audio, av1_playback] } }
+    CompressJob:
+      type: object
+      required: [id, target, profile, auto, priority, state, createdAt, counts, progress]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        target: { type: string }
+        name: { type: string }
+        profile: { type: string }
+        options: { type: object }
+        select: { type: object }
+        auto: { type: boolean }
+        priority: { type: integer }
+        state: { type: string, enum: [active, paused, cancelled, done] }
+        paused: { type: boolean }
+        createdAt: { type: integer, format: int64 }
+        finishedAt: { type: integer, format: int64, nullable: true }
+        createdBy: { type: string }
+        counts: { type: object, additionalProperties: { type: integer }, description: "Items per state" }
+        skipped: { type: object, additionalProperties: { type: integer } }
+        failed: { type: object, additionalProperties: { type: integer } }
+        bytes:
+          type: object
+          properties:
+            original: { type: integer, format: int64 }
+            output: { type: integer, format: int64 }
+            saved: { type: integer, format: int64, description: "Realised: originals purged from the trash" }
+            inTrash: { type: integer, format: int64 }
+        progress:
+          type: object
+          properties:
+            done: { type: integer }
+            toDo: { type: integer }
+            etaMs: { type: integer, format: int64 }
+            current: { type: object, properties: { id: { type: string }, itemId: { type: string }, state: { type: string }, percent: { type: integer } } }
+        queued: { type: integer, description: "POST only" }
+        busy: { type: array, items: { $ref: "#/components/schemas/Uuid" }, description: "POST only" }
+    CompressItem:
+      type: object
+      required: [id, jobId, itemId, fingerprint, state, reason, size]
+      properties:
+        id: { type: string }
+        jobId: { $ref: "#/components/schemas/Uuid" }
+        itemId: { $ref: "#/components/schemas/Uuid", description: "The original's item when queued" }
+        fingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        target: { type: string }
+        folderId: { $ref: "#/components/schemas/Uuid" }
+        path: { type: string }
+        name: { type: string }
+        state:
+          type: string
+          enum: [queued, estimating, skipped, encoding, verifying, failed, ready, replacing, replaced, restored, purged, cancelled]
+        reason: { type: string }
+        size: { type: integer, format: int64 }
+        estSize: { type: integer, format: int64 }
+        outSize: { type: integer, format: int64 }
+        outFingerprint: { $ref: "#/components/schemas/Fingerprint" }
+        q: { type: integer }
+        vmaf: { type: object, properties: { mean: { type: number }, low: { type: number }, mode: { type: string, enum: [full, spot] } } }
+        encodeMs: { type: integer }
+        verifyMs: { type: integer }
+        decoder: { type: string, enum: [cuda, cpu] }
+        progress: { type: number, description: "0–1 while encoding" }
+        metaSidecar: { type: boolean }
+        trashPath: { type: string }
+        purgeAfter: { type: integer, format: int64 }
+        logAvailable: { type: boolean, description: "The log itself is on the admin page and the web gallery only" }
+    CompressBatch:
+      type: object
+      description: Either jobId or itemIds (compression item ids, or gallery item ids)
+      properties:
+        jobId: { $ref: "#/components/schemas/Uuid" }
+        itemIds: { type: array, maxItems: 1000, items: { type: string } }
     BackupRefusal:
       type: string
       enum: [unsupported_type, invalid_path, outside_root, reserved_prefix, invalid_fingerprint, invalid_size, invalid_modified_at, invalid_sha256, invalid_reason]
@@ -2139,8 +2532,31 @@ components:
             Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
             `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0), `edits` =
             ADR 0020 (0.9.0, with previews), `items-by-path` = ADR 0014 (0.10.0), `trash` = ADR 0023 (0.11.0), `backup`
-            = ADR 0024 (0.12.0). Clients ignore names they do not know.
-          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash, backup] }
+            = ADR 0024 (0.12.0), `compress` = ADR 0025 (0.13.0, when the start-up hevc_nvenc test encode passed).
+            Clients ignore names they do not know.
+          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash, backup, compress] }
+        compress:
+          type: object
+          description: "Video compression (ADR 0025, 0.13.0): present with the feature or when jobs exist (`available: false` then)."
+          properties:
+            available: { type: boolean }
+            reason: { type: string, nullable: true, enum: [no_gpu, no_tools, null] }
+            gpu: { type: string }
+            codecs: { type: array, items: { type: string, enum: [hevc, av1] } }
+            vmaf: { type: boolean }
+            cudaDecode: { type: boolean }
+            sessions: { type: integer }
+            nasWrite: { type: boolean, description: "The write mount exists (target nas)" }
+            offerAv1: { type: boolean }
+            trashDays: { type: integer }
+            profiles:
+              type: array
+              items:
+                type: object
+                properties: { id: { type: string }, codec: { type: string }, q: { type: integer }, default: { type: boolean }, optIn: { type: boolean } }
+            limits:
+              type: object
+              properties: { maxItemsPerJob: { type: integer }, maxEstimate: { type: integer }, maxBatch: { type: integer } }
         backup:
           type: object
           description: The phone backup's limits (ADR 0024, 0.12.0; with the backup feature).
@@ -2273,7 +2689,9 @@ components:
         One shot (ADR 0014). A tombstone (`deleted: true`) carries only `id`, `rev`, `deleted`, the timestamps and
         `replacedBy` when another item took its main file over. Unknown fields are ignored by clients. A trashed item
         (0.11.0, ADR 0023: every file in a trash) is a tombstone without `replacedBy` to clients that did not ask
-        for the trash, and is served whole with `trashed` to those that did.
+        for the trash, and is served whole with `trashed` to those that did. 0.13.0 (ADR 0025): a trashed item a
+        compression replaced carries `replacedBy` and `compressedTo` (served whole with include=trash; its tombstone
+        shape keeps `replacedBy`); a compression's output carries `compressed`.
       properties:
         id: { $ref: "#/components/schemas/Uuid" }
         rev: { type: integer }
@@ -2317,6 +2735,20 @@ components:
           type: array
           description: "Reveal's edited previews (0.9.0, ADR 0020), the primary first; absent when none"
           items: { $ref: "#/components/schemas/Edit" }
+        compressedTo: { $ref: "#/components/schemas/Uuid", description: "0.13.0: a trashed item a compression replaced (or a restored output): the live item" }
+        compressed:
+          type: object
+          description: "0.13.0: on a compression's output"
+          required: [from, fromItem, profile, q, at, original, originalSize, metaSidecar]
+          properties:
+            from: { $ref: "#/components/schemas/Fingerprint" }
+            fromItem: { $ref: "#/components/schemas/Uuid" }
+            profile: { type: string }
+            q: { type: integer }
+            at: { type: integer, format: int64 }
+            original: { type: string, enum: [trashed, purged] }
+            originalSize: { type: integer, format: int64 }
+            metaSidecar: { type: boolean }
     Edit:
       type: object
       required: [versionId, label, recipeDigest, editedAt, primary, isVirtualCopy, deviceId, format, width, height, bytes, updatedAt]

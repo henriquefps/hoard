@@ -77,6 +77,7 @@ const when = (ms) => (ms ? new Intl.DateTimeFormat(lang, { dateStyle: "medium", 
 const TABS = [
   ["status", "tabStatus", "pulse"], ["devices", "tabDevices", "device-mobile"],
   ["storage", "tabStorage", "hard-drives"], ["nas", "tabNas", "folder-simple"], ["backup", "tabBackup", "device-mobile"],
+  ["compress", "tabCompress", "hard-drives"],
 ];
 const page = () => document.getElementById("page");
 let timers = [];
@@ -108,7 +109,7 @@ async function route(forceState) {
   if (!state.signedIn || forceState === true) { renderTabs("", false); return renderSignIn(); }
   const key = (location.hash || "#status").slice(1);
   renderTabs(key, true);
-  const view = { status: renderStatus, devices: renderDevices, storage: renderStorage, nas: renderNas, backup: renderBackup }[key] || renderStatus;
+  const view = { status: renderStatus, devices: renderDevices, storage: renderStorage, nas: renderNas, backup: renderBackup, compress: renderCompress }[key] || renderStatus;
   try { await view(); } catch (e) { page().replaceChildren(h("p.error", e.message)); }
 }
 
@@ -428,6 +429,63 @@ async function renderBackup() {
       phones.length ? h("div.groups", phones) : h("p.empty", t("backupNone"))),
     h("div.section", h("h2", t("settingsTitle")),
       h("div.form", h("label.switch", keep, h("span", t("backupKeepNas"), h("p.hint", t("backupKeepNasHint")))))));
+}
+
+// --- video compression (ADR 0025) ----------------------------------------------------------------------------------
+
+async function renderCompress() {
+  const s = await api("GET", "compress");
+  const g = s.gpu || {};
+  const a = s.accounting || {};
+  const metric = (label, value, hint) => h("div.metric", h("div.eyebrow", label), h("div.value", value), hint ? h("div.meta", hint) : null);
+  const save = async (body) => { try { await api("PUT", "compress/settings", body); toast(t("saved")); } catch (e) { toast(e.message); route(); } };
+  const pause = h("input", { type: "checkbox", checked: s.pauseWhileBusy, onchange: () => save({ pauseWhileBusy: pause.checked }) });
+  const av1 = h("input", { type: "checkbox", checked: s.offerAv1, onchange: () => save({ offerAv1: av1.checked }) });
+  const windowOn = h("input", { type: "checkbox", checked: !!s.window });
+  const windowText = h("input.input.mono", { value: s.window || "01:00-08:00", maxlength: 11, disabled: !s.window });
+  windowOn.addEventListener("change", () => { windowText.disabled = !windowOn.checked; save({ window: windowOn.checked ? windowText.value : "" }); });
+  windowText.addEventListener("change", () => save({ window: windowText.value }));
+  const days = h("input.input", { type: "number", min: 1, max: 3650, value: s.trashDays });
+  days.addEventListener("change", () => save({ trashDays: Number(days.value) }));
+  const reason = (r) => t("compressReason_" + r) === "compressReason_" + r ? r : t("compressReason_" + r);
+  const counts = (m) => Object.entries(m || {}).map(([k, v]) => `${reason(k)}: ${num(v)}`).join(" · ") || "—";
+  const jobs = (s.jobs || []).map((j) => h("div.row", icon(j.auto ? "arrows-clockwise" : "folder-simple"),
+    h("div.main", h("div.name", j.name || (j.auto ? t("compressAuto") : t("compressJob")), " · ", j.profile),
+      h("div.meta", `${when(j.createdAt)} · ${t("compressDone", { done: num(j.progress.done), all: num(j.progress.done + j.progress.toDo) })} · `,
+        `${t("compressSaved")}: ${bytes(j.bytes.saved)} · ${t("compressInTrash")}: ${bytes(j.bytes.inTrash)}`)),
+    h("span.badge." + (j.state === "active" ? "ok" : j.state === "paused" ? "warn" : "idle"), t("compressJob_" + j.state))));
+  const items = (s.items || []).map((it) => h("div.row", icon("folder-simple"),
+    h("div.main", h("div.name.mono", it.name || it.itemId),
+      h("div.meta", [it.state, it.reason ? reason(it.reason) : null, it.outSize ? `${bytes(it.size)} → ${bytes(it.outSize)}` : bytes(it.size),
+        it.q ? `cq ${it.q}` : null, it.vmaf ? `VMAF ${it.vmaf.mean} (${it.vmaf.mode})` : null, it.decoder || null].filter(Boolean).join(" · "))),
+    it.logAvailable ? h("div.actions", h("a.button", { href: `api/compress/items/${encodeURIComponent(it.id)}/log`, target: "_blank", rel: "noopener" }, t("compressLog"))) : null));
+  page().replaceChildren(
+    h("div.section",
+      h("div.section-head", h("h2", t("compressTitle")),
+        h("button.button", { icon: "arrows-clockwise", onclick: async () => { await api("POST", "compress/detect").catch(() => {}); route(); } }, t("compressCheck"))),
+      h("p.muted", t("compressIntro")),
+      h("div.list",
+        h("div.row", icon(g.available ? "check" : "warning-circle"), h("div.main",
+          h("div.name", g.available ? `${g.gpu || "GPU"} · ${t("compressDriver")} ${g.driver || "?"}` : t("compressNoGpu_" + (g.reason || "no_gpu"))),
+          h("div.meta", `${t("compressCodecs")}: ${(g.codecs || []).join(", ") || "—"} · VMAF ${g.vmaf ? "✓" : "✗"} · CUDA ${g.cudaDecode ? "✓" : "✗"} · exiftool ${g.exiftool ? "✓" : "✗"} · ${t("compressChecked")} ${when(g.checkedAt)}`)),
+          h("span.badge." + (g.available ? "ok" : "warn"), t(g.available ? "compressAvailable" : "compressUnavailable"))),
+        h("div.row", icon("hard-drives"), h("div.main", h("div.name", t("compressWriteMount")), h("div.meta", t(s.nasWrite ? "compressWriteMountOk" : "compressWriteMountMissing"))),
+          h("span.badge." + (s.nasWrite ? "ok" : "idle"), t(s.nasWrite ? "compressAvailable" : "compressUnavailable")))),
+      h("div.metrics",
+        metric(t("compressSessions"), num(s.sessions)),
+        metric(t("compressSaved"), bytes(a.saved)),
+        metric(t("compressInTrash"), `${num(a.inTrash)} · ${bytes(a.inTrashBytes)}`, a.oldestInTrash ? `${t("compressOldest")}: ${when(a.oldestInTrash)}` : null),
+        metric(t("compressGpuTime"), `${num(Math.round((a.gpuMs || 0) / 60000))} min`)),
+      h("p.muted", `${t("compressSkipped")}: ${counts(a.skipped)}`), h("p.muted", `${t("compressFailed")}: ${counts(a.failed)}`)),
+    h("div.section", h("h2", t("settingsTitle")),
+      h("div.form",
+        h("label.switch", pause, h("span", t("compressPause"), h("p.hint", t("compressPauseHint")))),
+        h("label.switch", windowOn, h("span", t("compressWindow"), h("p.hint", t("compressWindowHint")))), windowText,
+        h("label.switch", av1, h("span", t("compressAv1"), h("p.hint", t("compressAv1Hint")))),
+        h("label", t("compressTrashDays")), days, h("p.hint", t("compressTrashDaysHint")))),
+    h("div.section", h("h2", t("compressJobs")), jobs.length ? h("div.list", jobs) : h("p.empty", t("compressNoJobs"))),
+    h("div.section", h("h2", t("compressItems")), items.length ? h("div.list", items) : h("p.empty", t("compressNoJobs"))));
+  if ((s.jobs || []).some((j) => j.state === "active" && j.progress.toDo > 0)) timers.push(setInterval(route, 5000));
 }
 
 // --- boot ---------------------------------------------------------------------------------------------------------

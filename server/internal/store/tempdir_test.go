@@ -18,7 +18,8 @@ import (
 // writes the schema 8 database, and `docker run --read-only -v <dir>:/data <image>` must start on it.
 //
 // 0.12.0: the database goes back to schema 8 from 10, so 0010_mirror.sql (new tables and indexes, the original_claims
-// backfill from a join of originals and blobs, two nas_files columns) runs under the same conditions.
+// backfill from a join of originals and blobs, two nas_files columns) runs under the same conditions. 0.13.0: and
+// 0012_compress.sql (new tables and their indexes only).
 func TestMigrationsNeedNoTempDir(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db.sqlite")
@@ -45,6 +46,9 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 	}
 	// Put the database back to schema 8 (the indexes of 0003, none of 0009's or 0010's tables and columns).
 	for _, q := range []string{
+		"DROP TABLE compress_items",
+		"DROP TABLE compress_jobs",
+		"DROP TABLE video_probe",
 		"DROP TABLE mirror_entries",
 		"DROP TABLE mirror_roots",
 		"DROP TABLE mirror_devices",
@@ -86,7 +90,7 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 		t.Fatalf("migrating with no temp directory: %v", err)
 	}
 	defer s.Close()
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 11 {
+	if v, err := s.SchemaVersion(ctx); err != nil || v != 12 {
 		t.Fatalf("schema %d %v", v, err)
 	}
 	var claims, unowned int

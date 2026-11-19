@@ -25,9 +25,18 @@ const (
 )
 
 // tombstoneJSON writes the tombstone shape of an item (what a client that did not ask for the trash sees of a
-// trashed one).
+// trashed one), with the replacedBy of a trashed item a compression replaced (ADR 0025), so every client follows it.
 func tombstoneJSON(buf *bytes.Buffer, r store.ItemRow) {
-	fmt.Fprintf(buf, `{"id":"%s","rev":%d,"deleted":true,"createdAt":%d,"updatedAt":%d}`, r.ID, r.Rev, r.CreatedAt, r.UpdatedAt)
+	fmt.Fprintf(buf, `{"id":"%s","rev":%d,"deleted":true,"createdAt":%d,"updatedAt":%d`, r.ID, r.Rev, r.CreatedAt, r.UpdatedAt)
+	if bytes.Contains(r.Data, []byte(`"replacedBy"`)) {
+		var d struct {
+			ReplacedBy string `json:"replacedBy"`
+		}
+		if json.Unmarshal(r.Data, &d) == nil && d.ReplacedBy != "" {
+			fmt.Fprintf(buf, `,"replacedBy":%s`, jsonString(d.ReplacedBy))
+		}
+	}
+	buf.WriteByte('}')
 }
 
 // withoutTrash returns an item's stored state without its locations in a trash, and without the files left with no

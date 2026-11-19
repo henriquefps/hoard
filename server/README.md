@@ -132,6 +132,12 @@ Changing the admin password signs every browser out. There is no setting to turn
 | `--preview-threads` | `PREVIEW_THREADS` | `2` | threads of one vips/ffmpeg run (1-32) |
 | `--preview-backlog` | `PREVIEW_BACKLOG` | `image,proxy` | what is made for every item ahead of requests: `image`, `proxy`, or `none` (the rest only when a client asks) |
 | `--full-cache-mb` | `FULL_CACHE_MB` | `4096` | disk kept for the gallery's full-resolution stills of RAW and HEIF photos (made on demand, least recently viewed dropped first; at least 64) |
+| `--nas-read-root` | `NAS_READ_ROOT` | `/mnt/nas` | the read-only NAS mount the write mount mirrors (GPU compression) |
+| `--nas-write-root` | `NAS_WRITE_ROOT` | `/mnt/nas-write` | a read-write mount of the same NAS directory, used only to replace compressed videos and move their originals into the trash (see "GPU compression") |
+| `--compress-sessions` | `COMPRESS_SESSIONS` | `1` | GPU encodes at a time (1-3) |
+| `--vmaf-threads` | `VMAF_THREADS` | `4` | threads of one VMAF run (the verification, on the CPU) |
+| `--exiftool` | `EXIFTOOL` | `exiftool` in `PATH` | exiftool, for compression's metadata (in the `-nvidia` image) |
+| `--nvidia-smi` | `NVIDIA_SMI` | `nvidia-smi` in `PATH` | reads the GPU's load ("Pause while the GPU is busy"; injected by the NVIDIA container toolkit) |
 | `--trust-tailscale-serve` | `TRUST_TAILSCALE_SERVE` | off | let the gallery and setup page answer requests `tailscale serve` proxies on this machine (see "HTTPS with `tailscale serve`") |
 
 These are the names reveal-sync used; none was renamed (there were never `REVEAL_SYNC_*` variables). The ffprobe
@@ -207,6 +213,68 @@ not hashed again) and fingerprints the videos and sidecars 0.4.0 skipped, so it 
 
 **Back up `data/` before upgrading** (stop the container, copy the folder): 0.4.0 refuses to open a schema-3
 database, so going back to 0.4.0 means restoring that copy.
+
+## GPU compression (0.13.0, the `-nvidia` image)
+
+hoard-server can compress the library's videos on an NVIDIA GPU (ADR 0025): HEVC with NVENC at the look of the owner's
+old script (cq 28, re-encoded at cq 26 or 24 only when VMAF falls under 93), 10-bit kept, HDR10 static metadata kept,
+PCM audio to AAC 256k, the file's metadata restored with exiftool, per-frame camera data (DJI, Sony) saved as JSON in
+`<data dir>/compress/meta/`. Every output is verified (duration, streams, picture, frames, metadata diff, VMAF ≥ 92,
+at least 20 % smaller) before it replaces anything. The replaced original goes to the **trash** (ADR 0023: the
+nearest `.hoard-trash` of the folder, by a hard link, so the path never goes missing): restore it from Hoard's Trash
+or with `POST /v1/compress/restore` until the trash is emptied (Hoard's Empty, its auto-empty, or the server's own
+retention of what it trashed, 30 days, on the setup page). Nothing runs until you start a job or turn "Compress
+automatically" on for a folder.
+
+What it needs:
+
+- the **`ghcr.io/henriquefps/hoard-server:<version>-nvidia`** image (Debian, amd64 only: the driver's libraries are
+  glibc ones; the default Alpine image never compresses and keeps working without a GPU);
+- the NVIDIA container toolkit with CDI (`nvidia-ctk cdi generate`), the GPU given as `nvidia.com/gpu=all` and
+  `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility` (`video` is NVENC/NVDEC, `utility` is `nvidia-smi`);
+- a **second, read-write mount of the NAS directory** at `/mnt/nas-write` (the read-only `/mnt/nas` stays the only
+  path the walk and previews read): the server writes through it only to replace a verified video and move its
+  original into the trash (and back on restore), all inside an `os.Root` of the folder;
+- the container running as **the owner of the library files** (`user: "<uid>:<gid>"`), so replaced files and trash
+  folders keep his ownership; `/data` and the backup folder must belong to the same uid:gid (`sudo chown -R` them once
+  when switching images);
+- a backup folder (the work directory is `<backup folder>/.hoard-compress/work`; outputs are written there first).
+
+```yaml
+services:
+  hoard-server:
+    image: ghcr.io/henriquefps/hoard-server:latest-nvidia
+    user: "${LIBRARY_UID:-1000}:${LIBRARY_GID:-1000}"   # the owner of the NAS files
+    devices:
+      - nvidia.com/gpu=all                              # CDI
+    environment:
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - COMPRESS_SESSIONS=1
+    volumes:
+      - ./data:/data
+      - ${BACKUP_DIR:-./backup}:/mnt/backup
+      - ${NAS_DIR:-/srv/photos}:/mnt/nas:ro            # indexed read-only, as before
+      - ${NAS_DIR:-/srv/photos}:/mnt/nas-write         # compression's replaces and trash moves only
+    cpus: "4"            # VMAF and exiftool run on the CPU
+    mem_limit: 2g
+```
+
+`runtime: nvidia` or `deploy.resources.reservations.devices` (`driver: nvidia`, `capabilities: [gpu, video]`) do the
+same with older toolkits. At start (and every 10 minutes while it fails) the server lists ffmpeg's encoders, makes a
+0.2 s `hevc_nvenc` test encode and decodes it with CUDA, and checks libvmaf and exiftool; the result is on the setup
+page (Compression) and in `GET /v1/server` (`features` gains `compress`). The GPU is shared: one encode at a time by
+default, and nothing new starts while another program holds an NVENC session or the GPU was over 50 % busy in the last
+minute ("Pause while the GPU is busy", setup page); an optional night window holds back automatic work only.
+
+## Upgrading to 0.13.0 (video compression)
+
+0.13.0 adds video compression (ADR 0025, above). With the default image nothing changes: the feature is absent, the
+compression routes that start work answer `503 unavailable` (`no_gpu`), and no file is written. A database migration
+(schema 12: `compress_jobs`, `compress_items`, `video_probe`, new tables only) runs on start and needs no temporary
+directory. Items gain optional fields (`compressed` on an output, `compressedTo` and `replacedBy` on a trashed
+original; a trashed item's tombstone shape for older clients carries `replacedBy`): released Hoard and Reveal ignore
+them. **Back up `data/` before upgrading**: 0.12.x refuses a schema-12 database. To compress, switch to the `-nvidia`
+image as described above (it runs as the library owner's uid: chown `data/` and the backup folder to it first).
 
 ## Upgrading to 0.12.1 (verify can demand a fresh re-hash)
 
@@ -355,14 +423,19 @@ cd server && go build -o hoard-server .              # Go version from go.mod, n
 - `/data/previews/` holds the gallery previews (`<key[0:2]>/<key>.thumb.jpg`, `.thumb.webp`, `.screen.jpg`,
   `.screen.webp`, `.proxy.mp4`); they
   can be deleted with the server stopped (with `DELETE FROM previews` in the database) and are made again.
-- Nothing is ever written to a NAS folder (XMP sidecars there are read, never written).
+- Nothing is ever written to a NAS folder (XMP sidecars there are read, never written), except through the optional
+  write mount of GPU compression (0.13.0): a verified output over its original, the original into `.hoard-trash`, and
+  back on restore.
+- `/data/compress/` holds compression's item logs (`logs/<job>/<item>.log`, kept 90 days) and the per-frame camera
+  data of compressed videos (`meta/<xx>/<fingerprint>.json.gz`): back it up with the rest of `data/`.
 - Logs never contain keys, tokens, passwords, file names or paths of photos.
 
 ## Releases
 
 Push a tag `server-v<version>` (e.g. `server-v0.4.0`): `.github/workflows/server-release.yml` tests, attaches static
 binaries to a GitHub release and publishes `ghcr.io/henriquefps/hoard-server:<version>` and `:latest` for amd64 and
-arm64. The Hoard app keeps its own `v*` tags.
+arm64, and `ghcr.io/henriquefps/hoard-server:<version>-nvidia` and `:latest-nvidia` (`Dockerfile.nvidia`, amd64). The
+Hoard app keeps its own `v*` tags.
 
 ## Development
 
@@ -375,6 +448,8 @@ golangci-lint run ./...
 # ffmpeg when the one under test is the image's minimal build). Opt-in:
 HOARD_SAMPLES_DIR=~/raw-samples go test -run RealSamples -v ./internal/media/ ./internal/previews/   # real camera files (never commit them)
 HOARD_BENCH_FILES=20000 go test -run TestIndexLargeTree -v -timeout 30m ./internal/nas/   # indexing benchmark
+# GPU compression on an NVIDIA host (builds the -nvidia image, runs it as your uid on temporary directories):
+HOARD_GPU_TEST=1 go test -run TestGPU -v -timeout 90m .
 ```
 
 Web gallery (`web/`, Vite + React + shadcn, ADR 0018): `bun run dev` (proxies `/web` to a local server,
@@ -395,3 +470,6 @@ Licence: [AGPL-3.0-or-later](../LICENSE). The Docker image also ships, run as se
 `Dockerfile` from the pinned upstream releases: FFmpeg (`ffmpeg`, `ffprobe`; GPL-2.0-or-later configuration because of
 x264; source: ffmpeg.org), libvips (LGPL-2.1-or-later; github.com/libvips/libvips) and libheif (LGPL-3.0;
 github.com/strukturag/libheif), with Alpine's packages of LibRaw, x264, zimg, dav1d, libde265 and their dependencies.
+The `-nvidia` image (`Dockerfile.nvidia`) adds, built from pinned releases: FFmpeg with NVENC/NVDEC (nv-codec-headers,
+MIT; NVIDIA's libraries are not shipped, the driver provides them), libvmaf (BSD-2-Clause-Patent;
+github.com/Netflix/vmaf) and exiftool (Perl, GPL-1.0-or-later or Artistic; exiftool.org), on Debian's packages.

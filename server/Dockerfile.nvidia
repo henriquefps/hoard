@@ -1,0 +1,172 @@
+# hoard-server -nvidia image (ADR 0025): the same binary and preview tools as the default image, on Debian (glibc: the
+# NVIDIA container toolkit injects the host driver's libcuda.so.1 and libnvidia-encode.so.1, glibc libraries Alpine's
+# musl cannot load), plus an FFmpeg with NVENC/NVDEC/CUDA and libvmaf, and exiftool, for video compression. Nothing
+# NVIDIA is shipped: NVENC and CUDA are loaded from the driver at run time. amd64 only. Build from server/:
+#   docker build -f Dockerfile.nvidia -t hoard-server:dev-nvidia .
+#   docker build -f Dockerfile.nvidia --build-arg VERSION=0.13.0 --build-arg JOBS=4 -t hoard-server:0.13.0-nvidia .
+# Run it with the GPU (CDI) as the owner of the library files (server/README.md, "GPU compression").
+
+ARG BUILDPLATFORM
+
+# Tools, built into /opt/hoard (first: the legacy builder builds stages in order, and this one is the long one). Every tarball is pinned by SHA-256 (as in Dockerfile); bump both on purpose.
+FROM debian:trixie-slim AS tools
+ARG JOBS=""
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake meson ninja-build pkg-config curl ca-certificates xz-utils nasm xxd \
+      libglib2.0-dev libexpat1-dev libjpeg62-turbo-dev liblcms2-dev libexif-dev libwebp-dev libspng-dev libraw-dev \
+      libhwy-dev libde265-dev libdav1d-dev libx264-dev libzimg-dev zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+ENV LD_LIBRARY_PATH=/opt/hoard/lib PKG_CONFIG_PATH=/opt/hoard/lib/pkgconfig
+WORKDIR /src
+
+ARG LIBHEIF_VERSION=1.23.7
+ARG LIBHEIF_SHA256=f7483e818503ea6224c8863e4a56ac02c7089021a98472c811c12aa19faf2475
+RUN curl -fsSL -o heif.tar.gz "https://github.com/strukturag/libheif/releases/download/v${LIBHEIF_VERSION}/libheif-${LIBHEIF_VERSION}.tar.gz" \
+ && echo "${LIBHEIF_SHA256}  heif.tar.gz" | sha256sum -c - \
+ && mkdir heif && tar xzf heif.tar.gz -C heif --strip-components=1 \
+ && cmake -S heif -B heif/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/hoard \
+      -DCMAKE_INSTALL_LIBDIR=lib -DENABLE_PLUGIN_LOADING=OFF -DWITH_EXAMPLES=OFF -DWITH_GDK_PIXBUF=OFF \
+      -DBUILD_TESTING=OFF -DBUILD_DOCUMENTATION=OFF -DWITH_LIBSHARPYUV=OFF \
+      -DWITH_LIBDE265=ON -DWITH_DAV1D=ON -DWITH_X265=OFF -DWITH_X264=OFF -DWITH_AOM_DECODER=OFF -DWITH_AOM_ENCODER=OFF \
+      -DWITH_OpenH264_DECODER=OFF -DWITH_OpenJPEG_DECODER=OFF -DWITH_OpenJPEG_ENCODER=OFF -DWITH_SvtEnc=OFF \
+      -DWITH_RAV1E=OFF -DWITH_FFMPEG_DECODER=OFF -DWITH_JPEG_DECODER=OFF -DWITH_JPEG_ENCODER=OFF \
+      -DWITH_OPENJPH_ENCODER=OFF -DWITH_UNCOMPRESSED_CODEC=OFF -DWITH_KVAZAAR=OFF -DWITH_VVDEC=OFF -DWITH_VVENC=OFF \
+      -DWITH_UVG266=OFF \
+ && ninja -C heif/build -j"${JOBS:-$(nproc)}" install && rm -rf heif heif.tar.gz
+
+ARG VIPS_VERSION=8.18.7
+ARG VIPS_SHA256=5baaead3b0bb20ffdb9e9ff09aa9fda08620923df77b63b436654cb5e0b3bf94
+RUN curl -fsSL -o vips.tar.xz "https://github.com/libvips/libvips/releases/download/v${VIPS_VERSION}/vips-${VIPS_VERSION}.tar.xz" \
+ && echo "${VIPS_SHA256}  vips.tar.xz" | sha256sum -c - \
+ && mkdir vips && tar xJf vips.tar.xz -C vips --strip-components=1 \
+ && meson setup vips/build vips --prefix=/opt/hoard --libdir=lib \
+      --buildtype=release -Dauto_features=disabled -Dmodules=disabled -Ddeprecated=false -Dexamples=false \
+      -Dcplusplus=false -Dintrospection=disabled -Dvapi=false -Ddocs=false -Dcpp-docs=false \
+      -Djpeg=enabled -Dspng=enabled -Dwebp=enabled -Dheif=enabled -Draw=enabled -Dlcms=enabled -Dexif=enabled \
+      -Dhighway=enabled -Dzlib=enabled -Dppm=true -Dnsgif=true -Danalyze=false -Dradiance=false \
+ && ninja -C vips/build -j"${JOBS:-$(nproc)}" install && rm -rf vips vips.tar.xz \
+ && /opt/hoard/bin/vips --version
+
+# NVENC/NVDEC headers (loaded from the driver at run time: nothing NVIDIA is linked or shipped). SDK 13.0: driver 570+.
+ARG NVCODEC_VERSION=13.0.19.0
+ARG NVCODEC_SHA256=13da39edb3a40ed9713ae390ca89faa2f1202c9dda869ef306a8d4383e242bee
+RUN curl -fsSL -o nv.tar.gz "https://github.com/FFmpeg/nv-codec-headers/releases/download/n${NVCODEC_VERSION}/nv-codec-headers-${NVCODEC_VERSION}.tar.gz" \
+ && echo "${NVCODEC_SHA256}  nv.tar.gz" | sha256sum -c - \
+ && mkdir nv && tar xzf nv.tar.gz -C nv --strip-components=1 \
+ && make -C nv PREFIX=/opt/hoard install && rm -rf nv nv.tar.gz
+
+# libvmaf with its built-in models (vmaf_v0.6.1, vmaf_4k_v0.6.1): the verification's quality score (ADR 0025).
+ARG VMAF_VERSION=3.2.1
+ARG VMAF_SHA256=5df7386911bc15fd1ca783132528748d219768ae4fc5f8e0b61184f041648092
+RUN curl -fsSL -o vmaf.tar.gz "https://github.com/Netflix/vmaf/archive/refs/tags/v${VMAF_VERSION}.tar.gz" \
+ && echo "${VMAF_SHA256}  vmaf.tar.gz" | sha256sum -c - \
+ && mkdir vmaf && tar xzf vmaf.tar.gz -C vmaf --strip-components=1 \
+ && meson setup vmaf/libvmaf/build vmaf/libvmaf --prefix=/opt/hoard --libdir=lib --buildtype=release \
+      -Denable_tests=false -Denable_docs=false -Dbuilt_in_models=true -Denable_float=true -Ddefault_library=shared \
+ && ninja -C vmaf/libvmaf/build -j"${JOBS:-$(nproc)}" install && rm -rf vmaf vmaf.tar.gz
+
+# FFmpeg: the default image's configuration, plus NVENC (hevc, av1), NVDEC/CUDA decoding, libvmaf, the mov muxer
+# (.mov outputs keep their container), PCM decoders (PCM audio is re-encoded to AAC) and lavfi (the start-up test
+# encode). GPL because of x264; run as separate programs.
+ARG FFMPEG_VERSION=9.0.2
+ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+RUN curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+ && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
+ && mkdir ffmpeg && tar xJf ffmpeg.tar.xz -C ffmpeg --strip-components=1 \
+ && cd ffmpeg && ./configure --prefix=/opt/hoard --disable-everything --disable-autodetect --disable-network \
+      --disable-doc --disable-debug --disable-ffplay --enable-gpl \
+      --enable-libx264 --enable-libzimg --enable-libdav1d --enable-zlib --enable-libvmaf \
+      --enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid --enable-cuda \
+      --enable-avdevice --enable-indev=lavfi \
+      --enable-protocol=file,subfile,pipe \
+      --enable-demuxer=mov,matroska,mpegts,avi \
+      --enable-muxer=mp4,mov,image2pipe,null \
+      --enable-parser=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,mjpeg,aac,ac3,mpegaudio,opus,amr \
+      --enable-decoder=h264,hevc,libdav1d,av1,vp8,vp9,prores,mpeg4,mpeg2video,mjpeg,png,aac,mp3,mp2,ac3,eac3,opus,alac,amrnb,amrwb,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_f32le,wrapped_avframe,rawvideo \
+      --enable-hwaccel=h264_nvdec,hevc_nvdec,av1_nvdec,vp9_nvdec,mpeg4_nvdec,mpeg2_nvdec \
+      --enable-encoder=libx264,aac,ppm,hevc_nvenc,av1_nvenc,wrapped_avframe \
+      --enable-bsf=aac_adtstoasc,extract_extradata,h264_mp4toannexb,hevc_mp4toannexb,h264_metadata,hevc_metadata,av1_frame_split \
+      --enable-filter=scale,zscale,tonemap,format,fps,transpose,hflip,vflip,rotate,setsar,null,anull,aresample,aformat,libvmaf,setpts,trim,select,settb,split,testsrc2,hwdownload,hwupload,scale_cuda,nullsink \
+      --enable-swscale --enable-swresample --enable-avfilter --enable-shared --disable-static \
+ && make -j"${JOBS:-$(nproc)}" && make install && cd .. && rm -rf ffmpeg ffmpeg.tar.xz \
+ && /opt/hoard/bin/ffmpeg -hide_banner -version | head -1 \
+ && rm -rf /opt/hoard/include /opt/hoard/share /opt/hoard/lib/pkgconfig /opt/hoard/lib/*.a /opt/hoard/lib/cmake \
+ && find /opt/hoard/bin -type f ! -name vips ! -name ffmpeg ! -name ffprobe -delete \
+ && (strip /opt/hoard/bin/* /opt/hoard/lib/*.so.* 2>/dev/null; true)
+
+# exiftool (Perl): restores the source's metadata on the output and writes the per-frame sidecar.
+ARG EXIFTOOL_VERSION=13.64
+ARG EXIFTOOL_SHA256=dcb9f6be1f6705ee826a92d1522e3fec1d0b3749cdc061b03c46873d5fe204fc
+RUN curl -fsSL -o et.tar.gz "https://sourceforge.net/projects/exiftool/files/Image-ExifTool-${EXIFTOOL_VERSION}.tar.gz/download" \
+ && echo "${EXIFTOOL_SHA256}  et.tar.gz" | sha256sum -c - \
+ && mkdir -p /opt/hoard/exiftool && tar xzf et.tar.gz -C /opt/hoard/exiftool --strip-components=1 \
+ && rm -rf et.tar.gz /opt/hoard/exiftool/t /opt/hoard/exiftool/html /opt/hoard/exiftool/Changes
+
+# The Debian packages the programs above load (their runtime libraries), resolved once here for the final stage.
+RUN ldd /opt/hoard/bin/* /opt/hoard/lib/*.so* 2>/dev/null | awk '/=> \// {print $3}' | grep -v '^/opt/hoard/' | sort -u \
+      | xargs -r realpath | xargs -r dpkg -S 2>/dev/null | cut -d: -f1 | sort -u > /opt/hoard/runtime-packages.txt \
+ && cat /opt/hoard/runtime-packages.txt
+
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN mkdir -p ../internal/webui/dist && bun run build
+
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
+ARG VERSION=dev
+ARG COMMIT=none
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=web /src/internal/webui/dist ./internal/webui/dist
+RUN test -f internal/webui/dist/index.html && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/hoard-server . \
+ && mkdir -p /out/data /out/mnt
+
+FROM debian:trixie-slim
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="hoard-server" \
+      org.opencontainers.image.description="Self-hosted photo server for Hoard and Reveal, with NVIDIA video compression" \
+      org.opencontainers.image.source="https://github.com/henriquefps/hoard" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.version="${VERSION}"
+COPY --from=tools /opt/hoard/runtime-packages.txt /tmp/runtime-packages.txt
+RUN apt-get update && apt-get install -y --no-install-recommends perl $(cat /tmp/runtime-packages.txt) \
+ && rm -rf /var/lib/apt/lists/* /tmp/runtime-packages.txt
+COPY --from=tools /opt/hoard /opt/hoard
+RUN ln -s /opt/hoard/exiftool/exiftool /usr/local/bin/exiftool \
+ && export LD_LIBRARY_PATH=/opt/hoard/lib \
+ && /opt/hoard/bin/vips --version \
+ && for l in jpegload heifload dcrawload ppmload; do /opt/hoard/bin/vips -l foreign | grep -q "($l)"; done \
+ && /opt/hoard/bin/ffmpeg -hide_banner -encoders | grep -q libx264 \
+ && /opt/hoard/bin/ffmpeg -hide_banner -encoders | grep -q hevc_nvenc \
+ && /opt/hoard/bin/ffmpeg -hide_banner -encoders | grep -q av1_nvenc \
+ && /opt/hoard/bin/ffmpeg -hide_banner -filters | grep -q libvmaf \
+ && /opt/hoard/bin/ffmpeg -hide_banner -filters | grep -q tonemap \
+ && /opt/hoard/bin/ffmpeg -hide_banner -f lavfi -i testsrc2=s=64x64:d=0.2 -f lavfi -i testsrc2=s=64x64:d=0.2 \
+      -lavfi "[0:v][1:v]libvmaf=model=version=vmaf_v0.6.1" -f null - 2>&1 | grep -q "VMAF score" \
+ && /opt/hoard/bin/ffprobe -version | head -1 \
+ && exiftool -ver
+COPY --from=build /out/hoard-server /usr/local/bin/hoard-server
+COPY --from=build --chown=65532:65532 /out/data /data
+COPY --from=build --chown=65532:65532 /out/mnt /mnt
+# NVIDIA_*: what the container toolkit injects; "video" is required for NVENC/NVDEC, "utility" for nvidia-smi.
+ENV PORT=3071 \
+    DATA_DIR=/data \
+    MOUNTS=/mnt \
+    LD_LIBRARY_PATH=/opt/hoard/lib \
+    FFPROBE=/opt/hoard/bin/ffprobe \
+    FFMPEG=/opt/hoard/bin/ffmpeg \
+    VIPS=/opt/hoard/bin/vips \
+    EXIFTOOL=/usr/local/bin/exiftool \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+EXPOSE 3071
+VOLUME /data
+# The compose example runs it as the library owner's uid:gid (user:); 65532 otherwise, like the default image.
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/hoard-server"]
+CMD ["serve"]

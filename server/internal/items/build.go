@@ -75,6 +75,24 @@ type Data struct {
 	Video           *media.Video   `json:"video,omitempty"`
 	Motion          *Motion        `json:"motion,omitempty"`
 	Files           []File         `json:"files"`
+	// Video compression (ADR 0025). Compressed: on an output item, its record. CompressedTo and ReplacedBy: on a
+	// trashed item whose file a compression replaced (or, after a restore, the trashed output), the live item that took
+	// it over (the heir rule): edits, culling and clients follow it as for a tombstone's replacedBy.
+	Compressed   *Compressed `json:"compressed,omitempty"`
+	CompressedTo string      `json:"compressedTo,omitempty"`
+	ReplacedBy   string      `json:"replacedBy,omitempty"`
+}
+
+// Compressed is the "compressed" object of an output item (ADR 0025 "What the walk and the items do").
+type Compressed struct {
+	From         string `json:"from"`     // the original's fingerprint
+	FromItem     string `json:"fromItem"` // the original's item
+	Profile      string `json:"profile"`
+	Q            int    `json:"q"`
+	At           int64  `json:"at"`       // when the output replaced the original (ms)
+	Original     string `json:"original"` // trashed | purged
+	OriginalSize int64  `json:"originalSize"`
+	MetaSidecar  bool   `json:"metaSidecar"`
 }
 
 // Build computes an item from its sources and the stored metadata of its files (ADR 0014 "Items"). ok is false when

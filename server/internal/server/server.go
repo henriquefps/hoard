@@ -21,6 +21,7 @@ import (
 
 	"github.com/henriquefps/hoard/server/internal/auth"
 	"github.com/henriquefps/hoard/server/internal/blobstore"
+	"github.com/henriquefps/hoard/server/internal/compress"
 	"github.com/henriquefps/hoard/server/internal/media"
 	"github.com/henriquefps/hoard/server/internal/mirror"
 	"github.com/henriquefps/hoard/server/internal/mounts"
@@ -93,6 +94,20 @@ type Config struct {
 	TailscaleServePeers []netip.Addr
 	// MirrorLinker replaces the phone backup's hard-link call (tests: an injected EXDEV); nil = os.Root.Link.
 	MirrorLinker mirror.Linker
+	// Video compression (ADR 0025). NasReadRoot is the read-only NAS mount the write mount NasWriteRoot mirrors
+	// (NAS_READ_ROOT, NAS_WRITE_ROOT); CompressSessions encodes at a time; VMAFThreads libvmaf's threads; Exiftool and
+	// NvidiaSMI the programs. CompressEncoder, CompressVerifier, CompressDetector and CompressNVML replace the real
+	// ones (tests); CompressLinker the write mount's hard link (tests: EPERM, EXDEV).
+	NasReadRoot, NasWriteRoot string
+	CompressSessions          int
+	VMAFThreads               int
+	Exiftool, NvidiaSMI       string
+	CompressEncoder           compress.Encoder
+	CompressVerifier          compress.Verifier
+	CompressDetector          compress.Detector
+	CompressNVML              compress.NVML
+	CompressLinker            compress.Linker
+	CompressPoll              time.Duration
 }
 
 // Server holds the state behind the handlers.
@@ -131,6 +146,8 @@ type Server struct {
 	errors []ErrorEvent
 
 	web webState // the web gallery (ADR 0018)
+
+	compress *compress.Manager // video compression (ADR 0025)
 }
 
 // ErrorEvent is one recent server-side failure, for the status page (no paths, names or keys).
@@ -190,7 +207,7 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 		s.log.Warn("first run: open the setup page from your network and enter this one-time setup code", "setupCode", s.setupCode)
 	}
 	s.indexer = &nas.Indexer{Store: st, Roots: s.roots, Log: s.log, Interval: cfg.NasInterval,
-		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob, AfterWalk: s.checkNasReferences}
+		Prober: media.NewProber(cfg.FFprobe, cfg.ProbeWorkers, cfg.ProbeTimeout), OpenBlob: s.openBlob, AfterWalk: s.afterWalk}
 	if !s.indexer.Prober.Available() {
 		s.log.Warn("ffprobe not found: videos are indexed, their metadata is read once it is installed")
 	}
@@ -220,7 +237,17 @@ func New(ctx context.Context, cfg Config, st *store.Store) (*Server, error) {
 			return nil, fmt.Errorf("previews directory: %w", err)
 		}
 	}
+	s.compress = s.newCompress()
 	return s, nil
+}
+
+// afterWalk runs after each NAS walk: the phone backup's NAS references (ADR 0024), then compression's purges by the
+// trash and its automatic folders (ADR 0025).
+func (s *Server) afterWalk(ctx context.Context) {
+	s.checkNasReferences(ctx)
+	if s.compress != nil {
+		s.compress.AfterWalk(ctx)
+	}
 }
 
 // openSource opens a file by fingerprint for the previews: an indexed NAS copy still as indexed, else an uploaded
@@ -247,6 +274,7 @@ func (s *Server) openSource(ctx context.Context, fp string) (*os.File, error) {
 func (s *Server) Run(ctx context.Context) {
 	go s.indexer.Run(ctx)
 	go s.runBackup(ctx)
+	go s.compress.Start(ctx)
 	if s.prev != nil {
 		s.log.Info("previews", "config", s.prev.String(), "dir", s.prev.Dir())
 		s.prev.Run(ctx)
