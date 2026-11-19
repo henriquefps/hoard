@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -17,6 +18,7 @@ func (s *Server) routesAdminCompress(authed func(string, http.HandlerFunc)) {
 	authed("PUT /admin/api/compress/settings", s.handleAdminCompressSettings)
 	authed("POST /admin/api/compress/detect", s.handleAdminCompressDetect)
 	authed("GET /admin/api/compress/items/{id}/log", s.handleAdminCompressLog)
+	authed("POST /admin/api/compress/items/{id}/force-cancel", s.handleAdminCompressForceCancel)
 }
 
 func (s *Server) handleAdminCompress(w http.ResponseWriter, r *http.Request) {
@@ -74,11 +76,24 @@ func (s *Server) handleAdminCompress(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	// Phone items waiting for a phone for a day (S2 follow-ups): the admin may force them out.
+	waitingRows, err := s.store.CompressItemsIn(ctx, store.CompressReady, store.CompressReplacing)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	var stuck []store.CompressItem
+	for _, it := range waitingRows {
+		if it.Source == "blob" && it.StalledAt != nil {
+			stuck = append(stuck, it)
+		}
+	}
+	waiting := s.compressItemsJSON(ctx, stuck)
 	feature, featureWhy := s.compressFeature()
 	writeJSON(w, http.StatusOK, map[string]any{"gpu": s.compress.Status(), "nasWrite": s.compress.NasWrite(), "writeProblem": s.compress.WriteProblem(),
 		"feature": feature, "featureReason": featureWhy, "targets": s.compressTargets(), "attention": att, "sessions": s.compress.Sessions(),
 		"pauseWhileBusy": s.compress.PauseWhileBusy(ctx), "window": s.compress.Window(ctx), "offerAv1": s.compress.OfferAV1(ctx),
-		"trashDays": s.compress.TrashDays(ctx), "accounting": acc, "jobs": list, "items": items})
+		"trashDays": s.compress.TrashDays(ctx), "accounting": acc, "jobs": list, "items": items, "waiting": waiting})
 }
 
 func (s *Server) handleAdminCompressSettings(w http.ResponseWriter, r *http.Request) {
@@ -157,4 +172,32 @@ func (s *Server) handleAdminCompressLog(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(b)
+}
+
+// handleAdminCompressForceCancel forces a phone item out of waiting for its phone (S2 follow-ups; the page confirms what
+// it keeps and drops first): a ready item is cancelled (its output dropped unless something keeps it, the original
+// untouched), a phone restore goes back to the trash as it was. 409 when the item is in no such state.
+func (s *Server) handleAdminCompressForceCancel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
+		return
+	}
+	it, err := s.compress.ForceCancel(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
+		return
+	case errors.Is(err, store.ErrConflict):
+		fail(w, r, http.StatusConflict, "conflict", "Only a phone item waiting for its phone can be forced.", map[string]any{"reason": "state", "state": it.State})
+		return
+	case err != nil:
+		s.internal(w, r, err)
+		return
+	}
+	s.log.Info("admin: compression item forced", "item", id, "state", it.State)
+	if fresh, err := s.store.CompressItem(r.Context(), id); err == nil {
+		it = fresh
+	}
+	writeJSON(w, http.StatusOK, s.compressItemsJSON(r.Context(), []store.CompressItem{it})[0])
 }

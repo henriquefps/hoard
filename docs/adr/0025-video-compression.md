@@ -1149,6 +1149,43 @@ the text above left open or a small deviation.
   `rootId`, `volume`, `path` (on the phone), `physicalDeviceId`, `modifiedAt`, `sha256` (the original's), `outSha256`
   and, while a phone writes, `direction`. Estimate rows of phone and backup targets carry `rootId`, `volume` and the
   phone path instead of `folderId`.
+- **Follow-ups (before the tag).**
+  - *A served output whose phone never reports.* A `ready` phone item the phone downloaded (`phone:served`) could
+    wait forever: a lost or reset phone, Hoard uninstalled, or the admin's purge of that phone's backup; both blobs held,
+    `DELETE /v1/originals` answering `409 compressed`, nothing in `attention`. Now: (1) it gets `stalled_at` after 24
+    hours without a report, like a phone restore, and counts in `compress.attention.stalled` (the item serves
+    `stalledAt`); (2) `POST /v1/compress/cancel` settles it when the phone's backup has the original nowhere (its entry
+    gone, or no entry of that phone holding a path with that content): `cancelled`, reason `phone_gone`; (3) the setup
+    page's Compression tab lists the stalled phone items ("Waiting for a phone") with **Force cancel**
+    (`POST /admin/api/compress/items/{id}/force-cancel`, admin session only), after a confirmation that says what stays
+    and what goes. A forced `ready` item is `cancelled`, reason `forced`; a forced phone restore (or restore again) goes
+    back to `replaced` (`restored`) with reason `forced` and its retention restarted, nothing deleted. **Settling is
+    safe:** the output blob is dropped only when nothing else keeps it (the backup already holding it, a claim, another
+    compression), and the original is never released by a cancel: the backup's entry keeps it, or, when the backup no
+    longer has it, it stays as an uploaded original (a gallery backup item) that `DELETE /v1/originals` or the owner can
+    remove, never the only copy lost. If the phone did write the output, its next backup report is an ordinary rewrite
+    (the original becomes the previous version, the output is uploaded again); its late `…/replaced` answers `409 state`.
+  - *The path served after a rename.* `GET /v1/compress/items` served `path`, `volume`, `rootId` and `modifiedAt` from
+    the item's own entry, which after a swap is the kept side at the old path: after a rename on the phone, a restore
+    named the old path, the phone abandoned it `gone`, and the server recorded the original deleted while the phone
+    still had the output. From `ready` to `restored` (and while a phone swaps them) they now come from the entry that
+    holds the live side (`CompressLiveOwner`, which also learned the live side of a `replacing` row: the output during a
+    phone restore, the original during a restore again).
+  - *The kept entry is the item's own.* `compress_items` gains `kept_entry_id` (added to the unreleased
+    `0012_compress.sql`, as `stalled_at` was): the entry the last swap made `compressed`. The next swap brings back
+    exactly that entry (the first swap makes a new one), and the purge removes exactly it. Before, the swap took any
+    `compressed` entry of that content on the phone (path first) and the purge looked only at the item's original path:
+    the same video at two paths, compressed one after the other, with a rename before the first replace, left the first
+    item's kept entry behind at the purge (pinned for good) and handed it to the second item's restore.
+  - *Tests* (Go, fake encoder): `TestCompressServedOutputStalledAndForced` (stalled after 24 h, in `attention` and the
+    page's waiting list; a cancel still refused while the backup has the original; force-cancel by the admin only, the
+    output dropped and the original kept; `DELETE /v1/originals` no longer `409 compressed`),
+    `TestCompressServedOutputCancelledOnceTheBackupIsGone` (the admin's backup purge, `409 compressed`, then a cancel
+    settles `phone_gone`, the original a gallery item, and `DELETE /v1/originals` removes it),
+    `TestCompressServedOutputCancelKeepsWhatTheMirrorNames` (the file moved out of every root: the output the backup
+    holds stays), `TestCompressForceCancelPhoneRestore`, `TestCompressServedPathFollowsARename` (a rename then a phone
+    restore: the served path is the new one, the restore completes there), `TestCompressKeptEntryIsTheItemsOwn` (two
+    paths of one content).
 - **Tests** (Go, fake encoder): `TestCompressPhoneFlow` (estimate and job of the caller's phone, the output served by
   range to that phone only, mismatches, `…/replaced` first, the next report uploading and removing nothing, free-up
   verify of the output, the trashed original with `include=trash` and `trashed=only`, culling moved, restore and

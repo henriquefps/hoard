@@ -609,6 +609,7 @@ func (s *Server) compressItemJSON(it store.CompressItem) map[string]any {
 	opt("purgeAfter", it.PurgeAfter, it.PurgeAfter != nil && (it.State == store.CompressReplaced || it.State == store.CompressRestored))
 	opt("purgedAt", it.PurgedAt, it.PurgedAt != nil)
 	opt("restoredAt", it.RestoredAt, it.RestoredAt != nil)
+	opt("stalledAt", it.StalledAt, it.StalledAt != nil)
 	if p, ok := s.compress.Progress(it.ID); ok && it.State == store.CompressEncoding {
 		m["progress"] = round3(p)
 	}
@@ -930,7 +931,16 @@ func (s *Server) compressItemsJSON(ctx context.Context, list []store.CompressIte
 				m["direction"] = map[bool]string{true: "restore", false: "compress"}[it.ReplaceStep == store.StepRestorePhone]
 			}
 			if it.MirrorEntryID != nil {
-				if e, ok := entries[*it.MirrorEntryID]; ok {
+				e, ok := entries[*it.MirrorEntryID]
+				switch it.State {
+				case store.CompressReady, store.CompressReplacing, store.CompressReplaced, store.CompressRestored:
+					// The file where the phone keeps it now (S2 follow-ups): after a rename on the phone the item's own
+					// entry is the old path (the kept side's), and a restore naming it would be abandoned as gone.
+					if live, err := s.store.CompressLiveOwner(ctx, it.ID); err == nil {
+						e, ok = live, true
+					}
+				}
+				if ok {
 					m["rootId"], m["volume"], m["path"], m["name"], m["physicalDeviceId"] = e.RootID, e.Volume, e.Path, path.Base(e.Path), e.PhysicalID
 					m["modifiedAt"] = e.ModifiedAt
 				} else if it.RelPath != "" {

@@ -470,6 +470,18 @@ async function renderCompress() {
       h("div.meta", [it.state, it.reason ? reason(it.reason) : null, it.outSize ? `${bytes(it.size)} → ${bytes(it.outSize)}` : bytes(it.size),
         it.q ? `cq ${it.q}` : null, it.vmaf ? `VMAF ${it.vmaf.mean} (${it.vmaf.mode})` : null, it.decoder || null].filter(Boolean).join(" · "))),
     it.logAvailable ? h("div.actions", h("a.button", { href: `api/compress/items/${encodeURIComponent(it.id)}/log`, target: "_blank", rel: "noopener" }, t("compressLog"))) : null));
+  const force = async (it) => {
+    const name = it.name || it.itemId;
+    const msg = it.state === "ready" ? t("compressForceReady", { name }) : t("compressForceRestore", { name, days: num(s.trashDays) });
+    if (!confirm(msg)) return;
+    try { await api("POST", `compress/items/${encodeURIComponent(it.id)}/force-cancel`); toast(t("compressForced")); }
+    catch (e) { toast(e.message); }
+    route();
+  };
+  const waiting = (s.waiting || []).map((it) => h("div.row", icon("warning-circle"),
+    h("div.main", h("div.name.mono", it.name || it.itemId),
+      h("div.meta", [it.state, it.direction || null, it.stalledAt ? `${t("compressOldest")}: ${when(it.stalledAt)}` : null].filter(Boolean).join(" · "))),
+    h("div.actions", h("button.button", { onclick: () => force(it) }, t("compressForce")))));
   page().replaceChildren(
     h("div.section",
       h("div.section-head", h("h2", t("compressTitle")),
@@ -505,6 +517,7 @@ async function renderCompress() {
         h("label.switch", windowOn, h("span", t("compressWindow"), h("p.hint", t("compressWindowHint")))), windowText,
         h("label.switch", av1, h("span", t("compressAv1"), h("p.hint", t("compressAv1Hint")))),
         h("label", t("compressTrashDays")), days, h("p.hint", t("compressTrashDaysHint")))),
+    ...(waiting.length ? [h("div.section", h("h2", t("compressWaiting")), h("p.hint", t("compressWaitingHint")), h("div.list", waiting))] : []),
     h("div.section", h("h2", t("compressJobs")), jobs.length ? h("div.list", jobs) : h("p.empty", t("compressNoJobs"))),
     h("div.section", h("h2", t("compressItems")), items.length ? h("div.list", items) : h("p.empty", t("compressNoJobs"))));
   if ((s.jobs || []).some((j) => j.state === "active" && j.progress.toDo > 0)) timers.push(setInterval(route, 5000));

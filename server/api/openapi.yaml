@@ -2011,7 +2011,10 @@ paths:
       summary: Cancel a job or items before their replace (0.13.0)
       description: >-
         Every queued to ready item becomes `cancelled` (running ffmpeg and VMAF processes are killed, work files
-        removed); items already replacing or replaced are answered with their state (Restore is the undo).
+        removed); items already replacing or replaced are answered with their state (Restore is the undo). A phone
+        item whose output the phone already downloaded stays `ready` (answered with its state) until the phone
+        reports, unless the phone's backup no longer has the original anywhere (its entry gone, the backup purged):
+        it is then cancelled with reason `phone_gone`, the output dropped unless the backup holds it.
       requestBody:
         required: true
         content:
@@ -2422,7 +2425,7 @@ components:
         folderId: { $ref: "#/components/schemas/Uuid" }
         rootId: { $ref: "#/components/schemas/Uuid", description: "Phone and backup targets: the backup root" }
         volume: { type: string, description: "Phone and backup targets: the phone's volume" }
-        path: { type: string, description: "nas: relative to the folder; phone and backup: the path on the phone's volume" }
+        path: { type: string, description: "nas: relative to the folder; phone and backup: the path on the phone's volume where the backup has the file now (ready to restored: the live side's, which follows a rename on the phone)" }
         otherCopies: { type: array, items: { type: string }, description: "The item's other NAS copies (folderId:path), left as they are" }
         durationMs: { type: integer, format: int64 }
         size: { type: integer, format: int64 }
@@ -2482,12 +2485,12 @@ components:
         target: { type: string, enum: [nas, phone, backup] }
         source: { type: string, enum: [nas, blob] }
         folderId: { $ref: "#/components/schemas/Uuid" }
-        path: { type: string, description: "nas: relative to the folder; phone and backup: the path on the phone's volume" }
+        path: { type: string, description: "nas: relative to the folder; phone and backup: the path on the phone's volume where the backup has the file now (ready to restored: the live side's, which follows a rename on the phone)" }
         name: { type: string }
         rootId: { $ref: "#/components/schemas/Uuid", description: "Phone and backup items: the backup root" }
         volume: { type: string }
         physicalDeviceId: { $ref: "#/components/schemas/Uuid" }
-        modifiedAt: { type: integer, format: int64, description: "Phone and backup items: the original's mtime on the phone (Unix ms)" }
+        modifiedAt: { type: integer, format: int64, description: "Phone and backup items: the mtime on the phone of the file at path (Unix ms)" }
         sha256: { $ref: "#/components/schemas/Sha256", description: "Phone and backup items: the original's" }
         outSha256: { $ref: "#/components/schemas/Sha256", description: "Phone and backup items: the output's" }
         direction: { type: string, enum: [compress, restore], description: "A phone item replacing: what the phone writes (the output, or the original back)" }
@@ -2508,6 +2511,7 @@ components:
         metaSidecar: { type: boolean }
         trashPath: { type: string }
         purgeAfter: { type: integer, format: int64 }
+        stalledAt: { type: integer, format: int64, description: "Waiting since (Unix ms): a NAS journal, or a phone restore or a served output no phone reported for a day" }
         logAvailable: { type: boolean, description: "The log itself is on the admin page and the web gallery only" }
     CompressBatch:
       type: object
@@ -2701,7 +2705,7 @@ components:
                 backup: { $ref: "#/components/schemas/CompressTarget" }
             attention:
               type: object
-              description: "Journals waiting (the write mount was unavailable) since the oldest, and originals a failed replace left untracked in a trash"
+              description: "Journals waiting (the write mount was unavailable; a phone restore or a downloaded output no phone reported for a day) since the oldest, and originals a failed replace left untracked in a trash"
               properties:
                 stalled: { type: integer }
                 stalledSince: { type: integer, format: int64, nullable: true }
