@@ -666,9 +666,9 @@
     <string name="compress_profile_same">Same look</string>
     <string name="compress_profile_same_desc">HEVC with the look you approved. Recommended.</string>
     <string name="compress_profile_smaller">Smaller</string>
-    <string name="compress_profile_smaller_desc">Another 15–25% smaller, slightly softer.</string>
+    <string name="compress_profile_smaller_desc" formatted="false">Another 15–25% smaller, slightly softer.</string>
     <string name="compress_profile_av1">AV1</string>
-    <string name="compress_profile_av1_desc">About 15–20% smaller than HEVC; plays only where AV1 is decoded in hardware.</string>
+    <string name="compress_profile_av1_desc" formatted="false">About 15–20% smaller than HEVC; plays only where AV1 is decoded in hardware.</string>
     <string name="compress_estimate_title">Estimate</string>
     <string name="compress_estimate_sizes">%1$s → about %2$s · about %3$s</string>
     <string name="compress_estimate_pending">Still reading some videos on the server…</string>

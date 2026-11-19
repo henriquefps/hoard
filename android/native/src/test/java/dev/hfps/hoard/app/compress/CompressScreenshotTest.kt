@@ -86,12 +86,12 @@ class CompressScreenshotTest {
     private val sheet = CompressSheetState(Compress.TARGET_NAS, profiles).withEstimate(estimate)
 
     @Composable
-    private fun estimateSheet() = Sheet { CompressSheetContent(sheet, listOf(Compress.TARGET_NAS, Compress.TARGET_BACKUP), leftOut = 3, trashDays = 30, unavailable = null) }
+    private fun EstimateSheet() = Sheet { CompressSheetContent(sheet, listOf(Compress.TARGET_NAS, Compress.TARGET_BACKUP), leftOut = 3, trashDays = 30, unavailable = null) }
 
-    @Test fun sheetPhoneLight() = shoot("compress_sheet_phone_light") { estimateSheet() }
-    @Test fun sheetPhoneDark() = shoot("compress_sheet_phone_dark", dark = true) { estimateSheet() }
-    @Test fun sheetTabletLight() = shoot("compress_sheet_tablet_light", TABLET) { estimateSheet() }
-    @Test fun sheetTabletDark() = shoot("compress_sheet_tablet_dark", TABLET, dark = true) { estimateSheet() }
+    @Test fun sheetPhoneLight() = shoot("compress_sheet_phone_light") { EstimateSheet() }
+    @Test fun sheetPhoneDark() = shoot("compress_sheet_phone_dark", dark = true) { EstimateSheet() }
+    @Test fun sheetTabletLight() = shoot("compress_sheet_tablet_light", TABLET) { EstimateSheet() }
+    @Test fun sheetTabletDark() = shoot("compress_sheet_tablet_dark", TABLET, dark = true) { EstimateSheet() }
 
     @Test fun sheetEstimatingPhoneLight() = shoot("compress_sheet_estimating_phone_light") {
         Sheet { CompressSheetContent(CompressSheetState(Compress.TARGET_NAS, profiles + Compress.PROFILE_AV1, profile = Compress.PROFILE_AV1), listOf(Compress.TARGET_NAS), 0, 30, null) }

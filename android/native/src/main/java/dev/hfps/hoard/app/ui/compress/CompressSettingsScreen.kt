@@ -237,11 +237,14 @@ private fun StatusBlock(ui: CompressSettingsUi) {
 }
 
 @Composable
-private fun Header(text: String) = Eyebrow(text, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
+private fun Header(text: String) {
+    Eyebrow(text, Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
+}
 
 @Composable
-private fun Hint(text: String) =
+private fun Hint(text: String) {
     Text(text, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+}
 
 @Composable
 private fun jobTitle(job: CompressJob): String {
