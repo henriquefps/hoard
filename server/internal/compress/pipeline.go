@@ -243,11 +243,12 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 	if ctx.Err() != nil {
 		return false
 	}
-	// The per-frame sidecar, before the encode.
-	metaTmp := filepath.Join(work, "meta.json.gz")
+	// The per-frame part of the metadata sidecar, before the encode.
+	perFrameTmp := ""
 	it.MetaSidecar = false
 	if probe.PerFrameData() {
-		f, err := os.Create(metaTmp)
+		perFrameTmp = filepath.Join(work, "perframe.json.gz")
+		f, err := os.Create(perFrameTmp)
 		if err == nil {
 			err = m.cfg.Encoder.Sidecar(ctx, src, f, log)
 			if cerr := f.Close(); err == nil {
@@ -255,7 +256,7 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 			}
 		}
 		if err != nil { // a gate: the per-frame data leaves the file, so it must be saved first
-			_ = os.Remove(metaTmp)
+			_ = os.Remove(perFrameTmp)
 			if ctx.Err() != nil {
 				return false
 			}
@@ -272,6 +273,7 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 	q := prof.Q
 	floor := opts.Quality.VMAF
 	var vm VMAFResult
+	var cr CheckResult
 	var encodeMs, verifyMs int64
 	var decoder string
 	from := store.CompressEstimating
@@ -318,17 +320,17 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 			return false
 		}
 		from = store.CompressVerifying
-		select {
-		case m.cpu <- struct{}{}:
-		case <-ctx.Done():
+		// verifying above 2.7K takes every CPU slot: one 4K VMAF at a time bounds the memory.
+		slots := m.cpuSlots(probe)
+		if !m.acquireCPU(ctx, slots) {
 			return false
 		}
 		t = time.Now()
-		err = m.cfg.Verifier.Check(ctx, src, out, log)
+		cr, err = m.cfg.Verifier.Check(ctx, src, out, log)
 		if err == nil {
 			vm, err = m.cfg.Verifier.VMAF(ctx, src, out, probe, log)
 		}
-		<-m.cpu
+		m.releaseCPU(slots)
 		verifyMs += ms(time.Since(t))
 		if err != nil {
 			if ctx.Err() != nil {
@@ -384,22 +386,50 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 		return false
 	}
 	it.OutFingerprint, it.OutSHA256, it.OutSize = ofp, hex.EncodeToString(oh.Sum(nil)), i64(ofi.Size())
-	if it.MetaSidecar {
-		dst := m.MetaPath(ofp)
-		err := os.MkdirAll(filepath.Dir(dst), 0o700)
-		if err == nil {
-			err = moveFile(metaTmp, dst)
-		}
-		if err != nil { // the gate holds until the sidecar is in the data directory
-			m.fail(ctx, it, ReasonVerifyMeta, log, fmt.Errorf("the per-frame metadata could not be kept: %w", err))
-			return false
-		}
+	// The metadata sidecar, for every replaced video: the source's tags, what the output lacks, the camera and the
+	// per-frame data (ADR 0025 Amendment (N4)). A gate: it holds until the sidecar is in the data directory.
+	var sc sidecarHead
+	sc.Original.Fingerprint, sc.Original.SHA256, sc.Original.Size = it.Fingerprint, it.SHA256, it.Size
+	sc.Output.Fingerprint, sc.Output.SHA256, sc.Output.Size = ofp, it.OutSHA256, ofi.Size()
+	sc.Camera.Make, sc.Camera.Model = cr.Make, cr.Model
+	sc.NotRestored, sc.ExpectedLost, sc.Exiftool, sc.FFprobe = cr.NotRestored, cr.Expected, cr.Exiftool, cr.FFprobe
+	if err := m.keepSidecar(work, sc, perFrameTmp); err != nil {
+		m.fail(ctx, it, ReasonVerifyMeta, log, fmt.Errorf("the metadata sidecar could not be kept: %w", err))
+		return false
 	}
+	fmt.Fprintf(log, "metadata sidecar kept (%d tags not restored, per-frame data: %v)\n", len(cr.NotRestored), it.MetaSidecar)
 	if it.Source == "blob" { // the output becomes a blob (ADR 0025 "The output becomes a blob")
 		return m.readyBlob(ctx, it, out, log)
 	}
 	it.State, it.Reason = store.CompressReady, ""
 	return m.save(ctx, it, store.CompressVerifying)
+}
+
+// keepSidecar writes the metadata sidecar in the work directory, then moves it to MetaPath.
+func (m *Manager) keepSidecar(work string, h sidecarHead, perFrameTmp string) error {
+	tmp := filepath.Join(work, "meta.json.gz")
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	err = writeSidecar(f, h, perFrameTmp)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil && perFrameTmp != "" {
+		_ = os.Remove(perFrameTmp)
+	}
+	dst := m.MetaPath(h.Output.Fingerprint)
+	if err == nil {
+		err = os.MkdirAll(filepath.Dir(dst), 0o700)
+	}
+	if err == nil {
+		err = moveFile(tmp, dst)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+	}
+	return err
 }
 
 // workOutput finds a ready item's output in its work directory and checks it by size and SHA-256.

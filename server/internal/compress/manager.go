@@ -36,7 +36,7 @@ const (
 type Config struct {
 	Store *store.Store
 	Log   *slog.Logger
-	// DataDir holds compress/logs and compress/meta (the per-frame sidecars).
+	// DataDir holds compress/logs and compress/meta (the metadata sidecars, one per replaced video).
 	DataDir string
 	// WorkRoot returns <backup root>/.hoard-compress/work ("" without a backup root: nothing runs).
 	WorkRoot func() string
@@ -79,14 +79,53 @@ type Manager struct {
 	// mountProblem: a folder's probe found the write mount unusable (unstable_inode); cleared by Detect.
 	mountProblem string
 
-	gpu  chan struct{}
-	cpu  chan struct{}
-	wake chan struct{}
-	ops  chan op // restore and purge, one at a time
-	wg   sync.WaitGroup
+	gpu chan struct{}
+	cpu chan struct{}
+	// cpuWide serializes taking several CPU slots at once (a verification above 2.7K), so two of them never deadlock
+	// holding part of the pool each.
+	cpuWide sync.Mutex
+	wake    chan struct{}
+	ops     chan op // restore and purge, one at a time
+	wg      sync.WaitGroup
 
 	// afterStep, in tests, runs after each journal step is written; an error stops the journal there (a crash).
 	afterStep func(step string) error
+}
+
+// wideFrame is the frame size above which a verification takes every CPU slot (more than 2.7K, about 4.2 MP): a 4K
+// 10-bit VMAF takes about 2.9 GiB and a 4K encode 2.1 GiB, so two 4K verifications next to an encode would need about
+// 8 GiB (ADR 0025 Amendment (N4)).
+const wideFrame = 2720 * 1530
+
+// cpuSlots is how many CPU slots verifying a source takes: all of them above wideFrame, else one.
+func (m *Manager) cpuSlots(p Probe) int {
+	if p.Width*p.Height > wideFrame {
+		return cap(m.cpu)
+	}
+	return 1
+}
+
+// acquireCPU takes n CPU slots (false: cancelled, none held).
+func (m *Manager) acquireCPU(ctx context.Context, n int) bool {
+	if n > 1 {
+		m.cpuWide.Lock()
+		defer m.cpuWide.Unlock()
+	}
+	for i := range n {
+		select {
+		case m.cpu <- struct{}{}:
+		case <-ctx.Done():
+			m.releaseCPU(i)
+			return false
+		}
+	}
+	return true
+}
+
+func (m *Manager) releaseCPU(n int) {
+	for range n {
+		<-m.cpu
+	}
 }
 
 type busySample struct {
@@ -512,7 +551,7 @@ type nopCloser struct{ io.Writer }
 
 func (nopCloser) Close() error { return nil }
 
-// MetaPath is where the per-frame sidecar of an output is kept: <data dir>/compress/meta/<hex[0:2]>/<hex>.json.gz.
+// MetaPath is where the metadata sidecar of an output is kept: <data dir>/compress/meta/<hex[0:2]>/<hex>.json.gz.
 func (m *Manager) MetaPath(outFingerprint string) string {
 	h := strings.TrimPrefix(outFingerprint, "v1:")
 	if len(h) < 2 {

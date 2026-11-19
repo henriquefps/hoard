@@ -1,6 +1,7 @@
 package compress
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -257,7 +258,11 @@ func (f *Folder) ProbeTrash(rel string) error {
 	if err := f.mkdirLikeParent(base); err != nil {
 		return fmt.Errorf("%w: %w", ErrNotWritable, err)
 	}
-	probe := base + "/.hoard-compress-probe"
+	// A name of its own: two workers replacing in the same folder at once probe it each (a shared name made one
+	// remove the other's probe mid-check: not_writable).
+	var tag [8]byte
+	_, _ = rand.Read(tag[:])
+	probe := base + "/.hoard-compress-probe-" + hex.EncodeToString(tag[:])
 	file, err := f.root.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("%w: %w", ErrNotWritable, err)
