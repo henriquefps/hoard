@@ -2354,6 +2354,12 @@ components:
                     error: { type: string }
                     alsoKeptBy: { type: array, items: { type: string, enum: [claim, mirror, record, compress] }, description: "purge of a phone or backup item: why the bytes stay" }
   schemas:
+    CompressTarget:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        reason: { type: string, enum: [no_gpu, no_tools, no_backup_root, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode] }
     CompressPhoneFile:
       type: object
       required: [fingerprint, sha256, size, modifiedAt]
@@ -2672,13 +2678,27 @@ components:
           type: object
           description: >-
             Video compression (ADR 0025, 0.13.0): present with a GPU, the feature or jobs. `available` (and the feature
-            `compress`) needs a working GPU and a usable write mount; `reason` says why not.
+            `compress`) needs a working GPU and at least one usable target (`targets`); `reason` says why not (the nas
+            target's reason, else the phone's). Hoard 2.7.0 offers NAS jobs only when `targets.nas.ok`; Hoard 2.8.0
+            offers phone jobs when `targets.phone.ok`.
           properties:
             available: { type: boolean }
             reason:
               type: string
               nullable: true
-              enum: [no_gpu, no_tools, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode, null]
+              enum: [no_gpu, no_tools, no_backup_root, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode, null]
+            targets:
+              type: object
+              description: >-
+                Each target's state (ADR 0025 Amendment (S2)). Every target needs the GPU (`no_gpu`, `no_tools`) and a
+                backup folder (`no_backup_root`: the work directory and the blob store live there); `nas` also the write
+                mount's gate (`no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`).
+                `POST /v1/compress/jobs` answers a target that is not ok with the same reason (`503 unavailable`, or
+                `503 storage_not_configured` for `no_backup_root`).
+              properties:
+                nas: { $ref: "#/components/schemas/CompressTarget" }
+                phone: { $ref: "#/components/schemas/CompressTarget" }
+                backup: { $ref: "#/components/schemas/CompressTarget" }
             attention:
               type: object
               description: "Journals waiting (the write mount was unavailable) since the oldest, and originals a failed replace left untracked in a trash"

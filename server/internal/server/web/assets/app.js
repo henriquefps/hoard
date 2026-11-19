@@ -436,6 +436,13 @@ async function renderBackup() {
 
 // --- video compression (ADR 0025) ----------------------------------------------------------------------------------
 
+// targetWhy words why a compression target (or the feature) is off.
+function targetWhy(r) {
+  if (r === "no_gpu" || r === "no_tools") return t("compressNoGpu_" + r);
+  if (r === "no_backup_root") return t("compressNoBackupRoot");
+  return t("compressWrite_" + (r || "no_write_mount"));
+}
+
 async function renderCompress() {
   const s = await api("GET", "compress");
   const g = s.gpu || {};
@@ -469,7 +476,7 @@ async function renderCompress() {
         h("button.button", { icon: "arrows-clockwise", onclick: async () => { await api("POST", "compress/detect").catch(() => {}); route(); } }, t("compressCheck"))),
       h("p.muted", t("compressIntro")),
       s.feature ? h("p", h("span.badge.ok", t("compressFeatureOn"))) : h("p", h("span.badge.warn", t("compressFeatureOff", {
-        why: !g.available ? t("compressNoGpu_" + (g.reason || "no_gpu")) : t("compressWrite_" + (s.writeProblem || "no_write_mount")) }))),
+        why: targetWhy(s.featureReason || g.reason || "no_gpu") }))),
       h("p.hint", t("compressHoardRule")),
       att.stalled ? h("p", h("span.badge.bad", t("compressStalled", { n: num(att.stalled), since: when(att.stalledSince) }))) : null,
       att.untrackedTrash ? h("p", h("span.badge.bad", t("compressUntracked", { n: num(att.untrackedTrash) }))) : null,
@@ -479,7 +486,13 @@ async function renderCompress() {
           h("div.meta", `${t("compressCodecs")}: ${(g.codecs || []).join(", ") || "—"} · VMAF ${g.vmaf ? "✓" : "✗"} · CUDA ${g.cudaDecode ? "✓" : "✗"} · exiftool ${g.exiftool ? "✓" : "✗"} · ${t("compressChecked")} ${when(g.checkedAt)}`)),
           h("span.badge." + (g.available ? "ok" : "warn"), t(g.available ? "compressAvailable" : "compressUnavailable"))),
         h("div.row", icon("hard-drives"), h("div.main", h("div.name", t("compressWriteMount")), h("div.meta", t(s.nasWrite ? "compressWriteMountOk" : "compressWriteMountMissing"))),
-          h("span.badge." + (s.nasWrite ? "ok" : "idle"), t(s.nasWrite ? "compressAvailable" : "compressUnavailable")))),
+          h("span.badge." + (s.nasWrite ? "ok" : "idle"), t(s.nasWrite ? "compressAvailable" : "compressUnavailable"))),
+        ...["nas", "phone", "backup"].map((k) => {
+          const tg = (s.targets || {})[k] || {};
+          return h("div.row", icon(tg.ok ? "check" : "warning-circle"), h("div.main", h("div.name", t("compressTarget_" + k)),
+            h("div.meta", tg.ok ? t("compressTargetOk") : targetWhy(tg.reason))),
+            h("span.badge." + (tg.ok ? "ok" : "warn"), t(tg.ok ? "compressAvailable" : "compressUnavailable")));
+        })),
       h("div.metrics",
         metric(t("compressSessions"), num(s.sessions)),
         metric(t("compressSaved"), bytes(a.saved)),

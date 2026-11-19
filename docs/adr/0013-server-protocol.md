@@ -506,7 +506,8 @@ Changes to existing routes, all optional for clients:
 
 Added by ADR 0025, which is the reference (the recipe, the skip rules, the verification, the job model, the trash
 interplay). Additions only; Reveal never calls these routes. `features` gains `"compress"` only when the start-up check
-passed (a `hevc_nvenc` test encode, CUDA decode of it, libvmaf, exiftool: the `-nvidia` image with the GPU). Schema 12
+passed (a `hevc_nvenc` test encode, CUDA decode of it, libvmaf, exiftool: the `-nvidia` image with the GPU) and at least
+one target is usable (`compress.targets`, below). Schema 12
 (`0012_compress.sql`: `compress_jobs`, `compress_items`, `video_probe`; new tables only). Three targets:
 **`"nas"`** (phase S1): library videos replaced in place through the server's write mount (`NAS_WRITE_ROOT`,
 `/mnt/nas-write`), the original moved into the folder's trash (ADR 0023, `.hoard-trash`); **`"phone"`** (phase S2): the
@@ -549,8 +550,13 @@ trashed by a restore) gains `"compressedTo"` and `"replacedBy"` (the live item: 
 again, as for a tombstone, ADR 0014/0020/0016), served whole with `include=trash`; without it, its tombstone shape
 carries `replacedBy`. A purged original is a tombstone with `replacedBy`. A trash location an unfinished compression
 journal holds carries `"held": true`: clients must not empty it. `features` lists `compress` only with a working GPU and
-a usable write mount; `compress.reason` says why not (`no_gpu`, `no_tools`, `no_write_mount`, `write_mount_mismatch`,
-`write_mount_read_only`, `unstable_inode`), and `compress.attention` counts waiting journals (`stalled`,
+a usable target. `compress.targets` is `{"nas": {"ok", "reason"?}, "phone": {…}, "backup": {…}}`: every target needs the
+GPU (`no_gpu`, `no_tools`) and a backup folder (`no_backup_root`); `nas` also the write mount's gate (`no_write_mount`,
+`write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`); `POST /v1/compress/jobs` answers a target that is
+not ok with the same reason (`503 unavailable`, or `503 storage_not_configured` with reason `no_backup_root`). Hoard
+2.7.0 offers NAS jobs only when `targets.nas.ok`, Hoard 2.8.0 phone jobs when `targets.phone.ok`; the write mount is
+still added only once every device runs Hoard 2.7.0+ (it honours `held`). `compress.reason` says why the feature is off
+(the nas target's reason, else the phone's), and `compress.attention` counts waiting journals (`stalled`,
 `stalledSince`) and originals left untracked in a trash (`untrackedTrash`). A phone or backup original is trashed through a
 new item source, its kept entry: a `mirror` location with `onDevice: false` and `gone: "compressed"` (clients treat an
 unknown `gone` as `deleted`) next to its `backup` location; while a phone swap or restore of it is unfinished, that

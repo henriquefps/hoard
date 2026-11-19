@@ -74,8 +74,9 @@ func (s *Server) handleAdminCompress(w http.ResponseWriter, r *http.Request) {
 		s.internal(w, r, err)
 		return
 	}
+	feature, featureWhy := s.compressFeature()
 	writeJSON(w, http.StatusOK, map[string]any{"gpu": s.compress.Status(), "nasWrite": s.compress.NasWrite(), "writeProblem": s.compress.WriteProblem(),
-		"feature": s.compress.FeatureAvailable(), "attention": att, "sessions": s.compress.Sessions(),
+		"feature": feature, "featureReason": featureWhy, "targets": s.compressTargets(), "attention": att, "sessions": s.compress.Sessions(),
 		"pauseWhileBusy": s.compress.PauseWhileBusy(ctx), "window": s.compress.Window(ctx), "offerAv1": s.compress.OfferAV1(ctx),
 		"trashDays": s.compress.TrashDays(ctx), "accounting": acc, "jobs": list, "items": items})
 }

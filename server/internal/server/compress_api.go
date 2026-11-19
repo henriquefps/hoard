@@ -26,19 +26,61 @@ const (
 	compressMaxBatch       = 1000
 )
 
+// compressTarget is whether a target can take new jobs, and why not.
+type compressTarget struct {
+	OK     bool   `json:"ok"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// compressTargets is the state of each target (ADR 0025 Amendment (S2), "Targets"): every one needs the GPU (the start-up
+// test encode) and a backup folder (the work directory and the blob store live there); nas also the write mount's gate
+// (no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode).
+func (s *Server) compressTargets() map[string]compressTarget {
+	base := ""
+	if s.compress == nil {
+		base = "no_gpu"
+	} else if st := s.compress.Status(); !st.Available {
+		base = st.Reason
+		if base == "" {
+			base = "no_gpu"
+		}
+	} else if s.blobStore() == nil {
+		base = "no_backup_root"
+	}
+	nas := base
+	if nas == "" {
+		nas = s.compress.WriteProblem()
+	}
+	t := func(reason string) compressTarget { return compressTarget{OK: reason == "", Reason: reason} }
+	return map[string]compressTarget{compress.TargetNAS: t(nas), compress.TargetPhone: t(base), compress.TargetBackup: t(base)}
+}
+
+// compressFeature is the feature "compress": a usable GPU and at least one usable target. reason (feature off) is the
+// NAS target's, else the phone's.
+func (s *Server) compressFeature() (bool, string) {
+	ts := s.compressTargets()
+	for _, t := range ts {
+		if t.OK {
+			return true, ""
+		}
+	}
+	if ts[compress.TargetNAS].Reason == "no_backup_root" || ts[compress.TargetPhone].Reason != "no_backup_root" {
+		return false, ts[compress.TargetNAS].Reason
+	}
+	return false, ts[compress.TargetPhone].Reason
+}
+
 // compressInfo is GET /v1/server's "compress" object (present with the feature or with jobs).
 func (s *Server) compressInfo(ctx context.Context) map[string]any {
 	st := s.compress.Status()
+	feature, why := s.compressFeature()
 	var reason any
-	switch {
-	case !st.Available:
-		reason = st.Reason
-	case s.compress.WriteProblem() != "":
-		reason = s.compress.WriteProblem()
+	if !feature {
+		reason = why
 	}
 	att, _ := s.store.CompressAttentionNow(ctx)
 	profiles := append([]compress.Profile{}, compress.Profiles...)
-	return map[string]any{"available": s.compress.FeatureAvailable(), "reason": reason, "gpu": st.GPU, "attention": att, "codecs": st.Codecs, "vmaf": st.VMAF,
+	return map[string]any{"available": feature, "reason": reason, "targets": s.compressTargets(), "gpu": st.GPU, "attention": att, "codecs": st.Codecs, "vmaf": st.VMAF,
 		"cudaDecode": st.CUDADecode, "sessions": s.compress.Sessions(), "nasWrite": s.compress.NasWrite(), "offerAv1": s.compress.OfferAV1(ctx),
 		"trashDays": s.compress.TrashDays(ctx), "profiles": profiles,
 		"limits": map[string]any{"maxItemsPerJob": compressMaxItemsPerJob, "maxEstimate": compressMaxEstimate, "maxBatch": compressMaxBatch}}
@@ -261,20 +303,17 @@ func (s *Server) handleCompressJobCreate(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	if !s.compress.Available() {
-		reason := s.compress.Status().Reason
-		if reason == "" {
-			reason = "no_gpu"
-		}
-		unavailable(w, r, reason, "This server cannot compress videos (no working NVIDIA encoder, or tools missing).")
+	// The target's state, with the same reason GET /v1/server's compress.targets gives.
+	switch tg := s.compressTargets()[req.Target]; {
+	case tg.OK:
+	case tg.Reason == "no_backup_root":
+		fail(w, r, http.StatusServiceUnavailable, "storage_not_configured", "Choose a backup folder on the setup page first.", map[string]any{"reason": tg.Reason})
 		return
-	}
-	if s.blobStore() == nil {
-		fail(w, r, http.StatusServiceUnavailable, "storage_not_configured", "Choose a backup folder on the setup page first.", nil)
+	case tg.Reason == "no_gpu" || tg.Reason == "no_tools":
+		unavailable(w, r, tg.Reason, "This server cannot compress videos (no working NVIDIA encoder, or tools missing).")
 		return
-	}
-	if p := s.compress.WriteProblem(); p != "" && req.Target == compress.TargetNAS {
-		unavailable(w, r, p, "NAS videos cannot be replaced on this server: "+p+" (NAS_WRITE_ROOT, README \"GPU compression\").")
+	default:
+		unavailable(w, r, tg.Reason, "NAS videos cannot be replaced on this server: "+tg.Reason+" (NAS_WRITE_ROOT, README \"GPU compression\").")
 		return
 	}
 	// The selection as stored: an automatic folder is matched on it (one switch per folder).

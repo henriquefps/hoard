@@ -1112,6 +1112,16 @@ the text above left open or a small deviation.
   side's trash location (`mirror`, `gone: "compressed"`) is served `"held": true`; the server's purge acts only on
   `replaced`/`restored` rows, so a held one answers `{"error": "state"}`. A phone restore no phone reported for 24 hours
   gets `stalled_at` and counts in `compress.attention.stalled` until the phone reports or gives up; every swap clears it.
+- **Targets.** The feature `compress` (and `compress.available`) is a usable GPU **and at least one usable target**, so
+  a server with a backup folder and no write mount offers phone and backup jobs. `GET /v1/server`'s `compress` object
+  gains `targets: {nas, phone, backup}`, each `{ok, reason?}`: every target needs the GPU (`no_gpu`, `no_tools`) and a
+  backup folder (`no_backup_root`: the work directory and the blob store are there; S1 already refused jobs without it);
+  `nas` also the write mount's gate (`no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`,
+  `unstable_inode`). Job creation answers a target that is not ok with the same reason (`503 unavailable`, or `503
+  storage_not_configured` with `details.reason: "no_backup_root"`); `compress.reason` (feature off) is the nas target's,
+  else the phone's. The setup page's Compression tab shows each target. **Clients:** Hoard 2.7.0 offers NAS jobs only
+  when `targets.nas.ok`; Hoard 2.8.0 offers phone jobs when `targets.phone.ok`. The deployment rule of the S1 review
+  stands: the write mount is added only once every device runs Hoard 2.7.0+ (`held`).
 - **Review nits.** The write mount's writability is probed on the library's NAS folders at their write paths (any one
   writable is enough), not on the mount's root, which may be root's while the owner's folders are his; the root is
   probed only when no folder is known. `compress.attention.untrackedTrash` reflects the files still there: after a walk,
