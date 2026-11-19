@@ -4,9 +4,14 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 )
+
+// perFrameCap bounds the per-frame metadata (exiftool -ee3 of the source, uncompressed): over it the sidecar is not
+// written, the item fails verify_metadata and the original stays. A variable for the tests.
+var perFrameCap int64 = 512 << 20
 
 // SidecarVersion is the format of the metadata sidecar (ADR 0025 Amendment (N4)).
 const SidecarVersion = 2
@@ -87,10 +92,59 @@ func appendPerFrame(w io.Writer, head []byte, perFrameGz string) error {
 	if _, err := io.WriteString(w, `,"perFrame":`); err != nil {
 		return err
 	}
-	// Our own exiftool output, already capped at 512 MiB when it was written.
-	if _, err := io.CopyN(w, zr, 512<<20); err != nil && !errors.Is(err, io.EOF) {
+	// Our own exiftool output, refused over perFrameCap when it was written; a file past it is not cut short here.
+	n, err := io.CopyN(w, zr, perFrameCap+1)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
+	}
+	if n > perFrameCap {
+		return fmt.Errorf("the per-frame metadata is over %d MiB: %w", perFrameCap>>20, errCapped)
 	}
 	_, err = io.WriteString(w, "}")
 	return err
+}
+
+// checkGzipJSON reads a gzip file through and checks that it holds exactly one well-formed JSON value, without keeping
+// it in memory (the per-frame data can be hundreds of MiB).
+func checkGzipJSON(p string) error {
+	f, err := os.Open(p)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = zr.Close() }()
+	return checkJSON(zr)
+}
+
+// checkJSON checks that r holds exactly one well-formed JSON value (whitespace around it allowed).
+func checkJSON(r io.Reader) error {
+	dec := json.NewDecoder(r)
+	depth := 0
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				err = io.ErrUnexpectedEOF
+			}
+			return fmt.Errorf("not valid JSON: %w", err)
+		}
+		if d, ok := tok.(json.Delim); ok {
+			if d == '[' || d == '{' {
+				depth++
+			} else {
+				depth--
+			}
+		}
+		if depth == 0 {
+			break
+		}
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("not valid JSON: data after the value")
+	}
+	return nil
 }

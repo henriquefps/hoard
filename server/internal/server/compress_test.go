@@ -106,10 +106,12 @@ type fakeVerifier struct {
 	// hold keeps each Check running that long; active and maxActive count the verifications at once.
 	hold                      time.Duration
 	active, maxActive, checks atomic.Int32
+	marker                    atomic.Value // the last marker a check was asked to confirm
 }
 
-func (v *fakeVerifier) Check(context.Context, *os.File, string, io.Writer) (compress.CheckResult, error) {
+func (v *fakeVerifier) Check(_ context.Context, _ *os.File, _, marker string, _ io.Writer) (compress.CheckResult, error) {
 	v.checks.Add(1)
+	v.marker.Store(marker)
 	n := v.active.Add(1)
 	defer v.active.Add(-1)
 	for {
@@ -350,6 +352,9 @@ func TestCompressNASFlow(t *testing.T) {
 	it := ch.one()
 	if it.State != store.CompressReplaced || it.TrashPath == "" || *it.Q != 28 || it.Decoder != "cuda" || it.OutFingerprint == "" {
 		t.Fatalf("item %+v", it)
+	}
+	if m, _ := ch.ver.marker.Load().(string); !strings.HasPrefix(m, "v1, hevc-cq28, ") || len(m) != len("v1, hevc-cq28, 2006-01-02") {
+		t.Fatalf("the check did not confirm the marker: %q", m)
 	}
 	rel := "2024/Trip/A.MP4"
 	if ch.fp(rel) != it.OutFingerprint {

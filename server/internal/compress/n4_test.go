@@ -83,7 +83,7 @@ func TestVerifierEditListHidesLeadingFrames(t *testing.T) {
 		"-fps_mode", "passthrough", "-enc_time_base:v", "demux"}
 	good := tl.make(t, filepath.Join(dir, "good.mp4"), append([]string{"-i", src, "-map", "0", "-c:a", "copy"}, reenc...)...)
 	var log bytes.Buffer
-	if _, err := v.Check(ctx, open(t, src), good, &log); err != nil {
+	if _, err := v.Check(ctx, open(t, src), good, "", &log); err != nil {
 		t.Fatalf("good: %v\n%s", err, log.String())
 	}
 	if !strings.Contains(log.String(), "duration (decoded), streams, picture: ok") {
@@ -92,7 +92,7 @@ func TestVerifierEditListHidesLeadingFrames(t *testing.T) {
 	// The video cut 0.5 s short, the audio whole: the file's duration is unchanged.
 	short := tl.make(t, filepath.Join(dir, "short.mp4"), append([]string{"-i", src, "-map", "0", "-c:a", "copy", "-frames:v", "221"}, reenc...)...)
 	log.Reset()
-	if got := reasonOf(v.Check(ctx, open(t, src), short, &log)); got != "verify_duration" {
+	if got := reasonOf(v.Check(ctx, open(t, src), short, "", &log)); got != "verify_duration" {
 		t.Fatalf("truncated: %q\n%s", got, log.String())
 	}
 }

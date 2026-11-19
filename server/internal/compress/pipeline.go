@@ -254,6 +254,9 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 			if cerr := f.Close(); err == nil {
 				err = cerr
 			}
+			if err == nil {
+				err = checkGzipJSON(perFrameTmp)
+			}
 		}
 		if err != nil { // a gate: the per-frame data leaves the file, so it must be saved first
 			_ = os.Remove(perFrameTmp)
@@ -294,8 +297,9 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 		m.encoding++
 		m.mu.Unlock()
 		t := time.Now()
-		r, err := m.cfg.Encoder.Encode(ctx, EncodeRequest{Src: src, SrcMTime: fi.ModTime(), Probe: probe, Profile: prof, Q: q, Set: opts.Set,
-			Out: out, Date: m.now().Format("2006-01-02"), Log: log, Progress: func(p float64) { m.setProgress(it.ID, p) }})
+		req := EncodeRequest{Src: src, SrcMTime: fi.ModTime(), Probe: probe, Profile: prof, Q: q, Set: opts.Set,
+			Out: out, Date: m.now().Format("2006-01-02"), Log: log, Progress: func(p float64) { m.setProgress(it.ID, p) }}
+		r, err := m.cfg.Encoder.Encode(ctx, req)
 		m.mu.Lock()
 		m.encoding--
 		m.mu.Unlock()
@@ -326,7 +330,7 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 			return false
 		}
 		t = time.Now()
-		cr, err = m.cfg.Verifier.Check(ctx, src, out, log)
+		cr, err = m.cfg.Verifier.Check(ctx, src, out, markerValue(req), log)
 		if err == nil {
 			vm, err = m.cfg.Verifier.VMAF(ctx, src, out, probe, log)
 		}
@@ -415,6 +419,9 @@ func (m *Manager) keepSidecar(work string, h sidecarHead, perFrameTmp string) er
 	err = writeSidecar(f, h, perFrameTmp)
 	if cerr := f.Close(); err == nil {
 		err = cerr
+	}
+	if err == nil { // only a sidecar that parses counts as kept
+		err = checkGzipJSON(tmp)
 	}
 	if err == nil && perFrameTmp != "" {
 		_ = os.Remove(perFrameTmp)
