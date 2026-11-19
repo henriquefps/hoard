@@ -442,7 +442,8 @@ func (s *Store) CompressItems(ctx context.Context, q CompressItemQuery) ([]Compr
 		}
 	}
 	if q.PhysicalID != "" {
-		where = append(where, "job_id IN (SELECT id FROM compress_jobs WHERE target = 'phone' AND physical_id = ?)")
+		where = append(where, `job_id IN (SELECT id FROM compress_jobs WHERE target = 'phone') AND mirror_entry_id IN
+			(SELECT e.id FROM mirror_entries e WHERE e.physical_id = ?)`)
 		args = append(args, q.PhysicalID)
 	}
 	if q.Limit <= 0 {

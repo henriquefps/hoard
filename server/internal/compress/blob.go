@@ -257,10 +257,18 @@ func (m *Manager) PhoneItem(ctx context.Context, id int64, physicalID string) (s
 	if err != nil {
 		return it, err
 	}
-	if it.Source != "blob" || j.Target != TargetPhone || j.PhysicalID == "" || j.PhysicalID != physicalID {
+	if it.Source != "blob" || j.Target != TargetPhone || physicalID == "" {
 		return it, ErrNotPhoneItem
 	}
-	return it, nil
+	if j.PhysicalID == physicalID {
+		return it, nil
+	}
+	// A phone backup moved to another physical device (ADR 0017 claim) takes its entries along: the phone is the
+	// entry's.
+	if e, err := m.entryOf(ctx, it); err == nil && e.PhysicalID == physicalID {
+		return it, nil
+	}
+	return it, ErrNotPhoneItem
 }
 
 // OpenBlob opens a stored blob (the phone's download of an output).
