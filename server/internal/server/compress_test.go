@@ -480,8 +480,8 @@ func TestCompressPurgeByRetentionAndByTrash(t *testing.T) {
 		t.Fatalf("emptied by Hoard: %s", it.State)
 	}
 	// A's original: due after trashDays.
-	ch.st.Now = func() time.Time { return time.Now().Add(31 * 24 * time.Hour) }
-	defer func() { ch.st.Now = time.Now }()
+	ch.st.SetNow(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
+	defer func() { ch.st.SetNow(time.Now) }()
 	ch.srv.compress.Housekeeping(ctx)
 	it, _ := ch.st.CompressItem(ctx, items[0].ID)
 	if it.State != store.CompressPurged || exists(filepath.Join(ch.nas, items[0].TrashPath)) {
@@ -638,9 +638,9 @@ func TestCompressQualityAndGuards(t *testing.T) {
 	if d.State != store.CompressQueued || d.Reason != "encoder" || d.Attempts != 1 || d.NotBefore <= time.Now().UnixMilli() {
 		t.Fatalf("retry %+v", d)
 	}
-	ch.st.Now = func() time.Time { return time.Now().Add(time.Hour) }
+	ch.st.SetNow(func() time.Time { return time.Now().Add(time.Hour) })
 	ch.runAll()
-	ch.st.Now = time.Now
+	ch.st.SetNow(time.Now)
 	if d = byFP(fpOf["D.MP4"]); d.State != store.CompressReplaced {
 		t.Fatalf("after retry %+v", d)
 	}
@@ -788,7 +788,7 @@ func TestCompressQueue(t *testing.T) {
 	ch.nvml.mu.Lock()
 	ch.nvml.load = compress.GPULoad{}
 	ch.nvml.mu.Unlock()
-	ch.st.Now = func() time.Time { return time.Now().Add(2 * time.Minute) } // the busy minute has passed
+	ch.st.SetNow(func() time.Time { return time.Now().Add(2 * time.Minute) }) // the busy minute has passed
 	ch.srv.compress.SampleGPU(ctx)
 
 	// Paused job: its items wait.
@@ -826,7 +826,7 @@ func TestCompressQueue(t *testing.T) {
 	close(ch.enc.slow)
 	stop()
 	ch.srv.compress.Wait()
-	ch.st.Now = time.Now
+	ch.st.SetNow(time.Now)
 }
 
 // The night window holds automatic items only; a folder compressed automatically gets only the videos that appear after

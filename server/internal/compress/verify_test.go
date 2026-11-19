@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The Verifier with real ffmpeg on synthetic lavfi clips (CPU encoders, seconds). Skipped without ffmpeg/ffprobe;
@@ -245,5 +247,67 @@ func TestCompareInfoUnknownDuration(t *testing.T) {
 	}
 	if got := checkReason(compareInfo(verifyInfo{Duration: 10, Streams: []verifyStream{v}}, verifyInfo{Duration: 10, Streams: []verifyStream{v}})); got != "" {
 		t.Fatalf("equal: %q", got)
+	}
+}
+
+// damageLastAudioFrame overwrites the payload of a file's last AAC packet.
+func damageLastAudioFrame(t *testing.T, tl tools, p string) {
+	t.Helper()
+	out, err := exec.Command(tl.ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries", "packet=pos,size", "-of", "csv=p=0", p).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Fields(string(out))
+	var pos, size int64
+	// ffprobe prints the fields in its own order: size, then pos.
+	if _, err := fmt.Sscanf(strings.TrimSuffix(strings.ReplaceAll(lines[len(lines)-1], ",", " "), " "), "%d %d", &size, &pos); err != nil {
+		t.Fatalf("%q: %v", lines[len(lines)-1], err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := pos + 2; i < pos+size; i++ { // the payload after the first bytes
+		b[i] = 0xff
+	}
+	if err := os.WriteFile(p, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Re-review N3: a damaged last AAC frame the source already has (a copied track keeps it) does not fail the item; the
+// same damage only in the output does.
+func TestVerifierDamagedLastAudioFrame(t *testing.T) {
+	tl := needTools(t)
+	dir := t.TempDir()
+	v := &FFVerifier{FFmpeg: tl.ffmpeg, FFprobe: tl.ffprobe, Threads: 2}
+	ctx := context.Background()
+	clean := tl.make(t, filepath.Join(dir, "clean.mp4"), "-f", "lavfi", "-i", "testsrc2=s=320x180:r=30:d=6", "-f", "lavfi", "-i", "sine=f=440:d=6",
+		"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-shortest")
+	damaged := filepath.Join(dir, "damaged.mp4")
+	b, _ := os.ReadFile(clean)
+	if err := os.WriteFile(damaged, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	damageLastAudioFrame(t, tl, damaged)
+	if err := v.decode(ctx, time.Minute, nil, damaged, "0:a"); err == nil {
+		t.Skip("this ffmpeg decodes the damaged frame without an error")
+	}
+	reenc := []string{"-map", "0", "-c:a", "copy", "-c:v", "libx265", "-preset", "ultrafast", "-crf", "28", "-tag:v", "hvc1", "-x265-params", "log-level=error",
+		"-fps_mode", "passthrough", "-enc_time_base:v", "demux"}
+	// The source has the damage; the output copies it.
+	out := tl.make(t, filepath.Join(dir, "out.mp4"), append([]string{"-i", damaged}, reenc...)...)
+	var log bytes.Buffer
+	if err := v.Check(ctx, open(t, damaged), out, &log); err != nil {
+		t.Fatalf("inherited damage failed the check: %v\n%s", err, log.String())
+	}
+	if !strings.Contains(log.String(), "the source's audio has the same damage") {
+		t.Fatalf("not logged:\n%s", log.String())
+	}
+	// A clean source; only the output is damaged.
+	out2 := tl.make(t, filepath.Join(dir, "out2.mp4"), append([]string{"-i", clean}, reenc...)...)
+	damageLastAudioFrame(t, tl, out2)
+	if got := checkReason(v.Check(ctx, open(t, clean), out2, &bytes.Buffer{})); got != "verify_decode" {
+		t.Fatalf("damage only in the output: %q", got)
 	}
 }

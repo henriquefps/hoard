@@ -371,11 +371,26 @@ func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io
 	} else {
 		fmt.Fprintf(log, "check: frames %d = %d\n", va.NbFrames, vb.NbFrames)
 	}
-	// The whole output decodes without an error (spots of VMAF and equal frame counts do not prove that).
-	if _, err := v.run(ctx, 30*time.Minute, nil, nil, v.FFmpeg, "-hide_banner", "-nostdin", "-xerror", "-v", "error",
-		"-protocol_whitelist", "file", "-format_whitelist", probeFormats, "-i", out, "-map", "0:v:0", "-map", "0:a?", "-f", "null", "-"); err != nil {
+	// The whole output decodes without an error (spots of VMAF and equal frame counts do not prove that): the video with
+	// -xerror; the audio too, but a decode error there fails only when the source's audio decodes cleanly (camera files
+	// often end with a damaged AAC frame, which a copied track keeps).
+	timeout := 10*time.Minute + time.Duration(b.Duration*10*float64(time.Second))
+	if err := v.decode(ctx, timeout, nil, out, "0:v:0"); err != nil {
 		fmt.Fprintf(log, "check: decode: %v\n", err)
-		return &VerifyError{"decode", "the output does not decode cleanly: " + err.Error()}
+		return &VerifyError{"decode", "the output's video does not decode cleanly: " + err.Error()}
+	}
+	hasAudio := false
+	for _, st := range b.Streams {
+		hasAudio = hasAudio || st.Kind == "audio"
+	}
+	if hasAudio {
+		if err := v.decode(ctx, timeout, nil, out, "0:a"); err != nil {
+			if serr := v.decode(ctx, timeout, src, "", "0:a"); serr == nil {
+				fmt.Fprintf(log, "check: decode audio: %v\n", err)
+				return &VerifyError{"decode", "the output's audio does not decode cleanly: " + err.Error()}
+			}
+			fmt.Fprintf(log, "check: decode audio: %v (the source's audio has the same damage: kept)\n", err)
+		}
 	}
 	fmt.Fprintln(log, "check: full decode: ok")
 	if err := v.metaDiff(ctx, a, b, src, out, log); err != nil {
@@ -383,6 +398,17 @@ func (v *FFVerifier) Check(ctx context.Context, src *os.File, out string, log io
 		return err
 	}
 	return nil
+}
+
+// decode decodes the mapped streams of a file (src as descriptor 3, else path) to nothing, stopping at the first error.
+func (v *FFVerifier) decode(ctx context.Context, timeout time.Duration, src *os.File, path, mapping string) error {
+	in := path
+	if src != nil {
+		in = fdInput
+	}
+	_, err := v.run(ctx, timeout, src, nil, v.FFmpeg, "-hide_banner", "-nostdin", "-xerror", "-v", "error",
+		"-protocol_whitelist", "file", "-format_whitelist", probeFormats, "-i", in, "-map", mapping, "-f", "null", "-")
+	return err
 }
 
 // keyFFTags are container tags whose loss fails the check (capture time, place, camera).

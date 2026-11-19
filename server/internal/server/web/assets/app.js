@@ -153,7 +153,10 @@ async function renderStatus() {
   const s = await api("GET", "status");
   const c = s.counts, b = s.blobs || {};
   const metric = (label, value) => h("div.metric", h("div.eyebrow", label), h("div.value", value));
+  const ca = s.compressAttention || {};
   const errors = [...(s.folderErrors || []).map((f) => `${f.folder}: ${t("state" + cap(f.state))}`),
+    ...(ca.stalled ? [t("compressStalled", { n: num(ca.stalled), since: when(ca.stalledSince) })] : []),
+    ...(ca.untrackedTrash ? [t("compressUntracked", { n: num(ca.untrackedTrash) })] : []),
     ...(s.errors || []).slice().reverse().map((e) => `${when(e.at)} · ${e.route} · ${e.code || "internal"}`)];
   const settingsErr = h("p.error", { role: "alert" });
   const name = h("input.input", { value: s.settings.serverName, maxlength: 60 });
@@ -437,6 +440,7 @@ async function renderCompress() {
   const s = await api("GET", "compress");
   const g = s.gpu || {};
   const a = s.accounting || {};
+  const att = s.attention || {};
   const metric = (label, value, hint) => h("div.metric", h("div.eyebrow", label), h("div.value", value), hint ? h("div.meta", hint) : null);
   const save = async (body) => { try { await api("PUT", "compress/settings", body); toast(t("saved")); } catch (e) { toast(e.message); route(); } };
   const pause = h("input", { type: "checkbox", checked: s.pauseWhileBusy, onchange: () => save({ pauseWhileBusy: pause.checked }) });
@@ -464,6 +468,11 @@ async function renderCompress() {
       h("div.section-head", h("h2", t("compressTitle")),
         h("button.button", { icon: "arrows-clockwise", onclick: async () => { await api("POST", "compress/detect").catch(() => {}); route(); } }, t("compressCheck"))),
       h("p.muted", t("compressIntro")),
+      s.feature ? h("p", h("span.badge.ok", t("compressFeatureOn"))) : h("p", h("span.badge.warn", t("compressFeatureOff", {
+        why: !g.available ? t("compressNoGpu_" + (g.reason || "no_gpu")) : t("compressWrite_" + (s.writeProblem || "no_write_mount")) }))),
+      h("p.hint", t("compressHoardRule")),
+      att.stalled ? h("p", h("span.badge.bad", t("compressStalled", { n: num(att.stalled), since: when(att.stalledSince) }))) : null,
+      att.untrackedTrash ? h("p", h("span.badge.bad", t("compressUntracked", { n: num(att.untrackedTrash) }))) : null,
       h("div.list",
         h("div.row", icon(g.available ? "check" : "warning-circle"), h("div.main",
           h("div.name", g.available ? `${g.gpu || "GPU"} · ${t("compressDriver")} ${g.driver || "?"}` : t("compressNoGpu_" + (g.reason || "no_gpu"))),

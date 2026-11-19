@@ -49,6 +49,7 @@ CREATE TABLE compress_items (
     replace_step    TEXT NOT NULL DEFAULT '',   -- the replace or restore journal
     trash_path      TEXT,                       -- nas: the trashed file, relative to the folder
     replaced_at INTEGER, trashed_at INTEGER, purge_after INTEGER, purged_at INTEGER, restored_at INTEGER,
+    stalled_at      INTEGER,                    -- a journal waiting (write mount gone, an I/O error) since
     updated_at      INTEGER NOT NULL
 ) STRICT;
 CREATE INDEX compress_items_queue ON compress_items (priority, order_key DESC) WHERE state = 'queued';

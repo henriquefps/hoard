@@ -28,11 +28,15 @@ const (
 func (s *Server) compressInfo(ctx context.Context) map[string]any {
 	st := s.compress.Status()
 	var reason any
-	if !st.Available {
+	switch {
+	case !st.Available:
 		reason = st.Reason
+	case s.compress.WriteProblem() != "":
+		reason = s.compress.WriteProblem()
 	}
+	att, _ := s.store.CompressAttentionNow(ctx)
 	profiles := append([]compress.Profile{}, compress.Profiles...)
-	return map[string]any{"available": st.Available, "reason": reason, "gpu": st.GPU, "codecs": st.Codecs, "vmaf": st.VMAF,
+	return map[string]any{"available": s.compress.FeatureAvailable(), "reason": reason, "gpu": st.GPU, "attention": att, "codecs": st.Codecs, "vmaf": st.VMAF,
 		"cudaDecode": st.CUDADecode, "sessions": s.compress.Sessions(), "nasWrite": s.compress.NasWrite(), "offerAv1": s.compress.OfferAV1(ctx),
 		"trashDays": s.compress.TrashDays(ctx), "profiles": profiles,
 		"limits": map[string]any{"maxItemsPerJob": compressMaxItemsPerJob, "maxEstimate": compressMaxEstimate, "maxBatch": compressMaxBatch}}
@@ -164,8 +168,8 @@ func (s *Server) handleCompressEstimate(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if !s.compress.NasWrite() {
-		unavailable(w, r, "no_write_mount", "The server has no write mount for NAS folders (NAS_WRITE_ROOT).")
+	if p := s.compress.WriteProblem(); p != "" {
+		unavailable(w, r, p, "NAS videos cannot be replaced on this server: "+p+" (NAS_WRITE_ROOT, README \"GPU compression\").")
 		return
 	}
 	start := 0
@@ -259,8 +263,8 @@ func (s *Server) handleCompressJobCreate(w http.ResponseWriter, r *http.Request)
 		fail(w, r, http.StatusServiceUnavailable, "storage_not_configured", "Choose a backup folder on the setup page first.", nil)
 		return
 	}
-	if !s.compress.NasWrite() {
-		unavailable(w, r, "no_write_mount", "The server has no write mount for NAS folders (NAS_WRITE_ROOT).")
+	if p := s.compress.WriteProblem(); p != "" {
+		unavailable(w, r, p, "NAS videos cannot be replaced on this server: "+p+" (NAS_WRITE_ROOT, README \"GPU compression\").")
 		return
 	}
 	// The selection as stored: an automatic folder is matched on it (one switch per folder).

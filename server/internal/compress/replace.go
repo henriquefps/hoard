@@ -32,10 +32,11 @@ type Linker func(root *os.Root, oldname, newname string) error
 
 // Errors of the write mount.
 var (
-	ErrNoWriteMount = errors.New("no write mount")
-	ErrNotWritable  = errors.New("folder not writable")
-	ErrChanged      = errors.New("source changed")
-	ErrCrossDevice  = errors.New("trash on another filesystem")
+	ErrUnstableInode = errors.New("the write mount does not keep inode numbers stable (CIFS without serverino, FUSE)")
+	ErrNoWriteMount  = errors.New("no write mount")
+	ErrNotWritable   = errors.New("folder not writable")
+	ErrChanged       = errors.New("source changed")
+	ErrCrossDevice   = errors.New("trash on another filesystem")
 )
 
 // WriteMount maps NAS folders under ReadRoot (the read-only mount the walk uses) to the same relative path under
@@ -52,6 +53,23 @@ func (m *WriteMount) Available() bool {
 	}
 	fi, err := os.Stat(m.WriteRoot)
 	return err == nil && fi.IsDir()
+}
+
+// Usable reports why the write mount cannot be used ("" when it can): no_write_mount (absent), write_mount_mismatch
+// (not the same directory as the read mount), write_mount_read_only (not writable for the server's user).
+func (m *WriteMount) Usable() string {
+	if !m.Available() {
+		return "no_write_mount"
+	}
+	r, err1 := os.Stat(m.ReadRoot)
+	w, err2 := os.Stat(m.WriteRoot)
+	if err1 != nil || err2 != nil || !sameFile(r, w) {
+		return "write_mount_mismatch"
+	}
+	if syscall.Access(m.WriteRoot, 2 /* W_OK */) != nil {
+		return "write_mount_read_only"
+	}
+	return ""
 }
 
 // Folder opens the write path of a NAS folder whose read path is readDir, after proving it: the same directory
@@ -214,16 +232,70 @@ func (f *Folder) ProbeTrash(rel string) error {
 		return fmt.Errorf("%w: %w", ErrNotWritable, err)
 	}
 	if file != nil {
-		file.Close()
+		_ = file.Close()
 	}
-	if err := f.root.Remove(probe); err != nil {
-		return fmt.Errorf("%w: %w", ErrNotWritable, err)
+	// The journals compare inode numbers (the trash link is the path's own file): they must be stable on this mount.
+	stable, err := f.inodeProbe(probe)
+	_ = f.root.Remove(probe + ".l")
+	if rerr := f.root.Remove(probe); rerr != nil && err == nil {
+		err = fmt.Errorf("%w: %w", ErrNotWritable, rerr)
+	}
+	if err != nil {
+		return err
+	}
+	if !stable {
+		return ErrUnstableInode
 	}
 	if f.probed == nil {
 		f.probed = map[string]bool{}
 	}
 	f.probed[troot] = true
 	return nil
+}
+
+// inodeProbe links (or, without hard links, renames and renames back) a probe file and checks that every name and every
+// later look report the same inode.
+func (f *Folder) inodeProbe(probe string) (bool, error) {
+	ino := func(p string) (uint64, error) {
+		st, err := f.Stat(p, false)
+		if err == nil && !st.Exists {
+			err = fs.ErrNotExist
+		}
+		if err != nil {
+			return 0, fmt.Errorf("%w: probe of %s: %w", ErrNotWritable, p, err)
+		}
+		return st.Ino, nil
+	}
+	a, err := ino(probe)
+	if err != nil {
+		return false, err
+	}
+	other := probe + ".l"
+	err = f.link(f.root, probe, other)
+	renamed := false
+	if err != nil {
+		if !errors.Is(err, syscall.EPERM) && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EOPNOTSUPP) && !errors.Is(err, syscall.EXDEV) {
+			return false, fmt.Errorf("%w: probe link %w", ErrNotWritable, err)
+		}
+		if err := f.root.Rename(probe, other); err != nil {
+			return false, fmt.Errorf("%w: probe rename %w", ErrNotWritable, err)
+		}
+		renamed = true
+	}
+	b, err := ino(other)
+	if err != nil {
+		return false, err
+	}
+	if renamed {
+		if err := f.root.Rename(other, probe); err != nil {
+			return false, fmt.Errorf("%w: probe rename %w", ErrNotWritable, err)
+		}
+	}
+	c, err := ino(probe)
+	if err != nil {
+		return false, err
+	}
+	return a != 0 && a == b && b == c, nil
 }
 
 // TempName is the hidden temporary file of a replace, next to its target (a dot name the walk and Hoard never list).

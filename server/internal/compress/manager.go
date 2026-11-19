@@ -74,6 +74,8 @@ type Manager struct {
 	samples  []busySample
 	probing  map[string]bool
 	journal  map[int64]bool // items whose journal runs now (Settle)
+	// mountProblem: a folder's probe found the write mount unusable (unstable_inode); cleared by Detect.
+	mountProblem string
 
 	gpu  chan struct{}
 	cpu  chan struct{}
@@ -143,6 +145,29 @@ func (m *Manager) Available() bool { return m.Status().Available }
 // NasWrite reports whether the write mount exists.
 func (m *Manager) NasWrite() bool { return m.cfg.Mount.Available() }
 
+// WriteProblem says why NAS videos cannot be replaced ("" when they can): the write mount's own state, or an unstable
+// inode seen by a folder's probe (until the next "Check again").
+func (m *Manager) WriteProblem() string {
+	if m.cfg.Mount == nil {
+		return "no_write_mount"
+	}
+	if p := m.cfg.Mount.Usable(); p != "" {
+		return p
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.mountProblem
+}
+
+// FeatureAvailable is the feature "compress": a working GPU and a usable write mount (ADR 0025 Amendment (S1)).
+func (m *Manager) FeatureAvailable() bool { return m.Available() && m.WriteProblem() == "" }
+
+func (m *Manager) setMountProblem(p string) {
+	m.mu.Lock()
+	m.mountProblem = p
+	m.mu.Unlock()
+}
+
 // Detect runs the GPU check now.
 func (m *Manager) Detect(ctx context.Context) GPUStatus {
 	if m.cfg.Detector == nil {
@@ -152,6 +177,7 @@ func (m *Manager) Detect(ctx context.Context) GPUStatus {
 	m.mu.Lock()
 	was := m.status.Available
 	m.status = st
+	m.mountProblem = ""
 	m.mu.Unlock()
 	if st.Available != was || !st.Available {
 		m.log.Info("compress: gpu check", "available", st.Available, "reason", st.Reason, "gpu", st.GPU, "driver", st.Driver,

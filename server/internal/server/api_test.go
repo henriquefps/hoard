@@ -75,7 +75,7 @@ func TestPairingTokenIsOneTimeAndExpires(t *testing.T) {
 
 	w = hs.do("POST", "/admin/api/pairings", map[string]any{"url": "http://192.168.1.10:3071"}, adminHeaders())
 	token = decode(t, w)["token"].(string)
-	hs.st.Now = func() time.Time { return time.Now().Add(11 * time.Minute) }
+	hs.st.SetNow(func() time.Time { return time.Now().Add(11 * time.Minute) })
 	hs.cookie = nil
 	expect(t, hs.do("POST", "/v1/pair", map[string]any{"token": token, "deviceName": "Late", "platform": "android"}, remote("203.0.113.10:1")), 401, "invalid_pairing_token")
 }

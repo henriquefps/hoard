@@ -538,7 +538,11 @@ Items: a compression's output item gains `"compressed": {"from", "fromItem", "pr
 "trashed" | "purged", "originalSize", "metaSidecar"}`; a trashed item whose file a compression replaced (and an output
 trashed by a restore) gains `"compressedTo"` and `"replacedBy"` (the live item: edits move and culling records are sent
 again, as for a tombstone, ADR 0014/0020/0016), served whole with `include=trash`; without it, its tombstone shape
-carries `replacedBy`. A purged original is a tombstone with `replacedBy`. `GET /v1/originals/{fingerprint}` and the
+carries `replacedBy`. A purged original is a tombstone with `replacedBy`. A trash location an unfinished compression
+journal holds carries `"held": true`: clients must not empty it. `features` lists `compress` only with a working GPU and
+a usable write mount; `compress.reason` says why not (`no_gpu`, `no_tools`, `no_write_mount`, `write_mount_mismatch`,
+`write_mount_read_only`, `unstable_inode`), and `compress.attention` counts waiting journals (`stalled`,
+`stalledSince`) and originals left untracked in a trash (`untrackedTrash`). `GET /v1/originals/{fingerprint}` and the
 fingerprint lookup find a trashed original until it is purged. The server writes the NAS only through the write mount,
 for these replaces, restores and purges (ADR 0025 "Containment"); every other write rule of ADR 0023 holds.
 

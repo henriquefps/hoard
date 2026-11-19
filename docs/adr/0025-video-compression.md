@@ -1023,3 +1023,30 @@ Phase S1 (hoard-server 0.13.0) as built; each point is a detail the text above l
   replaced file keeps the original's group when the server's user may set it; directories are fsynced after each link,
   rename and unlink; the purge guard checks path segments; both mount paths are resolved through symlinks; a restore
   request never blocks on a full queue; selections never pick a copy inside a `.hoard-*` folder.
+- **Re-review (PR #71, second pass).**
+  - *A purge's live-copy check* counts only live, indexed NAS files outside any trash or `.hoard-*` folder: an output
+    trashed by hand is no live copy, so the original stays.
+  - *Waiting journals are visible and their trash entries held.* `compress_items` gains `stalled_at` (added to the
+    unreleased `0012_compress.sql`): when a journal first waits. `GET /v1/server`'s `compress` object, the setup page's
+    Compression tab and its Status errors show `attention: {stalled, stalledSince, untrackedTrash}`. Every trash entry
+    an unfinished journal holds (a `replacing` row's `trash_path`, and the file a restore moved, named in its step) is
+    served as `"held": true` on its item's trash location. **Contract for clients:** Hoard's Empty and auto-empty
+    must leave held entries (Hoard 2.7.0, phase A1, implements it); the server's own purge and `trashDays` only ever act
+    on `replaced`/`restored` rows, never on a held entry. **Deployment rule:** add the write mount only once every
+    device runs a Hoard that honours `held` (2.7.0+): Hoard 2.6.x auto-empties `.hoard-trash` over SMB without it.
+  - *The feature needs the write mount.* `features` lists `compress`, and `compress.available` is true, only with a
+    working GPU **and** a usable write mount: present, the same directory as `/mnt/nas`, writable for the server's user,
+    and with stable inode numbers. A folder's first replace links (or renames) a probe file in its `.hoard-trash` and
+    checks that every name reports the same inode; when it does not (CIFS without `serverino`, FUSE), the item fails
+    `not_writable` and the feature is off (`reason: unstable_inode`) until "Check again". `compress.reason` gains
+    `no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`.
+  - *Nothing moved, nothing waits.* Without the write mount, a purge, a restore at its check step and a replace at
+    its check or copy step go back to where they were (`replaced`/`restored` with `reason: not_writable`, or `ready`
+    tried again a minute later); only a journal that already moved a file waits.
+  - *The full-decode gate* has a timeout that scales with the duration (as VMAF's) and applies `-xerror` to the video;
+    an audio decode error fails the item only when the source's audio decodes cleanly (a copied track keeps a camera's
+    damaged last AAC frame).
+  - *Smaller.* An original a failed replace leaves in the trash (another file took its path) keeps its `trash_path` on
+    the failed row, is logged loudly and counted as `untrackedTrash`; a purge whose journal the housekeeping runs at that
+    moment answers `busy`; the background probe never caches "unreadable" for a file that vanished during a rename; the
+    store's clock is safe for concurrent use (tests).

@@ -68,7 +68,13 @@ func (s *Server) handleAdminCompress(w http.ResponseWriter, r *http.Request) {
 	for i := len(recent) - 1; i >= 0 && len(items) < 50; i-- {
 		items = append(items, s.compressItemJSON(recent[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"gpu": s.compress.Status(), "nasWrite": s.compress.NasWrite(), "sessions": s.compress.Sessions(),
+	att, err := s.store.CompressAttentionNow(ctx)
+	if err != nil {
+		s.internal(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"gpu": s.compress.Status(), "nasWrite": s.compress.NasWrite(), "writeProblem": s.compress.WriteProblem(),
+		"feature": s.compress.FeatureAvailable(), "attention": att, "sessions": s.compress.Sessions(),
 		"pauseWhileBusy": s.compress.PauseWhileBusy(ctx), "window": s.compress.Window(ctx), "offerAv1": s.compress.OfferAV1(ctx),
 		"trashDays": s.compress.TrashDays(ctx), "accounting": acc, "jobs": list, "items": items})
 }

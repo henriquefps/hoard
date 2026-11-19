@@ -372,11 +372,11 @@ func TestPreviewStaleFailedAndDeleted(t *testing.T) {
 	}
 	gen.fail[pairFP] = fmt.Errorf("vips: crashed")
 	expect(t, hs.do("GET", "/v1/items/"+ids["PAIR.ARW"]+"/preview", nil, bearer(key)), http.StatusAccepted, "")
-	hs.st.Now = func() time.Time { return time.Now().Add(7 * time.Hour) } // past every retry delay
+	hs.st.SetNow(func() time.Time { return time.Now().Add(7 * time.Hour) }) // past every retry delay
 	if n := work(t, hs, previews.JobImage); n != 3 {
 		t.Fatalf("attempts %d, want 3", n)
 	}
-	hs.st.Now = time.Now
+	hs.st.SetNow(time.Now)
 	expect(t, hs.do("GET", "/v1/items/"+ids["PAIR.ARW"]+"/preview", nil, bearer(key)), 404, "preview_unavailable")
 
 	// Deleted: the item becomes a tombstone, the scan removes its row and files.

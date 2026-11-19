@@ -288,8 +288,8 @@ func (m *Manager) probeLater(cands []Candidate) {
 				f, _, err := m.openNas(ctx, store.CompressItem{FolderID: c.FolderID, RelPath: c.RelPath, Size: c.Size, Fingerprint: c.Fingerprint})
 				if err != nil {
 					b, _ := json.Marshal(Probe{Unreadable: true})
-					if errors.Is(err, ErrChanged) {
-						return // the walk will see the change
+					if errors.Is(err, ErrChanged) || errors.Is(err, os.ErrNotExist) {
+						return // moved or changed (a rename in progress): the walk will see it; nothing is cached
 					}
 					_ = m.cfg.Store.PutVideoProbe(ctx, c.Fingerprint, ProbeVersion, b)
 					return
@@ -458,7 +458,7 @@ func (m *Manager) autoAppend(ctx context.Context) error {
 		var fps []string
 		seen := map[string]bool{}
 		for _, v := range list {
-			if v.CreatedAt < j.CreatedAt || v.Kind != "video" || seen[v.ItemID] || IsSyncArtifact(v.RelPath) || inHoardDir(v.RelPath) {
+			if v.CreatedAt <= j.CreatedAt || v.Kind != "video" || seen[v.ItemID] || IsSyncArtifact(v.RelPath) || inHoardDir(v.RelPath) {
 				continue
 			}
 			seen[v.ItemID] = true

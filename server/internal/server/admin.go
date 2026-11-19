@@ -322,9 +322,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	head, _ := s.store.HeadRev(ctx)
+	// Video compression that needs the owner's eye (ADR 0025): journals waiting, originals left untracked in a trash.
+	att, _ := s.store.CompressAttentionNow(ctx)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": s.cfg.Version, "serverId": s.serverID, "counts": counts, "blobs": blobs, "revision": head,
-		"storageConfigured": s.blobStore() != nil, "indexing": s.indexer.Running(), "folderErrors": folderErrors,
+		"storageConfigured": s.blobStore() != nil, "indexing": s.indexer.Running(), "folderErrors": folderErrors, "compressAttention": att,
 		"errors": s.recentErrors(), "settings": s.settings(ctx), "direct": s.localRequest(r),
 	})
 }

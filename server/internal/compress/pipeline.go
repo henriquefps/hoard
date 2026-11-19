@@ -91,6 +91,9 @@ func (m *Manager) fileHDR(ctx context.Context, fp string) string {
 
 // save writes an item when its stored state is one of from; false means it was cancelled meanwhile.
 func (m *Manager) save(ctx context.Context, it *store.CompressItem, from ...string) bool {
+	if it.State != store.CompressReplacing {
+		it.StalledAt = nil // a journal that ended waits no more
+	}
 	ok, err := m.cfg.Store.SaveCompressItem(context.WithoutCancel(ctx), *it, from...)
 	if err != nil {
 		m.log.Error("compress: save item", "item", it.ID, "err", err)

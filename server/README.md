@@ -276,6 +276,14 @@ original; a trashed item's tombstone shape for older clients carries `replacedBy
 them. **Back up `data/` before upgrading**: 0.12.x refuses a schema-12 database. To compress, switch to the `-nvidia`
 image as described above (it runs as the library owner's uid: chown `data/` and the backup folder to it first).
 
+**Add the write mount (`/mnt/nas-write`) only once every device runs Hoard 2.7.0 or later.** A compression whose
+replace has to wait (the NAS went away between two steps) keeps its original in `.hoard-trash`, marked `held` on the
+item; Hoard 2.7.0 and later leave held files when they empty the trash, older Hoard (2.6.x empties `.hoard-trash` over
+SMB on its own) does not know the mark and could delete that original. Without the write mount the feature `compress`
+stays off and nothing is written; the setup page's Compression tab says why it is off. The feature also stays off when
+the write mount is not the same directory as `/mnt/nas`, is read-only for the server's user, or does not keep inode
+numbers stable (a CIFS mount without `serverino`, some FUSE file systems).
+
 ## Upgrading to 0.12.1 (verify can demand a fresh re-hash)
 
 0.12.1 adds an optional `maxAge` (milliseconds) to `POST /v1/backup/verify`, for Hoard's "Free up space": a stored

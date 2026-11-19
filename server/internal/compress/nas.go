@@ -89,10 +89,17 @@ func (m *Manager) release(id int64) {
 // journalRetry.
 func (m *Manager) stall(ctx context.Context, it *store.CompressItem, log io.Writer, err error) {
 	fmt.Fprintf(log, "%s: waiting (%v): tried again later\n", it.ReplaceStep, err)
+	first := it.StalledAt == nil
 	it.Reason = ReasonNotWritable
 	it.NotBefore = m.now().Add(journalRetry).UnixMilli()
+	if first {
+		it.StalledAt = i64(m.now().UnixMilli())
+	}
 	m.save(ctx, it, store.CompressReplacing)
 	m.log.Warn("compress: journal waits", "item", it.ID, "step", stepName(it.ReplaceStep), "err", errorClass(err))
+	if first && m.cfg.Refresh != nil { // its trashed file is now held (Location.held) for clients
+		m.cfg.Refresh(context.WithoutCancel(ctx), []string{it.Fingerprint, it.OutFingerprint})
+	}
 }
 
 // stepName is a journal step without its path (for the server log).
@@ -118,20 +125,32 @@ func errorClass(err error) string {
 	}
 }
 
-// Settle runs (or resumes) the journal of a replacing item: a replace, a restore, a restore again or a purge.
-func (m *Manager) Settle(ctx context.Context, it store.CompressItem) {
-	if it.State != store.CompressReplacing || it.Source != "nas" || !m.claim(it.ID) {
-		return
+// Settle runs (or resumes) the journal of a replacing item: a replace, a restore, a restore again or a purge. It
+// reports false when another goroutine runs that journal now.
+func (m *Manager) Settle(ctx context.Context, it store.CompressItem) bool {
+	if it.State != store.CompressReplacing || it.Source != "nas" {
+		return true
+	}
+	if !m.claim(it.ID) {
+		return false
 	}
 	defer m.release(it.ID)
 	// The row may have moved on since it was read.
 	cur, err := m.cfg.Store.CompressItem(ctx, it.ID)
 	if err != nil || cur.State != store.CompressReplacing {
-		return
+		return true
 	}
 	it = cur
 	log := m.itemLog(it)
 	defer func() { _ = log.Close() }()
+	if it.StalledAt != nil {
+		// A journal that waited and now ended releases its held trash entries.
+		defer func() {
+			if after, err := m.cfg.Store.CompressItem(ctx, it.ID); err == nil && after.StalledAt == nil && m.cfg.Refresh != nil {
+				m.cfg.Refresh(context.WithoutCancel(ctx), []string{it.Fingerprint, it.OutFingerprint})
+			}
+		}()
+	}
 	switch {
 	case strings.HasPrefix(it.ReplaceStep, "purge:"):
 		m.runPurge(ctx, &it, log)
@@ -140,6 +159,7 @@ func (m *Manager) Settle(ctx context.Context, it store.CompressItem) {
 	default:
 		m.runReplace(ctx, &it, log)
 	}
+	return true
 }
 
 // replaceReady starts the replace of a ready NAS item (its verified output checked again first).
@@ -175,17 +195,31 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 		m.removeWork(it.ID)
 		m.log.Info("compress: replace", "item", it.ID, "state", it.State, "reason", reason)
 	}
-	f, err := m.folder(ctx, it.FolderID)
-	if err != nil {
-		f = nil
-		m.stall(ctx, it, log, err)
-		return
-	}
-	defer func() { _ = f.Close() }()
 	step := it.ReplaceStep
 	if step == "" {
 		step = "replace:check"
 	}
+	// Nothing moved yet (check, copy): an unavailable write mount sends the item back to ready, tried again later.
+	notYet := func(err error) {
+		fmt.Fprintf(log, "replace: write mount unavailable before anything moved (%v): ready again\n", err)
+		if f != nil {
+			_ = f.Remove(tmp)
+		}
+		it.State, it.Reason, it.ReplaceStep, it.TrashPath = store.CompressReady, ReasonNotWritable, "", ""
+		it.NotBefore = m.now().Add(journalRetry).UnixMilli()
+		m.save(ctx, it, store.CompressReplacing)
+	}
+	f, err := m.folder(ctx, it.FolderID)
+	if err != nil {
+		f = nil
+		if step == "replace:check" || step == "replace:copy" {
+			notYet(err)
+		} else {
+			m.stall(ctx, it, log, err)
+		}
+		return
+	}
+	defer func() { _ = f.Close() }()
 	if step == "replace:check" || step == "replace:copy" {
 		work, ok := m.workOutput(*it)
 		if !ok { // nothing moved yet: the output is made again
@@ -203,7 +237,7 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 		cur, err := f.Stat(it.RelPath, true)
 		ofi, oerr := os.Stat(work)
 		if err != nil || oerr != nil {
-			m.stall(ctx, it, log, errors.Join(err, oerr))
+			notYet(errors.Join(err, oerr))
 			return
 		}
 		// The original: the queued fingerprint and size, and the mtime the output carries (the original's).
@@ -212,6 +246,10 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 			return
 		}
 		if err := f.ProbeTrash(it.RelPath); err != nil {
+			if errors.Is(err, ErrUnstableInode) {
+				m.setMountProblem("unstable_inode")
+				m.log.Error("compress: the write mount does not keep inode numbers stable: compression is turned off", "item", it.ID)
+			}
 			fail(ReasonNotWritable, err)
 			return
 		}
@@ -227,7 +265,7 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 		}
 		lfi, err := f.root.Lstat(it.RelPath)
 		if err != nil {
-			m.stall(ctx, it, log, err)
+			notYet(err)
 			return
 		}
 		if err := f.CopyIn(work, tmp, it.OutSHA256, lfi, cur.MTime); err != nil {
@@ -339,8 +377,14 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 			fail(ReasonSourceChanged, errors.New("the file at the path was written to during the replace"))
 			return
 		}
-		fmt.Fprintln(log, "replace: another file took the path; the original stays in the trash as a trashed file")
+		// The original stays in the trash as an ordinary trashed file: kept in trash_path of this failed row, counted in
+		// the status ("untracked originals in the trash") and logged loudly.
+		fmt.Fprintf(log, "replace: ANOTHER FILE TOOK THE PATH; THE ORIGINAL IS LEFT IN THE TRASH AT %s (restore it by hand if needed)\n", it.TrashPath)
+		m.log.Warn("compress: an original was left in the trash: another file took its path during the replace", "job", it.JobID, "item", it.ID)
+		kept := it.TrashPath
 		fail(ReasonSourceChanged, errors.New("another file took the path during the replace"))
+		it.TrashPath = kept
+		m.save(ctx, it, store.CompressFailed)
 		return
 	default: // the path is the original (a link) or empty (a rename): swap
 		if err := f.Swap(tmp, it.RelPath); err != nil {
@@ -491,7 +535,11 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 	}
 	f, err := m.folder(ctx, it.FolderID)
 	if err != nil {
-		m.stall(ctx, it, log, err)
+		if stepName == "check" { // nothing moved yet: back as it was
+			abort(ReasonNotWritable, err)
+		} else {
+			m.stall(ctx, it, log, err)
+		}
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -502,7 +550,7 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 		tst, err1 := f.Stat(it.TrashPath, true)
 		live, err2 := f.Stat(it.RelPath, true)
 		if err := errors.Join(err1, err2); err != nil {
-			m.stall(ctx, it, log, err)
+			abort(ReasonNotWritable, err)
 			return
 		}
 		if !tst.Exists || tst.Fingerprint != trashedFP {
@@ -516,7 +564,7 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 		newTrash = ""
 		if live.Exists {
 			if newTrash, err = f.TrashPath(it.RelPath, m.now()); err != nil {
-				m.stall(ctx, it, log, err)
+				abort(ReasonNotWritable, err)
 				return
 			}
 		}
@@ -654,14 +702,14 @@ func (m *Manager) purgeNow(ctx context.Context, ids []int64, why string) []Resto
 			out = append(out, RestoreAnswer{ID: id, State: it.State, Error: "state"})
 			continue
 		}
-		m.Settle(ctx, it)
+		ran := m.Settle(ctx, it)
 		after, err := m.cfg.Store.CompressItem(ctx, id)
 		a := RestoreAnswer{ID: id, State: after.State}
 		switch {
 		case err != nil:
 			a.Error = "not_found"
-		case after.State == store.CompressReplacing:
-			a.Error = ReasonNotWritable
+		case !ran || after.State == store.CompressReplacing:
+			a.Error = "busy" // the housekeeping runs this purge right now
 		case after.State != store.CompressPurged:
 			a.Error = after.Reason
 		}
@@ -674,7 +722,8 @@ func (m *Manager) purgeNow(ctx context.Context, ids []int64, why string) []Resto
 }
 
 // runPurge deletes the trashed file of an item claimed for a purge. The live side must still exist (at its path, or
-// as another live NAS copy): the trashed file is never deleted when it may be the only copy left.
+// as another live NAS copy): the trashed file is never deleted when it may be the only copy left. Nothing moves before
+// the unlink, so any error sends the item back to its previous state (a purge is never left waiting).
 func (m *Manager) runPurge(ctx context.Context, it *store.CompressItem, log io.Writer) {
 	prev := strings.TrimPrefix(it.ReplaceStep, "purge:")
 	back := func(reason string, err error) {
@@ -693,14 +742,14 @@ func (m *Manager) runPurge(ctx context.Context, it *store.CompressItem, log io.W
 	if it.TrashPath != "" {
 		f, err := m.folder(ctx, it.FolderID)
 		if err != nil {
-			m.stall(ctx, it, log, err)
+			back(ReasonNotWritable, err)
 			return
 		}
 		defer func() { _ = f.Close() }()
 		tst, err1 := f.Stat(it.TrashPath, true)
 		cur, err2 := f.Stat(it.RelPath, true)
 		if err := errors.Join(err1, err2); err != nil {
-			m.stall(ctx, it, log, err)
+			back(ReasonNotWritable, err)
 			return
 		}
 		if tst.Exists {
@@ -711,7 +760,7 @@ func (m *Manager) runPurge(ctx context.Context, it *store.CompressItem, log io.W
 			if !cur.Exists || cur.Fingerprint != liveFP {
 				elsewhere, err := m.cfg.Store.LiveNasCopy(ctx, liveFP, it.FolderID, it.RelPath)
 				if err != nil {
-					m.stall(ctx, it, log, err)
+					back(ReasonNotWritable, err)
 					return
 				}
 				if !elsewhere {
@@ -720,7 +769,7 @@ func (m *Manager) runPurge(ctx context.Context, it *store.CompressItem, log io.W
 				}
 			}
 			if err := f.Purge(it.TrashPath); err != nil {
-				m.stall(ctx, it, log, err)
+				back(ReasonNotWritable, err)
 				return
 			}
 		}

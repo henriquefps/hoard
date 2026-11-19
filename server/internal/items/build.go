@@ -25,12 +25,15 @@ type Location struct {
 	DeviceName       string `json:"deviceName,omitempty"`
 	RootID           string `json:"rootId,omitempty"`
 	Volume           string `json:"volume,omitempty"`
-	Path             string `json:"path,omitempty"`       // nas: relative to the folder, '/'-separated (in a trash: the original path)
-	Trash            string `json:"trash,omitempty"`      // nas, in a trash (ADR 0023): where the file is now, relative to the folder
-	ModifiedAt       int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms; mirror: the phone's
-	OnDevice         *bool  `json:"onDevice,omitempty"`   // mirror: false once the phone no longer has the file
-	Gone             string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted
-	SHA256           string `json:"sha256,omitempty"`     // backup: the blob
+	Path             string `json:"path,omitempty"`  // nas: relative to the folder, '/'-separated (in a trash: the original path)
+	Trash            string `json:"trash,omitempty"` // nas, in a trash (ADR 0023): where the file is now, relative to the folder
+	// Held (ADR 0025, re-review N2): an unfinished compression journal holds this trashed file (an original whose
+	// replace waits, or what a restore moved). Hoard's Empty and auto-empty leave it, and so does the server.
+	Held       bool   `json:"held,omitempty"`
+	ModifiedAt int64  `json:"modifiedAt,omitempty"` // nas: the file's mtime, Unix ms; mirror: the phone's
+	OnDevice   *bool  `json:"onDevice,omitempty"`   // mirror: false once the phone no longer has the file
+	Gone       string `json:"gone,omitempty"`       // mirror, off the phone: freed | deleted
+	SHA256     string `json:"sha256,omitempty"`     // backup: the blob
 }
 
 func sameLocation(a, b Location) bool {

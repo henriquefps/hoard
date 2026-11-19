@@ -2537,10 +2537,22 @@ components:
           items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash, backup, compress] }
         compress:
           type: object
-          description: "Video compression (ADR 0025, 0.13.0): present with the feature or when jobs exist (`available: false` then)."
+          description: >-
+            Video compression (ADR 0025, 0.13.0): present with a GPU, the feature or jobs. `available` (and the feature
+            `compress`) needs a working GPU and a usable write mount; `reason` says why not.
           properties:
             available: { type: boolean }
-            reason: { type: string, nullable: true, enum: [no_gpu, no_tools, null] }
+            reason:
+              type: string
+              nullable: true
+              enum: [no_gpu, no_tools, no_write_mount, write_mount_mismatch, write_mount_read_only, unstable_inode, null]
+            attention:
+              type: object
+              description: "Journals waiting (the write mount was unavailable) since the oldest, and originals a failed replace left untracked in a trash"
+              properties:
+                stalled: { type: integer }
+                stalledSince: { type: integer, format: int64, nullable: true }
+                untrackedTrash: { type: integer }
             gpu: { type: string }
             codecs: { type: array, items: { type: string, enum: [hevc, av1] } }
             vmaf: { type: boolean }
@@ -2668,6 +2680,11 @@ components:
         trash:
           type: string
           description: "nas, with include=trash only (0.11.0, ADR 0023): the file is in a trash, at this path relative to the folder (`<P>/.hoard-trash/<day>/<R>`)"
+        held:
+          type: boolean
+          description: >-
+            0.13.0 (ADR 0025): this trashed file is held by an unfinished compression journal (an original whose replace
+            waits, or what a restore moved). Clients must not empty it (Empty, auto-empty) while held; absent otherwise.
         modifiedAt: { type: integer, description: "nas: the file's mtime; mirror: the phone's; Unix ms" }
         sha256: { type: string, description: "backup: the uploaded blob" }
     ItemFile:

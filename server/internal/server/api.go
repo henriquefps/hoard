@@ -187,7 +187,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	out["backup"] = map[string]any{"maxRoots": backupMaxRoots, "maxReportEntries": backupMaxReport, "maxVerify": backupMaxVerify,
 		"maxPath": mirror.MaxPath}
 	// Video compression (ADR 0025, 0.13.0): present with the feature or with jobs.
-	if s.compress.Available() || s.compressHasJobs(r.Context()) {
+	if s.compress.FeatureAvailable() || s.compress.Available() || s.compressHasJobs(r.Context()) {
 		out["compress"] = s.compressInfo(r.Context())
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -207,7 +207,7 @@ func (s *Server) features() []string {
 		f = append(f, "edits")
 	}
 	f = append(f, "trash", "backup")
-	if s.compress != nil && s.compress.Available() {
+	if s.compress != nil && s.compress.FeatureAvailable() { // a GPU and a usable write mount (ADR 0025 Amendment (S1))
 		f = append(f, "compress")
 	}
 	return f

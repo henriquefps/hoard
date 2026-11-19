@@ -212,6 +212,27 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		d        Data
 	}
 	var trashedLater []trashedItem
+	held := map[string]map[string]bool{} // folder -> trash paths an unfinished compression journal holds
+	markHeld := func(d *Data) error {
+		for i := range d.Files {
+			for j := range d.Files[i].Locations {
+				l := &d.Files[i].Locations[j]
+				if l.Trash == "" {
+					continue
+				}
+				h, ok := held[l.FolderID]
+				if !ok {
+					var err error
+					if h, err = tx.HeldTrash(l.FolderID); err != nil {
+						return err
+					}
+					held[l.FolderID] = h
+				}
+				l.Held = h[l.Trash]
+			}
+		}
+		return nil
+	}
 	queued := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		queued[id] = true
@@ -261,6 +282,9 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		if !ok {
 			dead = append(dead, id)
 			continue
+		}
+		if err := markHeld(&d); err != nil {
+			return n, err
 		}
 		if trashed && d.Kind == KindVideo { // after the live ones: its heir may be one of them
 			trashedLater = append(trashedLater, trashedItem{id, main, d})

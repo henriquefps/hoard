@@ -17,7 +17,7 @@ func openTest(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	s.Now = func() time.Time { return time.UnixMilli(1_000_000) }
+	s.SetNow(func() time.Time { return time.UnixMilli(1_000_000) })
 	return s
 }
 

@@ -95,6 +95,7 @@ type CompressItem struct {
 	PurgeAfter     *int64
 	PurgedAt       *int64
 	RestoredAt     *int64
+	StalledAt      *int64 // a journal waiting since (nil: not waiting)
 	UpdatedAt      int64
 }
 
@@ -116,7 +117,7 @@ const compressItemCols = `id, job_id, item_id, fingerprint, coalesce(sha256, '')
 	mirror_entry_id, state, reason, priority, order_key, not_before, attempts, est_size, est_ms, duration_ms, q,
 	coalesce(out_fingerprint, ''), coalesce(out_sha256, ''), out_size, vmaf_mean, vmaf_low, coalesce(vmaf_mode, ''), encode_ms, verify_ms,
 	coalesce(decoder, ''), meta_sidecar, replace_step, coalesce(trash_path, ''), replaced_at, trashed_at, purge_after, purged_at,
-	restored_at, updated_at`
+	restored_at, stalled_at, updated_at`
 
 func scanCompressItem(row interface{ Scan(...any) error }) (CompressItem, error) {
 	var it CompressItem
@@ -124,7 +125,7 @@ func scanCompressItem(row interface{ Scan(...any) error }) (CompressItem, error)
 		&it.MirrorEntryID, &it.State, &it.Reason, &it.Priority, &it.OrderKey, &it.NotBefore, &it.Attempts, &it.EstSize, &it.EstMs,
 		&it.DurationMs, &it.Q, &it.OutFingerprint, &it.OutSHA256, &it.OutSize, &it.VmafMean, &it.VmafLow, &it.VmafMode, &it.EncodeMs,
 		&it.VerifyMs, &it.Decoder, &it.MetaSidecar, &it.ReplaceStep, &it.TrashPath, &it.ReplacedAt, &it.TrashedAt, &it.PurgeAfter,
-		&it.PurgedAt, &it.RestoredAt, &it.UpdatedAt)
+		&it.PurgedAt, &it.RestoredAt, &it.StalledAt, &it.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return it, ErrNotFound
 	}
@@ -557,11 +558,11 @@ func (s *Store) SaveCompressItem(ctx context.Context, it CompressItem, from ...s
 	q := `UPDATE compress_items SET sha256 = ?, size = ?, state = ?, reason = ?, priority = ?, not_before = ?, attempts = ?, est_size = ?,
 		est_ms = ?, duration_ms = ?, q = ?, out_fingerprint = ?, out_sha256 = ?, out_size = ?, vmaf_mean = ?, vmaf_low = ?, vmaf_mode = ?,
 		encode_ms = ?, verify_ms = ?, decoder = ?, meta_sidecar = ?, replace_step = ?, trash_path = ?, replaced_at = ?, trashed_at = ?,
-		purge_after = ?, purged_at = ?, restored_at = ?, updated_at = ? WHERE id = ?`
+		purge_after = ?, purged_at = ?, restored_at = ?, stalled_at = ?, updated_at = ? WHERE id = ?`
 	args := []any{nullString(it.SHA256), it.Size, it.State, it.Reason, it.Priority, it.NotBefore, it.Attempts, it.EstSize, it.EstMs,
 		it.DurationMs, it.Q, nullString(it.OutFingerprint), nullString(it.OutSHA256), it.OutSize, it.VmafMean, it.VmafLow,
 		nullString(it.VmafMode), it.EncodeMs, it.VerifyMs, nullString(it.Decoder), it.MetaSidecar, it.ReplaceStep, nullString(it.TrashPath),
-		it.ReplacedAt, it.TrashedAt, it.PurgeAfter, it.PurgedAt, it.RestoredAt, it.UpdatedAt, it.ID}
+		it.ReplacedAt, it.TrashedAt, it.PurgeAfter, it.PurgedAt, it.RestoredAt, it.StalledAt, it.UpdatedAt, it.ID}
 	if len(from) > 0 {
 		q += " AND state IN (" + placeholders(len(from)) + ")" //nolint:gosec // placeholders only
 		for _, f := range from {
@@ -789,7 +790,8 @@ func (s *Store) NasFileAt(ctx context.Context, folderID, rel string) (NasFileSta
 func (s *Store) LiveNasCopy(ctx context.Context, fp, folderID, rel string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM nas_files f JOIN nas_folders d ON d.id = f.folder_id
-		WHERE f.fingerprint = ? AND f.removed = 0 AND f.origin_path IS NULL AND d.enabled = 1 AND NOT (f.folder_id = ? AND f.rel_path = ?)`,
+		WHERE f.fingerprint = ? AND f.removed = 0 AND f.origin_path IS NULL AND f.trash_path IS NULL
+		AND f.rel_path NOT LIKE '.hoard-%' AND f.rel_path NOT LIKE '%/.hoard-%' AND d.enabled = 1 AND NOT (f.folder_id = ? AND f.rel_path = ?)`,
 		fp, folderID, rel).Scan(&n)
 	return n > 0, err
 }
@@ -873,4 +875,47 @@ func (s *Store) ItemMainFingerprint(ctx context.Context, id string) (string, err
 func (s *Store) SetCompressItemsPriority(ctx context.Context, jobID string, priority int) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE compress_items SET priority = ?, updated_at = ? WHERE job_id = ? AND state = 'queued'", priority, s.nowMs(), jobID)
 	return err
+}
+
+// CompressAttention is what needs the owner's eye: journals waiting (count, oldest) and originals a failed replace left
+// in a trash untracked (another file took the path meanwhile).
+type CompressAttention struct {
+	Stalled        int    `json:"stalled"`
+	StalledSince   *int64 `json:"stalledSince"`
+	UntrackedTrash int    `json:"untrackedTrash"`
+}
+
+// CompressAttentionNow counts stalled journals and untracked trashed originals.
+func (s *Store) CompressAttentionNow(ctx context.Context) (CompressAttention, error) {
+	var a CompressAttention
+	err := s.db.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM compress_items WHERE state = 'replacing' AND stalled_at IS NOT NULL),
+		(SELECT min(stalled_at) FROM compress_items WHERE state = 'replacing' AND stalled_at IS NOT NULL),
+		(SELECT count(*) FROM compress_items WHERE state = 'failed' AND trash_path IS NOT NULL)`).Scan(&a.Stalled, &a.StalledSince, &a.UntrackedTrash)
+	return a, err
+}
+
+// HeldTrash lists, per folder, the trash paths an unfinished compression journal holds (its original or, during a
+// restore, the output it moved): Hoard's Empty and auto-empty must leave them, and so does the server's purge.
+func (t *ItemTx) HeldTrash(folderID string) (map[string]bool, error) {
+	rows, err := t.tx.QueryContext(t.ctx, "SELECT coalesce(trash_path, ''), replace_step FROM compress_items WHERE state = 'replacing' AND folder_id = ?", folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var p, step string
+		if err := rows.Scan(&p, &step); err != nil {
+			return nil, err
+		}
+		if p != "" {
+			out[p] = true
+		}
+		// restore:trash:<path>, restore:swap:<path>, reswap:…: the file the restore moved into the trash.
+		if parts := strings.SplitN(step, ":", 3); len(parts) == 3 && parts[2] != "" && (parts[0] == "restore" || parts[0] == "reswap") {
+			out[parts[2]] = true
+		}
+	}
+	return out, rows.Err()
 }

@@ -53,9 +53,9 @@ func (ch *cHarness) unmount(empty bool) func() {
 
 // later moves the clock past a stalled journal's wait and runs the housekeeping.
 func (ch *cHarness) later(d time.Duration) {
-	ch.st.Now = func() time.Time { return time.Now().Add(d) }
+	ch.st.SetNow(func() time.Time { return time.Now().Add(d) })
 	ch.srv.compress.Housekeeping(ch.t.Context())
-	ch.st.Now = time.Now
+	ch.st.SetNow(time.Now)
 }
 
 // Blockers 1 and 2: a replace interrupted after its rename-fallback trash step (the path empty), restarted while the
@@ -375,5 +375,219 @@ func TestCompressTrashFolderModes(t *testing.T) {
 		if err != nil || fi.Mode().Perm() != 0o775 {
 			t.Fatalf("%s: %v %v", d, fi.Mode(), err)
 		}
+	}
+}
+
+// Re-review N1: the output trashed by hand is not a live copy: the purge keeps the original.
+func TestCompressPurgeOutputTrashedByHand(t *testing.T) {
+	ch := compressHarness(t, true, "A.MP4")
+	orig := ch.fp("A.MP4")
+	ch.job(map[string]any{"itemIds": []string{store.ItemID(orig)}}, nil)
+	ch.runAll()
+	it := ch.one()
+	ch.move("A.MP4", ".hoard-trash/2026-11-20/A.MP4")
+	ch.walkAll()
+	if a := ch.srv.compress.Purge(t.Context(), []int64{it.ID}); a[0].Error != compress.ReasonOutputMissing {
+		t.Fatalf("purge answered %+v", a)
+	}
+	if ch.fp(it.TrashPath) != orig {
+		t.Fatal("the original was purged")
+	}
+}
+
+func trashLocation(t *testing.T, item map[string]any) map[string]any {
+	t.Helper()
+	for _, f := range item["files"].([]any) {
+		for _, l := range f.(map[string]any)["locations"].([]any) {
+			if lm := l.(map[string]any); lm["trash"] != nil {
+				return lm
+			}
+		}
+	}
+	return nil
+}
+
+// Re-review N2 (a, b): a waiting journal is surfaced (GET /v1/server, the admin page, the status errors) and the trash
+// entry it holds is marked held on the item, for Hoard's Empty and auto-empty; the server's own retention skips it.
+func TestCompressStalledSurfacedAndHeld(t *testing.T) {
+	ch := compressHarness(t, true, "A.MP4")
+	orig := ch.fp("A.MP4")
+	ch.srv.compress.SetJournalHook(crashAt("replace:swap"))
+	ch.job(map[string]any{"itemIds": []string{store.ItemID(orig)}}, nil)
+	ch.runAll()
+	ch.srv.compress.SetJournalHook(nil)
+	ch.walkAll()
+	id := store.ItemID(orig)
+	l := trashLocation(t, getItem(t, ch.harness, ch.key, id, "?include=trash"))
+	if l == nil || l["held"] != true {
+		t.Fatalf("the trash entry of a running journal is not held: %v", l)
+	}
+	back := ch.unmount(false)
+	if err := ch.srv.compress.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	att := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key)))["compress"].(map[string]any)["attention"].(map[string]any)
+	if att["stalled"].(float64) != 1 || att["stalledSince"] == nil {
+		t.Fatalf("attention %v", att)
+	}
+	st := decode(t, ch.do("GET", "/admin/api/status", nil, adminHeaders()))
+	if st["compressAttention"].(map[string]any)["stalled"].(float64) != 1 {
+		t.Fatalf("status %v", st["compressAttention"])
+	}
+	since := att["stalledSince"].(float64)
+	ch.later(40 * 24 * time.Hour) // retried, still waiting: the first time it waited is kept; never purged
+	if it := ch.one(); it.State != store.CompressReplacing || it.StalledAt == nil || float64(*it.StalledAt) != since {
+		t.Fatalf("%+v", it)
+	}
+	back()
+	if !exists(filepath.Join(ch.nas, ch.one().TrashPath)) {
+		t.Fatal("the held original was purged")
+	}
+	ch.later(41 * 24 * time.Hour)
+	if it := ch.one(); it.State != store.CompressReplaced || it.StalledAt != nil {
+		t.Fatalf("%+v", it)
+	}
+	ch.walkAll()
+	if l := trashLocation(t, getItem(t, ch.harness, ch.key, id, "?include=trash")); l == nil || l["held"] != nil {
+		t.Fatalf("still held after the journal ended: %v", l)
+	}
+	if att := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key)))["compress"].(map[string]any)["attention"].(map[string]any); att["stalled"].(float64) != 0 {
+		t.Fatalf("attention %v", att)
+	}
+}
+
+// Re-review N2 (c): without the write mount, a purge, a restore and a replace that moved nothing yet go back to their
+// previous state instead of waiting (and work again once it is back).
+func TestCompressNothingMovedGoesBack(t *testing.T) {
+	ch := compressHarness(t, true, "A.MP4", "B.MP4")
+	a := ch.fp("A.MP4")
+	ch.job(map[string]any{"itemIds": []string{store.ItemID(a)}}, nil)
+	ch.runAll()
+	id := ch.one().ID
+	back := ch.unmount(false)
+	if ans := ch.srv.compress.Purge(t.Context(), []int64{id}); ans[0].Error != compress.ReasonNotWritable || ans[0].State != store.CompressReplaced {
+		t.Fatalf("purge %+v", ans)
+	}
+	ch.srv.compress.Restore(t.Context(), []int64{id})
+	ch.srv.compress.RunOps(t.Context())
+	if it := ch.one(); it.State != store.CompressReplaced || it.Reason != compress.ReasonNotWritable || it.StalledAt != nil {
+		t.Fatalf("restore %+v", it)
+	}
+	back()
+	// A replace interrupted at its check and resumed without the write mount goes back to ready.
+	b := ch.fp("B.MP4")
+	ch.srv.compress.SetJournalHook(crashAt("replace:check"))
+	ch.job(map[string]any{"itemIds": []string{store.ItemID(b)}}, nil)
+	ch.runAll()
+	ch.srv.compress.SetJournalHook(nil)
+	back = ch.unmount(false)
+	if err := ch.srv.compress.Recover(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var bi store.CompressItem
+	for _, x := range ch.items() {
+		if x.Fingerprint == b {
+			bi = x
+		}
+	}
+	if bi.State != store.CompressReady || bi.Reason != compress.ReasonNotWritable || bi.TrashPath != "" {
+		t.Fatalf("replace %+v", bi)
+	}
+	back()
+	ch.later(2 * time.Minute)
+	for _, x := range ch.items() {
+		if x.State != store.CompressReplaced {
+			t.Fatalf("after the NAS came back %+v", x)
+		}
+	}
+	ch.srv.compress.Restore(t.Context(), []int64{id})
+	ch.srv.compress.RunOps(t.Context())
+	if it, _ := ch.st.CompressItem(t.Context(), id); it.State != store.CompressRestored {
+		t.Fatalf("%+v", it)
+	}
+}
+
+// The features gate (coordinator's N2 addition): "compress" needs a GPU and a usable write mount; the object says why.
+func TestCompressFeatureNeedsTheWriteMount(t *testing.T) {
+	for _, c := range []struct {
+		name, reason string
+		write        func(nas string) string
+	}{
+		{"missing", "no_write_mount", func(nas string) string { return filepath.Join(filepath.Dir(nas), "nas-write") }},
+		{"another directory", "write_mount_mismatch", func(nas string) string {
+			d := filepath.Join(filepath.Dir(nas), "elsewhere")
+			_ = os.MkdirAll(d, 0o700)
+			return d
+		}},
+		{"usable", "", func(nas string) string { return nas }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			hs := newHarnessWith(t, true, func(cfg *Config) {
+				nas := filepath.Join(cfg.Mounts[0], "nas")
+				cfg.NasReadRoot, cfg.NasWriteRoot = nas, c.write(nas)
+				cfg.CompressDetector, cfg.CompressEncoder, cfg.CompressVerifier = fakeDetector{ok: true}, &fakeEncoder{}, &fakeVerifier{}
+			})
+			hs.srv.compress.Detect(t.Context())
+			key, _ := hs.pair("Phone")
+			srv := decode(t, hs.do("GET", "/v1/server", nil, bearer(key)))
+			has := strings.Contains(fmt.Sprint(srv["features"]), "compress")
+			obj := srv["compress"].(map[string]any)
+			if has != (c.reason == "") || obj["available"] != (c.reason == "") || (c.reason != "" && obj["reason"] != c.reason) {
+				t.Fatalf("features %v, compress %v", srv["features"], obj)
+			}
+			adm := decode(t, hs.do("GET", "/admin/api/compress", nil, adminHeaders()))
+			if adm["feature"] != (c.reason == "") || adm["writeProblem"] != c.reason {
+				t.Fatalf("admin %v %v", adm["feature"], adm["writeProblem"])
+			}
+		})
+	}
+}
+
+// Re-review N5: a write mount whose inode numbers are not stable (a link that comes out as another file) fails the
+// item before anything moves and turns the feature off until the next check.
+func TestCompressUnstableInodeTurnsTheFeatureOff(t *testing.T) {
+	ch := compressHarness(t, true, "A.MP4")
+	ch.linker = func(r *os.Root, o, n string) error { // a "link" that is a copy: another inode
+		b, err := r.ReadFile(o)
+		if err != nil {
+			return err
+		}
+		return r.WriteFile(n, b, 0o600)
+	}
+	orig := ch.fp("A.MP4")
+	ch.job(map[string]any{"itemIds": []string{store.ItemID(orig)}}, nil)
+	ch.runAll()
+	if it := ch.one(); it.State != store.CompressFailed || it.Reason != compress.ReasonNotWritable || ch.fp("A.MP4") != orig || len(trashDirs(t, ch.nas)) != 0 {
+		t.Fatalf("%+v %v", it, trashDirs(t, ch.nas))
+	}
+	srv := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key)))
+	if strings.Contains(fmt.Sprint(srv["features"]), "compress") || srv["compress"].(map[string]any)["reason"] != "unstable_inode" {
+		t.Fatalf("%v %v", srv["features"], srv["compress"])
+	}
+	ch.linker = nil
+	ch.srv.compress.Detect(t.Context()) // "Check again"
+	if srv := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key))); !strings.Contains(fmt.Sprint(srv["features"]), "compress") {
+		t.Fatal("not back after the check")
+	}
+}
+
+// Re-review N6: an original left in the trash by a failed replace is counted (and kept in the failed row).
+func TestCompressUntrackedTrashCounted(t *testing.T) {
+	ch := compressHarness(t, true, "A.MP4")
+	ch.srv.compress.SetJournalHook(func(s string) error {
+		if s == "replace:swap" {
+			ch.replaceWith("A.MP4", "newer version")
+		}
+		return nil
+	})
+	ch.job(map[string]any{"itemIds": []string{ch.itemOf("A.MP4")}}, nil)
+	ch.runAll()
+	it := ch.one()
+	if it.State != store.CompressFailed || it.TrashPath == "" || !exists(filepath.Join(ch.nas, it.TrashPath)) {
+		t.Fatalf("%+v", it)
+	}
+	att := decode(t, ch.do("GET", "/admin/api/compress", nil, adminHeaders()))["attention"].(map[string]any)
+	if att["untrackedTrash"].(float64) != 1 {
+		t.Fatalf("%v", att)
 	}
 }

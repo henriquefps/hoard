@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
@@ -27,9 +28,20 @@ var ErrNotFound = errors.New("not found")
 
 // Store wraps the database.
 type Store struct {
-	db  *sql.DB
-	Now func() time.Time
+	db    *sql.DB
+	clock atomic.Pointer[func() time.Time]
 }
+
+// Now is the store's clock (time.Now unless a test set another with SetNow; safe for concurrent use).
+func (s *Store) Now() time.Time {
+	if f := s.clock.Load(); f != nil {
+		return (*f)()
+	}
+	return time.Now()
+}
+
+// SetNow replaces the store's clock (tests).
+func (s *Store) SetNow(f func() time.Time) { s.clock.Store(&f) }
 
 // Open opens (creating it with mode 0600 when missing) and migrates the database at path.
 func Open(path string) (*Store, error) {
@@ -52,7 +64,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(8)
-	s := &Store{db: db, Now: time.Now}
+	s := &Store{db: db}
 	if err := s.migrate(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
