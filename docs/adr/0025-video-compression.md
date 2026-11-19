@@ -1297,3 +1297,6 @@ release.
     `verify_metadata`. This replaces the "by presence" rule above.
   - *exiftool's JSON must parse.* A read of the source or the output whose JSON does not parse (a read cut at the
     tools' 32 MiB stdout cap) fails `verify_metadata` instead of comparing empty tag sets.
+  - *GPU test re-run* (2026-11-19, the build host's RTX 4080, driver 620, a locally built `-nvidia` image as a non-root
+    uid on temporary directories, synthetic clips only): the nine clips all `replaced` at cq 28 (VMAF 96.0–96.7), every
+    check confirming the marker and the camera by value; 108 s of video in 121 s wall.
