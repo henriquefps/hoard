@@ -143,23 +143,49 @@ func (m *Manager) Settle(ctx context.Context, it store.CompressItem) bool {
 	it = cur
 	log := m.itemLog(it)
 	defer func() { _ = log.Close() }()
-	if it.StalledAt != nil {
-		// A journal that waited and now ended releases its held trash entries.
-		defer func() {
-			if after, err := m.cfg.Store.CompressItem(ctx, it.ID); err == nil && after.StalledAt == nil && m.cfg.Refresh != nil {
-				m.cfg.Refresh(context.WithoutCancel(ctx), []string{it.Fingerprint, it.OutFingerprint})
-			}
-		}()
-	}
+	// A journal that held a trash entry (it waited, or it linked one in this run) and now ended, early or not, releases
+	// it: its item is rebuilt (a finished replace or restore is rebuilt by after() too).
+	held := it.StalledAt != nil
 	switch {
 	case strings.HasPrefix(it.ReplaceStep, "purge:"):
 		m.runPurge(ctx, &it, log)
 	case strings.HasPrefix(it.ReplaceStep, "restore:"), strings.HasPrefix(it.ReplaceStep, "reswap:"):
-		m.runSwapBack(ctx, &it, log)
+		held = m.runSwapBack(ctx, &it, log) || held
 	default:
-		m.runReplace(ctx, &it, log)
+		held = m.runReplace(ctx, &it, log) || held
+	}
+	if held && m.cfg.Refresh != nil {
+		if after, err := m.cfg.Store.CompressItem(ctx, it.ID); err == nil && after.State != store.CompressReplacing {
+			m.cfg.Refresh(context.WithoutCancel(ctx), []string{it.Fingerprint, it.OutFingerprint})
+		}
 	}
 	return true
+}
+
+// hold makes a trash entry a journal just linked (or renamed) held for clients right away, until the journal settles
+// (ADR 0025 Amendment (S1), "The trash link is held"): the trash path is already in the replacing row (HeldTrash), the
+// item is rebuilt now and its folder walked soon, so the new entry is listed held.
+func (m *Manager) hold(ctx context.Context, it *store.CompressItem) {
+	if m.cfg.Refresh != nil {
+		m.cfg.Refresh(context.WithoutCancel(ctx), []string{it.Fingerprint, it.OutFingerprint})
+	}
+	if m.cfg.RequestWalk != nil && it.FolderID != "" {
+		m.cfg.RequestWalk([]string{it.FolderID})
+	}
+}
+
+// stillLinked checks, right before a swap renames over the path, that our trash entry is still there with the inode
+// read at the start of the swap step: an Empty (Hoard over SMB, or anything else) may have deleted it meanwhile, and
+// a swap then would drop the only copy of what was at the path.
+func (m *Manager) stillLinked(f *Folder, trash string, ino uint64) (bool, error) {
+	if m.beforeSwap != nil {
+		m.beforeSwap(trash)
+	}
+	st, err := f.Stat(trash, false)
+	if err != nil {
+		return false, err
+	}
+	return st.Exists && st.Ino == ino, nil
 }
 
 // replaceReady starts the replace of a ready NAS item (its verified output checked again first).
@@ -180,8 +206,9 @@ func (m *Manager) replaceReady(ctx context.Context, it store.CompressItem) {
 	m.Settle(ctx, it)
 }
 
-// runReplace runs (or resumes) the replace journal from it.ReplaceStep.
-func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io.Writer) {
+// runReplace runs (or resumes) the replace journal from it.ReplaceStep. It reports whether it linked the original into
+// the trash in this run (its item was rebuilt with the entry held).
+func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io.Writer) (held bool) {
 	tmp := TempName(it.RelPath, it.ID)
 	var f *Folder
 	// fail settles an item before anything is in the trash (or after our own move was undone).
@@ -324,6 +351,8 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 			}
 			return
 		}
+		m.hold(ctx, it)
+		held = true
 		step = "replace:swap"
 	}
 	if step != "replace:swap" {
@@ -366,6 +395,11 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 		_ = f.Purge(it.TrashPath)
 		fail(ReasonSourceChanged, errors.New("the file at the path was written to during the replace"))
 		return
+	case !tst.Exists && m.isOriginal(cur, it, time.Time{}):
+		// Our trash link was deleted before the swap (an Empty): the original is still at its path, nothing to undo.
+		_ = f.Remove(tmp)
+		fail(ReasonTrashFailed, errors.New("the trash link was removed before the swap: the original stays at its path"))
+		return
 	case !tst.Exists || tst.Fingerprint != it.Fingerprint:
 		m.stall(ctx, it, log, errors.New("the original is not in the trash"))
 		return
@@ -387,6 +421,20 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 		m.save(ctx, it, store.CompressFailed)
 		return
 	default: // the path is the original (a link) or empty (a rename): swap
+		linked, err := m.stillLinked(f, it.TrashPath, tst.Ino)
+		if err != nil {
+			m.stall(ctx, it, log, err)
+			return
+		}
+		if !linked {
+			if now, err := f.Stat(it.RelPath, true); err == nil && m.isOriginal(now, it, time.Time{}) {
+				_ = f.Remove(tmp) // the original never left its path: the output is not swapped in
+				fail(ReasonTrashFailed, errors.New("the trash link was removed right before the swap: the original stays at its path"))
+				return
+			}
+			m.stall(ctx, it, log, errors.New("the original left the trash right before the swap"))
+			return
+		}
 		if err := f.Swap(tmp, it.RelPath); err != nil {
 			m.stall(ctx, it, log, err)
 			return
@@ -404,6 +452,7 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 	m.log.Info("compress: replaced", "job", it.JobID, "item", it.ID)
 	m.removeWork(it.ID)
 	m.after(ctx, *it)
+	return false // after() rebuilt the item: nothing left held
 }
 
 // isOriginal reports whether st is the queued original (and carries mtime when it is not zero).
@@ -516,8 +565,9 @@ func (m *Manager) RunOps(ctx context.Context) {
 }
 
 // runSwapBack runs a restore ("restore": the output to the trash, the original back) or a restore again ("reswap":
-// the original to the trash, the output back) from its journal step.
-func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log io.Writer) {
+// the original to the trash, the output back) from its journal step. It reports whether it moved the live file into
+// the trash in this run (its item was rebuilt with the entry held).
+func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log io.Writer) (held bool) {
 	dir, rest, _ := strings.Cut(it.ReplaceStep, ":")
 	stepName, newTrash, _ := strings.Cut(rest, ":")
 	back := store.CompressReplaced // where an abort leaves it
@@ -611,6 +661,8 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 				}
 				return
 			}
+			m.hold(ctx, it)
+			held = true
 		}
 		stepName = "swap"
 	}
@@ -643,6 +695,10 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 			m.stall(ctx, it, log, errors.New("the trashed file went and our move cannot be undone"))
 		}
 		return
+	case newTrash != "" && !nt.Exists && cur.Exists && cur.Fingerprint == liveFP:
+		// Our trash link of the live file was deleted before the swap (an Empty): the live file is still at its path.
+		abort(ReasonTrashFailed, errors.New("the trash link was removed before the swap: the file stays at its path"))
+		return
 	case cur.Exists && (newTrash == "" || cur.Ino != nt.Ino || cur.Fingerprint != liveFP):
 		// The path changed after our link (or a file appeared on an empty path): never overwrite it.
 		if newTrash != "" && cur.Ino == nt.Ino {
@@ -652,6 +708,21 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 		abort("path_taken", errors.New("the file at the path changed during the restore"))
 		return
 	default:
+		if newTrash != "" { // the live file was linked (or renamed) into the trash: that entry must still be there
+			linked, err := m.stillLinked(f, newTrash, nt.Ino)
+			if err != nil {
+				m.stall(ctx, it, log, err)
+				return
+			}
+			if !linked {
+				if now, err := f.Stat(it.RelPath, true); err == nil && now.Exists && now.Fingerprint == liveFP {
+					abort(ReasonTrashFailed, errors.New("the trash link was removed right before the swap: the file stays at its path"))
+					return
+				}
+				m.stall(ctx, it, log, errors.New("the live file left the trash right before the swap"))
+				return
+			}
+		}
 		if err := f.Swap(it.TrashPath, it.RelPath); err != nil {
 			m.stall(ctx, it, log, err)
 			return
@@ -675,6 +746,7 @@ func (m *Manager) runSwapBack(ctx context.Context, it *store.CompressItem, log i
 	fmt.Fprintf(log, "%s: done (%s)\n", dir, final)
 	m.log.Info("compress: "+dir, "job", it.JobID, "item", it.ID, "state", final)
 	m.after(ctx, *it)
+	return false // after() rebuilt the item: nothing left held
 }
 
 // Purge empties the trashed file of replaced and restored items now (POST /v1/compress/purge).

@@ -1056,6 +1056,23 @@ Phase S1 (hoard-server 0.13.0) as built; each point is a detail the text above l
     the failed row, is logged loudly and counted as `untrackedTrash`; a purge whose journal the housekeeping runs at that
     moment answers `busy`; the background probe never caches "unreadable" for a file that vanished during a rename; the
     store's clock is safe for concurrent use (tests).
+- **The trash link is held until the swap (0.13.1, independent review).** Between a replace's `trash` step and its
+  `swap`, an Empty (Hoard's over SMB, or anything else that deletes in `.hoard-trash`) could delete the fresh trash link
+  and the swap would then drop the only copy of the original. Two changes, the same for a restore's (and a restore
+  again's) `trash` step:
+  - *Held from the link on.* The entry was already served `held` whenever the item was rebuilt while the row was
+    `replacing` (its `trash_path`, or the restore step's path); now, as soon as the link (or rename) is made and
+    checked, the journal rebuilds the item and requests a walk of the folder, so the new entry is listed held without
+    waiting for the next walk; a journal that ends early after the link (failed, aborted) rebuilds the item again so the
+    mark goes. A finished replace or restore is rebuilt as before (`replaced`/`restored`: not held).
+  - *The swap checks the link again.* Right before `rename(<temporary>, <rel_path>)` (a restore: the trashed file over
+    the path) the trash entry is looked at again: it must exist with the inode read at the start of the `swap` step.
+    When it is gone and the path still holds the original (a hard link: nothing of ours moved), the swap is abandoned:
+    a replace fails `trash_failed` with the temporary copy removed, a restore goes back to `replaced`/`restored` with
+    `reason: trash_failed`, the file at the path untouched either way. The same holds when the link was already gone
+    when the `swap` step starts. With the rename fallback (no hard links) the path is empty, so a deleted trash entry
+    means the original is lost to the Empty: the journal keeps waiting (as before) rather than guess. The check and the
+    rename are not one atomic operation; the held mark is what keeps clients out of that last instant.
 
 ## Amendment (S2)
 

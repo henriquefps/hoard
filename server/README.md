@@ -282,6 +282,14 @@ page (Compression) and in `GET /v1/server` (`features` gains `compress`). The GP
 default, and nothing new starts while another program holds an NVENC session or the GPU was over 50 % busy in the last
 minute ("Pause while the GPU is busy", setup page); an optional night window holds back automatic work only.
 
+## Upgrading to 0.13.1 (the trash link held until the swap)
+
+0.13.1 fixes a window in the NAS replace (ADR 0025 "Amendment (S1)"): the original's fresh link in `.hoard-trash` is
+marked `held` on its item from the moment it is made until the replace (or a restore) settles, and the swap checks the
+link is still there right before it renames the output over the path. If an Empty deleted it meanwhile, the original
+stays at its path and the item fails `trash_failed` (a restore goes back with `reason: trash_failed`). No schema or
+protocol change: replace the image and restart.
+
 ## Upgrading to 0.13.0 (video compression)
 
 0.13.0 adds video compression (ADR 0025, above). With the default image nothing changes: the feature is absent, the
