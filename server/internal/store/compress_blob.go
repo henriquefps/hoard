@@ -178,8 +178,18 @@ func liveOwnerTx(ctx context.Context, tx *sql.Tx, orig MirrorEntry, liveFP strin
 		ownsPathSQL+" ORDER BY e.on_device DESC, e.id DESC LIMIT 1", orig.PhysicalID, liveFP))
 }
 
-// CompressLiveOwner is the entry holding a replaced (the output) or restored (the original) blob compression's live
-// side now, wherever the phone moved it.
+// liveFingerprint is the side of a blob compression the phone's path holds now: the output once replaced (and while
+// a phone restores it), else the original.
+func liveFingerprint(it CompressItem) string {
+	if it.State == CompressReplaced || (it.State == CompressReplacing && it.ReplaceStep == StepRestorePhone) {
+		return it.OutFingerprint
+	}
+	return it.Fingerprint
+}
+
+// CompressLiveOwner is the entry holding a blob compression's live side now (the original while ready, the output once
+// replaced, the original once restored; while a phone swaps them, the side it is replacing), wherever the phone moved
+// it. ErrNotFound: the phone's backup has it nowhere (the entry gone, the backup purged).
 func (s *Store) CompressLiveOwner(ctx context.Context, id int64) (MirrorEntry, error) {
 	var out MirrorEntry
 	err := s.tx(ctx, func(tx *sql.Tx) error {
@@ -194,14 +204,73 @@ func (s *Store) CompressLiveOwner(ctx context.Context, id int64) (MirrorEntry, e
 		if err != nil {
 			return err
 		}
-		live := it.Fingerprint
-		if it.State == CompressReplaced {
-			live = it.OutFingerprint
-		}
-		out, err = liveOwnerTx(ctx, tx, orig, live, 0)
+		out, err = liveOwnerTx(ctx, tx, orig, liveFingerprint(it), 0)
 		return err
 	})
 	return out, err
+}
+
+// Reasons of a cancel that settles a served phone item (S2 follow-ups): the phone's backup no longer has the original
+// (phone_gone), or the admin forced it (forced; a phone restore given up on by the admin keeps this reason too).
+const (
+	ReasonPhoneGone = "phone_gone"
+	ReasonForced    = "forced"
+)
+
+// servedPhoneGoneTx reports whether a ready phone item's original is nowhere in its phone's backup any more: its entry
+// was removed (the admin purged the backup) or no entry of that phone holds a path with the original's content. Then no
+// phone report can come for it, and a cancel may settle it.
+func servedPhoneGoneTx(ctx context.Context, tx *sql.Tx, it CompressItem) (bool, error) {
+	if it.MirrorEntryID == nil {
+		return true, nil
+	}
+	orig, err := entryTx(ctx, tx, *it.MirrorEntryID)
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, err = liveOwnerTx(ctx, tx, orig, it.Fingerprint, 0)
+	if errors.Is(err, ErrNotFound) {
+		return true, nil
+	}
+	return false, err
+}
+
+// ForceCancelCompressItem is the admin's way out of a phone item that waits for a phone (S2 follow-ups): a ready item
+// (its output served or not) is cancelled (reason forced; the caller drops the output unless something keeps it, and
+// the original stays: the backup's, or a server item when the backup no longer has it); a phone restore (or restore
+// again) goes back to replaced (restored) with its retention restarted, as an abandon would. Nothing else is touched.
+// prev is the state before.
+func (s *Store) ForceCancelCompressItem(ctx context.Context, id, trashMs int64) (it CompressItem, prev string, err error) {
+	now := s.nowMs()
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if it, err = compressItemTx(ctx, tx, id); err != nil {
+			return err
+		}
+		prev = it.State
+		if it.Source != "blob" {
+			return ErrConflict
+		}
+		switch {
+		case it.State == CompressReady:
+			it.State = CompressCancelled
+		case it.State == CompressReplacing && it.ReplaceStep == StepRestorePhone:
+			it.State, it.PurgeAfter = CompressReplaced, ptr(now+trashMs)
+		case it.State == CompressReplacing && it.ReplaceStep == StepReswapPhone:
+			it.State, it.PurgeAfter = CompressRestored, ptr(now+trashMs)
+		default:
+			return ErrConflict
+		}
+		it.Reason, it.ReplaceStep, it.StalledAt, it.UpdatedAt = ReasonForced, "", nil, now
+		ok, err := saveCompressItem(ctx, tx, it, prev)
+		if err == nil && !ok {
+			err = ErrConflict
+		}
+		return err
+	})
+	return it, prev, err
 }
 
 // CompressSwapOut is what a swap changed.
@@ -292,9 +361,14 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 	if in.DeviceID != "" {
 		by = in.DeviceID
 	}
+	// The kept side is exactly the entry this item's last swap made "compressed" (the same video at another path, or
+	// another item's kept entry of the same content, is never taken). The first swap has none: a new entry.
 	var kept int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM mirror_entries WHERE physical_id = ? AND fingerprint = ?
-		AND removed_reason = 'compressed' ORDER BY (volume = ? AND path = ?) DESC, id DESC LIMIT 1`, orig.PhysicalID, newFP, owner.Volume, owner.Path).Scan(&kept)
+	err = sql.ErrNoRows
+	if it.KeptEntryID != nil {
+		err = tx.QueryRowContext(ctx, `SELECT id FROM mirror_entries WHERE id = ? AND physical_id = ? AND fingerprint = ? AND removed_reason = 'compressed'`,
+			*it.KeptEntryID, orig.PhysicalID, newFP).Scan(&kept)
+	}
 	switch {
 	case err == nil: // the kept side comes back, at the path the live side holds now (the phone may have moved it)
 		if _, err := tx.ExecContext(ctx, `UPDATE mirror_entries SET volume = ?, path = ?, root_id = ?, on_device = ?, removed_reason = ?, removed_at = ?,
@@ -315,7 +389,7 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 		return out, err
 	}
 	it.State, it.Reason, it.ReplaceStep, it.TrashPath, it.StalledAt = final, "", "", "", nil
-	it.TrashedAt, it.PurgeAfter = &now, ptr(now+in.TrashMs)
+	it.TrashedAt, it.PurgeAfter, it.KeptEntryID = &now, ptr(now+in.TrashMs), ptr(owner.ID)
 	if final == CompressReplaced {
 		it.ReplacedAt = &now
 	} else {
@@ -490,13 +564,11 @@ func (s *Store) PurgeCompressBlob(ctx context.Context, id int64) (CompressBlobPu
 		if it.State == CompressRestored {
 			fp, sha = it.OutFingerprint, it.OutSHA256
 		}
-		orig, err := entryTx(ctx, tx, *it.MirrorEntryID)
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if err == nil {
-			if out.Links, err = queryMirrorEntries(ctx, tx, `WHERE e.physical_id = ? AND e.volume = ? AND e.path = ? AND e.fingerprint = ?
-				AND e.removed_reason = 'compressed' ORDER BY e.id`, orig.PhysicalID, orig.Volume, orig.Path, fp); err != nil {
+		if it.KeptEntryID != nil {
+			// Exactly the kept entry of this item (wherever the phone had moved the file when it was swapped); gone with
+			// a backup purge already.
+			if out.Links, err = queryMirrorEntries(ctx, tx, `WHERE e.id = ? AND e.fingerprint = ? AND e.removed_reason = 'compressed'`,
+				*it.KeptEntryID, fp); err != nil {
 				return err
 			}
 			for _, e := range out.Links {

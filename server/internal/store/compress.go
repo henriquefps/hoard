@@ -96,7 +96,10 @@ type CompressItem struct {
 	PurgedAt       *int64
 	RestoredAt     *int64
 	StalledAt      *int64 // a journal waiting since (nil: not waiting)
-	UpdatedAt      int64
+	// KeptEntryID (blob items): the mirror entry of the trashed side, which the last swap made "compressed"; the next
+	// swap brings back exactly this entry, and the purge removes it.
+	KeptEntryID *int64
+	UpdatedAt   int64
 }
 
 const compressJobCols = "id, target, coalesce(physical_id, ''), created_by, name, selection, profile, options, auto, priority, state, created_at, finished_at, coalesce(request_id, '')"
@@ -117,7 +120,7 @@ const compressItemCols = `id, job_id, item_id, fingerprint, coalesce(sha256, '')
 	mirror_entry_id, state, reason, priority, order_key, not_before, attempts, est_size, est_ms, duration_ms, q,
 	coalesce(out_fingerprint, ''), coalesce(out_sha256, ''), out_size, vmaf_mean, vmaf_low, coalesce(vmaf_mode, ''), encode_ms, verify_ms,
 	coalesce(decoder, ''), meta_sidecar, replace_step, coalesce(trash_path, ''), replaced_at, trashed_at, purge_after, purged_at,
-	restored_at, stalled_at, updated_at`
+	restored_at, stalled_at, kept_entry_id, updated_at`
 
 func scanCompressItem(row interface{ Scan(...any) error }) (CompressItem, error) {
 	var it CompressItem
@@ -125,7 +128,7 @@ func scanCompressItem(row interface{ Scan(...any) error }) (CompressItem, error)
 		&it.MirrorEntryID, &it.State, &it.Reason, &it.Priority, &it.OrderKey, &it.NotBefore, &it.Attempts, &it.EstSize, &it.EstMs,
 		&it.DurationMs, &it.Q, &it.OutFingerprint, &it.OutSHA256, &it.OutSize, &it.VmafMean, &it.VmafLow, &it.VmafMode, &it.EncodeMs,
 		&it.VerifyMs, &it.Decoder, &it.MetaSidecar, &it.ReplaceStep, &it.TrashPath, &it.ReplacedAt, &it.TrashedAt, &it.PurgeAfter,
-		&it.PurgedAt, &it.RestoredAt, &it.StalledAt, &it.UpdatedAt)
+		&it.PurgedAt, &it.RestoredAt, &it.StalledAt, &it.KeptEntryID, &it.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return it, ErrNotFound
 	}
@@ -573,11 +576,11 @@ func saveCompressItem(ctx context.Context, db sqlExecer, it CompressItem, from .
 	q := `UPDATE compress_items SET sha256 = ?, size = ?, state = ?, reason = ?, priority = ?, not_before = ?, attempts = ?, est_size = ?,
 		est_ms = ?, duration_ms = ?, q = ?, out_fingerprint = ?, out_sha256 = ?, out_size = ?, vmaf_mean = ?, vmaf_low = ?, vmaf_mode = ?,
 		encode_ms = ?, verify_ms = ?, decoder = ?, meta_sidecar = ?, replace_step = ?, trash_path = ?, replaced_at = ?, trashed_at = ?,
-		purge_after = ?, purged_at = ?, restored_at = ?, stalled_at = ?, updated_at = ? WHERE id = ?`
+		purge_after = ?, purged_at = ?, restored_at = ?, stalled_at = ?, kept_entry_id = ?, updated_at = ? WHERE id = ?`
 	args := []any{nullString(it.SHA256), it.Size, it.State, it.Reason, it.Priority, it.NotBefore, it.Attempts, it.EstSize, it.EstMs,
 		it.DurationMs, it.Q, nullString(it.OutFingerprint), nullString(it.OutSHA256), it.OutSize, it.VmafMean, it.VmafLow,
 		nullString(it.VmafMode), it.EncodeMs, it.VerifyMs, nullString(it.Decoder), it.MetaSidecar, it.ReplaceStep, nullString(it.TrashPath),
-		it.ReplacedAt, it.TrashedAt, it.PurgeAfter, it.PurgedAt, it.RestoredAt, it.StalledAt, it.UpdatedAt, it.ID}
+		it.ReplacedAt, it.TrashedAt, it.PurgeAfter, it.PurgedAt, it.RestoredAt, it.StalledAt, it.KeptEntryID, it.UpdatedAt, it.ID}
 	if len(from) > 0 {
 		q += " AND state IN (" + placeholders(len(from)) + ")" //nolint:gosec // placeholders only
 		for _, f := range from {
@@ -632,8 +635,23 @@ func (s *Store) CancelCompressItems(ctx context.Context, jobID string, ids []int
 		for _, it := range list {
 			if it.State == CompressReady && it.Source == "blob" && it.ReplaceStep == StepServed {
 				// The phone downloaded the output and may have written it already: only its own report (or abandon)
-				// settles the item (ADR 0025 Amendment (S2), "A served output").
-				others = append(others, it)
+				// settles the item (ADR 0025 Amendment (S2), "A served output"), unless its phone's backup no longer
+				// has the original anywhere (the entry gone, the backup purged): then nothing can report it, and the
+				// cancel settles it (S2 follow-ups; the caller drops the output unless the mirror names it).
+				gone, err := servedPhoneGoneTx(ctx, tx, it)
+				if err != nil {
+					return err
+				}
+				if !gone {
+					others = append(others, it)
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE compress_items SET state = 'cancelled', reason = ?, replace_step = '', stalled_at = NULL,
+					updated_at = ? WHERE id = ?`, ReasonPhoneGone, now, it.ID); err != nil {
+					return err
+				}
+				it.State, it.Reason, it.ReplaceStep, it.StalledAt = CompressCancelled, ReasonPhoneGone, "", nil
+				cancelled = append(cancelled, it)
 				continue
 			}
 			switch it.State {
@@ -906,12 +924,13 @@ type CompressAttention struct {
 	UntrackedTrash int    `json:"untrackedTrash"`
 }
 
-// CompressAttentionNow counts stalled journals and untracked trashed originals.
+// CompressAttentionNow counts stalled journals (a NAS journal waiting, a phone restore or a served output no phone
+// reported for a day) and untracked trashed originals.
 func (s *Store) CompressAttentionNow(ctx context.Context) (CompressAttention, error) {
 	var a CompressAttention
 	err := s.db.QueryRowContext(ctx, `SELECT
-		(SELECT count(*) FROM compress_items WHERE state = 'replacing' AND stalled_at IS NOT NULL),
-		(SELECT min(stalled_at) FROM compress_items WHERE state = 'replacing' AND stalled_at IS NOT NULL),
+		(SELECT count(*) FROM compress_items WHERE state IN ('replacing', 'ready') AND stalled_at IS NOT NULL),
+		(SELECT min(stalled_at) FROM compress_items WHERE state IN ('replacing', 'ready') AND stalled_at IS NOT NULL),
 		(SELECT count(*) FROM compress_items WHERE state = 'failed' AND trash_path IS NOT NULL)`).Scan(&a.Stalled, &a.StalledSince, &a.UntrackedTrash)
 	return a, err
 }

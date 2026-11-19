@@ -510,27 +510,51 @@ func (m *Manager) housekeepBlobs(ctx context.Context) {
 	m.stallPhones(ctx)
 }
 
-// phoneStall is how long a phone may take to write a restore before its journal counts as waiting (attention).
+// phoneStall is how long a phone may take to write a restore, or to report an output it downloaded, before the item
+// counts as waiting (attention).
 const phoneStall = 24 * time.Hour
 
-// stallPhones marks the phone restores (and restores again) no phone reported for phoneStall as waiting: they are
-// counted with the stalled journals (compress.attention) until the phone reports or gives up.
+// stallPhones marks the phone restores (and restores again) and the served outputs (S2 follow-ups) no phone reported
+// for phoneStall as waiting: they are counted with the stalled journals (compress.attention) until the phone reports
+// or gives up, a cancel settles them (the phone's backup no longer has the original), or the admin forces them.
 func (m *Manager) stallPhones(ctx context.Context) {
-	list, err := m.cfg.Store.CompressItemsIn(ctx, store.CompressReplacing)
+	list, err := m.cfg.Store.CompressItemsIn(ctx, store.CompressReplacing, store.CompressReady)
 	if err != nil {
 		return
 	}
 	now := m.now()
 	for _, it := range list {
-		if it.Source != "blob" || it.StalledAt != nil || (it.ReplaceStep != store.StepRestorePhone && it.ReplaceStep != store.StepReswapPhone) ||
-			now.Sub(time.UnixMilli(it.UpdatedAt)) < phoneStall {
+		phone := it.ReplaceStep == store.StepRestorePhone || it.ReplaceStep == store.StepReswapPhone || it.ReplaceStep == store.StepServed
+		if it.Source != "blob" || it.StalledAt != nil || !phone || now.Sub(time.UnixMilli(it.UpdatedAt)) < phoneStall {
 			continue
 		}
 		it.StalledAt = i64(it.UpdatedAt)
-		if m.save(ctx, &it, store.CompressReplacing) {
-			m.log.Warn("compress: a phone restore waits", "job", it.JobID, "item", it.ID)
+		// Written as is (m.save clears stalled_at on any state but replacing).
+		if ok, err := m.cfg.Store.SaveCompressItem(context.WithoutCancel(ctx), it, it.State); err == nil && ok {
+			m.log.Warn("compress: a phone item waits", "job", it.JobID, "item", it.ID, "state", it.State, "step", it.ReplaceStep)
 		}
 	}
+}
+
+// ForceCancel is the admin's way out of a phone item waiting for a phone that may never report (lost, reset, Hoard
+// uninstalled; S2 follow-ups): a ready item is cancelled and its output dropped unless something keeps it (the
+// phone's backup already holding it, a claim, another compression); the original is never touched (the phone backup's,
+// or a server item when the backup no longer has it). A phone restore (or restore again) goes back to the trash as it
+// was, its retention restarted. store.ErrConflict: the item is in no such state.
+func (m *Manager) ForceCancel(ctx context.Context, id int64) (store.CompressItem, error) {
+	it, prev, err := m.cfg.Store.ForceCancelCompressItem(ctx, id, m.trashMs(ctx))
+	if err != nil {
+		return it, err
+	}
+	log := m.openLog(it)
+	fmt.Fprintf(log, "forced by the admin: %s → %s\n", prev, it.State)
+	_ = log.Close()
+	m.log.Warn("compress: forced by the admin", "job", it.JobID, "item", it.ID, "from", prev, "to", it.State)
+	if it.State == store.CompressCancelled {
+		m.dropOutput(context.WithoutCancel(ctx), it)
+	}
+	m.refreshBlob(ctx, it)
+	return it, nil
 }
 
 // recoverBlobs, after a restart: a ready output that is no longer in the store goes back to the queue. A phone's

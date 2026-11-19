@@ -34,6 +34,7 @@ CREATE TABLE compress_items (
     folder_id       TEXT,                       -- nas: the NAS folder and path being replaced
     rel_path        TEXT,
     mirror_entry_id INTEGER,                    -- phone and backup: the mirror entry
+    kept_entry_id   INTEGER,                    -- phone and backup: the entry of the trashed side (the last swap's)
     state           TEXT NOT NULL,
     reason          TEXT NOT NULL DEFAULT '',   -- skip or failure reason
     priority        INTEGER NOT NULL,
