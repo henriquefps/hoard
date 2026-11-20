@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.8.1 (unreleased)
+
+Fixes after the first phone compressions ([ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.8.1)").
+
+- **A compressed video shows once in the Gallery.** Right after Hoard replaced a video on the phone, the Gallery showed it twice: once as on the phone and once as on the server. It now shows once, as on both, right away, and Hoard syncs with the photo server after each replace or restore.
+- **You see when videos are ready to replace.** The notification that compressed videos wait for your permission now shows like other notifications (it was silent), and the Gallery and Settings › Compress videos say "3 compressed videos are ready to replace on this phone" with **Continue**, which opens Android's permission dialog.
+- **Safer replaces.** Hoard checks each video again after you allow the replace, so a video you changed while the dialog was open is left as it is. A replace interrupted half-way is finished from the copy Hoard already downloaded, also when the phone is no longer paired with the photo server. While a video is being replaced, Settings › Compress videos warns not to uninstall Hoard or clear its storage.
+- Smaller fixes: the phone's free space is read correctly before the first download, and the Gallery and backup take the replaced video's details from the finished file.
+
 ## 2.8.0 (unreleased)
 
 Compress the videos on this phone: the photo server makes the compressed copy, and Hoard puts it in place of your video, with the same name, folder and date ([ADR 0025](docs/adr/0025-video-compression.md), phase A2). Android 11 and later with All files access; needs hoard-server 0.13.0 or later with its GPU image and a backup folder.

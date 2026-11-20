@@ -999,6 +999,14 @@
     <string name="compress_job_phone">Este celular</string>
     <string name="compress_auto_phone_desc">Vídeos novos desta pasta, depois do backup</string>
     <string name="compress_channel">Compressão de vídeos</string>
+    <string name="compress_consent_channel">Vídeos prontos para substituir</string>
+    <plurals name="compress_phone_ready_banner">
+        <item quantity="one">%1$s vídeo comprimido está pronto para substituir neste celular</item>
+        <item quantity="many">%1$s vídeos comprimidos estão prontos para substituir neste celular</item>
+        <item quantity="other">%1$s vídeos comprimidos estão prontos para substituir neste celular</item>
+    </plurals>
+    <string name="compress_phone_ready_continue">Continuar</string>
+    <string name="compress_phone_writing_warning">Um vídeo está sendo substituído. Não desinstale o Hoard nem limpe o armazenamento dele até terminar: a cópia que conclui a substituição fica lá.</string>
     <string name="compress_notification_title">Substituindo vídeos comprimidos</string>
     <string name="compress_notification_downloading">Baixando %1$s (%2$s de %3$s)</string>
     <string name="compress_notification_writing">Substituindo %1$s</string>

@@ -181,3 +181,37 @@ target working, the library's `no_write_mount` read as if nothing could be compr
 
 Afterwards: the container removed by name, the AVD stopped and deleted from my scratch space, the temporary
 directories left in the session's scratch space only.
+
+## 2.8.1: one Gallery cell after a phone replace, "ready to replace" (ADR 0025 Amendment (2.8.1))
+
+Run on cachyos-fps on 2026-11-20, branch `hoard-281` on `main` fcc8895.
+
+### JVM and Robolectric
+
+| Suite | What it checks |
+| --- | --- |
+| `:core:server` `CompressEngineTest` | a replace or restore report calls `reported` once per run (not while consent waits, not on the run after the sync: no loop), also from the consent path; the file checked again after the dialog (changed meanwhile: abandoned, not written); a partly written file keeps its part and is redone (no new download, no abandon); a started write finishes while unpaired (`written`, nothing reported); `written` saved before the part is deleted (a kill there reports next); the index takes the file's time when MediaStore still describes the old file; the parts folder created before its free space is read; the backup reads the writing paths once per pass |
+| `:core:server` `CompressPlanTest` | `PartlyWritten` (also with MediaStore unreadable), never for the source, `changed` for another file |
+| `:native` `DevicesTest` | the reported state (the output's fingerprint and size on the phone, the cached item with the original's fingerprint and its mirror's old size at the same place, a `reported` or `written` journal row): **one cell**, on the phone and the server, before and after the sync; the same after a restore; only rows that wrote the file alias |
+| `:native` `PhoneCompressSyncTest` | a report schedules `GallerySyncWorker.soon`; a consent run that backs off schedules `CompressWorker.later`; the consent notification is on `phone-compress-consent` at the default importance |
+| `:native` `GalleryScreenTest`, `PhoneCompressScreenshotTest` | the banner (text, Continue, gone at 0) on the Gallery and Settings; the writing warning; goldens `gallery_replace_ready_phone_{light,dark}`, `compress_phone_settings_*` (the banner on top), `compress_phone_settings_writing_phone_light` |
+
+### End to end: emulator against my own hoard-server container
+
+Server: `main` built with `-tags hoarde2e` (`HOARD_E2E_FAKE_COMPRESS=1`), the binary mounted into the 0.12.1 image as
+`hoard-281-server`, `--cpus 2 --memory 1536m`, `127.0.0.1:3281`, temporary `/data` and `/mnt/backup`; admin set-up and
+the pairing link through the admin API, typed into Hoard (`10.0.2.2:3281`). Emulator: AVD `hoard-281` (API 36, in my
+scratch space, port 5596, `-memory 3072 -no-window`), the debug build, All files access by `appops`. Three synthetic
+720p clips in `DCIM/Camera` (MediaStore owner `com.android.shell`: every replace needs consent).
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Backup of DCIM/Camera; Compress videos in this folder (2 clips) | the worker downloads both, then waits for consent; the notification is on `phone-compress-consent`, importance 3 (shown) | — |
+| Gallery after a sync | banner "2 compressed videos are ready to replace on this phone" · Continue; two cells, both on the phone and the server | [`b281-p01`](compression/e2e/b281-p01-gallery-banner.png) |
+| Continue | Settings › Compress videos opens and Android's "Allow Hoard debug to modify 2 videos?" | [`b281-p02`](compression/e2e/b281-p02-consent-dialog.png) |
+| Allow | both written (17 MB → 1 MB), reported; "2 reported, the Gallery syncs"; the sync 5 s later; the run after it replaced nothing (no loop); two cells, "Compressed", banner gone | — |
+| A third clip backed up and compressed; Gallery synced; dialog open, **the server paused**, Allow | the file written (17 022 165 → 1 032 056 bytes), the report unanswered: journal `written`, `device_media` the output's fingerprint, the cached item the original's (the reported state). **One cell**, on the phone and the server | [`b281-p04`](compression/e2e/b281-p04-gallery-before-sync.png) |
+| Server unpaused | the row stayed `written` until Settings › Compress videos ran the worker (found: the consent run did not schedule its back-off; fixed, `PhoneCompressSyncTest`); then reported, the sync brought the swapped item (the output's fingerprint): **one cell** | [`b281-p05`](compression/e2e/b281-p05-gallery-after-report-sync.png) |
+
+**Not run here**: a restore on the emulator (JVM: `DevicesTest`, `CompressEngineTest`); the partly-written and unpaired
+paths (JVM only). Afterwards the container was removed by name and the AVD stopped and deleted.

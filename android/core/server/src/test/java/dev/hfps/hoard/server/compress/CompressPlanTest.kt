@@ -165,6 +165,20 @@ class CompressPlanTest {
     }
 
     @Test
+    fun aPartlyWrittenFileIsRedoneNeverAbandoned() {
+        val r = row(state = PhoneState.VERIFIED)
+        // Amendment (2.8.1): a file that starts with the part's bytes is a write of ours cut short (the part is kept).
+        val half = PhoneFileNow(true, 150, 9_000, "v1:half", r.absolute, partlyWritten = true)
+        assertThat(CompressPlan.check(r, half)).isEqualTo(PhoneCheck.PartlyWritten)
+        // Also with MediaStore unreadable or its row gone (the write is redone only on a found row, later).
+        assertThat(CompressPlan.check(r, half.copy(mediaReadable = false))).isEqualTo(PhoneCheck.PartlyWritten)
+        // The source itself is never "partly written".
+        assertThat(CompressPlan.check(r, PhoneFileNow(true, 1000, 5_000, fpA, r.absolute, partlyWritten = true))).isEqualTo(PhoneCheck.Ok)
+        // Another file (not a prefix of the part): changed, as before.
+        assertThat(CompressPlan.check(r, half.copy(partlyWritten = false))).isEqualTo(PhoneCheck.Abandon(PhoneError.CHANGED))
+    }
+
+    @Test
     fun aBadDownloadIsFetchedOnceMoreThenAbandoned() {
         val first = CompressPlan.verifyFailed(row(state = PhoneState.VERIFYING).copy(offset = 300), now)
         assertThat(first.state).isEqualTo(PhoneState.DOWNLOADING)

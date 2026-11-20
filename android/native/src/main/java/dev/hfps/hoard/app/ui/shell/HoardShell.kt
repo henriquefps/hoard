@@ -130,6 +130,9 @@ object ShellRequests {
 
     /** Settings › Compress videos (the phone replace's consent notification, ADR 0025 A2). */
     val openCompress = MutableStateFlow(false)
+
+    /** …and start its consent step at once (the Gallery's "ready to replace" banner, ADR 0025 Amendment (2.8.1)). */
+    val compressConsent = MutableStateFlow(false)
 }
 
 /** The app shell: the tabs and the screens behind them, over the real data in [container]. */

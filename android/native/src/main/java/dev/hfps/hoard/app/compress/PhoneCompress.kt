@@ -29,12 +29,15 @@ import dev.hfps.hoard.server.compress.PhoneAbility
 import dev.hfps.hoard.server.compress.PhoneMedia
 import dev.hfps.hoard.server.compress.PhoneWrite
 import dev.hfps.hoard.server.db.CompressPhoneEntity
+import dev.hfps.hoard.server.sync.GallerySyncWorker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -64,6 +67,9 @@ class PhoneCompress(
 
     val progress: StateFlow<CompressProgress> get() = engine.progress
 
+    /** Videos waiting for the owner's consent (the "ready to replace" banner, ADR 0025 Amendment (2.8.1)). */
+    val waitingConsent: Flow<Int> by lazy { rows.map { dev.hfps.hoard.server.compress.PhoneOverview.of(it).waiting.size }.distinctUntilChanged() }
+
     /** A worker's run (also the screen's [allow]). */
     suspend fun run(stopped: () -> Boolean, foreground: suspend (CompressProgress) -> Unit = {}): CompressRunResult {
         cleanParts()
@@ -80,8 +86,25 @@ class PhoneCompress(
     /** "Allow": the screen is up, so the rows waiting for consent are asked (one system dialog per batch) and written. */
     suspend fun allow(): CompressRunResult = scope.async(Dispatchers.IO) {
         // In the app's scope: leaving the screen does not cut a write short (it would be redone, but need not be).
-        engine.run(interactive = true).also { if (it.waitingConsent == 0) CompressNotifications.cancelConsent(context) }
+        engine.run(interactive = true).also {
+            if (it.waitingConsent == 0) CompressNotifications.cancelConsent(context)
+            scheduleAfter(it)
+        }
     }.await()
+
+    /**
+     * After a run outside the worker (the consent step): a row that backs off (a report the server did not answer, a
+     * write without room) gets the worker's follow-up as a worker run would, instead of waiting for the next sync
+     * (ADR 0025 Amendment (2.8.1)).
+     */
+    internal suspend fun scheduleAfter(result: CompressRunResult) {
+        val unmetered = runCatching { unmetered() }.getOrDefault(true)
+        val retryAt = result.retryAt
+        when {
+            retryAt != null -> CompressWorker.later(context, unmetered, ((retryAt - System.currentTimeMillis()) / 60_000).coerceIn(1, 360))
+            result.serverPending -> CompressWorker.later(context, unmetered)
+        }
+    }
 
     /** "Keep originals": the waiting rows are given up; the server cancels them (the originals stay). */
     suspend fun keepOriginals(ids: Collection<String>) {
@@ -323,6 +346,16 @@ class PhoneCompress(
 
     override fun consentWaiting(count: Int) {
         CompressNotifications.consent(context, count)
+    }
+
+    /**
+     * Files were replaced or restored and reported (ADR 0025 Amendment (2.8.1)): the Gallery syncs, so its cached item
+     * takes the new fingerprint. The engine calls it once per run that reported something; the sync's own run reports
+     * nothing new, so they never loop.
+     */
+    override fun reported(count: Int) {
+        Log.i(TAG, "replace: $count reported, the Gallery syncs")
+        GallerySyncWorker.soon(context)
     }
 
     /** Process start: a journal left mid-way (a kill during a write) is finished by a run soon. */

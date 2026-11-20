@@ -161,4 +161,74 @@ class DevicesTest {
         assertThat(Mirrors.volumeOf("machine-1")).isNull()
         assertThat(Mirrors.volume("primary")).isEqualTo("PRIMARY")
     }
+
+    // --- ADR 0025 Amendment (2.8.1): a video this phone replaced in place shows once -------------------------------
+
+    private val original = fp(70)
+    private val output = fp(71)
+    private val video = server("tv", "VID_1.mp4", "2026-11-05T10:00:00.000", kind = "video", folder = "Tab S9/DCIM/Camera", main = 70)
+
+    private fun journal(direction: String, source: String, target: String, sourceSize: Long, targetSize: Long, state: String = dev.hfps.hoard.server.compress.PhoneState.REPORTED, started: Boolean = true) =
+        dev.hfps.hoard.server.db.CompressPhoneEntity(
+            id = "7", volume = "primary", path = "DCIM/Camera/VID_1.mp4", absolute = "/storage/emulated/0/DCIM/Camera/VID_1.mp4", direction = direction,
+            sourceFingerprint = source, sourceSha256 = "s", sourceSize = sourceSize, targetFingerprint = target, targetSha256 = "t", targetSize = targetSize,
+            state = state, writeStarted = started, report = if (direction == "compress") "replaced" else "restored",
+        )
+
+    private fun cells(device: dev.hfps.hoard.server.db.DeviceMediaEntity, files: Map<String, String>, mirrorSize: Long, aliases: Map<String, String>) =
+        GalleryModel.entries(
+            GalleryInput(
+                listOf(video), DeviceShots.group(listOf(device)), files, emptyMap(), emptyMap(),
+                mirrors = mapOf("tv" to listOf(mirror("tv", 70, tablet, "DCIM/Camera/VID_1.mp4", size = mirrorSize))),
+                physicalId = tablet, aliases = aliases,
+            ),
+        )
+
+    @Test
+    fun aVideoThisPhoneReplacedShowsOnceBeforeAndAfterTheSync() {
+        // Right after the replace: the index has the output (its fingerprint, its size); the cached item still has the
+        // original's fingerprint, and its mirror the old size at the same place.
+        val rewritten = media("DCIM/Camera/VID_1.mp4", "2026-11-05T10:00:00.000", size = 700_000, fingerprint = output, video = true)
+        val cached = mapOf(original to "tv")
+        // Without the journal it shows twice (the report of 2.8.0): neither the fingerprint nor the place (size) match.
+        assertThat(cells(rewritten, cached, 3_000_000, emptyMap())).hasSize(2)
+        val aliases = CompressAliases.of(listOf(journal("compress", original, output, 3_000_000, 700_000)))
+        assertThat(aliases).containsExactly(output, original)
+        val before = cells(rewritten, cached, 3_000_000, aliases)
+        assertThat(before).hasSize(1)
+        assertThat(before.single().source).isEqualTo(Source.Both)
+        assertThat(before.single().itemId).isEqualTo("tv")
+        // `written` (not reported yet) too.
+        assertThat(cells(rewritten, cached, 3_000_000, CompressAliases.of(listOf(journal("compress", original, output, 3_000_000, 700_000, state = "written"))))).hasSize(1)
+        // After the sync: the cache has the swapped item (the output's fingerprint, the new size); the direct match wins.
+        val after = cells(rewritten, mapOf(output to "tv"), 700_000, aliases)
+        assertThat(after).hasSize(1)
+        assertThat(after.single().source).isEqualTo(Source.Both)
+        assertThat(after.single().itemId).isEqualTo("tv")
+    }
+
+    @Test
+    fun aVideoThisPhoneRestoredShowsOnceBeforeTheSync() {
+        // Restored: the phone has the original again; the cached item still has the output (and the small size).
+        val restored = media("DCIM/Camera/VID_1.mp4", "2026-11-05T10:00:00.000", size = 3_000_000, fingerprint = original, video = true)
+        val cached = mapOf(output to "tv")
+        assertThat(cells(restored, cached, 700_000, emptyMap())).hasSize(2)
+        val aliases = CompressAliases.of(listOf(journal("restore", output, original, 700_000, 3_000_000)))
+        val list = cells(restored, cached, 700_000, aliases)
+        assertThat(list).hasSize(1)
+        assertThat(list.single().source).isEqualTo(Source.Both)
+        // After the sync the item has the original's fingerprint again.
+        assertThat(cells(restored, mapOf(original to "tv"), 3_000_000, aliases)).hasSize(1)
+    }
+
+    @Test
+    fun onlyRowsThatWroteTheFileAlias() {
+        assertThat(CompressAliases.of(listOf(journal("compress", original, output, 3, 1, state = "verified", started = false)))).isEmpty()
+        assertThat(CompressAliases.of(listOf(journal("compress", original, output, 3, 1, state = "writing")))).isEmpty()
+        assertThat(CompressAliases.of(listOf(journal("compress", original, output, 3, 1, state = "abandoned")))).isEmpty()
+        // Two files' rows: each maps its own new fingerprint (one hop, never a chain).
+        val a = journal("compress", original, output, 3, 1)
+        val b = journal("compress", fp(80), fp(81), 3, 1).copy(id = "8")
+        assertThat(CompressAliases.of(listOf(a, b))).containsExactly(output, original, fp(81), fp(80))
+    }
 }

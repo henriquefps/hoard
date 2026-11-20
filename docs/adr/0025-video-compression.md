@@ -1624,3 +1624,63 @@ free space and the server).
   `reported` or `abandoned`): `BackupEngine` neither identifies, reports nor uploads those paths, so a backup pass
   during a long redo does not upload the half-written file as a new version. The replace's read-back sets the backup
   row afterwards, as before.
+
+## Amendment (2.8.1)
+
+Hoard 2.8.1 (app only; works with hoard-server 0.13.x): the owner's first phone compressions, and the follow-ups queued
+in the reviews of #81. Nothing in the protocol, the schema (`gallery.db` stays 6) or the server changes. Tests:
+`CompressEngineTest`, `CompressPlanTest` (`:core:server`), `DevicesTest`, `GalleryScreenTest`,
+`PhoneCompressScreenshotTest`, `PhoneCompressSyncTest` (`:native`).
+
+- **One Gallery cell after a replace (the owner's report).** After a phone replace the Gallery showed the clip twice: a
+  phone-only cell (the rewritten file) and a server-only one (the old item). The read-back's `DeviceDao.replaced` gives
+  the phone's `device_media` row the output's size, fingerprint and SHA-256 at once (correct), but no Gallery sync ran
+  after `/replaced`, so the cached item kept the original's fingerprint and its mirror the old size at the same path:
+  the row then failed both merge rules of `GalleryModel` (the fingerprint, and the place, whose size check stays: a
+  file rewritten by anything else at that path is another file). Two fixes:
+  - *A sync after a report.* `CompressSource.reported(count)` is called once per engine run in which the server
+    accepted a `/replaced` or `/restored` (or answered 409/404: it may have swapped already), from the worker and from
+    the screen's consent path alike; `PhoneCompress` schedules `GallerySyncWorker.soon`. No loop: a sync starts a
+    replace run (`afterSync`), and that run reports nothing new, so it schedules nothing.
+  - *An alias until the sync.* The server's swap and the sync may lag (an offline back-off can last hours).
+    `GalleryRepository` builds `CompressAliases.of(compress_phone)`: for every row whose write started and whose state
+    is `written` or `reported`, the file's fingerprint now (the row's target) → the one it had (its source); a restore
+    is the same rule in the other direction. `GalleryModel` tries `serverFiles[alias[fp]]` after `serverFiles[fp]`, so
+    the cell is one shot shown as on the phone and on the server; once the cache has the swapped item the direct match
+    wins. One hop only (an alias is never followed twice).
+- **"Ready to replace" is visible.** The consent notification has its own channel `phone-compress-consent` at
+  `IMPORTANCE_DEFAULT` ("Videos ready to replace", `compress_consent_channel`); the run's `phone-compress` channel stays
+  low and silent (a channel's importance cannot be raised after it was created). The Gallery and the top of Settings ›
+  Compress videos show a banner ("3 compressed videos are ready to replace on this phone", `compress_phone_ready_banner`)
+  while rows wait for consent; **Continue** starts the consent step (`PhoneCompress.allow`, the system dialog). From the
+  Gallery it opens Settings › Compress videos with `ShellRequests.compressConsent`, which starts the step there (Keep
+  originals stays one tap away). The banner is not dismissable: it goes when the rows are written or kept.
+- **A consent run that backs off schedules the worker.** Found on the emulator: a report the server did not answer
+  during the screen's consent run (`PhoneCompress.allow`) left the row `written` until the next trigger (the hourly
+  sync), as only the worker scheduled its own back-off. `allow` now schedules `CompressWorker.later` at the run's
+  `retryAt` (or the 5-minute follow-up while the server still works), as the worker does.
+- **The check runs again after the consent dialog.** The dialog can stay up for minutes: after **Allow**, each row is
+  checked again (`check`) before its write. A file changed meanwhile is abandoned (`changed`) and not written; a file
+  whose MediaStore row is now another one waits for consent again.
+- **A partly written file keeps the part.** `PhoneFileNow.partlyWritten`: the file is shorter than the part and starts
+  with its bytes (the first MiB compared; only when it is no longer the source). `CompressPlan.check` answers
+  `PartlyWritten` (before the MediaStore checks): the row goes to `writing` with `write_started` set and is redone from
+  the part (a known MediaStore row still needed), instead of being abandoned `changed` with the part deleted, which
+  left a broken video.
+- **Unpaired, a started write still finishes.** Without an account (or a key), a run finishes the rows in `writing`
+  with `write_started` from their parts and reads them back (`written`); they report once paired again. Nothing else
+  moves without a server.
+- **The read-back saves `written` before deleting the part** (`CompressSource.deletePart`): a kill between the two
+  leaves a row that reports, never a `writing` row without its part.
+- **The index takes fresh values.** After the scan and the `DATE_TAKEN` write the MediaStore row is read again;
+  `recordWritten` uses its `DATE_MODIFIED` only when the row already has the target's size (else the file's own time,
+  in whole seconds), and reads and writes the backup rows in one transaction.
+- **The parts folder exists before its free space is read.** The engine calls `mkdirs` before `usableSpace` (the
+  download's folder, the file's folder); `CompressSource.usableSpace` no longer creates it and answers null for a folder
+  that does not exist (a missing folder reads as 0 bytes free, which looked like a full phone).
+- **The backup reads the writing paths once per pass** (`CompressDao.writingPaths()` at the start of `BackupEngine.pass`,
+  shared by identify, report, upload and the report after uploads).
+- **A Settings warning while a write is in progress.** "This phone" says "A video is being replaced. Don't uninstall
+  Hoard or clear its storage until it finishes" (`compress_phone_writing_warning`) while the run writes or a started
+  write waits to be redone: the part that finishes it lives in Hoard's app-specific storage, which an uninstall or
+  "Clear storage" removes.

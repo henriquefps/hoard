@@ -40,6 +40,12 @@ import dev.hfps.hoard.server.compress.PhoneOverview
 import dev.hfps.hoard.server.compress.PhoneReport
 import dev.hfps.hoard.server.compress.PhoneState
 import dev.hfps.hoard.server.db.CompressPhoneEntity
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.google.common.truth.Truth.assertThat
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -136,5 +142,36 @@ class PhoneCompressScreenshotTest {
             settings.copy(overview = CompressOverview(emptyList(), emptyList(), emptyList()), phone = PhoneCompressUi(offer = CompressOffer.Unavailable(CompressGate.REASON_PHONE_ALL_FILES))),
             onBack = {},
         )
+    }
+
+    // --- ADR 0025 Amendment (2.8.1): "ready to replace" and the warning while a write is in progress ---
+
+    @Test fun settingsWritingPhoneLight() = shoot("compress_phone_settings_writing_phone_light") {
+        CompressSettingsContent(
+            settings.copy(
+                phone = PhoneCompressUi(
+                    PhoneOverview.of(listOf(row("3", "PXL_20241102_181233.mp4", PhoneState.WRITING).copy(writeStarted = true))),
+                    CompressProgress(running = true, phase = CompressEngine.PHASE_WRITING, name = "PXL_20241102_181233.mp4", size = 260_000_000),
+                    CompressOffer.Ready,
+                ),
+            ),
+            onBack = {},
+        )
+    }
+
+    @Test
+    fun theSettingsBannerStartsTheConsentStepAndTheWarningFollowsAWrite() {
+        var allowed = 0
+        var ui by androidx.compose.runtime.mutableStateOf(settings)
+        compose.setContent { FixedNowTheme(darkTheme = false) { CompressSettingsContent(ui, onBack = {}, onAllow = { allowed++ }) } }
+        compose.onNodeWithText("3 compressed videos are ready to replace on this phone").assertExists()
+        compose.onNodeWithTag("compress-ready-continue").performClick()
+        assertThat(allowed).isEqualTo(1)
+        compose.onNodeWithTag("compress-phone-writing-warning").assertDoesNotExist()
+        // A write in progress (or a started one waiting to be redone): the uninstall / clear storage warning.
+        ui = settings.copy(phone = PhoneCompressUi(PhoneOverview.of(listOf(row("3", "PXL_1.mp4", PhoneState.WRITING).copy(writeStarted = true, nextAttemptAt = 9, error = PhoneError.SPACE))), offer = CompressOffer.Ready))
+        compose.waitForIdle()
+        compose.onNodeWithTag("compress-ready-banner").assertDoesNotExist()
+        compose.onNodeWithTag("compress-phone-writing-warning").assertExists()
     }
 }

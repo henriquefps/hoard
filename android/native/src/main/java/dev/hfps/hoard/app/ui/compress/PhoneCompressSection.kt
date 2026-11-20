@@ -7,12 +7,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -48,6 +50,40 @@ data class PhoneCompressUi(
 ) {
     /** Listed when the phone target is offered (or unusable here) or the journal has rows. */
     val visible: Boolean get() = offer != CompressOffer.Hidden || !overview.isEmpty
+
+    /** Videos waiting for the owner's consent ("ready to replace": the banner, ADR 0025 Amendment (2.8.1)). */
+    val ready: Int get() = overview.waiting.size
+
+    /**
+     * A phone file is being written in place, or a started write waits to be redone: the copy that finishes it lives
+     * in Hoard's storage, so Settings warns about uninstalling or clearing storage meanwhile.
+     */
+    val writing: Boolean get() = progress.phase == CompressEngine.PHASE_WRITING ||
+        overview.active.any { it.writeStarted && it.state == PhoneState.WRITING }
+}
+
+/**
+ * "3 compressed videos are ready to replace on this phone" with Continue, which starts the consent step (ADR 0025
+ * Amendment (2.8.1)): on the Gallery and at the top of Settings › Compress videos. Not dismissable; it goes when the
+ * videos are replaced or kept.
+ */
+@Composable
+fun ReplaceReadyBanner(count: Int, onContinue: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    if (count <= 0) return
+    Row(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(HfpsTheme.colors.card).padding(start = 12.dp, end = 4.dp).testTag("compress-ready-banner"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(PhosphorRegular.ArrowsIn, null, Modifier.size(18.dp), tint = HfpsTheme.colors.primary)
+        Text(
+            pluralStringResource(R.plurals.compress_phone_ready_banner, count, formatNumber(count, locale())),
+            style = HfpsTheme.typography.ui,
+            color = HfpsTheme.colors.cardForeground,
+            modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+        )
+        GhostButton(stringResource(R.string.compress_phone_ready_continue), onContinue, enabled = enabled, modifier = Modifier.testTag("compress-ready-continue"))
+    }
 }
 
 /**
@@ -67,6 +103,17 @@ fun PhoneCompressSection(
         Eyebrow(stringResource(R.string.compress_phone_title), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
         (ui.offer as? CompressOffer.Unavailable)?.let { u ->
             ReasonLine(unavailableText(u.reason), HfpsTheme.typography.ui, HfpsTheme.colors.warning, Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("compress-phone-unavailable"))
+        }
+        if (ui.writing) {
+            // A write in place is redone from the copy in Hoard's storage after a kill; an uninstall or "Clear storage"
+            // takes that copy with it (ADR 0025 Amendment (2.8.1)).
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp).testTag("compress-phone-writing-warning"),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(PhosphorRegular.Warning, null, Modifier.size(16.dp).padding(top = 2.dp), tint = HfpsTheme.colors.warning)
+                Text(stringResource(R.string.compress_phone_writing_warning), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.warning)
+            }
         }
         if (o.waiting.isNotEmpty()) {
             Column(Modifier.fillMaxWidth().background(HfpsTheme.colors.card).padding(16.dp).testTag("compress-phone-consent")) {

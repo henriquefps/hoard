@@ -94,6 +94,8 @@ data class PhoneFileNow(
     val fingerprint: String?,
     val mediaPath: String?,
     val mediaReadable: Boolean = true,
+    /** The file is shorter than the downloaded part and starts with its bytes: a write of ours cut short. */
+    val partlyWritten: Boolean = false,
 )
 
 /** A check's verdict. */
@@ -105,6 +107,11 @@ sealed interface PhoneCheck {
     data class Abandon(val reason: String) : PhoneCheck
     /** Nothing known about the MediaStore row (the query failed): checked again later, never written meanwhile. */
     data object Wait : PhoneCheck
+    /**
+     * The file is neither version but starts with the part's bytes: a write of ours the journal did not record. The
+     * part is kept and the write redone from it (Amendment (2.8.1)), never abandoned with the part deleted.
+     */
+    data object PartlyWritten : PhoneCheck
 }
 
 /**
@@ -243,6 +250,8 @@ object CompressPlan {
     fun check(row: CompressPhoneEntity, now: PhoneFileNow): PhoneCheck {
         if (!now.exists) return PhoneCheck.Abandon(PhoneError.GONE)
         if (now.size == row.targetSize && now.fingerprint == row.targetFingerprint) return PhoneCheck.AlreadyTarget
+        val source = now.size == row.sourceSize && now.fingerprint == row.sourceFingerprint
+        if (!source && now.partlyWritten) return PhoneCheck.PartlyWritten
         if (!now.mediaReadable) return PhoneCheck.Wait
         if (now.mediaPath == null || now.mediaPath != row.absolute) return PhoneCheck.Abandon(PhoneError.CHANGED)
         if (now.size != row.sourceSize || now.fingerprint != row.sourceFingerprint) return PhoneCheck.Abandon(PhoneError.CHANGED)
