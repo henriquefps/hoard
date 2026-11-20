@@ -1532,3 +1532,62 @@ deviation. Tests and screenshots: `docs/testing/web-compression.md`.
   page", with `compress.item.skip.*` (plural) apart from `compress.item.reason.*` (failures), and `nav.compression`,
   `nav.trash`, `trash.*`, `folders.backups`.
 
+
+## Amendment (A2)
+
+Phase A2 (Hoard 2.8.0: the phone's own replace) as built; each point is a detail the text above left open or a small
+deviation. E2E and tests: `docs/testing/compression.md` "A2".
+
+- **Modules.** `:core:server` `compress/`: `CompressPlan` (pure: server items → journal rows, the step of every state,
+  the check, failed downloads and read-backs, the repair, consent batches, `PhoneOverview`), `CompressDownloader`,
+  `CompressEngine` over `CompressSource`, `CompressWorker` with `CompressHost` (the application). `:native`
+  `compress/PhoneCompress.kt` (the source over MediaStore and the phone's files, the worker's scheduling, the consent
+  step) and `CompressNotifications`; `ui/compress/PhoneCompressSection.kt` ("This phone").
+- **`gallery.db` 6.** `compress_jobs` (`id`, `target`, `profile`, `auto`, `created_at`, `status` JSON: every job this
+  phone started) and `compress_phone`, one row per server compression item: `direction`, the source's and target's
+  fingerprint/SHA-256/size, `original_mtime`, `date_taken`, `state` (`downloading`, `verifying`, `verified`, `writing`,
+  `written`, `reported`, `abandon`, `abandoned`), `part`, `part_offset` (`offset` is an SQL keyword), `etag`, `attempts`,
+  `next_attempt_at`, `error`, `verify_failures`, `rewrites`, `write_started`, `report` (`replaced`, `restored`, `none`)
+  and `abandon_reason`. A newer cycle of the same item (a restore after a replace, a restore again) replaces a settled
+  row. Unpairing drops the jobs and the rows that wrote nothing.
+- **Order of the steps.** As the table says, with two shortcuts: a row whose phone file already is the target (a write
+  whose answer was lost) is read back and reported without a download; `verifying` compares the part with the phone
+  file only while it is still the source. Once `write_started` is set the source is never checked again: a kill is
+  redone from the part, a part gone is downloaded again (and never abandoned: the phone file is neither version).
+- **No `IS_PENDING` on an existing row.** On the emulator (Android 16) `IS_PENDING = 1` on a camera video's row moved
+  the file to a `.pending-…` name; a process killed before it is cleared would leave the video under that name. The
+  write uses no `IS_PENDING`: the journal and the part make it redoable, and other apps may see a half-written file
+  for the seconds the copy takes. Then: `fsync`, mtime set back, `scanFile`, mtime again, `scanFile` again.
+- **`DATE_TAKEN` comes from the file.** MediaProvider ignores every app's update of `datetaken` ("Ignoring mutation of
+  datetaken", also from the row's owner), so "written back under the grant" cannot work: the read-back still tries,
+  and notes `date_taken` on the row when the value moved. The capture time survives because the server's recipe
+  restores the QuickTime `CreateDate` (exiftool, N4) and its gate checks it; with an output that carries it, the
+  emulator showed the same `DATE_TAKEN` after the replace.
+- **Consent.** Needed unless MediaStore names Hoard as the row's owner or Hoard has Media management. The system dialog
+  needs Hoard on screen: the worker leaves such rows `verified` with `error = permission` and posts one notification
+  ("3 compressed videos ready to replace", opening Settings › Compress videos); **Allow** there asks one
+  `createWriteRequest` per 500 rows and writes them at once in the app's scope; a refusal keeps them waiting;
+  **Keep originals** abandons them `refused`. A grant does not outlive the process: rows still `verified` after a
+  kill are asked again (a `writing` row is redone without asking: the owner already allowed it, and All files access
+  writes the file).
+- **Triggers.** A run after each successful Gallery sync (when `targets.phone.ok` or rows are open), one minute after
+  a phone job starts, when Settings › Compress videos opens, at once after a Trash restore the server answers
+  `replacing` (and for "Replace now"), ten minutes after a backup pass that stored new videos when this phone has an
+  automatic phone job (`BackupRunResult.videosStored`), and every 5 minutes while the server still works on items of
+  this phone (queued … verifying), or at a row's back-off. Runs follow the backup's "Only on Wi-Fi" rule (unmetered by
+  default), battery not low; the explicit actions (a restore, Replace now, Keep originals) go on any network.
+- **Selection target.** A Gallery video this phone has in a backed-up folder (`mirror`, `onDevice`, this physical
+  device) goes to `phone` when the phone target is offered, even if the library also has it (one compression per
+  content; the NAS copy is the library's decision, compressed from Files). Settings › Phone backup's folder screen has
+  "Compress videos in this folder" and "Compress automatically" (a root select).
+- **The phone target** is offered with `targets.phone.ok` only; on Android 10 or without All files access the sheet
+  and Settings say so (`phone_android11`, `phone_all_files`, Hoard's own reasons). Settings › Compress videos labels
+  the library's reason "Library videos: …" when the phone target works.
+- **Backup.** After the read-back, `device_media` and `backup_files` take the target's size, MediaStore time,
+  fingerprint and SHA-256 (state `stored`); after `…/replaced` (or `/restored`) the backup row counts as reported as
+  it is, so the next pass sends nothing for it. If the report is lost the backup's own report heals it (the server's
+  swap answers `stored`): no upload, no removal either way (tested).
+- **Free up** leaves a shot with an unsettled row (`FreeUpExclusion.Compressing`, and `compressing` at the check).
+- **Strings** follow the list above plus `compress_phone_*` (states, reasons, consent, progress), `compress_job_phone`,
+  `compress_auto_phone_desc`, `compress_unavailable_library`, `compress_channel`, `compress_notification_*`,
+  `freeup_kept_compressing`, `freeup_reason_compressing`.

@@ -26,7 +26,7 @@ class GalleryMigrationTest {
         }
         helper.runMigrationsAndValidate(name, 2, true, GalleryDatabase.MIGRATION_1_2).close()
         val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), GalleryDatabase::class.java, name)
-            .addMigrations(GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4, GalleryDatabase.MIGRATION_4_5).build()
+            .addMigrations(*GalleryDatabase.MIGRATIONS).build()
         try {
             runBlocking {
                 assertThat(room.culling().pendingFor("i1")).hasSize(1)
@@ -50,7 +50,7 @@ class GalleryMigrationTest {
         }
         helper.runMigrationsAndValidate(name, 3, true, GalleryDatabase.MIGRATION_2_3).close()
         val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), GalleryDatabase::class.java, name)
-            .addMigrations(GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4, GalleryDatabase.MIGRATION_4_5).build()
+            .addMigrations(*GalleryDatabase.MIGRATIONS).build()
         try {
             runBlocking {
                 // The existing row is live (trashed_since NULL) and still in the grid.
@@ -78,7 +78,7 @@ class GalleryMigrationTest {
         }
         helper.runMigrationsAndValidate(name, 4, true, GalleryDatabase.MIGRATION_3_4).close()
         val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), GalleryDatabase::class.java, name)
-            .addMigrations(GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4, GalleryDatabase.MIGRATION_4_5).build()
+            .addMigrations(*GalleryDatabase.MIGRATIONS).build()
         try {
             runBlocking {
                 // The index and the queue are kept; the new hash columns start empty.
@@ -114,7 +114,7 @@ class GalleryMigrationTest {
         }
         helper.runMigrationsAndValidate(name, 5, true, GalleryDatabase.MIGRATION_4_5).close()
         val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), GalleryDatabase::class.java, name)
-            .addMigrations(GalleryDatabase.MIGRATION_1_2, GalleryDatabase.MIGRATION_2_3, GalleryDatabase.MIGRATION_3_4, GalleryDatabase.MIGRATION_4_5).build()
+            .addMigrations(*GalleryDatabase.MIGRATIONS).build()
         try {
             runBlocking {
                 // The pairing and the cursor are kept (nothing is pulled again); the cached items still need their index.
@@ -126,6 +126,47 @@ class GalleryMigrationTest {
                 assertThat(room.items().observeMirrors().first().single().gone).isEqualTo("deleted")
                 room.account().setMirrorsIndexed(true)
                 assertThat(room.account().get()!!.mirrorsIndexed).isTrue()
+            }
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun migratesFiveToSixAddingThePhoneReplaceJournal() {
+        val name = "migration-5-6.db"
+        helper.createDatabase(name, 5).use { db ->
+            db.execSQL(
+                "INSERT INTO server_account (id, url, server_id, server_name, server_version, device_id, physical_device_id, app, features, cursor, " +
+                    "caught_up, paired_at, culling_declared, backup_roots, mirrors_indexed) VALUES (1, 'http://s', 'srv', 'S', '0.13.1', 'd1', 'p1', 'hoard', " +
+                    "'items,backup,compress', 'c:9', 1, 5, 1, NULL, 1)",
+            )
+            db.execSQL(
+                "INSERT INTO backup_files (root_id, path, absolute, media_id, kind, size, modified, taken, fingerprint, fp_size, fp_modified, sha256, sha_size, " +
+                    "sha_modified, state, reported, server_state, item_id, verified_at, upload_id, upload_offset, attempts, next_attempt_at, error, updated_at) " +
+                    "VALUES ('r', 'DCIM/Camera/VID_1.mp4', '/storage/emulated/0/DCIM/Camera/VID_1.mp4', 7, 'video', 10, 20, 30, 'v1:x', 10, 20, NULL, NULL, NULL, " +
+                    "'stored', 'v1:x|10|20', 'stored', 'i1', NULL, NULL, 0, 0, NULL, NULL, 1)",
+            )
+        }
+        helper.runMigrationsAndValidate(name, 6, true, GalleryDatabase.MIGRATION_5_6).close()
+        val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), GalleryDatabase::class.java, name)
+            .addMigrations(*GalleryDatabase.MIGRATIONS).build()
+        try {
+            runBlocking {
+                // What was there stays: the pairing, the backup's rows.
+                assertThat(room.account().get()!!.cursor).isEqualTo("c:9")
+                assertThat(room.backup().filesAt("/storage/emulated/0/DCIM/Camera/VID_1.mp4").single().state).isEqualTo("stored")
+                // The new tables work.
+                room.compress().putJob(CompressJobEntity("job", "phone", "hevc-cq28", false, 9))
+                assertThat(room.compress().jobs().single().target).isEqualTo("phone")
+                room.compress().putPhone(
+                    CompressPhoneEntity(
+                        id = "7", volume = "primary", path = "DCIM/Camera/VID_1.mp4", absolute = "/storage/emulated/0/DCIM/Camera/VID_1.mp4",
+                        direction = "compress", sourceFingerprint = "v1:x", sourceSha256 = null, sourceSize = 10, targetFingerprint = "v1:y",
+                        targetSha256 = "s", targetSize = 3, state = "writing", report = "replaced",
+                    ),
+                )
+                assertThat(room.compress().unsettledPaths()).containsExactly("/storage/emulated/0/DCIM/Camera/VID_1.mp4")
             }
         } finally {
             room.close()

@@ -485,16 +485,48 @@ fun BackupFolderScreen(container: AppContainer, rootId: String, onBack: () -> Un
     var filter by remember { mutableStateOf(FileFilter.All) }
     val r = root?.firstOrNull { it.id == rootId }
     val title = r?.let { folderTitle(FolderRow(it.locationId, it.folder, BackupFolders.label(it.folder), it.id, 0, 0)) } ?: stringResource(R.string.backup_title)
-    BackupFilesContent(title, files, filter, onFilter = { filter = it }, onBack = onBack)
+    // ADR 0025 A2: this phone's videos of the folder, replaced in place (offered with the server's phone target).
+    val phoneOffer by container.compress.phoneOffer.collectAsState()
+    var compressing by remember { mutableStateOf<dev.hfps.hoard.app.ui.compress.CompressRequest?>(null) }
+    LaunchedEffect(Unit) { container.compress.recheckPhone() }
+    val folder = r?.let { container.compress.phoneFolder(it.id, "", title) }
+    BackupFilesContent(
+        title, files, filter, onFilter = { filter = it }, onBack = onBack,
+        onCompress = folder?.takeIf { phoneOffer != dev.hfps.hoard.server.compress.CompressOffer.Hidden }?.let { f -> { compressing = dev.hfps.hoard.app.ui.compress.CompressRequest(listOf(f.part)) } },
+        onCompressAuto = folder?.takeIf { phoneOffer != dev.hfps.hoard.server.compress.CompressOffer.Hidden }?.let { f -> { compressing = dev.hfps.hoard.app.ui.compress.CompressRequest(listOf(f.part), autoFolder = f) } },
+    )
+    compressing?.let { request -> dev.hfps.hoard.app.ui.compress.CompressSheet(container, request, onDismiss = { compressing = null }) }
 }
 
 /** A folder's files with their states (goldens in `BackupScreenshotTest`). */
 @Composable
-fun BackupFilesContent(title: String, files: List<BackupFileEntity>, filter: FileFilter, onFilter: (FileFilter) -> Unit, onBack: () -> Unit) {
+fun BackupFilesContent(
+    title: String,
+    files: List<BackupFileEntity>,
+    filter: FileFilter,
+    onFilter: (FileFilter) -> Unit,
+    onBack: () -> Unit,
+    /** "Compress videos in this folder" and "Compress automatically" (ADR 0025 A2); null hides them. */
+    onCompress: (() -> Unit)? = null,
+    onCompressAuto: (() -> Unit)? = null,
+) {
     HfpsScaffold(header = rememberCollapsingHeaderState(), topBar = { HfpsTopBar(title = title, onBack = onBack) }) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             val shown = files.filter(filter::accepts)
             LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize().testTag("backup-files")) {
+                if (onCompress != null || onCompressAuto != null) {
+                    item("compress") {
+                        Column(Modifier.padding(top = 8.dp).background(HfpsTheme.colors.card)) {
+                            onCompress?.let {
+                                HfpsListRow(stringResource(R.string.compress_action_folder), icon = PhosphorRegular.ArrowsIn, onClick = it, modifier = Modifier.testTag("backup-compress"))
+                            }
+                            onCompressAuto?.let {
+                                if (onCompress != null) HfpsRowDivider(Modifier.padding(start = 54.dp))
+                                HfpsListRow(stringResource(R.string.compress_auto_title), subtitle = stringResource(R.string.compress_auto_phone_desc), icon = PhosphorRegular.ArrowsClockwise, onClick = it, modifier = Modifier.testTag("backup-compress-auto"))
+                            }
+                        }
+                    }
+                }
                 item("filters") {
                     Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         for (f in FileFilter.entries) {

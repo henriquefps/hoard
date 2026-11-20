@@ -69,6 +69,8 @@ data class BackupRunResult(
     val bytes: Long = 0,
     /** Videos wait for the phone to charge (the worker asks for a run with that constraint). */
     val waitingForCharging: Boolean = false,
+    /** Videos the server holds since this pass (stored or found on its NAS): a compressed folder's new videos (ADR 0025). */
+    val videosStored: Int = 0,
 )
 
 /** What turning a folder's switch on came to. */
@@ -222,6 +224,7 @@ class BackupEngine(
         val batch = limits.maxReportEntries.coerceIn(1, 1000)
         dao.settleInterrupted()
         dao.deleteOrphans()
+        val videosBefore = storedVideos()
         val types = source.types()
         val listings = HashMap<String, Listing>()
         val freedPaths = dao.freed().associateBy { it.path }
@@ -258,8 +261,12 @@ class BackupEngine(
                 dao.passed(root.id, at, stats?.get(root.id)?.stats?.let { ServerJson.encodeToString(BackupRootStats.serializer(), it) } ?: root.serverStats)
             }
         }
-        return upload
+        return upload.copy(videosStored = (storedVideos() - videosBefore).size)
     }
+
+    /** Videos of every root the server holds now, by root and path. */
+    private suspend fun storedVideos(): Set<String> =
+        dao.allFiles().filter { it.kind == BackupKind.VIDEO && it.state in BackupState.DONE }.mapTo(HashSet()) { "${it.rootId}|${it.path}" }
 
     /** The root's `types` follow All files access (ADR 0024: `PATCH` when it is granted or revoked); a root gone is made again. */
     private suspend fun ensureTypes(api: ServerApi, root: BackupRootEntity, types: List<String>): BackupRootEntity? {

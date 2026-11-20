@@ -154,9 +154,12 @@ class AppContainer(context: Context) {
     /** The trash for rejects (ADR 0023): `.hoard-trash` folders, restore, Empty, auto-empty. */
     val trash: dev.hfps.hoard.app.trash.TrashService by lazy { dev.hfps.hoard.app.trash.TrashService(this) }
 
+    /** The phone's replace of compressed videos (ADR 0025, phase A2). */
+    val phoneCompress: dev.hfps.hoard.app.compress.PhoneCompress by lazy { dev.hfps.hoard.app.compress.PhoneCompress(appContext, gallery, scope) { backup.rules().photosUnmetered } }
+
     /** Video compression on hoard-server (ADR 0025, phase A1). */
     val compress: dev.hfps.hoard.app.compress.CompressService by lazy {
-        dev.hfps.hoard.app.compress.CompressService(gallery, scope) { serverLinks.paths.mappings() }
+        dev.hfps.hoard.app.compress.CompressService(gallery, scope, { serverLinks.paths.mappings() }, { phoneCompress.ability() }) { phoneCompress.afterPhoneJob() }
     }
 
     val transfers: TransferService by lazy {
@@ -221,6 +224,10 @@ class AppContainer(context: Context) {
         // Free up (ADR 0024 A3): a delete request a killed process left waiting for consent is settled (only if one is).
         if (java.io.File(appContext.noBackupFilesDir, dev.hfps.hoard.app.backup.PhoneFreeUp.PENDING_FILE).isFile) scope.launch { freeUp.settlePending() }
         gallery.start()
+        // The phone replace (ADR 0025 A2): a journal a killed process left mid-way is finished by a run soon, and each
+        // sync looks for items of this phone the server has compressed.
+        phoneCompress.start()
+        gallery.afterSync = { phoneCompress.afterSync() }
         // "Save to this device" (ADR 0024 A2): saved files reach the device index with their server fingerprint.
         TransferManager.get(appContext).addListener { progress ->
             runCatching {

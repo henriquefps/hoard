@@ -1,0 +1,16 @@
+diff --git a/server/e2e_compress_fake.go b/server/e2e_compress_fake.go
+index ad24913..eed5436 100644
+--- a/server/e2e_compress_fake.go
++++ b/server/e2e_compress_fake.go
+@@ -46,9 +46,9 @@ func (f fakeEncoder) Encode(ctx context.Context, r compress.EncodeRequest) (comp
+ 		bin = "ffmpeg"
+ 	}
+ 	cmd := exec.CommandContext(ctx, bin, //nolint:gosec // the configured ffmpeg; arguments are constants and work-directory paths
+-		"-hide_banner", "-nostdin", "-y", "-i", "/dev/fd/3", "-map", "0", "-c", "copy",
++		"-hide_banner", "-nostdin", "-y", "-i", "/dev/fd/3", "-map", "0", "-map_metadata", "0", "-c", "copy",
+ 		"-c:v:0", "libx264", "-preset", "ultrafast", "-b:v", "1M", "-metadata", "dev.hfps.hoard.compressed=v1, fake-cq28, "+r.Date,
+-		"-movflags", "+use_metadata_tags+faststart", "-f", "mp4", r.Out)
++		"-movflags", "+faststart", "-f", "mp4", r.Out)
+ 	if _, err := r.Src.Seek(0, io.SeekStart); err != nil {
+ 		return compress.EncodeResult{}, err
+ 	}

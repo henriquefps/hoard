@@ -144,7 +144,8 @@ class FreeUpEngine(
         val shots = FreeUpPlan.shots(roots, files)
         val favourites = source.favourites(files.mapNotNull { it.mediaId })
         val pending = source.pendingCulling(shots.mapTo(HashSet()) { it.key })
-        FreeUpPreview(FreeUpPlan.candidates(roots, files, rules, favourites, pending, now()), gate)
+        val compressing = db.compress().unsettledPaths().toHashSet()
+        FreeUpPreview(FreeUpPlan.candidates(roots, files, rules, favourites, pending, now(), compressing), gate)
     }
 
     /**
@@ -188,8 +189,13 @@ class FreeUpEngine(
         val stamps = HashMap<String, FileStamp>()
         val toHash = shots.sumOf { it.files.size }
         var hashed = 0
+        val compressing = db.compress().unsettledPaths().toHashSet()
         for (shot in shots) {
             if (stopped()) return FreeUpCheck(emptyList(), kept, gate, emptyMap())
+            if (shot.files.any { it.absolute in compressing }) {
+                kept += shot to FreeUpPlan.REASON_COMPRESSING
+                continue
+            }
             var reason: String? = null
             val files = ArrayList<BackupFileEntity>()
             for (row in shot.files) {

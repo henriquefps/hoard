@@ -112,3 +112,72 @@ the original still on the share, the item still `replaced`. Containers, the Samb
   ([`e271-settings-no-write-mount.png`](compression/e2e/e271-settings-no-write-mount.png)). The sub-folders line needs
   hoard-server 0.13.2 and is covered by the unit tests and goldens only. The container, the AVD and the temporary
   directories were removed.
+
+## A2: Hoard 2.8.0, the phone's own replace (ADR 0025 Amendment (A2))
+
+Run on cachyos-fps on 2026-11-20, branch `compress-a2` on `main` d91e160 (hoard-server 0.13.2, Hoard 2.7.1, web S3).
+
+### JVM and Robolectric
+
+| Suite | What it checks |
+| --- | --- |
+| `:core:server` `CompressPlanTest` | a `ready` item is a `compress` row, a `replacing` one a `restore` row (a restore again writes the output); items without a phone file or hashes are no rows; **every journal state resumes where it was killed, in both directions** (download at its offset, verify and check again, write redone, report, abandon; back-offs wait); reconcile (new items, a new cycle over a settled row, the other direction replaced unless its write started, an abandoned row not made again; rows dropped only before the write and only from a complete list); the check (size, mtime within 2 s, fingerprint, the MediaStore path; gone; a target already in place); a bad download fetched once more then abandoned (never after the write started); a bad read-back written once more, abandoned, then repaired from the server; consent batches of 500; the overview |
+| `:core:server` `CompressDownloaderTest` | a dropped connection (a body shorter than its length) resumes at the bytes that arrived, with `If-Range` on the ETag; a stopped run resumes from the saved offset (bytes after it dropped); a changed file (another ETag) is sent whole and the part starts over; a server that ignores the range starts over; a complete part is done; `404` is not found; a connection that keeps dropping gives up with what arrived kept |
+| `:core:server` `CompressEngineTest` | against a fake server (`FakeCompress` over `FakeBackup`): a backed-up video replaced in place (same path, mtime), `…/replaced` with the output's fingerprint, SHA-256, size and the original's mtime, the index and backup rows updated, and **the backup's next run uploads nothing, reports nothing for it and removes nothing**; a report lost is healed by the backup's own report without an upload; **a process killed during the write is redone from the part** (no new download); consent waits without a screen, a refusal keeps the original, an allowance writes at once; Keep originals abandons `refused`; a changed file `changed`, a missing one `gone`; a `404` on the output and an item no longer listed drop the row unwritten; a lost answer is reported without a download; a restore writes the original back from `GET /v1/originals` and a restore again the output; a broken write is written again, abandoned `verify` and repaired; the server still compressing asks for a later run |
+| `:core:server` `GalleryMigrationTest` | 5 → 6 keeps the pairing and backup rows; the new tables work |
+| `:core:server` `FreeUpPlanTest`, `CompressModelTest` | a video with an unsettled replace stays on the phone (`Compressing`); the phone target only with `targets.phone.ok`, unusable on Android 10 or without All files access |
+| `:native` `PhoneCompressScreenshotTest` | the goldens below |
+
+Goldens (`:native:recordRoborazziDebug`, copies here): `compress_phone_sheet_{phone_light,phone_dark,tablet_light}`
+(this phone's videos, the other-apps note, skips), `compress_phone_sheet_no_all_files_phone_light`,
+`compress_phone_settings_{phone,tablet}_{light,dark}` ("This phone": the consent step with replaces and a restore, a
+download in progress, recent rows, the phone job), `compress_phone_settings_no_all_files_phone_light`.
+
+### End to end: emulator against my own hoard-server container
+
+- **Server**: hoard-server built from `main` d91e160 with `-tags hoarde2e` (`HOARD_E2E_FAKE_COMPRESS=1`: the fake
+  libx264 encoder of `server/e2e_compress_fake.go`), run as `hoard-a2-server` with the 0.12.1 image's tools,
+  `--cpus 2 --memory 1536m`, `-p 127.0.0.1:3282:3071`, temporary `/data` and `/mnt/backup` (`BACKUP_ROOT`), no write
+  mount (`targets.nas`: `no_write_mount`, `targets.phone.ok`). No GPU used. Admin set-up and the pairing link through
+  the admin API; the link typed into Hoard's pairing field (`10.0.2.2:3282`).
+- **The fake encoder drops the capture time** (no `-map_metadata 0`, and `use_metadata_tags`): its outputs have no
+  `creation_time`, so MediaStore's `DATE_TAKEN` was NULL after the first replaces. MediaProvider ignores every app's
+  update of `datetaken` (Amendment (A2)), so for the date check the harness was rebuilt locally with the real recipe's
+  `-map_metadata 0` and without `use_metadata_tags` ([`a2fake/keep-dates.patch.txt`](compression/a2fake/keep-dates.patch.txt),
+  never committed under `server/`).
+- **Emulator**: AVD `hoard-a2` (API 36 google_apis_playstore x86_64, `ANDROID_AVD_HOME` in my scratch space, port
+  5594, `-memory 3072 -no-window`), the debug build, All files access by `appops`, media and notification permissions
+  granted. Synthetic clips (ffmpeg `testsrc2` + noise, 720p H.264 at 20 Mb/s + AAC, 4–8 s, `creation_time` set):
+  `DCIM/Camera/PXL_*.mp4` and a DJI-like `DCIM/DJI Album/` with `DJI_0412.MP4`, a
+  `DJI_0413.sync-conflict-20241101-123456-ABCDEFG.MP4` and a stale `.stfolder`; mtimes set in 2024; one video made a
+  favourite (`is_favorite=1`). MediaStore owner `com.android.shell`, so every replace needed consent.
+
+| Step | Result | Screenshot |
+| --- | --- | --- |
+| Settings › Phone backup: Camera and DJI Album on, Back up now | 5 of 5 backed up | — |
+| DJI Album › Compress videos in this folder | "Videos on this phone are replaced … same name, folder and date", the other-apps note, "1 of 2 videos · 15.4 MB → about 1.4 MB", **"1 sync tool copy"** skipped; the stale `.stfolder` changes nothing | [`a2-p01`](compression/e2e/a2-p01-dji-sheet.png) |
+| Start; Settings › Compress videos | the worker downloaded and verified the output, then waits: "1 video is ready to replace (saves 13 MB here)", Allow / Keep originals | [`a2-p02`](compression/e2e/a2-p02-consent-step.png) |
+| Allow → system dialog "Allow Hoard debug to modify this video?" → **Deny** | "consent … false"; the row still waits; the file untouched | [`a2-p03`](compression/e2e/a2-p03-system-dialog.png) |
+| Allow → Allow | DJI_0412 replaced: **same `_ID` 21, name, `date_modified` (mtime), `is_pending=0`**, 15.4 → 2.4 MB; server: the original's entry `compressed` + pinned, a new current entry with the output; item `replaced`; "13 MB smaller on this phone" | [`a2-p04`](compression/e2e/a2-p04-replaced.png) |
+| Finding | `IS_PENDING = 1` on the row moved the file to a `.pending-` name (undone by the first build's guard): the write no longer sets it (Amendment (A2)) | — |
+| Back up now | `backup run: Done, 0 uploaded`; no report or upload request reached the server for the replaced file | — |
+| Camera › Compress videos in this folder → Start (3 videos); Allow → one dialog "modify 3 videos?" → Allow, the debug build pausing half-way through the first write (`files/compress-pause-write`), **the process killed** (`kill -9`) | the journal: row `writing`, `write_started=1`; the phone file a 2 MiB half | [`a2-p06`](compression/e2e/a2-p06-consent-three.png) |
+| New build installed, app started | **the write redone from the part** (no download): the file's SHA-256 is the server's output SHA-256, the mtime the original's, reported; the other two asked again (a grant does not outlive the process), Allow: all three replaced; **`IS_FAVORITE` kept** (row 17 still `1`), `_ID`s, names and `date_modified` unchanged | — |
+| DJI Album › Compress automatically (on); a new `DJI_0420.MP4`, Back up now | the server appended it to the standing job after the backup (`ready`); a worker run scheduled 10 minutes after the backup | — |
+| Gallery (after a sync) | "Compressed" on the replaced videos, "Compressing" on the waiting one | [`a2-p09`](compression/e2e/a2-p09-gallery-badges.png) |
+| A new Camera clip selected in the Gallery › Compress videos | "1 of 1 video", the phone target | [`a2-p10`](compression/e2e/a2-p10-selection-sheet.png) |
+| Harness keeping the dates; `PXL_20241106_192030.mp4` compressed and replaced | **same `_ID` 30, name, `datetaken` 1730920830000, `date_modified`** | [`a2-p14`](compression/e2e/a2-p14-settings-phone-section.png) |
+| Trash › Originals of compressed videos › PXL_20241102 › Restore original | the server: `replacing` (`restore:phone`); the worker downloaded the original (`GET /v1/originals`) and waits; the notification "1 compressed video ready to replace · Open Hoard to allow it" opens Settings › Compress videos; Allow: **the original's bytes back** (SHA-256 of the source clip), same `_ID` 18, `datetaken` and mtime; the server `restored`, entries swapped back | [`a2-p16`](compression/e2e/a2-p16-notification.png), [`a2-p17`](compression/e2e/a2-p17-after-restore.png) |
+| Settings › Phone backup › Free up space, only DJI_0412 and PXL_20241103 (both compressed) kept selected | "Staying on the phone: 1 favourite"; the server re-hashed the outputs, "2 shots verified"; Android's delete dialog, Allow: "Freed 2 files · 4.7 MB"; server: the outputs' entries `freed`, the originals still `compressed` + pinned | [`a2-p18`](compression/e2e/a2-p18-freeup-preview.png), [`a2-p20`](compression/e2e/a2-p20-freed.png) |
+| Back up now | `0 uploaded`; no mirror entry `deleted` (removal reasons: `compressed` 7, `freed` 2) | — |
+
+**Found and fixed during the run**: `IS_PENDING` moved the file (dropped); a NULL `DATE_TAKEN` after the write was not
+seen as changed (now noted); nothing ran the worker after a phone job started or when Settings › Compress videos
+opened (both now do); a restore's consent line said "saves 0 B" (restores have their own sentence); with the phone
+target working, the library's `no_write_mount` read as if nothing could be compressed (now "Library videos: …").
+
+**Not run here**: the real NVENC image (the server side is S1/S2/N4's, tested there); an SD card volume; Android 10
+(the phone target is shown unusable there, a golden and `CompressModelTest`); the 24 h stalled path of a served output.
+
+Afterwards: the container removed by name, the AVD stopped and deleted from my scratch space, the temporary
+directories left in the session's scratch space only.

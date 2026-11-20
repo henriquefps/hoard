@@ -206,6 +206,9 @@ class SyncEngine(
             db.culling().clearFingerprints()
             db.culling().clearPending()
             db.device().clearPushed()
+            // ADR 0025 A2: the jobs and the replaces of that server (a write already started keeps its row and part).
+            db.compress().clearJobs()
+            db.compress().clearUnstarted()
             // ADR 0022: mappings belong to the paired server.
             db.mappings().clearMappings()
             db.mappings().clearAllMisses()

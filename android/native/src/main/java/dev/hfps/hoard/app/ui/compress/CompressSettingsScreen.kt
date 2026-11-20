@@ -68,6 +68,8 @@ data class CompressSettingsUi(
     val nas: CompressOffer = CompressOffer.Hidden,
     val loading: Boolean = true,
     val failed: Boolean = false,
+    /** This phone's replaces (ADR 0025 A2). */
+    val phone: PhoneCompressUi = PhoneCompressUi(),
 )
 
 /** Settings › Compress videos (ADR 0025 "UI"): jobs in progress, folders compressed automatically, history. */
@@ -76,6 +78,10 @@ fun CompressSettingsScreen(container: AppContainer, onBack: () -> Unit, onOpenTr
     val compress = container.compress
     val info by compress.info.collectAsState()
     val nas by compress.nasOffer.collectAsState()
+    val phoneOffer by compress.phoneOffer.collectAsState()
+    val phoneRows by container.phoneCompress.rows.collectAsState(emptyList())
+    val phoneProgress by container.phoneCompress.progress.collectAsState()
+    var asking by remember { mutableStateOf(false) }
     var overview by remember { mutableStateOf<CompressOverview?>(null) }
     var loading by remember { mutableStateOf(true) }
     var failed by remember { mutableStateOf(false) }
@@ -98,7 +104,11 @@ fun CompressSettingsScreen(container: AppContainer, onBack: () -> Unit, onOpenTr
             loading = false
         }
     }
-    LaunchedEffect(Unit) { compress.refresh() }
+    LaunchedEffect(Unit) {
+        compress.recheckPhone()
+        container.phoneCompress.onScreen()
+        compress.refresh()
+    }
     LaunchedEffect(tick) {
         // Progress moves on the server: read it again while something runs.
         while (true) {
@@ -114,8 +124,19 @@ fun CompressSettingsScreen(container: AppContainer, onBack: () -> Unit, onOpenTr
         }
     }
     CompressSettingsContent(
-        ui = CompressSettingsUi(overview, info, nas, loading, failed),
+        ui = CompressSettingsUi(overview, info, nas, loading, failed, PhoneCompressUi(dev.hfps.hoard.server.compress.PhoneOverview.of(phoneRows), phoneProgress, phoneOffer, asking)),
         onBack = onBack,
+        onAllow = {
+            asking = true
+            scope.launch {
+                runCatching { container.phoneCompress.allow() }
+                    .onSuccess { r -> if (r.replaced > 0) toaster.show(res.getQuantityString(R.plurals.compress_phone_replaced_toast, r.replaced, r.replaced.toString())) }
+                    .onFailure { if (it is CancellationException) throw it else toaster.show(res.getString(R.string.compress_load_failed)) }
+                asking = false
+            }
+        },
+        onKeep = { act { container.phoneCompress.keepOriginals(phoneRows.filter { it.error == dev.hfps.hoard.server.compress.PhoneError.PERMISSION }.map { it.id }) } },
+        onReplaceNow = { container.phoneCompress.kick() },
         onRefresh = { tick++ },
         onOpenTrash = onOpenTrash,
         onPause = { job -> act { compress.pause(job, !job.paused) } },
@@ -145,6 +166,9 @@ fun CompressSettingsContent(
     onPause: (CompressJob) -> Unit = {},
     onCancel: (CompressJob) -> Unit = {},
     onAutoOff: (CompressJob) -> Unit = {},
+    onAllow: () -> Unit = {},
+    onKeep: () -> Unit = {},
+    onReplaceNow: () -> Unit = {},
 ) {
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
@@ -159,6 +183,7 @@ fun CompressSettingsContent(
             LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize().testTag("compress-settings")) {
                 if (ui.loading && ui.overview == null) item("loading") { LinearProgressIndicator(Modifier.fillMaxWidth(), color = HfpsTheme.colors.primary, trackColor = HfpsTheme.colors.muted) }
                 item("status") { StatusBlock(ui) }
+                if (ui.phone.visible) item("phone") { PhoneCompressSection(ui.phone, onAllow, onKeep, onReplaceNow) }
                 val o = ui.overview
                 if (o != null) {
                     if (o.running.isNotEmpty()) {
@@ -213,7 +238,12 @@ fun CompressSettingsContent(
 private fun StatusBlock(ui: CompressSettingsUi) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         when (val n = ui.nas) {
-            is CompressOffer.Unavailable -> ReasonLine(unavailableText(n.reason), HfpsTheme.typography.ui, HfpsTheme.colors.warning, Modifier.testTag("compress-unavailable"))
+            is CompressOffer.Unavailable -> {
+                // With this phone's own replace working, the library's reason is said as the library's (ADR 0025 A2).
+                val reason = unavailableText(n.reason)
+                val shown = if (ui.phone.offer == CompressOffer.Ready) reason.copy(text = stringResource(R.string.compress_unavailable_library, reason.text)) else reason
+                ReasonLine(shown, HfpsTheme.typography.ui, HfpsTheme.colors.warning, Modifier.testTag("compress-unavailable"))
+            }
             else -> Unit
         }
         ui.info?.attention?.stalled?.takeIf { it > 0 }?.let { n ->
@@ -274,6 +304,7 @@ private fun jobLine(job: CompressJob): String {
         job.state == CompressJob.STATE_DONE -> parts.add(0, stringResource(R.string.compress_job_done))
     }
     if (job.target == Compress.TARGET_BACKUP) parts += stringResource(R.string.compress_target_backup)
+    if (job.target == Compress.TARGET_PHONE) parts += stringResource(R.string.compress_job_phone)
     return parts.joinToString(" · ")
 }
 

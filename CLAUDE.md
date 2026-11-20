@@ -103,7 +103,11 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   restored and emptied through `/v1/compress/restore` and `…/purge`; **Empty, Delete permanently and auto-empty never
   delete a trash entry the server reports `held: true`** (any cached item, matched through the mapping or by its
   `.hoard-trash/<day>/<path>`; an unknown held state leaves every share alone); compressed originals are deleted only by the server (no SMB fallback). E2E with a fake-encoder server build:
-  `docs/testing/compression.md`. The phone's own replace is A2.
+  `docs/testing/compression.md`. **Phone replace** (A2, Hoard 2.8.0): `:core:server` `compress/` (`CompressPlan` pure:
+  the redo journal `compress_phone` of `gallery.db` 6; `CompressDownloader`, `CompressEngine`, `CompressWorker`),
+  `:native` `compress/PhoneCompress.kt`; in-place write (same MediaStore row), consent through `createWriteRequest`
+  from the screen only, no `IS_PENDING` on existing rows, the backup rows updated so nothing is uploaded; debug kill
+  test via `files/compress-pause-write`. E2E: `docs/testing/compression.md` "A2".
 - **hoard-server** (`server/`, ADR 0012; protocol of record ADR 0013, `server/api/openapi.yaml`; items ADR 0014; culling ADR 0016; physical devices ADR 0017; Reveal's edited previews ADR 0020): Go +
   SQLite, formerly Reveal's `reveal-sync`. `cd server && go vet ./... && go test ./...` (Go from `server/go.mod`;
   includes an end-to-end test, `TestOpensRevealSyncDataDir`, `TestUpgradesHoardServer040DataDir` and

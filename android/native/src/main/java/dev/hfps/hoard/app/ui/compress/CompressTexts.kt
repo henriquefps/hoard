@@ -33,6 +33,9 @@ object CompressReasonTexts {
         "write_mount_mismatch" -> R.string.compress_unavailable_write_mount_mismatch
         "write_mount_read_only" -> R.string.compress_unavailable_write_mount_read_only
         "unstable_inode" -> R.string.compress_unavailable_unstable_inode
+        // This phone's own reasons for the phone target (ADR 0025 A2), not the server's.
+        dev.hfps.hoard.server.compress.CompressGate.REASON_PHONE_ANDROID11 -> R.string.compress_phone_needs_android11
+        dev.hfps.hoard.server.compress.CompressGate.REASON_PHONE_ALL_FILES -> R.string.compress_phone_needs_all_files
         else -> null
     }
 

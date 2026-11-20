@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8.0 (unreleased)
+
+Compress the videos on this phone: the photo server makes the compressed copy, and Hoard puts it in place of your video, with the same name, folder and date ([ADR 0025](docs/adr/0025-video-compression.md), phase A2). Android 11 and later with All files access; needs hoard-server 0.13.0 or later with its GPU image and a backup folder.
+
+- **Compress videos on this phone.** Select backed-up videos in the Gallery, or open a folder in Settings › Photo server › Phone backup and choose **Compress videos in this folder**. The server compresses its backup copy; Hoard downloads the result (only on Wi-Fi by default, picking up where it left off if the connection drops), checks it, and writes it over the video on the phone. The video keeps its place in every gallery app: same name, folder, date taken, modified time and favourite.
+- **Android asks you first.** Android only lets Hoard change videos another app made (the camera, a drone app) after you allow it: Settings › Compress videos says "3 videos are ready to replace" with **Allow** (one Android dialog for up to 500 videos) and **Keep originals**. A notification tells you when videos are waiting.
+- **Nothing is lost on the way.** If the phone stops half-way through writing a video, Hoard finishes it the next time from the copy it already downloaded. A video you changed on the phone since its backup is left as it is. Other apps see a changed file: a cloud backup app may upload it again.
+- **The originals go to the trash, as for the library.** Each original waits in the Trash ("Original of a compressed video"); **Restore original** brings it back onto the phone the same way, after you allow it.
+- **The backup knows.** A replaced video is neither uploaded again nor reported as deleted, and Free up space can free it like any other backed-up video (a video still being replaced stays on the phone until it is done).
+- **Compress automatically** on a backed-up phone folder: new videos are compressed after their backup, and replaced on the phone when they are ready.
+- Settings › Compress videos shows **This phone**: what is downloading or being replaced, what was replaced, and how much smaller the phone is.
+
 ## 2.7.1 (unreleased)
 
 Compression follow-ups ([ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.7.1)"). Works with hoard-server 0.13.x.

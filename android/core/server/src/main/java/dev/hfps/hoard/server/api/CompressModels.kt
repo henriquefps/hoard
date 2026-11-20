@@ -218,7 +218,28 @@ data class CompressItem(
     val trashPath: String? = null,
     val purgeAfter: Long? = null,
     val updatedAt: Long? = null,
+    val durationMs: Long? = null,
+    val stalledAt: Long? = null,
+    // Phone and backup items (Amendment (S2), "Items in the answers"): the phone file, where the phone keeps it now.
+    val volume: String? = null,
+    val physicalDeviceId: String? = null,
+    /** The phone's mtime of the live side's file (Unix ms). */
+    val modifiedAt: Long? = null,
+    /** The original's SHA-256 (a blob compression). */
+    val sha256: String? = null,
+    /** The output's SHA-256. */
+    val outSha256: String? = null,
+    /** While a phone writes (state `replacing`): `restore` (the original back) or `compress` (a restore again). */
+    val direction: String? = null,
 )
+
+/** `POST /v1/compress/items/{id}/replaced` and `…/restored`: the file the phone wrote at the path. */
+@Serializable
+data class CompressPhoneReport(val fingerprint: String, val sha256: String, val size: Long, val modifiedAt: Long)
+
+/** `POST /v1/compress/items/{id}/abandon`: `verify`, `changed`, `gone`, `refused`. */
+@Serializable
+data class CompressAbandon(val reason: String)
 
 @Serializable
 data class CompressItemsPage(val items: List<CompressItem> = emptyList(), val cursor: String? = null, val hasMore: Boolean = false)
@@ -266,6 +287,19 @@ object Compress {
     const val PROFILE_SAME = "hevc-cq28"
     const val PROFILE_SMALLER = "hevc-cq30"
     const val PROFILE_AV1 = "av1-cq34"
+
+    const val DIRECTION_COMPRESS = "compress"
+    const val DIRECTION_RESTORE = "restore"
+
+    const val STATE_READY = "ready"
+    const val STATE_REPLACING = "replacing"
+    const val STATE_REPLACED = "replaced"
+    const val STATE_RESTORED = "restored"
+
+    const val ABANDON_VERIFY = "verify"
+    const val ABANDON_CHANGED = "changed"
+    const val ABANDON_GONE = "gone"
+    const val ABANDON_REFUSED = "refused"
 
     /** States of an item that has not settled: the Gallery's "Compressing" badge. */
     val UNFINISHED = setOf("queued", "estimating", "encoding", "verifying", "ready", "replacing")

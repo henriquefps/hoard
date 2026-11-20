@@ -16,12 +16,17 @@ import dev.hfps.hoard.server.paths.SharePaths
 /** Which compression target a server item belongs to, and the other pure helpers of the compression screens. */
 object CompressTargets {
     /**
-     * `nas` when a live NAS file of the item exists (the library's copy is replaced); `backup` when its only copies are a
-     * phone backup's and that phone no longer has the file; null otherwise (on a phone: Hoard 2.8.0; an upload).
+     * `phone` when this phone ([physicalId]) has the file in a backed-up folder (its own copy is replaced in place,
+     * Hoard 2.8.0; offered only where [phone] is true); else `nas` when a live NAS file of the item exists (the
+     * library's copy is replaced); `backup` when its only copies are a phone backup's and that phone no longer has the
+     * file; null otherwise (an upload, another phone's file).
      */
-    fun of(item: Item): String? {
+    fun of(item: Item, physicalId: String? = null, phone: Boolean = false): String? {
         if (item.kind != "video" || item.trashed != null) return null
         val locations = item.files.flatMap { it.locations }
+        if (phone && physicalId != null && locations.any { it.source == FileLocation.SOURCE_MIRROR && it.onDevice != false && it.physicalDeviceId == physicalId }) {
+            return Compress.TARGET_PHONE
+        }
         if (locations.any { it.source == "nas" && it.trash == null }) return Compress.TARGET_NAS
         val mirrors = locations.filter { it.source == FileLocation.SOURCE_MIRROR }
         if (mirrors.isNotEmpty() && mirrors.none { it.onDevice != false } && locations.any { it.source == "backup" }) return Compress.TARGET_BACKUP
@@ -65,6 +70,10 @@ object CompressTargets {
     /** The job's selection is exactly [folder] (an automatic folder's standing job). */
     fun sameFolder(job: CompressJob, folder: CompressFolder): Boolean {
         val select = job.select?.let { runCatching { ServerJson.decodeFromJsonElement(CompressSelect.serializer(), it) }.getOrNull() } ?: return false
+        if (folder.rootId != null) {
+            val r = select.roots?.singleOrNull() ?: return false
+            return job.target == folder.target && r.rootId == folder.rootId && SharePaths.normalize(r.path) == SharePaths.normalize(folder.path)
+        }
         val f = select.folders?.singleOrNull() ?: return false
         return f.folderId == folder.folderId && SharePaths.normalize(f.path) == SharePaths.normalize(folder.path)
     }

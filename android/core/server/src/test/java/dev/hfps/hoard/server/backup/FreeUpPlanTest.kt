@@ -40,6 +40,14 @@ class FreeUpPlanTest {
         FreeUpPlan.candidates(listOf(root, sd), files, rules, favourites, culling, now)
 
     @Test
+    fun aVideoWhoseCompressionReplaceHasNotSettledStaysOnThePhone() {
+        val files = listOf(row("DCIM/Camera/VID_1.mp4"), row("DCIM/Camera/VID_2.mp4"))
+        val c = FreeUpPlan.candidates(listOf(root, sd), files, FreeUpRules(), emptySet(), emptySet(), now, compressing = setOf("/storage/emulated/0/DCIM/Camera/VID_1.mp4"))
+        assertThat(c.shots.map { it.key }).containsExactly("device/DCIM/Camera/vid_2")
+        assertThat(c.excluded).containsExactly(FreeUpExclusion.Compressing, 1)
+    }
+
+    @Test
     fun wholeShotsOldestFirstWithEveryFileBackedUp() {
         val files = listOf(
             row("DCIM/Camera/PXL_2.jpg", taken = old + 1000),

@@ -457,6 +457,7 @@ private fun excludedText(counts: Map<FreeUpExclusion, Int>, rules: FreeUpRules):
             FreeUpExclusion.Culling -> pluralStringResource(R.plurals.freeup_kept_culling, n, formatNumber(n, l))
             FreeUpExclusion.NotBackedUp -> pluralStringResource(R.plurals.freeup_kept_not_backed_up, n, formatNumber(n, l))
             FreeUpExclusion.NoMedia -> pluralStringResource(R.plurals.freeup_kept_no_media, n, formatNumber(n, l))
+            FreeUpExclusion.Compressing -> pluralStringResource(R.plurals.freeup_kept_compressing, n, formatNumber(n, l))
         }
     }
     return stringResource(R.string.freeup_kept_intro, parts.joinToString(" · "))
@@ -504,6 +505,7 @@ fun keptReason(reason: String): String = when {
     reason == "changed_on_nas" -> stringResource(R.string.freeup_reason_changed_on_nas)
     reason == "unavailable" -> stringResource(R.string.freeup_reason_unavailable)
     reason == FreeUpPlan.REASON_CHANGED -> stringResource(R.string.freeup_reason_changed)
+    reason == FreeUpPlan.REASON_COMPRESSING -> stringResource(R.string.freeup_reason_compressing)
     reason == FreeUpPlan.REASON_UNREADABLE -> stringResource(R.string.freeup_reason_unreadable)
     reason == "pending" -> stringResource(R.string.freeup_reason_pending)
     reason == "offline" -> stringResource(R.string.backup_offline)

@@ -7,9 +7,9 @@ import dev.hfps.hoard.server.api.CompressJob
 import dev.hfps.hoard.server.api.Features
 
 /**
- * What Hoard 2.7.0 offers for a compression target (ADR 0025 Amendment (S2), "Targets"): nothing without the feature
+ * What Hoard offers for a compression target (ADR 0025 Amendment (S2), "Targets"): nothing without the feature
  * `compress`; the action with the server's reason when the target is not usable; the action otherwise. The phone's own
- * replace (`target: "phone"`) is Hoard 2.8.0 and never offered here.
+ * replace (`target: "phone"`, Hoard 2.8.0) also needs Android 11+ and All files access on this phone.
  */
 sealed interface CompressOffer {
     /** The server has no `compress` feature: every compression action is hidden. */
@@ -22,14 +22,25 @@ sealed interface CompressOffer {
 }
 
 object CompressGate {
-    /** [features] of `GET /v1/server`, its `compress` object, and the target (`nas` or `backup`). */
-    fun offer(features: Collection<String>, info: CompressInfo?, target: String): CompressOffer {
+    /**
+     * [features] of `GET /v1/server`, its `compress` object, and the target (`nas`, `backup` or `phone`). The phone
+     * target is offered only when the server says `targets.phone.ok` (never judged without `targets`), and shown
+     * unusable on a phone that cannot write in place ([phone]).
+     */
+    fun offer(features: Collection<String>, info: CompressInfo?, target: String, phone: PhoneAbility = PhoneAbility.Ready): CompressOffer {
         if (Features.COMPRESS !in features || info == null) return CompressOffer.Hidden
-        if (target == Compress.TARGET_PHONE) return CompressOffer.Hidden
         val t = when (target) {
             Compress.TARGET_NAS -> info.targets?.nas
             Compress.TARGET_BACKUP -> info.targets?.backup
+            Compress.TARGET_PHONE -> info.targets?.phone ?: return CompressOffer.Hidden
             else -> null
+        }
+        if (target == Compress.TARGET_PHONE && t?.ok == true) {
+            return when (phone) {
+                PhoneAbility.Ready -> CompressOffer.Ready
+                PhoneAbility.OldAndroid -> CompressOffer.Unavailable(REASON_PHONE_ANDROID11)
+                PhoneAbility.NoAllFiles -> CompressOffer.Unavailable(REASON_PHONE_ALL_FILES)
+            }
         }
         // A 0.13.0 server always sends targets; without them only nas can be judged (by `nasWrite` and `available`).
         if (t == null) {
@@ -54,7 +65,14 @@ object CompressGate {
     }
 
     const val REASON_UNKNOWN = "unavailable"
+
+    /** Local reasons of the phone target (not the server's): Android 10 or older; no All files access. */
+    const val REASON_PHONE_ANDROID11 = "phone_android11"
+    const val REASON_PHONE_ALL_FILES = "phone_all_files"
 }
+
+/** Whether this phone can replace its files in place (ADR 0025: Android 11+ with All files access). */
+enum class PhoneAbility { Ready, OldAndroid, NoAllFiles }
 
 /**
  * The estimate sheet's figures (ADR 0025 "UI"): "129 of 312 videos · 29.1 GB → about 5.6 GB · about 35 min", skipped by

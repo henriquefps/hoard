@@ -75,6 +75,7 @@ fun CompressSheet(container: AppContainer, request: CompressRequest, onDismiss: 
     val info by compress.info.collectAsState()
     val nas by compress.nasOffer.collectAsState()
     val backup by compress.backupOffer.collectAsState()
+    val phone by compress.phoneOffer.collectAsState()
     val res = LocalResources.current
     val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
@@ -83,7 +84,10 @@ fun CompressSheet(container: AppContainer, request: CompressRequest, onDismiss: 
     var autoJob by remember { mutableStateOf<CompressJob?>(null) }
     var autoChecked by remember { mutableStateOf(!auto) }
 
-    LaunchedEffect(Unit) { compress.refresh() }
+    LaunchedEffect(Unit) {
+        compress.recheckPhone()
+        compress.refresh()
+    }
     if (auto) {
         LaunchedEffect(request.autoFolder) {
             autoJob = runCatching { compress.automaticJob(request.autoFolder!!) }.getOrNull()
@@ -92,7 +96,7 @@ fun CompressSheet(container: AppContainer, request: CompressRequest, onDismiss: 
     }
     // The offer of every part's target: a part whose target is not usable shows the server's reason instead.
     val blocked = request.parts.mapNotNull { p ->
-        when (val o = if (p.target == Compress.TARGET_BACKUP) backup else nas) {
+        when (val o = when (p.target) { Compress.TARGET_BACKUP -> backup; Compress.TARGET_PHONE -> phone; else -> nas }) {
             is CompressOffer.Unavailable -> o.reason
             CompressOffer.Hidden -> CompressGate.REASON_UNKNOWN
             CompressOffer.Ready -> null
@@ -198,12 +202,22 @@ fun CompressSheetContent(
         } else {
             for (t in targets) {
                 Text(
-                    stringResource(if (t == Compress.TARGET_BACKUP) R.string.compress_target_backup else R.string.compress_target_nas),
+                    stringResource(
+                        when (t) {
+                            Compress.TARGET_BACKUP -> R.string.compress_target_backup
+                            Compress.TARGET_PHONE -> R.string.compress_target_phone
+                            else -> R.string.compress_target_nas
+                        },
+                    ),
                     style = HfpsTheme.typography.body,
                     color = HfpsTheme.colors.mutedForeground,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = 8.dp).testTag("compress-target-$t"),
                 )
             }
+        }
+        if (Compress.TARGET_PHONE in targets && unavailable == null) {
+            // ADR 0025 "What else sees it": said once in the sheet.
+            Text(stringResource(R.string.compress_warn_other_backup_apps), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(top = 4.dp))
         }
         if (leftOut > 0) {
             Text(pluralStringResource(R.plurals.compress_left_out, leftOut, formatNumber(leftOut, locale())), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(top = 4.dp))
