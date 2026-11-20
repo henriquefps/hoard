@@ -30,13 +30,26 @@ class PhoneCompressSyncTest {
     @Test
     fun aReportSchedulesAGallerySync() {
         val direct = Executors.newSingleThreadExecutor()
-        WorkManager.initialize(context, Configuration.Builder().setExecutor(direct).setTaskExecutor(direct).build())
+        if (!WorkManager.isInitialized()) WorkManager.initialize(context, Configuration.Builder().setExecutor(direct).setTaskExecutor(direct).build())
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val gallery = GalleryRepository(context, HoardDatabase.open(context, name = null).cull(), scope, "2.8.1", true)
         val phone = PhoneCompress(context, gallery, scope)
         assertThat(WorkManager.getInstance(context).getWorkInfosForUniqueWork(GALLERY_SYNC_SOON).get()).isEmpty()
         phone.reported(1)
         assertThat(WorkManager.getInstance(context).getWorkInfosForUniqueWork(GALLERY_SYNC_SOON).get()).isNotEmpty()
+    }
+
+    @Test
+    fun aConsentRunThatBacksOffSchedulesTheWorker() = kotlinx.coroutines.runBlocking {
+        val direct = Executors.newSingleThreadExecutor()
+        if (!WorkManager.isInitialized()) WorkManager.initialize(context, Configuration.Builder().setExecutor(direct).setTaskExecutor(direct).build())
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val phone = PhoneCompress(context, GalleryRepository(context, HoardDatabase.open(context, name = null).cull(), scope, "2.8.1", true), scope)
+        phone.scheduleAfter(dev.hfps.hoard.server.compress.CompressRunResult(dev.hfps.hoard.server.compress.CompressOutcome.Done))
+        assertThat(WorkManager.getInstance(context).getWorkInfosForUniqueWork(dev.hfps.hoard.server.compress.CompressWorker.LATER).get()).isEmpty()
+        // A report the server did not answer: the worker's back-off run follows.
+        phone.scheduleAfter(dev.hfps.hoard.server.compress.CompressRunResult(dev.hfps.hoard.server.compress.CompressOutcome.Done, retryAt = System.currentTimeMillis() + 60_000))
+        assertThat(WorkManager.getInstance(context).getWorkInfosForUniqueWork(dev.hfps.hoard.server.compress.CompressWorker.LATER).get()).isNotEmpty()
     }
 
     @Test

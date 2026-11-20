@@ -86,8 +86,25 @@ class PhoneCompress(
     /** "Allow": the screen is up, so the rows waiting for consent are asked (one system dialog per batch) and written. */
     suspend fun allow(): CompressRunResult = scope.async(Dispatchers.IO) {
         // In the app's scope: leaving the screen does not cut a write short (it would be redone, but need not be).
-        engine.run(interactive = true).also { if (it.waitingConsent == 0) CompressNotifications.cancelConsent(context) }
+        engine.run(interactive = true).also {
+            if (it.waitingConsent == 0) CompressNotifications.cancelConsent(context)
+            scheduleAfter(it)
+        }
     }.await()
+
+    /**
+     * After a run outside the worker (the consent step): a row that backs off (a report the server did not answer, a
+     * write without room) gets the worker's follow-up as a worker run would, instead of waiting for the next sync
+     * (ADR 0025 Amendment (2.8.1)).
+     */
+    internal suspend fun scheduleAfter(result: CompressRunResult) {
+        val unmetered = runCatching { unmetered() }.getOrDefault(true)
+        val retryAt = result.retryAt
+        when {
+            retryAt != null -> CompressWorker.later(context, unmetered, ((retryAt - System.currentTimeMillis()) / 60_000).coerceIn(1, 360))
+            result.serverPending -> CompressWorker.later(context, unmetered)
+        }
+    }
 
     /** "Keep originals": the waiting rows are given up; the server cancels them (the originals stay). */
     suspend fun keepOriginals(ids: Collection<String>) {

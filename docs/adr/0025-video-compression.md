@@ -1655,6 +1655,10 @@ in the reviews of #81. Nothing in the protocol, the schema (`gallery.db` stays 6
   while rows wait for consent; **Continue** starts the consent step (`PhoneCompress.allow`, the system dialog). From the
   Gallery it opens Settings › Compress videos with `ShellRequests.compressConsent`, which starts the step there (Keep
   originals stays one tap away). The banner is not dismissable: it goes when the rows are written or kept.
+- **A consent run that backs off schedules the worker.** Found on the emulator: a report the server did not answer
+  during the screen's consent run (`PhoneCompress.allow`) left the row `written` until the next trigger (the hourly
+  sync), as only the worker scheduled its own back-off. `allow` now schedules `CompressWorker.later` at the run's
+  `retryAt` (or the 5-minute follow-up while the server still works), as the worker does.
 - **The check runs again after the consent dialog.** The dialog can stay up for minutes: after **Allow**, each row is
   checked again (`check`) before its write. A file changed meanwhile is abandoned (`changed`) and not written; a file
   whose MediaStore row is now another one waits for consent again.
