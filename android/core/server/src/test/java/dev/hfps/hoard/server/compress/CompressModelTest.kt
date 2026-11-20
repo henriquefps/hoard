@@ -30,9 +30,9 @@ import org.junit.Test
  */
 class CompressModelTest {
     private val ok = CompressTarget(ok = true)
-    private fun info(nas: CompressTarget = ok, backup: CompressTarget = ok, offerAv1: Boolean = false) = CompressInfo(
+    private fun info(nas: CompressTarget = ok, backup: CompressTarget = ok, offerAv1: Boolean = false, phone: CompressTarget? = ok) = CompressInfo(
         available = true,
-        targets = CompressTargets(nas = nas, phone = ok, backup = backup),
+        targets = CompressTargets(nas = nas, phone = phone, backup = backup),
         nasWrite = nas.ok,
         offerAv1 = offerAv1,
         profiles = listOf(CompressProfile(Compress.PROFILE_SAME, default = true), CompressProfile(Compress.PROFILE_SMALLER), CompressProfile(Compress.PROFILE_AV1, optIn = true)),
@@ -57,8 +57,15 @@ class CompressModelTest {
         assertThat(CompressGate.offer(f, info(nas = CompressTarget(false, "no_write_mount")), Compress.TARGET_BACKUP)).isEqualTo(CompressOffer.Ready)
         assertThat(CompressGate.offer(f, info(backup = CompressTarget(false, "no_backup_root")), Compress.TARGET_BACKUP))
             .isEqualTo(CompressOffer.Unavailable("no_backup_root"))
-        // The phone's own replace is Hoard 2.8.0.
-        assertThat(CompressGate.offer(f, info(), Compress.TARGET_PHONE)).isEqualTo(CompressOffer.Hidden)
+        // The phone's own replace (Hoard 2.8.0): only with `targets.phone.ok`, and only on a phone that can write in place.
+        assertThat(CompressGate.offer(f, info(), Compress.TARGET_PHONE)).isEqualTo(CompressOffer.Ready)
+        assertThat(CompressGate.offer(f, info(phone = CompressTarget(false, "no_backup_root")), Compress.TARGET_PHONE))
+            .isEqualTo(CompressOffer.Unavailable("no_backup_root"))
+        assertThat(CompressGate.offer(f, info(phone = null), Compress.TARGET_PHONE)).isEqualTo(CompressOffer.Hidden)
+        assertThat(CompressGate.offer(f, info(), Compress.TARGET_PHONE, PhoneAbility.OldAndroid)).isEqualTo(CompressOffer.Unavailable(CompressGate.REASON_PHONE_ANDROID11))
+        assertThat(CompressGate.offer(f, info(), Compress.TARGET_PHONE, PhoneAbility.NoAllFiles)).isEqualTo(CompressOffer.Unavailable(CompressGate.REASON_PHONE_ALL_FILES))
+        // A phone that cannot write still shows the server's reason first.
+        assertThat(CompressGate.offer(f, info(phone = CompressTarget(false, "no_gpu")), Compress.TARGET_PHONE, PhoneAbility.NoAllFiles)).isEqualTo(CompressOffer.Unavailable("no_gpu"))
         // A target without a reason falls back to the object's reason.
         assertThat(CompressGate.offer(f, info(nas = CompressTarget(false)).copy(reason = "no_gpu"), Compress.TARGET_NAS)).isEqualTo(CompressOffer.Unavailable("no_gpu"))
     }

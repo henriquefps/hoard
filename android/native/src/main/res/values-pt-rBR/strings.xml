@@ -934,4 +934,79 @@
         <item quantity="other">%1$s originais restaurados</item>
     </plurals>
     <!-- /Video compression -->
+    <!-- Compressão de vídeos no celular (ADR 0025 A2, Hoard 2.8.0) -->
+    <string name="compress_unavailable_library">Vídeos da biblioteca: %1$s</string>
+    <string name="compress_target_phone">Os vídeos deste celular são substituídos pelas cópias comprimidas no mesmo lugar: mesmo nome, pasta e data.</string>
+    <string name="compress_warn_other_backup_apps">Outros apps veem um arquivo alterado: um app de backup na nuvem pode enviá-lo de novo.</string>
+    <string name="compress_phone_needs_all_files">Substituir vídeos neste celular precisa do acesso a todos os arquivos (Ajustes › Arquivos).</string>
+    <string name="compress_phone_needs_android11">Substituir vídeos neste celular precisa do Android 11 ou mais recente.</string>
+    <string name="compress_phone_waiting_permission">Aguardando sua permissão</string>
+    <string name="compress_phone_title">Este celular</string>
+    <plurals name="compress_phone_consent">
+        <item quantity="one">%1$s vídeo está pronto para ser substituído (economiza %2$s aqui).</item>
+        <item quantity="many">%1$s vídeos estão prontos para ser substituídos (economizam %2$s aqui).</item>
+        <item quantity="other">%1$s vídeos estão prontos para ser substituídos (economizam %2$s aqui).</item>
+    </plurals>
+    <plurals name="compress_phone_consent_restore">
+        <item quantity="one">%1$s original está pronto para voltar a este celular (%2$s a mais aqui).</item>
+        <item quantity="many">%1$s originais estão prontos para voltar a este celular (%2$s a mais aqui).</item>
+        <item quantity="other">%1$s originais estão prontos para voltar a este celular (%2$s a mais aqui).</item>
+    </plurals>
+    <string name="compress_phone_consent_why">O Android pede que você permita ao Hoard alterar vídeos que outro app criou (a câmera, um app de drone). Sem isso, eles ficam como estão.</string>
+    <string name="compress_phone_allow">Permitir</string>
+    <string name="compress_phone_keep">Manter originais</string>
+    <string name="compress_phone_replace_now">Substituir agora</string>
+    <string name="compress_phone_none">Nenhum vídeo deste celular está sendo substituído.</string>
+    <string name="compress_phone_saved">%1$s a menos neste celular</string>
+    <string name="compress_phone_sizes">%1$s → %2$s</string>
+    <string name="compress_phone_progress_downloading">Baixando %1$s · %2$s de %3$s</string>
+    <string name="compress_phone_progress_verifying">Conferindo %1$s</string>
+    <string name="compress_phone_progress_writing">Substituindo %1$s</string>
+    <string name="compress_phone_progress_reporting">Avisando o servidor sobre %1$s</string>
+    <string name="compress_phone_state_downloading">Baixando a cópia comprimida</string>
+    <string name="compress_phone_state_retry">Aguardando para tentar de novo</string>
+    <string name="compress_phone_state_verifying">Conferindo o download</string>
+    <string name="compress_phone_state_verified">Pronto para substituir</string>
+    <string name="compress_phone_state_writing">Substituindo</string>
+    <string name="compress_phone_state_restoring">Devolvendo o original</string>
+    <string name="compress_phone_state_written">Substituído, avisando o servidor</string>
+    <string name="compress_phone_state_reported">Substituído</string>
+    <string name="compress_phone_state_restored">Original de volta no celular</string>
+    <string name="compress_phone_state_abandoned">Não substituído: %1$s</string>
+    <string name="compress_phone_reason_changed">o vídeo mudou no celular</string>
+    <string name="compress_phone_reason_gone">o vídeo não está mais no celular</string>
+    <string name="compress_phone_reason_verify">o download não conferiu</string>
+    <string name="compress_phone_reason_refused">você manteve o original</string>
+    <string name="compress_phone_reason_cancelled">cancelado no servidor</string>
+    <string name="compress_phone_reason_other">algo deu errado</string>
+    <string name="compress_phone_state_waiting">Aguardando para tentar de novo: %1$s</string>
+    <string name="compress_phone_wait_space">falta espaço livre no celular</string>
+    <string name="compress_phone_wait_write">o celular não conseguiu gravar o vídeo</string>
+    <string name="compress_phone_wait_permission">o Android recusou a gravação</string>
+    <string name="compress_phone_wait_media">a biblioteca de mídia do celular não respondeu</string>
+    <string name="compress_phone_wait_verify">o vídeo gravado não conferiu</string>
+    <plurals name="compress_phone_replaced_toast">
+        <item quantity="one">%1$s vídeo substituído</item>
+        <item quantity="many">%1$s vídeos substituídos</item>
+        <item quantity="other">%1$s vídeos substituídos</item>
+    </plurals>
+    <plurals name="compress_phone_consent_title">
+        <item quantity="one">%1$d vídeo comprimido pronto para substituir</item>
+        <item quantity="many">%1$d vídeos comprimidos prontos para substituir</item>
+        <item quantity="other">%1$d vídeos comprimidos prontos para substituir</item>
+    </plurals>
+    <string name="compress_phone_consent_text">Abra o Hoard para permitir.</string>
+    <string name="compress_job_phone">Este celular</string>
+    <string name="compress_auto_phone_desc">Vídeos novos desta pasta, depois do backup</string>
+    <string name="compress_channel">Compressão de vídeos</string>
+    <string name="compress_notification_title">Substituindo vídeos comprimidos</string>
+    <string name="compress_notification_downloading">Baixando %1$s (%2$s de %3$s)</string>
+    <string name="compress_notification_writing">Substituindo %1$s</string>
+    <string name="compress_notification_checking">Conferindo</string>
+    <plurals name="freeup_kept_compressing">
+        <item quantity="one">%1$s sendo substituído por uma cópia comprimida</item>
+        <item quantity="many">%1$s sendo substituídos por cópias comprimidas</item>
+        <item quantity="other">%1$s sendo substituídos por cópias comprimidas</item>
+    </plurals>
+    <string name="freeup_reason_compressing">Sendo substituído pela cópia comprimida</string>
 </resources>

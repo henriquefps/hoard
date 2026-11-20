@@ -29,6 +29,26 @@ class ServerException(
     val unauthorized: Boolean get() = status == 401 && code == "unauthorized"
 }
 
+/**
+ * A ranged download's answer: [status] `200` (the whole file from 0), `206` (from [start]) or `416` (nothing to send);
+ * [length] the body's `Content-Length` (-1 when unknown), [total] the file's size when the server said it.
+ */
+class Download(
+    val status: Int,
+    val start: Long,
+    val length: Long,
+    val total: Long?,
+    val etag: String?,
+    val sha256: String?,
+    val stream: InputStream,
+    private val onClose: () -> Unit,
+) : AutoCloseable {
+    override fun close() {
+        runCatching { stream.close() }
+        onClose()
+    }
+}
+
 /** What a preview GET answered (ADR 0015): the file, still pending (ask again after [retryAfterSeconds]), or none. */
 sealed interface PreviewResult {
     data class Ready(val file: File, val key: String?, val stale: Boolean) : PreviewResult
@@ -170,11 +190,12 @@ class ServerApi(
     fun patchCompressJob(jobId: String, patch: CompressJobPatch): CompressJob =
         send("PATCH", "/v1/compress/jobs/${enc(jobId)}", patch, CompressJobPatch.serializer(), CompressJob.serializer())
 
-    /** `GET /v1/compress/items`: [states] comma-separated. */
-    fun compressItems(jobId: String? = null, states: String? = null, cursor: String? = null, limit: Int = 200): CompressItemsPage {
+    /** `GET /v1/compress/items`: [states] comma-separated; [mine] only phone items of this phone. */
+    fun compressItems(jobId: String? = null, states: String? = null, cursor: String? = null, limit: Int = 200, mine: Boolean = false): CompressItemsPage {
         val q = StringBuilder("/v1/compress/items?limit=$limit")
         jobId?.let { q.append("&jobId=${enc(it)}") }
         states?.let { q.append("&state=${enc(it)}") }
+        if (mine) q.append("&mine=true")
         if (!cursor.isNullOrEmpty()) q.append("&cursor=${enc(cursor)}")
         return get(q.toString(), CompressItemsPage.serializer())
     }
@@ -189,6 +210,59 @@ class ServerApi(
     /** Empties the trashed file of replaced or restored items now (the space is saved). */
     fun compressPurge(itemIds: List<String>): CompressBatchAnswer =
         send("POST", "/v1/compress/purge", CompressBatch(itemIds = itemIds), CompressBatch.serializer(), CompressBatchAnswer.serializer())
+
+    /** The path of a phone item's output (`GET /v1/compress/items/{id}/output`, by range: [download]). */
+    fun compressOutputPath(id: String): String = "/v1/compress/items/${enc(id)}/output"
+
+    /** The path of an original (`GET /v1/originals/{fingerprint}`, by range: [download]). */
+    fun originalPath(fingerprint: String): String = "/v1/originals/${enc(fingerprint)}"
+
+    /** The phone wrote the output over its file (`…/replaced`) or the original back (`…/restored`). */
+    fun compressPhoneReport(id: String, restored: Boolean, report: CompressPhoneReport): CompressItem =
+        send("POST", "/v1/compress/items/${enc(id)}/${if (restored) "restored" else "replaced"}", report, CompressPhoneReport.serializer(), CompressItem.serializer())
+
+    /** The phone gives an item up (`verify`, `changed`, `gone`, `refused`). */
+    fun compressAbandon(id: String, reason: String): CompressItem =
+        send("POST", "/v1/compress/items/${enc(id)}/abandon", CompressAbandon(reason), CompressAbandon.serializer(), CompressItem.serializer())
+
+    /**
+     * A ranged `GET` of [path] from [offset] (`Range: bytes=<offset>-`, with `If-Range: <ifRange>` when given), as a
+     * [Download] the caller closes. An error answer is a [ServerException] (`404`: gone); `416` is a [Download] too.
+     */
+    fun download(path: String, offset: Long, ifRange: String?): Download {
+        val conn = open("GET", path, auth = true)
+        conn.readTimeout = maxOf(readTimeoutMs, 60_000)
+        conn.setRequestProperty("Accept", "*/*")
+        if (offset > 0) {
+            conn.setRequestProperty("Range", "bytes=$offset-")
+            if (ifRange != null) conn.setRequestProperty("If-Range", ifRange)
+        }
+        val status = try {
+            conn.responseCode
+        } catch (e: IOException) {
+            conn.disconnect()
+            throw e
+        }
+        if (status != 200 && status != 206 && status != 416) {
+            val error = readError(conn, status)
+            conn.disconnect()
+            throw error
+        }
+        val range = conn.getHeaderField("Content-Range")
+        val start = range?.removePrefix("bytes ")?.substringBefore('-')?.trim()?.toLongOrNull()
+        val total = range?.substringAfter('/', "")?.trim()?.toLongOrNull() ?: if (status == 200) conn.contentLengthLong.takeIf { it >= 0 } else null
+        val stream = if (status == 416) java.io.ByteArrayInputStream(ByteArray(0)).also { runCatching { conn.errorStream?.close() } } else conn.inputStream
+        return Download(
+            status = status,
+            start = if (status == 206) start ?: offset else 0,
+            length = conn.contentLengthLong,
+            total = total,
+            etag = conn.getHeaderField("ETag"),
+            sha256 = conn.getHeaderField("X-Hoard-Sha256"),
+            stream = stream,
+            onClose = { conn.disconnect() },
+        )
+    }
 
     /** Which fingerprints (≤ 1000) are a compression's original or output. */
     fun compressLookup(fingerprints: List<String>): CompressLookup =

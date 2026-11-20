@@ -16,7 +16,8 @@ import kotlinx.coroutines.flow.Flow
  * adds `smb_mappings` and `smb_mapping_misses`; version 3 (Hoard 2.3.0, ADR 0023) adds `server_items.trashed_since`;
  * version 4 (Hoard 2.4.0, ADR 0024) adds the phone backup: `backup_roots`, `backup_files`, `freed` and
  * `device_media.sha256` / `sha_size` / `sha_modified`; version 5 (Hoard 2.5.0, ADR 0024 A2) adds other phones'
- * backups: `server_item_mirrors`, `server_account.backup_roots` and `mirrors_indexed`.
+ * backups: `server_item_mirrors`, `server_account.backup_roots` and `mirrors_indexed`; version 6 (Hoard 2.8.0, ADR 0025
+ * A2) adds the phone's video compression: `compress_jobs` and the replace journal `compress_phone`.
  */
 @Database(
     entities = [
@@ -35,8 +36,10 @@ import kotlinx.coroutines.flow.Flow
         BackupFileEntity::class,
         FreedEntity::class,
         ServerItemMirrorEntity::class,
+        CompressJobEntity::class,
+        CompressPhoneEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -46,6 +49,7 @@ abstract class GalleryDatabase : RoomDatabase() {
     abstract fun device(): DeviceDao
     abstract fun mappings(): MappingDao
     abstract fun backup(): BackupDao
+    abstract fun compress(): CompressDao
 
     /**
      * Emits whenever the culling records or the queue change (no rows read): a screen that needs only a few items
@@ -125,13 +129,38 @@ abstract class GalleryDatabase : RoomDatabase() {
             }
         }
 
+        /** 2.8.0 (ADR 0025 A2): the jobs this phone started and the journal of its files replaced in place. */
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                for (sql in MIGRATION_5_6_SQL) db.execSQL(sql)
+            }
+        }
+
+        /** Room's own statements for version 6's new tables (checked against `schemas/…/6.json` by the migration test). */
+        internal val MIGRATION_5_6_SQL = listOf(
+            "CREATE TABLE IF NOT EXISTS `compress_jobs` (`id` TEXT NOT NULL, `target` TEXT NOT NULL, `profile` TEXT NOT NULL, " +
+                "`auto` INTEGER NOT NULL DEFAULT 0, `created_at` INTEGER NOT NULL, `status` TEXT, PRIMARY KEY(`id`))",
+            "CREATE TABLE IF NOT EXISTS `compress_phone` (`id` TEXT NOT NULL, `job_id` TEXT NOT NULL, `item_id` TEXT NOT NULL, `media_id` INTEGER, " +
+                "`root_id` TEXT NOT NULL, `volume` TEXT NOT NULL, `path` TEXT NOT NULL, `absolute` TEXT NOT NULL, `direction` TEXT NOT NULL, " +
+                "`source_fingerprint` TEXT NOT NULL, `source_sha256` TEXT, `source_size` INTEGER NOT NULL, `target_fingerprint` TEXT NOT NULL, " +
+                "`target_sha256` TEXT NOT NULL, `target_size` INTEGER NOT NULL, `original_mtime` INTEGER, `date_taken` INTEGER, `state` TEXT NOT NULL, " +
+                "`part` TEXT, `part_offset` INTEGER NOT NULL DEFAULT 0, `etag` TEXT, `attempts` INTEGER NOT NULL DEFAULT 0, `next_attempt_at` INTEGER, " +
+                "`error` TEXT, `verify_failures` INTEGER NOT NULL DEFAULT 0, `rewrites` INTEGER NOT NULL DEFAULT 0, `write_started` INTEGER NOT NULL DEFAULT 0, " +
+                "`report` TEXT NOT NULL, `abandon_reason` TEXT, `created_at` INTEGER NOT NULL, `updated_at` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_compress_phone_state` ON `compress_phone` (`state`)",
+            "CREATE INDEX IF NOT EXISTS `index_compress_phone_absolute` ON `compress_phone` (`absolute`)",
+        )
+
+        /** Every migration, in order (the app's builder and the tests). */
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+
         fun open(context: Context, name: String? = FILE_NAME): GalleryDatabase {
             val builder = if (name == null) {
                 Room.inMemoryDatabaseBuilder(context.applicationContext, GalleryDatabase::class.java)
             } else {
                 Room.databaseBuilder(context.applicationContext, GalleryDatabase::class.java, name)
             }
-            return builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
+            return builder.addMigrations(*MIGRATIONS).build()
         }
     }
 }
@@ -436,6 +465,16 @@ interface DeviceDao {
     )
     suspend fun setIdentity(id: Long, fingerprint: String, size: Long, modified: Long, motion: Boolean, sha256: String?)
 
+    /**
+     * A file a compression rewrote in place (ADR 0025 A2): its new size and MediaStore time, and the identity written
+     * (the target's fingerprint and SHA-256), so the index does not read it again.
+     */
+    @Query(
+        "UPDATE device_media SET size = :size, modified = :modified, fingerprint = :fingerprint, fp_size = :size, fp_modified = :modified, " +
+            "sha256 = :sha256, sha_size = :size, sha_modified = :modified WHERE id = :id",
+    )
+    suspend fun replaced(id: Long, size: Long, modified: Long, fingerprint: String, sha256: String)
+
     /** A SHA-256 the backup made just before an upload (ADR 0024), for the size and mtime it was made for. */
     @Query("UPDATE device_media SET sha256 = :sha256, sha_size = :size, sha_modified = :modified WHERE id = :id")
     suspend fun setSha(id: Long, sha256: String, size: Long, modified: Long)
@@ -564,6 +603,10 @@ interface BackupDao {
 
     @Query("SELECT * FROM backup_files WHERE root_id = :rootId AND path = :path")
     suspend fun file(rootId: String, path: String): BackupFileEntity?
+
+    /** The backup's rows of a phone file (any root), by its absolute path. */
+    @Query("SELECT * FROM backup_files WHERE absolute = :absolute")
+    suspend fun filesAt(absolute: String): List<BackupFileEntity>
 
     @Upsert
     suspend fun putFiles(rows: List<BackupFileEntity>)

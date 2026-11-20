@@ -521,7 +521,12 @@ class TrashService(private val container: AppContainer) {
     private val compressedActions = CompressedTrashActions({
         val api = runCatching { container.gallery.api() }.getOrNull() ?: return@CompressedTrashActions null
         object : CompressRoutes {
-            override suspend fun restore(itemIds: List<String>) = withContext(Dispatchers.IO) { api.compressRestore(itemIds).items }
+            override suspend fun restore(itemIds: List<String>) = withContext(Dispatchers.IO) {
+                api.compressRestore(itemIds).items.also { answers ->
+                    // A phone item's restore is this phone's to write (ADR 0025 A2: the server answers `replacing`).
+                    if (answers.values.any { it.state == dev.hfps.hoard.server.api.Compress.STATE_REPLACING }) container.phoneCompress.kick()
+                }
+            }
             override suspend fun purge(itemIds: List<String>) = withContext(Dispatchers.IO) { api.compressPurge(itemIds).items }
         }
     })

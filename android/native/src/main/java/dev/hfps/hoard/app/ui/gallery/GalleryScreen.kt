@@ -145,6 +145,7 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     val devices by vm.devices.collectAsStateWithLifecycle()
     val nasOffer by container.compress.nasOffer.collectAsStateWithLifecycle()
     val backupOffer by container.compress.backupOffer.collectAsStateWithLifecycle()
+    val phoneOffer by container.compress.phoneOffer.collectAsStateWithLifecycle()
     val compressBadges by container.compress.badges.collectAsStateWithLifecycle()
     var compressing by remember { mutableStateOf<dev.hfps.hoard.app.ui.compress.CompressRequest?>(null) }
     var filters by remember { mutableStateOf(false) }
@@ -170,7 +171,7 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     GalleryContent(
         ui = GalleryUi(
             layout, filter, columns, permission, account, status, total, dismissed, devices,
-            compressSelection = nasOffer != hidden || backupOffer != hidden,
+            compressSelection = nasOffer != hidden || backupOffer != hidden || phoneOffer != hidden,
             compressBackup = backupOffer != hidden,
             compressBadges = compressBadges,
         ),

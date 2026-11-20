@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         }
         // Launched from another app's share sheet (ADR 0007, share in).
         if (savedInstanceState == null) receiveShare(intent)
+        if (savedInstanceState == null) receiveOpen(intent)
         setContent {
             HoardApp(container) { dark ->
                 // Transparent bars; their icons follow the theme the user picked, not only the system's.
@@ -65,6 +66,14 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         receiveShare(intent)
+        receiveOpen(intent)
+    }
+
+    /** The phone replace's consent notification opens Settings › Compress videos (ADR 0025 A2). */
+    private fun receiveOpen(intent: Intent?) {
+        if (intent?.getStringExtra(dev.hfps.hoard.app.compress.CompressNotifications.EXTRA_OPEN) != dev.hfps.hoard.app.compress.CompressNotifications.OPEN_COMPRESS) return
+        intent.removeExtra(dev.hfps.hoard.app.compress.CompressNotifications.EXTRA_OPEN)
+        ShellRequests.openCompress.value = true
     }
 
     override fun attachBaseContext(newBase: android.content.Context) {

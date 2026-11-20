@@ -21,6 +21,8 @@ enum class FreeUpExclusion {
     NotBackedUp,
     /** No file of the shot is a MediaStore row (a RAW or sidecar found by listing only): no system consent can cover it. */
     NoMedia,
+    /** A compression replaces a file of the shot on the phone and has not settled (ADR 0025: `compress_phone` not `reported`). */
+    Compressing,
 }
 
 /**
@@ -138,6 +140,8 @@ object FreeUpPlan {
     /** `MediaStore.createDeleteRequest` takes at most this many items per request (one consent each). */
     const val MAX_DELETE_REQUEST = 1000
     const val FEATURE_FREED_ADOPT = "freed-adopt"
+    /** A shot kept at the check because a compression started replacing one of its files meanwhile. */
+    const val REASON_COMPRESSING = "compressing"
 
     /** A server `yes` counts only on a re-hash at most this old (the server's clock; `maxAge` of verify). */
     const val REHASH_MAX_AGE_MS = 24 * 3_600_000L
@@ -165,7 +169,8 @@ object FreeUpPlan {
      * The candidates, oldest first: every file of the shot backed up ([backedUp]), at least one MediaStore file, not
      * taken in the last [FreeUpRules.recentDays] days (when kept), no favourite file (when kept; [favourites] are
      * `device_media` ids), no pending culling ([pendingCulling]: shot keys). The Reveal gate is applied after the
-     * verification ([check]), where `namedByRecord` is known.
+     * verification ([check]), where `namedByRecord` is known. A shot with a file whose compression replace has not
+     * settled on the phone ([compressing]: absolute paths) stays (ADR 0025 "Free up").
      */
     fun candidates(
         roots: List<BackupRootEntity>,
@@ -174,6 +179,7 @@ object FreeUpPlan {
         favourites: Set<Long>,
         pendingCulling: Set<String>,
         now: Long,
+        compressing: Set<String> = emptySet(),
     ): FreeUpCandidates {
         val excluded = LinkedHashMap<FreeUpExclusion, Int>()
         fun keep(why: FreeUpExclusion) = excluded.merge(why, 1, Int::plus)
@@ -181,6 +187,7 @@ object FreeUpPlan {
         val since = now - rules.recentDays * DAY_MS
         for (shot in shots(roots.filter { !it.paused }, files)) {
             when {
+                shot.files.any { it.absolute in compressing } -> keep(FreeUpExclusion.Compressing)
                 shot.files.any { !backedUp(it) } -> keep(FreeUpExclusion.NotBackedUp)
                 shot.media.isEmpty() -> keep(FreeUpExclusion.NoMedia)
                 rules.keepRecent && shot.files.any { it.taken >= since } -> keep(FreeUpExclusion.Recent)

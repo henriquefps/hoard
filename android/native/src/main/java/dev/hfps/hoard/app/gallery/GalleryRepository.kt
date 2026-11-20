@@ -171,8 +171,12 @@ class GalleryRepository(
         promote()
         if (ok) scheduleOfflineThumbs()
         if (ok && db.culling().pending(1).isNotEmpty()) sync.sync()
+        if (ok) runCatching { afterSync?.invoke() }
         return ok
     }
+
+    /** Called after each successful sync (the phone replace looks for items of this phone, ADR 0025 A2). */
+    @Volatile var afterSync: (suspend () -> Unit)? = null
 
     // --- Decisions -------------------------------------------------------------------------------------------------
 

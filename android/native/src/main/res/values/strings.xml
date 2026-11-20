@@ -858,4 +858,74 @@
         <item quantity="other">%1$s originals restored</item>
     </plurals>
     <!-- /Video compression -->
+    <!-- Video compression on the phone (ADR 0025 A2, Hoard 2.8.0) -->
+    <string name="compress_unavailable_library">Library videos: %1$s</string>
+    <string name="compress_target_phone">Videos on this phone are replaced by their compressed copies in place: same name, folder and date.</string>
+    <string name="compress_warn_other_backup_apps">Other apps see a changed file: a cloud backup app may upload it again.</string>
+    <string name="compress_phone_needs_all_files">Replacing videos on this phone needs All files access (Settings › Files).</string>
+    <string name="compress_phone_needs_android11">Replacing videos on this phone needs Android 11 or later.</string>
+    <string name="compress_phone_waiting_permission">Waiting for your permission</string>
+    <string name="compress_phone_title">This phone</string>
+    <plurals name="compress_phone_consent">
+        <item quantity="one">%1$s video is ready to replace (saves %2$s here).</item>
+        <item quantity="other">%1$s videos are ready to replace (save %2$s here).</item>
+    </plurals>
+    <plurals name="compress_phone_consent_restore">
+        <item quantity="one">%1$s original is ready to go back on this phone (%2$s more here).</item>
+        <item quantity="other">%1$s originals are ready to go back on this phone (%2$s more here).</item>
+    </plurals>
+    <string name="compress_phone_consent_why">Android asks you to allow Hoard to change videos another app made (the camera, a drone app). Without it they stay as they are.</string>
+    <string name="compress_phone_allow">Allow</string>
+    <string name="compress_phone_keep">Keep originals</string>
+    <string name="compress_phone_replace_now">Replace now</string>
+    <string name="compress_phone_none">No video of this phone is being replaced.</string>
+    <string name="compress_phone_saved">%1$s smaller on this phone</string>
+    <string name="compress_phone_sizes">%1$s → %2$s</string>
+    <string name="compress_phone_progress_downloading">Downloading %1$s · %2$s of %3$s</string>
+    <string name="compress_phone_progress_verifying">Checking %1$s</string>
+    <string name="compress_phone_progress_writing">Replacing %1$s</string>
+    <string name="compress_phone_progress_reporting">Telling the server about %1$s</string>
+    <string name="compress_phone_state_downloading">Downloading the compressed copy</string>
+    <string name="compress_phone_state_retry">Waiting to try again</string>
+    <string name="compress_phone_state_verifying">Checking the download</string>
+    <string name="compress_phone_state_verified">Ready to replace</string>
+    <string name="compress_phone_state_writing">Replacing</string>
+    <string name="compress_phone_state_restoring">Putting the original back</string>
+    <string name="compress_phone_state_written">Replaced, telling the server</string>
+    <string name="compress_phone_state_reported">Replaced</string>
+    <string name="compress_phone_state_restored">Original back on the phone</string>
+    <string name="compress_phone_state_abandoned">Not replaced: %1$s</string>
+    <string name="compress_phone_reason_changed">the video changed on the phone</string>
+    <string name="compress_phone_reason_gone">the video is no longer on the phone</string>
+    <string name="compress_phone_reason_verify">the download did not match</string>
+    <string name="compress_phone_reason_refused">you kept the original</string>
+    <string name="compress_phone_reason_cancelled">cancelled on the server</string>
+    <string name="compress_phone_reason_other">something went wrong</string>
+    <string name="compress_phone_state_waiting">Waiting to try again: %1$s</string>
+    <string name="compress_phone_wait_space">not enough free space on the phone</string>
+    <string name="compress_phone_wait_write">the phone could not write the video</string>
+    <string name="compress_phone_wait_permission">Android refused the write</string>
+    <string name="compress_phone_wait_media">the phone’s media library did not answer</string>
+    <string name="compress_phone_wait_verify">the written video did not match</string>
+    <plurals name="compress_phone_replaced_toast">
+        <item quantity="one">%1$s video replaced</item>
+        <item quantity="other">%1$s videos replaced</item>
+    </plurals>
+    <plurals name="compress_phone_consent_title">
+        <item quantity="one">%1$d compressed video ready to replace</item>
+        <item quantity="other">%1$d compressed videos ready to replace</item>
+    </plurals>
+    <string name="compress_phone_consent_text">Open Hoard to allow it.</string>
+    <string name="compress_job_phone">This phone</string>
+    <string name="compress_auto_phone_desc">New videos of this folder, after their backup</string>
+    <string name="compress_channel">Video compression</string>
+    <string name="compress_notification_title">Replacing compressed videos</string>
+    <string name="compress_notification_downloading">Downloading %1$s (%2$s of %3$s)</string>
+    <string name="compress_notification_writing">Replacing %1$s</string>
+    <string name="compress_notification_checking">Checking</string>
+    <plurals name="freeup_kept_compressing">
+        <item quantity="one">%1$s being replaced by a compressed copy</item>
+        <item quantity="other">%1$s being replaced by compressed copies</item>
+    </plurals>
+    <string name="freeup_reason_compressing">Being replaced by its compressed copy</string>
 </resources>

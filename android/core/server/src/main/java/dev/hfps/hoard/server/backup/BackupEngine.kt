@@ -69,6 +69,8 @@ data class BackupRunResult(
     val bytes: Long = 0,
     /** Videos wait for the phone to charge (the worker asks for a run with that constraint). */
     val waitingForCharging: Boolean = false,
+    /** Videos the server holds since this pass (stored or found on its NAS): a compressed folder's new videos (ADR 0025). */
+    val videosStored: Int = 0,
 )
 
 /** What turning a folder's switch on came to. */
@@ -222,6 +224,7 @@ class BackupEngine(
         val batch = limits.maxReportEntries.coerceIn(1, 1000)
         dao.settleInterrupted()
         dao.deleteOrphans()
+        val videosBefore = storedVideos()
         val types = source.types()
         val listings = HashMap<String, Listing>()
         val freedPaths = dao.freed().associateBy { it.path }
@@ -258,8 +261,19 @@ class BackupEngine(
                 dao.passed(root.id, at, stats?.get(root.id)?.stats?.let { ServerJson.encodeToString(BackupRootStats.serializer(), it) } ?: root.serverStats)
             }
         }
-        return upload
+        return upload.copy(videosStored = (storedVideos() - videosBefore).size)
     }
+
+    /**
+     * Phone files a compression replace is writing in place (started, not read back): a backup pass during a long redo
+     * must not identify, report or upload the half-written file as a new version (ADR 0025 Amendment (A2), "Review of
+     * #81"). The replace's read-back puts the backup row right afterwards.
+     */
+    private suspend fun compressWriting(): Set<String> = db.compress().writingPaths().toHashSet()
+
+    /** Videos of every root the server holds now, by root and path. */
+    private suspend fun storedVideos(): Set<String> =
+        dao.allFiles().filter { it.kind == BackupKind.VIDEO && it.state in BackupState.DONE }.mapTo(HashSet()) { "${it.rootId}|${it.path}" }
 
     /** The root's `types` follow All files access (ADR 0024: `PATCH` when it is granted or revoked); a root gone is made again. */
     private suspend fun ensureTypes(api: ServerApi, root: BackupRootEntity, types: List<String>): BackupRootEntity? {
@@ -301,7 +315,8 @@ class BackupEngine(
 
     /** Fingerprints (and small files' SHA-256) the rows still lack, newest first, in batches with yields. */
     private suspend fun identify(root: BackupRootEntity, stopped: () -> Boolean): Boolean {
-        val todo = dao.files(root.id).filter { !BackupPlan.identified(it) && it.state != BackupState.REFUSED }.sortedByDescending { it.taken }
+        val writing = compressWriting()
+        val todo = dao.files(root.id).filter { !BackupPlan.identified(it) && it.state != BackupState.REFUSED && it.absolute !in writing }.sortedByDescending { it.taken }
         if (todo.isEmpty()) return true
         _progress.value = _progress.value.copy(phase = PHASE_HASHING)
         val charging = source.conditions().charging
@@ -360,7 +375,8 @@ class BackupEngine(
      */
     private suspend fun report(api: ServerApi, initial: BackupRootEntity, batch: Int): BackupRootEntity? {
         var root = initial
-        val due = BackupPlan.toReport(dao.files(root.id))
+        val writing = compressWriting()
+        val due = BackupPlan.toReport(dao.files(root.id)).filter { it.absolute !in writing }
         for (part in due.chunked(batch)) {
             var pending = part
             while (pending.isNotEmpty()) {
@@ -414,7 +430,8 @@ class BackupEngine(
 
     private suspend fun upload(api: ServerApi, chunkSize: Long, stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit): BackupRunResult {
         val roots = dao.roots().filter { !it.paused }
-        val candidates = roots.flatMap { BackupPlan.uploads(dao.files(it.id), now()) }.sortedByDescending { it.taken }
+        val writing = compressWriting()
+        val candidates = roots.flatMap { BackupPlan.uploads(dao.files(it.id), now()) }.filter { it.absolute !in writing }.sortedByDescending { it.taken }
         if (candidates.isEmpty()) return BackupRunResult(BackupOutcome.Done)
         val rules = source.rules()
         val uploader = BackupUploader(api, chunkSize)

@@ -127,6 +127,9 @@ fun usesTransfersSheet(width: Dp): Boolean = width < 600.dp
 /** Set by the activity when another app shared files to Hoard: the shell opens "Save to Hoard". */
 object ShellRequests {
     val openSave = MutableStateFlow(false)
+
+    /** Settings › Compress videos (the phone replace's consent notification, ADR 0025 A2). */
+    val openCompress = MutableStateFlow(false)
 }
 
 /** The app shell: the tabs and the screens behind them, over the real data in [container]. */
@@ -149,6 +152,13 @@ fun HoardShell(container: AppContainer) {
         if (openSave) {
             ShellRequests.openSave.value = false
             navController.navigate(SaveRoute) { launchSingleTop = true }
+        }
+    }
+    val openCompress by ShellRequests.openCompress.collectAsState()
+    LaunchedEffect(openCompress) {
+        if (openCompress) {
+            ShellRequests.openCompress.value = false
+            navController.navigate(CompressRoute) { launchSingleTop = true }
         }
     }
 
