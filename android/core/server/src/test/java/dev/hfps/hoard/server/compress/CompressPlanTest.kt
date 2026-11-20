@@ -197,6 +197,65 @@ class CompressPlanTest {
         assertThat(CompressPlan.afterAbandon(CompressPlan.abandon(row(state = PhoneState.VERIFIED), PhoneError.CHANGED, now), now).state).isEqualTo(PhoneState.ABANDONED)
     }
 
+    // --- Review of #81 (Amendment (A2)) ------------------------------------------------------------------------------
+
+    @Test
+    fun noMediaStoreRowMeansNoWriteAndAnUnreadableOneWaits() {
+        val r = row(state = PhoneState.VERIFIED)
+        val file = PhoneFileNow(true, 1000, 5_000, fpA, r.absolute)
+        // No row: the file is not one MediaStore knows, never written (abandoned as changed).
+        assertThat(CompressPlan.check(r, file.copy(mediaPath = null))).isEqualTo(PhoneCheck.Abandon(PhoneError.CHANGED))
+        // The query failed: nothing known, checked again later.
+        assertThat(CompressPlan.check(r, file.copy(mediaPath = null, mediaReadable = false))).isEqualTo(PhoneCheck.Wait)
+        // A target already in place is only read back (no write): it needs no row.
+        assertThat(CompressPlan.check(r, file.copy(size = 300, fingerprint = fpB, mediaPath = null, mediaReadable = false))).isEqualTo(PhoneCheck.AlreadyTarget)
+    }
+
+    @Test
+    fun aCheckOrWriteThatBacksOffWaitsInsteadOfLooping() {
+        for (state in listOf(PhoneState.VERIFIED, PhoneState.WRITING)) {
+            val waiting = CompressPlan.retryLater(row(state = state).copy(writeStarted = state == PhoneState.WRITING), PhoneError.SPACE, now)
+            assertThat(waiting.state).isEqualTo(state)
+            assertThat(waiting.error).isEqualTo(PhoneError.SPACE)
+            assertThat(CompressPlan.resume(waiting, now)).isEqualTo(PhoneStep.Wait(now + 60_000))
+            assertThat(CompressPlan.resume(waiting, now + 60_000)).isNotInstanceOf(PhoneStep.Wait::class.java)
+            // Each failure doubles the back-off, up to 6 hours.
+            val again = CompressPlan.retryLater(waiting, PhoneError.WRITE, now)
+            assertThat(again.nextAttemptAt).isEqualTo(now + 120_000)
+            assertThat(CompressPlan.retryLater(again.copy(attempts = 40), PhoneError.WRITE, now).nextAttemptAt).isEqualTo(now + 6 * 3_600_000L)
+        }
+    }
+
+    @Test
+    fun aWriteFitsOnlyWithRoomForWhatTheFileGrows() {
+        val restore = row(Compress.DIRECTION_RESTORE, PhoneState.VERIFIED) // 300 → 1000 bytes
+        val m = CompressPlan.WRITE_MARGIN
+        assertThat(CompressPlan.writeFits(restore, current = 300, free = 700 + m)).isTrue()
+        assertThat(CompressPlan.writeFits(restore, current = 300, free = 699 + m)).isFalse()
+        // A redo over a half-written file needs what is still missing.
+        assertThat(CompressPlan.writeFits(restore, current = 500, free = 500 + m)).isTrue()
+        // A compress shrinks the file: the margin is enough.
+        assertThat(CompressPlan.writeFits(row(state = PhoneState.VERIFIED), current = 1000, free = m)).isTrue()
+        assertThat(CompressPlan.writeFits(restore, current = 300, free = null)).isTrue()
+    }
+
+    @Test
+    fun aRepairWhoseReadBackKeepsFailingBacksOff() {
+        val repair = CompressPlan.repair(row(state = PhoneState.WRITING).copy(writeStarted = true), now).copy(state = PhoneState.WRITING)
+        val once = CompressPlan.readBackFailed(repair, now)
+        assertThat(CompressPlan.resume(once, now)).isEqualTo(PhoneStep.Write) // written once more at once
+        var r = once
+        val waits = ArrayList<Long>()
+        repeat(4) {
+            r = CompressPlan.readBackFailed(r, now)
+            assertThat(r.state).isEqualTo(PhoneState.WRITING) // a repair is never abandoned
+            val step = CompressPlan.resume(r, now)
+            assertThat(step).isInstanceOf(PhoneStep.Wait::class.java)
+            waits += (step as PhoneStep.Wait).at - now
+        }
+        assertThat(waits).containsExactly(60_000L, 120_000L, 240_000L, 480_000L).inOrder()
+    }
+
     @Test
     fun consentGoesInBatchesOfFiveHundred() {
         val rows = (1..1201).map { row().copy(id = "$it") }

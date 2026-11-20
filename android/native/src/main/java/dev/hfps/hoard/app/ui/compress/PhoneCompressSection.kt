@@ -164,14 +164,33 @@ fun rowText(row: CompressPhoneEntity): String {
     val state = when (row.state) {
         PhoneState.DOWNLOADING -> if (row.nextAttemptAt != null && row.error != null) stringResource(R.string.compress_phone_state_retry) else stringResource(R.string.compress_phone_state_downloading)
         PhoneState.VERIFYING -> stringResource(R.string.compress_phone_state_verifying)
-        PhoneState.VERIFIED -> if (row.error == PhoneError.PERMISSION) stringResource(R.string.compress_phone_waiting_permission) else stringResource(R.string.compress_phone_state_verified)
-        PhoneState.WRITING -> stringResource(if (restore) R.string.compress_phone_state_restoring else R.string.compress_phone_state_writing)
+        PhoneState.VERIFIED -> when {
+            row.error == PhoneError.PERMISSION && !row.writeStarted -> stringResource(R.string.compress_phone_waiting_permission)
+            row.nextAttemptAt != null && row.error != null -> stringResource(R.string.compress_phone_state_waiting, waitText(row.error))
+            else -> stringResource(R.string.compress_phone_state_verified)
+        }
+        // A write that backs off says why (no room, a failed write, MediaStore): Amendment (A2), "Review of #81".
+        PhoneState.WRITING -> if (row.nextAttemptAt != null && row.error != null) {
+            stringResource(R.string.compress_phone_state_waiting, waitText(row.error))
+        } else {
+            stringResource(if (restore) R.string.compress_phone_state_restoring else R.string.compress_phone_state_writing)
+        }
         PhoneState.WRITTEN -> stringResource(R.string.compress_phone_state_written)
         PhoneState.REPORTED -> stringResource(if (restore) R.string.compress_phone_state_restored else R.string.compress_phone_state_reported)
         PhoneState.ABANDON, PhoneState.ABANDONED -> stringResource(R.string.compress_phone_state_abandoned, abandonText(row.abandonReason ?: row.error))
         else -> row.state
     }
     return if (row.state == PhoneState.ABANDONED || row.state == PhoneState.ABANDON) state else "$state · $sizes"
+}
+
+@Composable
+private fun waitText(reason: String?): String = when (reason) {
+    PhoneError.SPACE -> stringResource(R.string.compress_phone_wait_space)
+    PhoneError.WRITE -> stringResource(R.string.compress_phone_wait_write)
+    PhoneError.PERMISSION -> stringResource(R.string.compress_phone_wait_permission)
+    PhoneError.MEDIA -> stringResource(R.string.compress_phone_wait_media)
+    PhoneError.VERIFY -> stringResource(R.string.compress_phone_wait_verify)
+    else -> stringResource(R.string.compress_phone_reason_other)
 }
 
 @Composable

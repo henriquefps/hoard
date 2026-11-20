@@ -34,6 +34,19 @@ data class PhoneMedia(
     val owner: String?,
 )
 
+/**
+ * A MediaStore lookup ([CompressSource.media]): the row, no row, or the query failed. Only a [Found] row may be written
+ * (Amendment (A2), "Review of #81"): a file MediaStore does not know, or a query that threw, never leads to a write.
+ */
+sealed interface MediaLookup {
+    data class Found(val media: PhoneMedia) : MediaLookup
+    data object Missing : MediaLookup
+    data object Unreadable : MediaLookup
+}
+
+/** The row when one was found. */
+val MediaLookup.found: PhoneMedia? get() = (this as? MediaLookup.Found)?.media
+
 /** What a write did (beyond the bytes): whether `IS_PENDING` was set around it (never on an existing row, Amendment (A2)). */
 data class PhoneWrite(val pending: Boolean)
 
@@ -54,8 +67,11 @@ interface CompressSource {
 
     fun file(absolute: String): File = File(absolute)
 
-    /** The MediaStore row of the file at [absolute] now (null: none). */
-    suspend fun media(absolute: String): PhoneMedia?
+    /** The MediaStore row of the file at [absolute] now: [MediaLookup.Missing] when none, [MediaLookup.Unreadable] when the query failed. */
+    suspend fun media(absolute: String): MediaLookup
+
+    /** Bytes free on the storage holding [dir] (null: unknown). */
+    fun usableSpace(dir: File): Long? = runCatching { dir.mkdirs(); dir.usableSpace }.getOrNull()
 
     /**
      * Whether the part plays as the phone file does: duration within 0.1 s, the same video and audio tracks, the same
@@ -63,7 +79,11 @@ interface CompressSource {
      */
     suspend fun compareMedia(part: File, phone: File): String?
 
-    /** Whether writing [media] needs the owner's consent: not Hoard's file, and no Media management (`MANAGE_MEDIA`). */
+    /**
+     * Whether writing [media] needs the owner's consent: not Hoard's file, and no Media management (`MANAGE_MEDIA`).
+     * False only for a known row that is Hoard's own or covered by Media management; any other is written only under a
+     * granted [requestWrite].
+     */
     fun needsConsent(media: PhoneMedia): Boolean
 
     /** One system dialog (`createWriteRequest`) for [media]; true when the owner allowed it, false when refused or no screen. */
@@ -72,8 +92,9 @@ interface CompressSource {
     /**
      * Copies [part] over the phone file in place (truncating, `fsync`), with `IS_PENDING` around it where MediaStore
      * allows it, sets the mtime back to [mtime] and has MediaStore scan the file again (before and after the mtime).
+     * [media] is the file's known MediaStore row: there is no write without one.
      */
-    suspend fun write(row: CompressPhoneEntity, media: PhoneMedia?, part: File, mtime: Long): PhoneWrite
+    suspend fun write(row: CompressPhoneEntity, media: PhoneMedia, part: File, mtime: Long): PhoneWrite
 
     /** Writes `DATE_TAKEN` back after a write changed it; false when MediaStore refused. */
     suspend fun setDateTaken(mediaId: Long, dateTaken: Long): Boolean
@@ -178,7 +199,9 @@ class CompressEngine(
                 if (stopped()) return result(CompressOutcome.Stopped, replaced, serverPending)
                 val step = CompressPlan.resume(row, now())
                 if (step == PhoneStep.Done || step is PhoneStep.Wait) break
-                if (!source.supported() && row.state in PhoneState.BEFORE_WRITE) break
+                // Without All files access nothing is written (a started write finishes once it is back); reports and
+                // abandons still go.
+                if (!source.supported() && (row.state in PhoneState.BEFORE_WRITE || step == PhoneStep.Write)) break
                 if (step == PhoneStep.Download && !foregrounded) {
                     foregrounded = true
                     runCatching { source.foreground(_progress.value) }
@@ -187,15 +210,17 @@ class CompressEngine(
                     PhoneStep.Download -> download(api, row, stopped) ?: return result(CompressOutcome.Stopped, replaced, serverPending)
                     PhoneStep.Verify -> verify(row)
                     PhoneStep.Check -> when (val c = check(row)) {
-                        is Checked.Write -> if (c.media != null && source.needsConsent(c.media)) {
+                        // A known row only ([check]); written at once only when it is Hoard's own or under Media
+                        // management, else after the owner's consent (no change on the phone without Android's consent).
+                        is Checked.Write -> if (source.needsConsent(c.media)) {
                             consent += row to c.media
                             null
                         } else {
-                            write(row.copy(originalMtime = c.mtime, dateTaken = c.media?.dateTaken ?: row.dateTaken), c.media)
+                            write(row.copy(originalMtime = c.mtime, dateTaken = c.media.dateTaken ?: row.dateTaken), c.media)
                         }
                         is Checked.Next -> c.row
                     }
-                    PhoneStep.Write -> write(row, source.media(row.absolute))
+                    PhoneStep.Write -> redo(row)
                     PhoneStep.Report -> report(api, row).also { if (it.state == PhoneState.REPORTED && row.report != PhoneReport.NONE) replaced++ }
                     PhoneStep.Abandon -> abandon(api, row)
                     else -> null
@@ -219,11 +244,17 @@ class CompressEngine(
                             waiting++
                             continue
                         }
-                        // Written under the grant at once, then read back and reported like any other.
+                        // Written under the grant at once, then read back and reported like any other (a write that
+                        // has to wait backs off and is finished by a later run).
                         var row = write(r.copy(originalMtime = r.originalMtime ?: source.file(r.absolute).lastModified(), dateTaken = media.dateTaken), media)
                         dao.putPhone(row)
-                        while (row.state == PhoneState.WRITTEN || row.state == PhoneState.WRITING) {
-                            val next = if (row.state == PhoneState.WRITING) write(row, source.media(row.absolute)) else report(api, row)
+                        while (true) {
+                            val step = CompressPlan.resume(row, now())
+                            val next = when (step) {
+                                PhoneStep.Write -> redo(row)
+                                PhoneStep.Report -> report(api, row)
+                                else -> break
+                            }
                             if (next == row) break
                             if (next.state == PhoneState.REPORTED) replaced++
                             row = next
@@ -276,7 +307,7 @@ class CompressEngine(
         }
         for (row in plan.put) {
             dao.phone(row.id)?.part?.let { File(it).delete() }
-            dao.putPhone(row.copy(mediaId = source.media(row.absolute)?.mediaId))
+            dao.putPhone(row.copy(mediaId = source.media(row.absolute).found?.mediaId))
         }
         if (plan.put.isNotEmpty() || plan.drop.isNotEmpty()) Log.i(TAG, "compress: ${plan.put.size} new, ${plan.drop.size} dropped of ${items.size} waiting")
         return runCatching {
@@ -293,14 +324,14 @@ class CompressEngine(
         // A target already at the path (a write done by a run whose answer was lost): read it back, no download.
         if (!row.writeStarted && row.offset == 0L && target.isFile && target.length() == row.targetSize) {
             val fp = runCatching { Fingerprint.of(target) }.getOrNull()
-            if (fp == row.targetFingerprint) return readBack(row.copy(writeStarted = true), source.media(row.absolute))
+            if (fp == row.targetFingerprint) return readBack(row.copy(writeStarted = true), source.media(row.absolute).found)
         }
         val part = row.part?.let(::File) ?: source.partFile(row)
         if (row.part == null) {
             row = row.copy(part = part.absolutePath, updatedAt = now())
             dao.putPhone(row)
         }
-        val free = runCatching { part.parentFile?.let { it.mkdirs(); it.usableSpace } }.getOrNull()
+        val free = part.parentFile?.let(source::usableSpace)
         if (free != null && free < row.targetSize - row.offset + SPACE_MARGIN) {
             return row.copy(error = PhoneError.SPACE, attempts = row.attempts + 1, nextAttemptAt = now() + CompressPlan.backoffMs(row.attempts + 1), updatedAt = now())
         }
@@ -356,23 +387,30 @@ class CompressEngine(
     }
 
     private sealed interface Checked {
-        data class Write(val media: PhoneMedia?, val mtime: Long) : Checked
+        data class Write(val media: PhoneMedia, val mtime: Long) : Checked
         data class Next(val row: CompressPhoneEntity) : Checked
     }
 
     private suspend fun check(row: CompressPhoneEntity): Checked {
         if (row.writeStarted) return Checked.Next(row.copy(state = PhoneState.WRITING, updatedAt = now()))
         val file = source.file(row.absolute)
-        val media = source.media(row.absolute)
+        val lookup = source.media(row.absolute)
+        val media = lookup.found
         val nowFile = PhoneFileNow(
             exists = file.isFile,
             size = if (file.isFile) file.length() else -1,
             modified = if (file.isFile) file.lastModified() else 0,
             fingerprint = if (file.isFile) runCatching { Fingerprint.of(file) }.getOrNull() else null,
             mediaPath = media?.path,
+            mediaReadable = lookup != MediaLookup.Unreadable,
         )
         return when (val c = CompressPlan.check(row, nowFile)) {
-            PhoneCheck.Ok -> Checked.Write(media, nowFile.modified)
+            // The plan answers Ok only with a row that names the file.
+            PhoneCheck.Ok -> Checked.Write(media!!, nowFile.modified)
+            PhoneCheck.Wait -> {
+                Log.w(TAG, "compress: MediaStore unreadable, checked again later")
+                Checked.Next(CompressPlan.retryLater(row, PhoneError.MEDIA, now()))
+            }
             PhoneCheck.AlreadyTarget -> Checked.Next(readBack(row.copy(writeStarted = true, originalMtime = row.originalMtime ?: nowFile.modified), media))
             is PhoneCheck.Abandon -> {
                 Log.i(TAG, "compress: the phone file is ${c.reason}")
@@ -382,28 +420,52 @@ class CompressEngine(
         }
     }
 
-    /** The write (and its redo after a kill): the journal says `writing` before the first byte. */
-    private suspend fun write(initial: CompressPhoneEntity, media: PhoneMedia?): CompressPhoneEntity {
+    /**
+     * A write already started (a kill, a failed read-back, a back-off): redone under the consent it started with, but
+     * only on a known MediaStore row; a missing or unreadable one waits (never a write without it).
+     */
+    private suspend fun redo(row: CompressPhoneEntity): CompressPhoneEntity {
+        val media = source.media(row.absolute).found
+        if (media == null) {
+            Log.w(TAG, "compress: no MediaStore row for a started write, tried again later")
+            return CompressPlan.retryLater(row, PhoneError.MEDIA, now())
+        }
+        return write(row, media)
+    }
+
+    /**
+     * The write (and its redo after a kill): the journal says `writing` before the first byte. The file is truncated
+     * only when the volume has room for the target ([CompressPlan.writeFits]); a short phone, an I/O error or a refusal
+     * backs off ([CompressPlan.retryLater]) and a later run finishes the row.
+     */
+    private suspend fun write(initial: CompressPhoneEntity, media: PhoneMedia): CompressPhoneEntity {
         val part = initial.part?.let(::File)
         if (part == null || !part.isFile || part.length() != initial.targetSize) {
             // The part went missing after the write started: downloaded again, then written.
             return initial.copy(state = PhoneState.DOWNLOADING, part = null, offset = 0, etag = null, writeStarted = true, updatedAt = now())
         }
-        val mtime = initial.originalMtime ?: source.file(initial.absolute).lastModified()
-        val row = initial.copy(state = PhoneState.WRITING, writeStarted = true, originalMtime = mtime, mediaId = media?.mediaId ?: initial.mediaId, updatedAt = now())
+        val target = source.file(initial.absolute)
+        val current = if (target.isFile) target.length() else 0L
+        val free = target.parentFile?.let(source::usableSpace)
+        if (!CompressPlan.writeFits(initial, current, free)) {
+            Log.w(TAG, "compress: no room to write ${initial.targetSize} bytes over $current ($free free), tried again later")
+            return CompressPlan.retryLater(initial, PhoneError.SPACE, now())
+        }
+        val mtime = initial.originalMtime ?: target.lastModified()
+        val row = initial.copy(state = PhoneState.WRITING, writeStarted = true, originalMtime = mtime, mediaId = media.mediaId, updatedAt = now())
         dao.putPhone(row)
         _progress.value = CompressProgress(true, PHASE_WRITING, File(row.absolute).name, 0, row.targetSize)
         try {
             val w = source.write(row, media, part, mtime)
             if (!w.pending) Log.i(TAG, "compress: written without IS_PENDING")
         } catch (e: IOException) {
-            Log.w(TAG, "compress: the write failed (${e.javaClass.simpleName})")
-            return row.copy(error = PhoneError.OFFLINE, updatedAt = now())
+            Log.w(TAG, "compress: the write failed (${e.javaClass.simpleName}), tried again later")
+            return CompressPlan.retryLater(row, PhoneError.WRITE, now())
         } catch (e: SecurityException) {
-            Log.w(TAG, "compress: the write was refused", e)
-            return row.copy(error = PhoneError.PERMISSION, updatedAt = now())
+            Log.w(TAG, "compress: the write was refused, tried again later", e)
+            return CompressPlan.retryLater(row, PhoneError.PERMISSION, now())
         }
-        return readBack(row, source.media(row.absolute) ?: media)
+        return readBack(row, source.media(row.absolute).found ?: media)
     }
 
     /**
@@ -419,7 +481,7 @@ class CompressEngine(
             return CompressPlan.readBackFailed(row, now())
         }
         var error: String? = null
-        val fresh = media?.let { source.media(row.absolute) } ?: media
+        val fresh = source.media(row.absolute).found ?: media
         val taken = row.dateTaken
         // A rewritten file whose metadata MediaStore reads differently (no capture time, another one): written back.
         if (fresh != null && taken != null && (fresh.dateTaken == null || kotlin.math.abs(fresh.dateTaken - taken) > 1000)) {

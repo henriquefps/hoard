@@ -24,6 +24,7 @@ import dev.hfps.hoard.server.compress.CompressProgress
 import dev.hfps.hoard.server.compress.CompressRunResult
 import dev.hfps.hoard.server.compress.CompressSource
 import dev.hfps.hoard.server.compress.CompressWorker
+import dev.hfps.hoard.server.compress.MediaLookup
 import dev.hfps.hoard.server.compress.PhoneAbility
 import dev.hfps.hoard.server.compress.PhoneMedia
 import dev.hfps.hoard.server.compress.PhoneWrite
@@ -160,8 +161,9 @@ class PhoneCompress(
         return File(File(base, PART_DIR), "${row.id.filter { it.isLetterOrDigit() || it == '-' }}.part")
     }
 
-    override suspend fun media(absolute: String): PhoneMedia? = withContext(Dispatchers.IO) {
-        if (Build.VERSION.SDK_INT < 30) return@withContext null
+    /** No row and a failed query are told apart: neither leads to a write, but only a failed query is asked again. */
+    override suspend fun media(absolute: String): MediaLookup = withContext(Dispatchers.IO) {
+        if (Build.VERSION.SDK_INT < 30) return@withContext MediaLookup.Unreadable
         val columns = arrayOf(
             MediaStore.MediaColumns._ID,
             MediaStore.Files.FileColumns.MEDIA_TYPE,
@@ -173,12 +175,15 @@ class PhoneCompress(
             MediaStore.MediaColumns.IS_FAVORITE,
             MediaStore.MediaColumns.OWNER_PACKAGE_NAME,
         )
-        runCatching {
-            context.contentResolver.query(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL), columns, "${MediaStore.MediaColumns.DATA} = ?", arrayOf(absolute), null)?.use { c ->
-                if (!c.moveToFirst()) return@use null
+        runCatching<MediaLookup> {
+            // A null cursor is a provider that did not answer: unreadable, not "no row".
+            val cursor = context.contentResolver.query(MediaStore.Files.getContentUri(MediaStore.VOLUME_EXTERNAL), columns, "${MediaStore.MediaColumns.DATA} = ?", arrayOf(absolute), null)
+                ?: return@runCatching MediaLookup.Unreadable
+            cursor.use { c ->
+                if (!c.moveToFirst()) return@use MediaLookup.Missing
                 val id = c.getLong(0)
                 val video = c.getInt(1) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
-                PhoneMedia(
+                MediaLookup.Found(PhoneMedia(
                     mediaId = if (video) DeviceIndexer.VIDEO_ID_BASE + id else id,
                     path = c.getString(2) ?: absolute,
                     size = c.getLong(3),
@@ -187,9 +192,9 @@ class PhoneCompress(
                     durationMs = c.getLong(6).takeIf { !c.isNull(6) && it > 0 },
                     favorite = c.getInt(7) == 1,
                     owner = c.getString(8),
-                )
+                ))
             }
-        }.onFailure { Log.w(TAG, "replace: MediaStore unreadable (${it.javaClass.simpleName})") }.getOrNull()
+        }.onFailure { Log.w(TAG, "replace: MediaStore unreadable (${it.javaClass.simpleName})") }.getOrDefault(MediaLookup.Unreadable)
     }
 
     private fun uriOf(mediaId: Long): Uri = if (mediaId >= DeviceIndexer.VIDEO_ID_BASE) {
@@ -256,7 +261,7 @@ class PhoneCompress(
     }
 
     @RequiresApi(30)
-    override suspend fun write(row: CompressPhoneEntity, media: PhoneMedia?, part: File, mtime: Long): PhoneWrite = withContext(Dispatchers.IO) {
+    override suspend fun write(row: CompressPhoneEntity, media: PhoneMedia, part: File, mtime: Long): PhoneWrite = withContext(Dispatchers.IO) {
         // No IS_PENDING: on an existing row MediaStore moves the file to a `.pending-` name (seen on Android 16), and a
         // process killed before it is cleared would leave the video under that name. The journal and the part make the
         // write redoable instead; other apps may see a half-written file for the seconds the copy takes (Amendment (A2)).

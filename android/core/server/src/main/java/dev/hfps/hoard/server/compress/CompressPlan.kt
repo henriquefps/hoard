@@ -43,8 +43,15 @@ object PhoneError {
     const val VERIFY = "verify"
     /** `DATE_TAKEN` changed with the write and could not be written back (noted, not a failure). */
     const val DATE_TAKEN = "date_taken"
-    /** The phone has no room for the part file. */
+    /** The phone has no room for the part file, or for the write (a restore grows the file in place): tried again later. */
     const val SPACE = "space"
+    /** The in-place write failed (an I/O error: a volume removed, access revoked meanwhile): tried again later. */
+    const val WRITE = "write"
+    /**
+     * The phone file's MediaStore row is unreadable (the query failed) or, for a write already started, missing: no
+     * write without a known row (Amendment (A2), "Review of #81"); tried again later.
+     */
+    const val MEDIA = "media"
     /** The owner chose to keep the original ("Keep originals"). */
     const val REFUSED = "refused"
     /** The server or network failed; tried again later. */
@@ -76,8 +83,18 @@ sealed interface PhoneStep {
 /** What [CompressPlan.reconcile] decided: rows to store (new, or a new cycle over a settled one) and rows to drop. */
 data class PhoneReconcile(val put: List<CompressPhoneEntity>, val drop: List<CompressPhoneEntity>)
 
-/** What the phone file is now, before a write ([CompressPlan.check]). */
-data class PhoneFileNow(val exists: Boolean, val size: Long, val modified: Long, val fingerprint: String?, val mediaPath: String?)
+/**
+ * What the phone file is now, before a write ([CompressPlan.check]). [mediaPath]: the path of its MediaStore row (null:
+ * no row); [mediaReadable]: false when the MediaStore query failed (nothing is known about the row).
+ */
+data class PhoneFileNow(
+    val exists: Boolean,
+    val size: Long,
+    val modified: Long,
+    val fingerprint: String?,
+    val mediaPath: String?,
+    val mediaReadable: Boolean = true,
+)
 
 /** A check's verdict. */
 sealed interface PhoneCheck {
@@ -86,6 +103,8 @@ sealed interface PhoneCheck {
     /** The target is in place already (a write done before a lost answer): read it back, then report. */
     data object AlreadyTarget : PhoneCheck
     data class Abandon(val reason: String) : PhoneCheck
+    /** Nothing known about the MediaStore row (the query failed): checked again later, never written meanwhile. */
+    data object Wait : PhoneCheck
 }
 
 /**
@@ -115,8 +134,9 @@ object CompressPlan {
     fun resume(row: CompressPhoneEntity, now: Long): PhoneStep = when (row.state) {
         PhoneState.DOWNLOADING -> row.nextAttemptAt?.takeIf { it > now }?.let { PhoneStep.Wait(it) } ?: PhoneStep.Download
         PhoneState.VERIFYING -> PhoneStep.Verify
-        PhoneState.VERIFIED -> PhoneStep.Check
-        PhoneState.WRITING -> PhoneStep.Write
+        // A check or write that waits (no room, a failed write, an unreadable MediaStore) backs off; never a hot loop.
+        PhoneState.VERIFIED -> row.nextAttemptAt?.takeIf { it > now }?.let { PhoneStep.Wait(it) } ?: PhoneStep.Check
+        PhoneState.WRITING -> row.nextAttemptAt?.takeIf { it > now }?.let { PhoneStep.Wait(it) } ?: PhoneStep.Write
         PhoneState.WRITTEN -> when {
             // A local repair settles without a call ([CompressEngine]'s report step).
             row.report == PhoneReport.NONE -> PhoneStep.Report
@@ -215,13 +235,16 @@ object CompressPlan {
 
     /**
      * Just before a write: the phone file must still be the source (its size, its mtime within [MTIME_SLACK_MS] of
-     * the one the server knows, its `v1:` fingerprint), and its MediaStore row must still name that path. A file that
-     * is already the target was written by an earlier run whose answer was lost.
+     * the one the server knows, its `v1:` fingerprint), and its MediaStore row must exist and still name that path: a
+     * file MediaStore does not know is never written (the consent rule needs a row, Amendment (A2) "Review of #81"),
+     * and an unreadable MediaStore waits. A file that is already the target was written by an earlier run whose answer
+     * was lost.
      */
     fun check(row: CompressPhoneEntity, now: PhoneFileNow): PhoneCheck {
         if (!now.exists) return PhoneCheck.Abandon(PhoneError.GONE)
         if (now.size == row.targetSize && now.fingerprint == row.targetFingerprint) return PhoneCheck.AlreadyTarget
-        if (now.mediaPath != null && now.mediaPath != row.absolute) return PhoneCheck.Abandon(PhoneError.CHANGED)
+        if (!now.mediaReadable) return PhoneCheck.Wait
+        if (now.mediaPath == null || now.mediaPath != row.absolute) return PhoneCheck.Abandon(PhoneError.CHANGED)
         if (now.size != row.sourceSize || now.fingerprint != row.sourceFingerprint) return PhoneCheck.Abandon(PhoneError.CHANGED)
         val known = row.originalMtime
         if (known != null && kotlin.math.abs(now.modified - known) > MTIME_SLACK_MS) return PhoneCheck.Abandon(PhoneError.CHANGED)
@@ -244,16 +267,32 @@ object CompressPlan {
 
     /**
      * A write whose read-back did not match: written once more from the part; a second failure abandons the item
-     * (`verify`) and then repairs the phone file from the server ([repair]).
+     * (`verify`) and then repairs the phone file from the server ([repair]). A repair (nothing to abandon: the phone
+     * file is neither version) keeps trying, but from its [MAX_REWRITES]th failure on only after a back-off.
      */
     fun readBackFailed(row: CompressPhoneEntity, now: Long): CompressPhoneEntity {
         val rewrites = row.rewrites + 1
-        return if (rewrites >= MAX_REWRITES && row.report != PhoneReport.NONE) {
-            abandon(row.copy(rewrites = rewrites), PhoneError.VERIFY, now)
-        } else {
-            row.copy(state = PhoneState.WRITING, rewrites = rewrites, error = PhoneError.VERIFY, updatedAt = now)
+        return when {
+            rewrites < MAX_REWRITES -> row.copy(state = PhoneState.WRITING, rewrites = rewrites, error = PhoneError.VERIFY, updatedAt = now)
+            row.report != PhoneReport.NONE -> abandon(row.copy(rewrites = rewrites), PhoneError.VERIFY, now)
+            else -> retryLater(row.copy(state = PhoneState.WRITING, rewrites = rewrites), PhoneError.VERIFY, now)
         }
     }
+
+    /** The row stays in its state with [error] and tries again after the back-off ([backoffMs], at most 6 hours). */
+    fun retryLater(row: CompressPhoneEntity, error: String, now: Long): CompressPhoneEntity =
+        row.copy(error = error, attempts = row.attempts + 1, nextAttemptAt = now + backoffMs(row.attempts + 1), updatedAt = now)
+
+    /** Room a write in place needs beyond what the file holds: it is truncated, then grows to the target size. */
+    const val WRITE_MARGIN = 64L shl 20
+
+    /**
+     * Whether a write of [row] fits now: the file at [current] bytes becomes [CompressPhoneEntity.targetSize], so a
+     * restore (the original over the smaller output) needs `target − current` more, plus [WRITE_MARGIN]. [free]
+     * unknown (null) does not block. Checked before the truncation, so a short phone leaves the file untouched.
+     */
+    fun writeFits(row: CompressPhoneEntity, current: Long, free: Long?): Boolean =
+        free == null || free >= row.targetSize - current.coerceAtLeast(0) + WRITE_MARGIN
 
     fun abandon(row: CompressPhoneEntity, reason: String, now: Long): CompressPhoneEntity =
         row.copy(state = PhoneState.ABANDON, abandonReason = reason, error = reason, nextAttemptAt = null, updatedAt = now)

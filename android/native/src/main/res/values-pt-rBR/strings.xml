@@ -979,6 +979,12 @@
     <string name="compress_phone_reason_refused">você manteve o original</string>
     <string name="compress_phone_reason_cancelled">cancelado no servidor</string>
     <string name="compress_phone_reason_other">algo deu errado</string>
+    <string name="compress_phone_state_waiting">Aguardando para tentar de novo: %1$s</string>
+    <string name="compress_phone_wait_space">falta espaço livre no celular</string>
+    <string name="compress_phone_wait_write">o celular não conseguiu gravar o vídeo</string>
+    <string name="compress_phone_wait_permission">o Android recusou a gravação</string>
+    <string name="compress_phone_wait_media">a biblioteca de mídia do celular não respondeu</string>
+    <string name="compress_phone_wait_verify">o vídeo gravado não conferiu</string>
     <plurals name="compress_phone_replaced_toast">
         <item quantity="one">%1$s vídeo substituído</item>
         <item quantity="many">%1$s vídeos substituídos</item>

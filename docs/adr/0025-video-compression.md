@@ -1591,3 +1591,36 @@ deviation. E2E and tests: `docs/testing/compression.md` "A2".
 - **Strings** follow the list above plus `compress_phone_*` (states, reasons, consent, progress), `compress_job_phone`,
   `compress_auto_phone_desc`, `compress_unavailable_library`, `compress_channel`, `compress_notification_*`,
   `freeup_kept_compressing`, `freeup_reason_compressing`.
+
+### Review of #81
+
+Fixes before 2.8.0 shipped (the owner's rule: no change on the phone without Android's consent; no truncated video;
+no write retried in a hot loop). JVM tests in `CompressPlanTest` and `CompressEngineTest` (fakes for MediaStore,
+free space and the server).
+
+- **No write without a known MediaStore row.** `CompressSource.media` answers a `MediaLookup`: `Found`, `Missing` or
+  `Unreadable` (the query threw or the provider gave no cursor); before, both of the last two were `null`, and a null
+  row skipped the consent and the path check, so a camera or drone video Hoard does not own could be written through
+  All files access by the worker. Now the check (`CompressPlan.check`) abandons a file with no row as `changed`
+  (nothing written) and makes an unreadable one wait (`error = media`, back-off). A write needs a `Found` row
+  (`CompressSource.write` takes a non-null `PhoneMedia`) and is done at once only when that row is Hoard's own or
+  covered by Media management; any other waits for a granted `createWriteRequest`. A write already started is redone
+  under the consent it started with, but also only on a `Found` row (else it waits, `media`).
+- **Room before the truncation.** The write checks the free space of the phone file's volume first
+  (`CompressPlan.writeFits`: `free ≥ target − current + 64 MiB`): a restore writes the larger original over the
+  smaller output in place and needs the difference. Without it the row keeps its state (`verified`, or `writing` for
+  a redo) with `error = space` and backs off; the file is not touched. Before, only the download's space was checked
+  and a short phone truncated the playable output part-way.
+- **Back-off, never a hot loop.** `verified` and `writing` rows honour `next_attempt_at` like the others
+  (`CompressPlan.resume`). An `IOException` during the write (an SD card removed, All files access revoked meanwhile)
+  backs off with `error = write`, a `SecurityException` with `permission` (`CompressPlan.retryLater`: 1 min, doubling,
+  at most 6 h); before, the row was retried at once, rewriting GBs until WorkManager stopped the run. Without All files
+  access a started write is not tried at all; it finishes once access is back (the redo journal). "This phone" shows
+  the reason ("Waiting to try again: not enough free space on the phone", `compress_phone_state_waiting`,
+  `compress_phone_wait_*`).
+- **A repair's read-back is capped.** A local repair (`report = none`) cannot be abandoned (the phone file is neither
+  version); from its second failed read-back on it backs off instead of rewriting at once forever.
+- **The backup skips a half-written file.** `CompressDao.writingPaths()` (rows with `write_started` not yet `written`,
+  `reported` or `abandoned`): `BackupEngine` neither identifies, reports nor uploads those paths, so a backup pass
+  during a long redo does not upload the half-written file as a new version. The replace's read-back sets the backup
+  row afterwards, as before.

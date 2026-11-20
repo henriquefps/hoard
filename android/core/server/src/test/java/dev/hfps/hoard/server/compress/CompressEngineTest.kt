@@ -53,25 +53,44 @@ class CompressEngineTest {
 
     /** The phone's primary volume as a directory; MediaStore as a map; consent and writes scripted. */
     inner class Source : CompressSource {
-        var consent = false
+        /** Media management (`MANAGE_MEDIA`): a camera's row is written without asking. */
+        var manageMedia = true
         var allow = true
+        /** MediaStore's query throws. */
+        var mediaUnreadable = false
+        /** Bytes free on the storage of a directory (null: unknown). */
+        var free: (File) -> Long? = { null }
+        /** Writes that fail with an I/O error before the first byte. */
+        var failWrites = 0
+        var supported = true
+        /** Calls of [write] (each one truncates the phone file). */
+        var writes = 0
         val asks = ArrayList<Int>()
         var killNextWrite = false
         /** Writes of the output that flip a byte (a broken write). */
         var corruptWrites = 0
         var waitingTold = 0
         val media = HashMap<String, PhoneMedia>()
-        override fun supported() = true
+        override fun supported() = supported
         override fun absolute(volume: String, path: String) = if (volume == "primary") File(phone, path).absolutePath else null
         override fun partFile(row: CompressPhoneEntity) = File(tmp.root, "parts/${row.id}.part")
-        override suspend fun media(absolute: String) = media[absolute]
+        override suspend fun media(absolute: String): MediaLookup = when {
+            mediaUnreadable -> MediaLookup.Unreadable
+            else -> media[absolute]?.let { MediaLookup.Found(it) } ?: MediaLookup.Missing
+        }
+        override fun usableSpace(dir: File): Long? = free(dir)
         override suspend fun compareMedia(part: File, phone: File): String? = null
-        override fun needsConsent(media: PhoneMedia) = consent
+        override fun needsConsent(media: PhoneMedia) = media.owner != OWN && !manageMedia
         override suspend fun requestWrite(media: List<PhoneMedia>): Boolean {
             asks += media.size
             return allow
         }
-        override suspend fun write(row: CompressPhoneEntity, media: PhoneMedia?, part: File, mtime: Long): PhoneWrite {
+        override suspend fun write(row: CompressPhoneEntity, media: PhoneMedia, part: File, mtime: Long): PhoneWrite {
+            writes++
+            if (failWrites > 0) {
+                failWrites--
+                throw java.io.IOException("EIO")
+            }
             val target = File(row.absolute)
             val bytes = part.readBytes()
             if (killNextWrite) {
@@ -85,7 +104,7 @@ class CompressEngineTest {
             }
             target.writeBytes(bytes)
             target.setLastModified(mtime)
-            media?.let { this.media[row.absolute] = it.copy(size = bytes.size.toLong()) }
+            this.media[row.absolute] = media.copy(size = bytes.size.toLong())
             return PhoneWrite(pending = true)
         }
         override suspend fun setDateTaken(mediaId: Long, dateTaken: Long) = true
@@ -103,6 +122,10 @@ class CompressEngineTest {
     private val path = "DCIM/Camera/VID_1.mp4"
     private val mtime = 1_700_000_000_000L
     private lateinit var video: File
+
+    private companion object {
+        const val OWN = "dev.hfps.hoard.debug"
+    }
 
     private fun sha(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }
 
@@ -228,7 +251,7 @@ class CompressEngineTest {
     @Test
     fun consentWaitsWithoutAScreenIsAskedInBatchesAndARefusalKeepsTheOriginal() = runBlocking<Unit> {
         backedUpAndCompressed()
-        source.consent = true
+        source.manageMedia = false
         val worker = engine().run()
         assertThat(worker.waitingConsent).isEqualTo(1)
         assertThat(source.waitingTold).isEqualTo(1)
@@ -253,7 +276,7 @@ class CompressEngineTest {
     @Test
     fun keepOriginalsAbandonsAsRefused() = runBlocking<Unit> {
         backedUpAndCompressed()
-        source.consent = true
+        source.manageMedia = false
         engine().run()
         engine().keepOriginals(listOf("7"))
         engine().run()
@@ -295,7 +318,7 @@ class CompressEngineTest {
     @Test
     fun aRowNotListedAnyMoreBeforeItsWriteIsDropped() = runBlocking<Unit> {
         backedUpAndCompressed()
-        source.consent = true
+        source.manageMedia = false
         engine().run()
         assertThat(row()!!.state).isEqualTo(PhoneState.VERIFIED)
         // Cancelled on the server (or settled by a backup report): no longer listed.
@@ -350,6 +373,147 @@ class CompressEngineTest {
         assertThat(fake.reports).isEmpty()
         assertThat(row()!!.state).isEqualTo(PhoneState.REPORTED)
         assertThat(row()!!.report).isEqualTo(PhoneReport.NONE)
+    }
+
+    // --- Review of #81 (Amendment (A2)): no write without Android's consent, no truncation, no hot loop -----------
+
+    @Test
+    fun aFileWithoutAMediaStoreRowIsNeverWritten() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.media.clear()
+        engine().run()
+        assertThat(source.writes).isEqualTo(0)
+        assertThat(video.readBytes()).isEqualTo(original)
+        assertThat(fake.abandons.single()).isEqualTo("7" to "changed")
+    }
+
+    @Test
+    fun anUnreadableMediaStoreWaitsWithoutAWrite() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.mediaUnreadable = true
+        val result = engine().run()
+        assertThat(source.writes).isEqualTo(0)
+        assertThat(video.readBytes()).isEqualTo(original)
+        assertThat(row()!!.state).isEqualTo(PhoneState.VERIFIED)
+        assertThat(row()!!.error).isEqualTo(PhoneError.MEDIA)
+        assertThat(result.retryAt).isEqualTo(clock + 60_000)
+        assertThat(fake.abandons).isEmpty()
+        // MediaStore answers again: written after the back-off.
+        source.mediaUnreadable = false
+        clock += 60_000
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(video.readBytes()).isEqualTo(output)
+    }
+
+    @Test
+    fun aForeignRowWithoutConsentIsNeverWrittenByTheWorker() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        // A camera's video, no Media management, no screen to ask: the worker only waits.
+        source.manageMedia = false
+        repeat(2) { engine().run() }
+        assertThat(source.writes).isEqualTo(0)
+        assertThat(video.readBytes()).isEqualTo(original)
+        assertThat(row()!!.error).isEqualTo(PhoneError.PERMISSION)
+        // Hoard's own video needs no dialog.
+        source.media[video.absolutePath] = source.media[video.absolutePath]!!.copy(owner = OWN)
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(source.asks).isEmpty()
+    }
+
+    @Test
+    fun aStartedWriteWhoseMediaStoreRowIsGoneWaitsInsteadOfWriting() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.killNextWrite = true
+        runCatching { engine().run() }
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITING)
+        val writes = source.writes
+        source.mediaUnreadable = true
+        engine().run()
+        source.mediaUnreadable = false
+        source.media.clear()
+        clock += 60_000
+        engine().run()
+        assertThat(source.writes).isEqualTo(writes)
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITING)
+        assertThat(row()!!.error).isEqualTo(PhoneError.MEDIA)
+        assertThat(row()!!.nextAttemptAt).isGreaterThan(clock)
+    }
+
+    @Test
+    fun aRestoreWithoutRoomLeavesTheOutputIntactAndBacksOff() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        engine().run()
+        assertThat(video.readBytes()).isEqualTo(output)
+        fake.items["7"] = fake.items["7"]!!.copy(state = Compress.STATE_REPLACING, direction = Compress.DIRECTION_RESTORE)
+        server.originals[origFp] = original
+        // The part's storage has room (its own check); the phone's volume lacks (original − output) + margin.
+        val grow = original.size.toLong() - output.size
+        source.free = { dir -> if (dir.absolutePath.startsWith(phone.absolutePath)) grow + CompressPlan.WRITE_MARGIN - 1 else null }
+        assertThat(engine().run().outcome).isEqualTo(CompressOutcome.Done)
+        assertThat(source.writes).isEqualTo(1) // the compress only
+        assertThat(video.readBytes()).isEqualTo(output)
+        assertThat(row()!!.state).isEqualTo(PhoneState.VERIFIED)
+        assertThat(row()!!.writeStarted).isFalse()
+        assertThat(row()!!.error).isEqualTo(PhoneError.SPACE)
+        val at = row()!!.nextAttemptAt!!
+        assertThat(at).isGreaterThan(clock)
+        // Run again before the back-off: nothing touched.
+        engine().run()
+        assertThat(source.writes).isEqualTo(1)
+        assertThat(video.readBytes()).isEqualTo(output)
+        // Room again after the back-off: restored.
+        clock = at
+        source.free = { grow + CompressPlan.WRITE_MARGIN }
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(video.readBytes()).isEqualTo(original)
+    }
+
+    @Test
+    fun aWriteThatKeepsFailingBacksOffInsteadOfLooping() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.failWrites = 100
+        val first = engine().run()
+        assertThat(source.writes).isEqualTo(1)
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITING)
+        assertThat(row()!!.writeStarted).isTrue()
+        assertThat(row()!!.error).isEqualTo(PhoneError.WRITE)
+        assertThat(first.retryAt).isEqualTo(clock + 60_000)
+        // Runs before the back-off write nothing; after it, one write each, the wait doubling.
+        engine().run()
+        assertThat(source.writes).isEqualTo(1)
+        clock += 60_000
+        engine().run()
+        assertThat(source.writes).isEqualTo(2)
+        assertThat(row()!!.nextAttemptAt).isEqualTo(clock + 120_000)
+        // All files access revoked: a started write is not even tried; once it is back, the row finishes.
+        source.supported = false
+        clock += 120_000
+        engine().run()
+        assertThat(source.writes).isEqualTo(2)
+        source.supported = true
+        source.failWrites = 0
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(video.readBytes()).isEqualTo(output)
+    }
+
+    @Test
+    fun theBackupSkipsAFileWhoseReplaceIsHalfWritten() = runBlocking<Unit> {
+        val rootId = backedUpAndCompressed()
+        source.killNextWrite = true
+        runCatching { engine().run() }
+        assertThat(video.length()).isEqualTo(output.size / 2L)
+        val creates = backupFake.creates.size
+        val reports = backupFake.reports.size
+        // A backup pass during the redo: the half file is neither reported nor uploaded.
+        val pass = backup().run()
+        assertThat(pass.uploaded).isEqualTo(0)
+        assertThat(backupFake.creates.size).isEqualTo(creates)
+        assertThat(backupFake.reports.drop(reports).flatMap { it.entries }.map { it.path }).doesNotContain(path)
+        // The redo finishes; the backup still sends nothing new.
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(backup().run().uploaded).isEqualTo(0)
+        assertThat(backupFake.creates.size).isEqualTo(creates)
+        assertThat(db.backup().file(rootId, path)!!.fingerprint).isEqualTo(outFp)
     }
 
     @Test

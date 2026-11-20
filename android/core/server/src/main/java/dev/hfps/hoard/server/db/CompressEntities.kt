@@ -118,6 +118,13 @@ interface CompressDao {
     @Query("SELECT absolute FROM compress_phone WHERE state NOT IN ('reported', 'abandoned')")
     suspend fun unsettledPaths(): List<String>
 
+    /**
+     * Phone paths a replace has started writing and not finished (the file is neither version until it is read back):
+     * the backup neither identifies, reports nor uploads them (Amendment (A2), "Review of #81").
+     */
+    @Query("SELECT absolute FROM compress_phone WHERE write_started = 1 AND state NOT IN ('written', 'reported', 'abandoned')")
+    suspend fun writingPaths(): List<String>
+
     @Query("SELECT state, error, COUNT(*) AS files, COALESCE(SUM(target_size), 0) AS bytes FROM compress_phone GROUP BY state, error")
     fun observeCounts(): Flow<List<CompressPhoneCount>>
 
