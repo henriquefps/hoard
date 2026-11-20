@@ -97,6 +97,7 @@ import dev.hfps.hoard.designsystem.components.HfpsTopBar
 import dev.hfps.hoard.designsystem.components.PrimaryButton
 import dev.hfps.hoard.designsystem.icons.PhosphorFill
 import dev.hfps.hoard.designsystem.icons.PhosphorRegular
+import dev.hfps.hoard.designsystem.theme.HfpsMedia
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.server.sync.SyncEngine
 import kotlinx.coroutines.delay
@@ -626,13 +627,13 @@ private fun DateHeader(row: GridRow.Header, locale: Locale, onClick: (() -> Unit
     }
 }
 
-private val BadgeBg = Color(0x99000000)
+private val BadgeBg = HfpsMedia.scrim
 
 /** Cells narrower than this show only the decision (a dot). */
 private const val COMPACT_CELL_DP = 72
 
 @Composable
-private fun Badge(icon: ImageVector, description: String, tint: Color = Color.White, tag: String? = null) {
+private fun Badge(icon: ImageVector, description: String, tint: Color = HfpsMedia.onScrim, tag: String? = null) {
     Box(
         Modifier.padding(3.dp).size(20.dp).clip(CircleShape).background(BadgeBg).let { if (tag != null) it.testTag(tag) else it },
         contentAlignment = Alignment.Center,
@@ -645,8 +646,8 @@ private fun Pill(text: String, tag: String? = null, icon: ImageVector? = null) {
         Modifier.padding(3.dp).clip(RoundedCornerShape(6.dp)).background(BadgeBg).padding(horizontal = 5.dp, vertical = 1.dp).let { if (tag != null) it.testTag(tag) else it },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) Icon(icon, null, Modifier.size(11.dp).padding(end = 2.dp), tint = Color.White)
-        Text(text, style = HfpsTheme.typography.ui.copy(fontSize = 10.sp), color = Color.White, maxLines = 1)
+        if (icon != null) Icon(icon, null, Modifier.size(11.dp).padding(end = 2.dp), tint = HfpsMedia.onScrim)
+        Text(text, style = HfpsTheme.typography.ui.copy(fontSize = 10.sp), color = HfpsMedia.onScrim, maxLines = 1)
     }
 }
 
@@ -732,15 +733,15 @@ fun GalleryCell(
             // A phone shot in a backed-up folder, not on the server yet (ADR 0024).
             when (entry.backup) {
                 null -> Unit
-                dev.hfps.hoard.app.gallery.BackupBadge.Waiting -> Badge(PhosphorRegular.UploadSimple, texts.backupWaiting, tint = Color(0xFFCBD5E1), tag = "badge-backup-waiting")
+                dev.hfps.hoard.app.gallery.BackupBadge.Waiting -> Badge(PhosphorRegular.UploadSimple, texts.backupWaiting, tint = HfpsMedia.onScrimMuted, tag = "badge-backup-waiting")
                 dev.hfps.hoard.app.gallery.BackupBadge.Uploading -> Badge(PhosphorRegular.UploadSimple, texts.backupUploading, tag = "badge-backup-uploading")
-                dev.hfps.hoard.app.gallery.BackupBadge.Paused -> Badge(PhosphorRegular.ClockCounterClockwise, texts.backupPaused, tint = Color(0xFFCBD5E1), tag = "badge-backup-paused")
-                dev.hfps.hoard.app.gallery.BackupBadge.Failed -> Badge(PhosphorRegular.WarningCircle, texts.backupFailed, tint = Color(0xFFFFC53D), tag = "badge-backup-failed")
+                dev.hfps.hoard.app.gallery.BackupBadge.Paused -> Badge(PhosphorRegular.ClockCounterClockwise, texts.backupPaused, tint = HfpsMedia.onScrimMuted, tag = "badge-backup-paused")
+                dev.hfps.hoard.app.gallery.BackupBadge.Failed -> Badge(PhosphorRegular.WarningCircle, texts.backupFailed, tint = HfpsMedia.caution, tag = "badge-backup-failed")
             }
             // A phone's backed-up shot the phone no longer has (ADR 0024 A2): kept on the server.
             when (offPhone) {
                 null -> Unit
-                dev.hfps.hoard.app.gallery.OffPhone.Deleted -> Badge(PhosphorRegular.DeviceMobileSlash, texts.offPhone, tint = Color(0xFFFFC53D), tag = "badge-off-phone")
+                dev.hfps.hoard.app.gallery.OffPhone.Deleted -> Badge(PhosphorRegular.DeviceMobileSlash, texts.offPhone, tint = HfpsMedia.caution, tag = "badge-off-phone")
                 dev.hfps.hoard.app.gallery.OffPhone.Freed -> Badge(PhosphorRegular.DeviceMobileSlash, texts.freed, tag = "badge-freed")
             }
             when (compress) {
@@ -760,16 +761,16 @@ fun GalleryCell(
         Row(Modifier.align(Alignment.BottomStart), verticalAlignment = Alignment.CenterVertically) {
             if (entry.decision.rating > 0) {
                 Row(Modifier.padding(3.dp).clip(RoundedCornerShape(6.dp)).background(BadgeBg).padding(horizontal = 4.dp, vertical = 1.dp).testTag("badge-rating"), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(PhosphorFill.Star, null, Modifier.size(10.dp), tint = Color(0xFFFFC53D))
-                    Text(entry.decision.rating.toString(), style = HfpsTheme.typography.ui.copy(fontSize = 10.sp), color = Color.White, modifier = Modifier.padding(start = 2.dp))
+                    Icon(PhosphorFill.Star, null, Modifier.size(10.dp), tint = HfpsMedia.caution)
+                    Text(entry.decision.rating.toString(), style = HfpsTheme.typography.ui.copy(fontSize = 10.sp), color = HfpsMedia.onScrim, modifier = Modifier.padding(start = 2.dp))
                 }
             }
         }
         Row(Modifier.align(Alignment.BottomEnd)) {
             if (entry.edited) Badge(PhosphorRegular.MagicWand, texts.edited, tag = "badge-edited")
             when (entry.decision.flag) {
-                "pick" -> Badge(PhosphorFill.CheckCircle, texts.picked, tint = Color(0xFF7DD3A8), tag = "badge-pick")
-                "reject" -> Badge(PhosphorFill.XCircle, texts.rejected, tint = Color(0xFFFF8A80), tag = "badge-reject")
+                "pick" -> Badge(PhosphorFill.CheckCircle, texts.picked, tint = HfpsMedia.positive, tag = "badge-pick")
+                "reject" -> Badge(PhosphorFill.XCircle, texts.rejected, tint = HfpsMedia.negative, tag = "badge-reject")
             }
         }
     }

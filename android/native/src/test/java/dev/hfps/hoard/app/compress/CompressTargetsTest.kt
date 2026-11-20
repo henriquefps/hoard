@@ -81,4 +81,11 @@ class CompressTargetsTest {
         assertThat(CompressTargets.folderLabel(job)).isEqualTo("Drone/2024/")
         assertThat(CompressTargets.sameFolder(CompressJob("k"), CompressFolder("f", "", ""))).isFalse()
     }
+
+    @Test
+    fun mergedEstimatesAddTheirSubfolders() {
+        val a = EstimateSummary(3, 3, 1, 1, 1, emptyList(), emptySet(), 0, subfolders = 1)
+        val b = EstimateSummary(2, 2, 1, 1, 1, emptyList(), emptySet(), 0, subfolders = 2)
+        assertThat(CompressTargets.merge(listOf(a, b)).subfolders).isEqualTo(3)
+    }
 }

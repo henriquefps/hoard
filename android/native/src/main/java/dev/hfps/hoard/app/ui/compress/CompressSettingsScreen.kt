@@ -213,7 +213,7 @@ fun CompressSettingsContent(
 private fun StatusBlock(ui: CompressSettingsUi) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         when (val n = ui.nas) {
-            is CompressOffer.Unavailable -> Text(unavailableText(n.reason), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.warning, modifier = Modifier.testTag("compress-unavailable"))
+            is CompressOffer.Unavailable -> ReasonLine(unavailableText(n.reason), HfpsTheme.typography.ui, HfpsTheme.colors.warning, Modifier.testTag("compress-unavailable"))
             else -> Unit
         }
         ui.info?.attention?.stalled?.takeIf { it > 0 }?.let { n ->
@@ -255,6 +255,7 @@ private fun jobTitle(job: CompressJob): String {
 /** Counts of a job: done of all, saved and in the trash, skipped and failed by reason. */
 @Composable
 private fun jobLine(job: CompressJob): String {
+    val res = LocalResources.current
     val total = job.progress.done + job.progress.toDo
     val parts = ArrayList<String>()
     if (total > 0) parts += pluralStringResource(R.plurals.compress_progress, total, formatNumber(job.progress.done, locale()), formatNumber(total, locale()))
@@ -264,7 +265,7 @@ private fun jobLine(job: CompressJob): String {
     val skipped = job.skipped.values.sum()
     if (skipped > 0) parts += pluralStringResource(R.plurals.compress_skipped_count, skipped, formatNumber(skipped, locale()))
     for ((reason, n) in job.failed.entries.sortedByDescending { it.value }) {
-        if (n > 0) parts += pluralStringResource(R.plurals.compress_failed_count, n, formatNumber(n, locale()), failedText(reason))
+        if (n > 0) parts += pluralStringResource(R.plurals.compress_failed_count, n, formatNumber(n, locale()), CompressReasonTexts.inline(res, CompressReasonTexts.failed(res, reason)))
     }
     when {
         job.auto -> parts.add(0, stringResource(R.string.compress_job_auto))

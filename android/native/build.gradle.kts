@@ -26,8 +26,8 @@ android {
         minSdk = rootProject.extra["minSdkVersion"] as Int
         targetSdk = rootProject.extra["targetSdkVersion"] as Int
         // Above every Hoard 1 release (1.11.0 is 20) and Hoard Next's betas (101), so 2.0.0 upgrades 1.x in place.
-        versionCode = 270
-        versionName = "2.7.0"
+        versionCode = 271
+        versionName = "2.7.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

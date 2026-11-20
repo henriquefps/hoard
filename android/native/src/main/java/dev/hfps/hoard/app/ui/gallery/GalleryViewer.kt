@@ -27,7 +27,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -68,6 +67,7 @@ import dev.hfps.hoard.app.ui.cull.CullViewer
 import dev.hfps.hoard.app.ui.cull.accept
 import dev.hfps.hoard.app.ui.reveal.rememberReveal
 import dev.hfps.hoard.designsystem.icons.PhosphorFill
+import dev.hfps.hoard.designsystem.theme.HfpsMedia
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
 import dev.hfps.hoard.smb.ErrorCode
 import kotlinx.coroutines.launch
@@ -129,8 +129,8 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
 
     val ready = view.core.status == CullStatus.Ready && view.core.metadataDone
     if (!ready) {
-        Box(Modifier.fillMaxSize().background(Color.Black).testTag("gallery-viewer-loading")) {
-            CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = Color.White, strokeWidth = 2.dp)
+        Box(Modifier.fillMaxSize().background(HfpsMedia.black).testTag("gallery-viewer-loading")) {
+            CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = HfpsMedia.onScrim, strokeWidth = 2.dp)
         }
         return
     }
@@ -175,7 +175,7 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
                         dev.hfps.hoard.designsystem.icons.PhosphorRegular.DeviceMobileSlash,
                         stringResource(R.string.gallery_badge_off_phone),
                         Modifier.padding(horizontal = 8.dp).size(20.dp).testTag("gallery-viewer-off-phone"),
-                        tint = Color(0xFFFFC53D),
+                        tint = HfpsMedia.caution,
                     )
                 }
                 if (entry.source == dev.hfps.hoard.app.gallery.Source.Server && paired) {
@@ -184,7 +184,7 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
                         stringResource(R.string.save_device),
                         { saving = entry },
                         modifier = Modifier.testTag("gallery-viewer-save"),
-                        tint = Color.White,
+                        tint = HfpsMedia.onScrim,
                     )
                 }
             }
@@ -193,11 +193,11 @@ fun GalleryViewer(container: AppContainer, gallery: GalleryViewModel, open: Gall
                 Text(
                     stringResource(if (original) R.string.gallery_viewer_original else R.string.gallery_viewer_edited),
                     style = HfpsTheme.typography.uiMedium,
-                    color = if (original) Color.White else HfpsTheme.colors.primaryForeground,
+                    color = if (original) HfpsMedia.onScrim else HfpsTheme.colors.primaryForeground,
                     modifier = Modifier
                         .padding(horizontal = 4.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(if (original) Color(0x33FFFFFF) else HfpsTheme.colors.primary)
+                        .background(if (original) HfpsMedia.onScrimFaint else HfpsTheme.colors.primary)
                         .clickable {
                             if (original) backend.showOriginal.remove(shot.id) else backend.showOriginal.add(shot.id)
                             variant++
@@ -235,9 +235,9 @@ private fun BoxScope.PlayButton(entry: GalleryEntry?, onPlay: (GalleryEntry) -> 
     entry ?: return
     if (!canPlay(entry)) return
     Box(
-        Modifier.align(Alignment.Center).size(72.dp).clip(CircleShape).background(Color(0x88000000)).clickable { onPlay(entry) }.testTag("gallery-play"),
+        Modifier.align(Alignment.Center).size(72.dp).clip(CircleShape).background(HfpsMedia.playScrim).clickable { onPlay(entry) }.testTag("gallery-play"),
         contentAlignment = Alignment.Center,
-    ) { Icon(PhosphorFill.Play, stringResource(R.string.gallery_viewer_play), Modifier.size(32.dp), tint = Color.White) }
+    ) { Icon(PhosphorFill.Play, stringResource(R.string.gallery_viewer_play), Modifier.size(32.dp), tint = HfpsMedia.onScrim) }
 }
 
 /** A video, a motion photo with its video next to it on the phone, or anything with a server proxy. */
@@ -271,10 +271,10 @@ fun VideoPlayer(container: AppContainer, entry: GalleryEntry, onClose: () -> Uni
         }
     }
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black).testTag("gallery-video")) {
+        Box(Modifier.fillMaxSize().background(HfpsMedia.black).testTag("gallery-video")) {
             val current = source
             if (current == null) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = Color.White, strokeWidth = 2.dp)
+                CircularProgressIndicator(Modifier.align(Alignment.Center).size(28.dp), color = HfpsMedia.onScrim, strokeWidth = 2.dp)
             } else {
                 AndroidView(
                     factory = { ctx ->

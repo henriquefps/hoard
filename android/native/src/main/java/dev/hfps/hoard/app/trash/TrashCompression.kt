@@ -140,3 +140,13 @@ suspend fun emptyTrash(
     val routed = split.compressed.filterKeys { it.itemId in server.done }.values.flatten()
     return TrashEmptyResult(deleted, routed, split, server)
 }
+
+/**
+ * Whether the held state is unknown (ADR 0025 Amendment (A1), (2.7.1)): with [refresh] the paired server is synced
+ * first, and a failed sync (or one that throws) leaves the cache as the only, possibly stale, source. Restore, Empty,
+ * auto-empty and its preview all refresh: none may act on a held state older than the action.
+ */
+suspend fun heldUnknown(refresh: Boolean, sync: suspend () -> Boolean): Boolean {
+    if (!refresh) return false
+    return !runCatching { sync() }.getOrDefault(false)
+}

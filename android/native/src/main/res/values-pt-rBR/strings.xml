@@ -758,14 +758,23 @@
     <string name="compress_failed_reason_encoder">o codificador falhou</string>
     <string name="compress_failed_reason_trash">não foi possível mover o original para a lixeira</string>
     <string name="compress_failed_reason_writable">o servidor não consegue gravar nessa pasta</string>
+    <string name="compress_failed_reason_unreadable">não pôde ser lido</string>
+    <string name="compress_failed_reason_missing">o vídeo comprimido sumiu</string>
+    <string name="compress_failed_reason_metadata">alguns dados da câmera não puderam ser mantidos</string>
+    <string name="compress_failed_reason_mismatch">a cópia comprimida não bateu com o original</string>
     <string name="compress_failed_reason_other">outros motivos</string>
     <string name="compress_badge_compressed">Comprimido</string>
     <string name="compress_badge_compressing">Comprimindo</string>
     <string name="compress_unavailable_gpu">O servidor de fotos não tem uma GPU utilizável para comprimir agora.</string>
-    <string name="compress_unavailable_write_mount">O servidor de fotos não consegue gravar na biblioteca (montagem de escrita: %1$s).</string>
     <string name="compress_unavailable_backup_root">O servidor de fotos não tem uma pasta de backup, que a compressão exige.</string>
-    <string name="compress_unavailable_other">A compressão não está disponível no servidor de fotos agora (%1$s).</string>
-    <string name="compress_start_failed">Não foi possível iniciar a compressão (%1$s).</string>
+    <string name="compress_unavailable_no_write_mount">O servidor de fotos não tem acesso de escrita à biblioteca, então não consegue substituir vídeos.</string>
+    <string name="compress_unavailable_write_mount_mismatch">A pasta de escrita do servidor de fotos não é a biblioteca que ele serve, então a compressão está desligada.</string>
+    <string name="compress_unavailable_write_mount_read_only">O acesso de escrita do servidor de fotos à biblioteca é somente leitura.</string>
+    <string name="compress_unavailable_unstable_inode">O armazenamento da biblioteca não mantém identificadores de arquivo estáveis, que a compressão exige para substituir vídeos com segurança.</string>
+    <string name="compress_unavailable_no_tools">O servidor de fotos não tem as ferramentas de vídeo que a compressão exige (codificador NVENC, VMAF ou exiftool).</string>
+    <string name="compress_unavailable_other">A compressão não está disponível no servidor de fotos agora.</string>
+    <string name="compress_reason_code">Código: %1$s</string>
+    <string name="compress_start_failed">Não foi possível iniciar a compressão.</string>
     <string name="compress_exists">Esta pasta já é comprimida automaticamente.</string>
     <string name="compress_busy">Estes vídeos já estão sendo comprimidos.</string>
     <string name="compress_none_in_selection">Nenhum destes vídeos pode ser comprimido pelo servidor (vídeos só neste celular vêm numa próxima versão).</string>
@@ -773,6 +782,8 @@
     <string name="compress_refused_not_writable">o servidor não conseguiu verificá-lo agora</string>
     <string name="compress_refused_output_missing">o vídeo comprimido sumiu, então o original é mantido</string>
     <string name="compress_refused_busy">uma compressão está trabalhando nele</string>
+    <string name="compress_refused_path_taken">o lugar antigo foi ocupado por outro arquivo</string>
+    <string name="compress_refused_not_found">o servidor não o conhece mais</string>
     <string name="compress_refused_offline">o servidor de fotos não responde</string>
     <string name="compress_refused_other">o servidor recusou (%1$s)</string>
     <string name="compress_job_auto">Automática</string>
@@ -791,6 +802,11 @@
         <item quantity="one">%1$s de %2$s vídeo</item>
         <item quantity="many">%1$s de %2$s vídeos</item>
         <item quantity="other">%1$s de %2$s vídeos</item>
+    </plurals>
+    <plurals name="compress_estimate_with_subfolders">
+        <item quantity="one">%1$s, incluindo %2$s em uma subpasta</item>
+        <item quantity="many">%1$s, incluindo %2$s em subpastas</item>
+        <item quantity="other">%1$s, incluindo %2$s em subpastas</item>
     </plurals>
     <plurals name="compress_skip_already">
         <item quantity="one">%1$s já comprimido</item>
@@ -841,6 +857,21 @@
         <item quantity="one">%1$s já sendo comprimido</item>
         <item quantity="many">%1$s já sendo comprimidos</item>
         <item quantity="other">%1$s já sendo comprimidos</item>
+    </plurals>
+    <plurals name="compress_skip_not_video">
+        <item quantity="one">%1$s não é vídeo</item>
+        <item quantity="many">%1$s não são vídeos</item>
+        <item quantity="other">%1$s não são vídeos</item>
+    </plurals>
+    <plurals name="compress_skip_trashed">
+        <item quantity="one">%1$s na lixeira</item>
+        <item quantity="many">%1$s na lixeira</item>
+        <item quantity="other">%1$s na lixeira</item>
+    </plurals>
+    <plurals name="compress_skip_not_in_target">
+        <item quantity="one">%1$s fora deste lugar</item>
+        <item quantity="many">%1$s fora deste lugar</item>
+        <item quantity="other">%1$s fora deste lugar</item>
     </plurals>
     <plurals name="compress_skip_other">
         <item quantity="one">%1$s ignorado por outro motivo</item>

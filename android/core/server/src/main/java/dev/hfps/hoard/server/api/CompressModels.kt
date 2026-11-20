@@ -119,6 +119,8 @@ data class CompressTotals(
     val size: Long = 0,
     val estSize: Long = 0,
     val estMs: Long = 0,
+    /** hoard-server 0.13.2 (additive; absent = 0): videos of the selection that sit in a sub-folder of a chosen folder. */
+    val subfolders: Int = 0,
 )
 
 /** An estimate page; [retryAfterSeconds] is the `Retry-After` header (probes still running), not part of the body. */
@@ -128,6 +130,8 @@ data class CompressEstimate(
     val totals: CompressTotals = CompressTotals(),
     val pending: Int = 0,
     val next: String? = null,
+    /** The same count as `totals.subfolders`, should a server put it beside `pending` instead. */
+    val subfolders: Int = 0,
     @kotlinx.serialization.Transient val retryAfterSeconds: Long? = null,
 )
 

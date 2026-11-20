@@ -98,3 +98,17 @@ compressed with the write mount (`replaced`, original in `.hoard-trash/2026-11-1
 **without** the write mount (`targets.nas`: `no_write_mount`). Trash › Empty trash: "1 original stays in the trash: the
 server cannot write the library now" ([`r01`](compression/e2e/r01-empty-refused.png)); log `1 refused [no_write_mount]`;
 the original still on the share, the item still `replaced`. Containers, the Samba image and the emulator removed/stopped.
+
+## Hoard 2.7.1 (ADR 0025 Amendment (2.7.1))
+
+- JVM/Robolectric: `CompressReasonTextsTest` (every listed reason is a sentence in en and pt-BR, never the raw code; an
+  unknown one is generic plus its code; the sub-folders plural), `CompressModelTest` (`subfolders` read and absent = 0;
+  the drift guard against the server's `Reason*` constants), `CompressTargetsTest` (merged sub-folders), `HeldUnknownTest`
+  (restore and the preview sync first; a failed sync holds every share row). Goldens re-recorded: `compress_sheet_*`
+  (sub-folders line; `write_mount_read_only` sentence) and the new `compress_settings_unknown_reason_phone_light`.
+- Emulator (own AVD `hoard-271`, port 5582; hoard-server built from `main` 1863dbf with the a1fake harness in a
+  container on port 3271, no write mount; paired by typing the link): Settings › Compress videos says "The photo server
+  has no write access to the library, so it cannot replace videos." for `no_write_mount`
+  ([`e271-settings-no-write-mount.png`](compression/e2e/e271-settings-no-write-mount.png)). The sub-folders line needs
+  hoard-server 0.13.2 and is covered by the unit tests and goldens only. The container, the AVD and the temporary
+  directories were removed.

@@ -71,6 +71,8 @@ data class EstimateSummary(
     val warnings: Set<String>,
     /** Videos whose probe the server is still reading. */
     val pending: Int,
+    /** Of [videos], how many sit in a sub-folder of a chosen folder (0.13.2; 0 = not reported). */
+    val subfolders: Int = 0,
 ) {
     val skippedTotal: Int get() = skipped.sumOf { it.second }
     val saving: Long get() = (size - estSize).coerceAtLeast(0)
@@ -89,7 +91,7 @@ data class EstimateSummary(
             val totals = last.totals
             val skipped = totals.skip.filter { it.value > 0 }.toList().sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
             val warnings = pages.flatMap { p -> p.items.filter { it.decision == DECISION_ENCODE }.flatMap { it.warnings } }.toSet()
-            return EstimateSummary(totals.items, totals.encode, totals.size, totals.estSize, totals.estMs, skipped, warnings, last.pending)
+            return EstimateSummary(totals.items, totals.encode, totals.size, totals.estSize, totals.estMs, skipped, warnings, last.pending, maxOf(totals.subfolders, last.subfolders).coerceAtMost(totals.items))
         }
 
         const val DECISION_ENCODE = "encode"
@@ -156,4 +158,31 @@ data class CompressOverview(
             return CompressOverview(running, automatic, history)
         }
     }
+}
+
+/**
+ * Every reason code the server's compression can show Hoard (`server/internal/compress`, ADR 0025 Amendment (2.7.1)),
+ * by where it appears. The app maps each to a sentence of its own; an unknown code (a newer server) falls back to a
+ * generic sentence with the code in small type.
+ */
+object CompressReasons {
+    /** `GET /v1/server` `compress.reason` and `compress.targets.<t>.reason`: why a target cannot be used. */
+    val TARGET = listOf("no_gpu", "no_tools", "no_backup_root", "no_write_mount", "write_mount_mismatch", "write_mount_read_only", "unstable_inode")
+
+    /** Skip reasons of an estimate and of a job's skipped items. */
+    val SKIP = listOf(
+        "not_video", "unreadable", "already_compressed", "older_compression", "efficient", "small_saving", "dolby_vision",
+        "reveal_record", "sync_artifact", "trashed", "busy", "not_in_target", "not_writable",
+    )
+
+    /** Failure reasons of a job's items (`verify_*` is a family). */
+    val FAILED = listOf(
+        "encoder", "source_changed", "no_space", "trash_failed", "not_writable", "unreadable", "output_missing",
+        "verify_quality", "verify_metadata", "verify_duration", "verify_streams", "verify_picture", "verify_frames", "verify_decode", "verify_phone",
+    )
+
+    /** Errors of a start, a restore or a purge (`POST /v1/compress/…`), besides the target reasons. */
+    val ROUTE = listOf("exists", "busy", "state", "not_found", "path_taken", "not_writable", "output_missing", "live_missing")
+
+    fun isVerify(reason: String): Boolean = reason.startsWith("verify")
 }
