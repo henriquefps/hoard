@@ -38,6 +38,9 @@ import dev.hfps.hoard.server.api.CandidateDevice
 import dev.hfps.hoard.server.db.ServerAccountEntity
 import dev.hfps.hoard.server.sync.SyncStatus
 import kotlinx.coroutines.runBlocking
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -121,6 +124,24 @@ class GalleryScreenTest {
     @Test fun gridFiltered() = shoot("gallery_grid_filtered_phone_light", ShellScreenshotTest.PHONE, false, grid(ui(filter = GalleryFilter(kind = KindFilter.RawPairs, minRating = 4, query = "trip"))))
     @Test fun noMatch() = shoot("gallery_no_match_phone_light", ShellScreenshotTest.PHONE, false, grid(ui(filter = GalleryFilter(camera = "Leica M11"))))
     @Test fun unpaired() = shoot("gallery_unpaired_phone_light", ShellScreenshotTest.PHONE, false, grid(ui(account = null)))
+    // ADR 0025 Amendment (2.8.1): compressed videos wait for the owner's consent.
+    @Test fun replaceReadyPhoneLight() = shoot("gallery_replace_ready_phone_light", ShellScreenshotTest.PHONE, false, grid(ui().copy(replaceReady = 3)))
+    @Test fun replaceReadyPhoneDark() = shoot("gallery_replace_ready_phone_dark", ShellScreenshotTest.PHONE, true, grid(ui().copy(replaceReady = 1)))
+
+    @Test
+    fun theReplaceReadyBannerLeadsToTheConsentStep() {
+        var continued = 0
+        var ready by androidx.compose.runtime.mutableStateOf(3)
+        compose.setContent { FixedNowTheme(darkTheme = false) { GalleryContent(ui().copy(replaceReady = ready), FakeThumbs, onReplaceReady = { continued++ }) } }
+        compose.onNodeWithText("3 compressed videos are ready to replace on this phone").assertExists()
+        compose.onNodeWithTag("compress-ready-continue").performClick()
+        assertThat(continued).isEqualTo(1)
+        // Replaced or kept: the banner goes.
+        ready = 0
+        compose.waitForIdle()
+        compose.onNodeWithTag("compress-ready-banner").assertDoesNotExist()
+    }
+
     @Test fun syncing() = shoot("gallery_syncing_phone_dark", ShellScreenshotTest.PHONE, true, grid(ui(status = SyncStatus(running = true))))
     @Test fun permission() = shoot("gallery_permission_phone_light", ShellScreenshotTest.PHONE, false) {
         TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryContent(GalleryUi(layout(emptyList(), false), permission = false, account = null), FakeThumbs) }

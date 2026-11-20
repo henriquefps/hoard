@@ -100,6 +100,9 @@ class GalleryRepository(
     /** Item id → its `mirror` locations (ADR 0024 A2). */
     private val mirrors: Flow<Map<String, List<dev.hfps.hoard.server.db.ServerItemMirrorEntity>>> = db.items().observeMirrors().map { rows -> rows.groupBy { it.itemId } }
 
+    /** Fingerprints a phone replace changed, until the cache has the swapped items (ADR 0025 Amendment (2.8.1)). */
+    private val compressAliases: Flow<Map<String, String>> = db.compress().observePhone().map { CompressAliases.of(it) }.distinctUntilChanged()
+
     /** This phone's physical device (ADR 0017), for the merge of its own backed-up files. */
     private val physicalId: Flow<String?> = db.account().observe().map { it?.physicalDeviceId }.distinctUntilChanged()
 
@@ -114,9 +117,9 @@ class GalleryRepository(
         deviceShots,
         serverFiles,
         serverDecisions,
-        combine(deviceDecisions, backupStates, mirrors, physicalId) { d, b, m, p -> Extra(d, b, m, p) },
+        combine(deviceDecisions, backupStates, mirrors, physicalId, compressAliases) { d, b, m, p, a -> Extra(d, b, m, p, a) },
     ) { server, shots, files, sd, extra ->
-        GalleryModel.entries(GalleryInput(server, shots, files, sd, extra.decisions, backup = extra.backup, mirrors = extra.mirrors, physicalId = extra.physicalId))
+        GalleryModel.entries(GalleryInput(server, shots, files, sd, extra.decisions, backup = extra.backup, mirrors = extra.mirrors, physicalId = extra.physicalId, aliases = extra.aliases))
     }.flowOn(Dispatchers.Default).stateIn(scope, SharingStarted.Eagerly, null)
 
     private data class Extra(
@@ -124,6 +127,7 @@ class GalleryRepository(
         val backup: Map<String, String>,
         val mirrors: Map<String, List<dev.hfps.hoard.server.db.ServerItemMirrorEntity>>,
         val physicalId: String?,
+        val aliases: Map<String, String>,
     )
 
     /** Gallery › Devices (ADR 0024 A2): every phone with a backup, its volumes and folders. */

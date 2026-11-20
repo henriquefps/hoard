@@ -148,7 +148,33 @@ data class GalleryInput(
     val mirrors: Map<String, List<ServerItemMirrorEntity>> = emptyMap(),
     /** This phone's physical device (ADR 0017): its own backed-up files merge with their items by place. */
     val physicalId: String? = null,
+    /**
+     * A phone file's new fingerprint → the one the server's item still has, for files this phone rewrote in place
+     * (ADR 0025 Amendment (2.8.1), [CompressAliases]): until a sync brings the swapped item, the file shows with it.
+     */
+    val aliases: Map<String, String> = emptyMap(),
 )
+
+/**
+ * The fingerprints a phone replace changed (ADR 0025 Amendment (2.8.1)). After a replace (or a restore) the phone's
+ * index has the file's new fingerprint at once, while the cached server item keeps the old one, and its mirror the old
+ * size, until a sync after the server's swap: the file would show twice (a phone-only cell and the old item). Rows whose
+ * write started and that are `written` or `reported` map the file's fingerprint now (the row's target) to the one it
+ * had (its source); the Gallery tries it after a direct match, so once the cache has the new item that one wins.
+ */
+object CompressAliases {
+    fun of(rows: List<dev.hfps.hoard.server.db.CompressPhoneEntity>): Map<String, String> {
+        val out = HashMap<String, String>()
+        // Oldest first: a newer cycle of the same file (a restore after a replace) overrides.
+        for (r in rows.sortedBy { it.updatedAt }) {
+            if (!r.writeStarted) continue
+            if (r.state != dev.hfps.hoard.server.compress.PhoneState.WRITTEN && r.state != dev.hfps.hoard.server.compress.PhoneState.REPORTED) continue
+            if (r.targetFingerprint == r.sourceFingerprint) continue
+            out[r.targetFingerprint] = r.sourceFingerprint
+        }
+        return out
+    }
+}
 
 /** A phone shot's backup as its cell shows it (backed-up shots show as on the server instead). */
 enum class BackupBadge { Waiting, Uploading, Paused, Failed;
@@ -177,6 +203,8 @@ object GalleryModel {
         val own = Mirrors.ownPlaces(input.mirrors.values.flatten(), input.physicalId)
         for (shot in input.device) {
             val item = shot.fingerprints.firstNotNullOfOrNull { input.serverFiles[it] }
+                // A file rewritten by a phone replace, before the cache has the swapped item (ADR 0025 2.8.1).
+                ?: shot.fingerprints.firstNotNullOfOrNull { fp -> input.aliases[fp]?.let { input.serverFiles[it] } }
                 ?: if (own.isEmpty()) null else shot.files.firstNotNullOfOrNull { f ->
                     val volume = Mirrors.volumeOf(f.media.locationId) ?: return@firstNotNullOfOrNull null
                     val path = if (f.media.dir.isEmpty()) f.media.name else "${f.media.dir.trim('/')}/${f.media.name}"

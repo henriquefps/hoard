@@ -70,6 +70,14 @@ class CompressEngineTest {
         /** Writes of the output that flip a byte (a broken write). */
         var corruptWrites = 0
         var waitingTold = 0
+        /** [CompressSource.reported] calls (the Gallery sync after a replace or restore, Amendment (2.8.1)). */
+        val reported = ArrayList<Int>()
+        /** Runs while the consent dialog is up (the owner edits the file meanwhile, say). */
+        var duringDialog: () -> Unit = {}
+        /** MediaStore's row keeps describing the old file after a write (a scan not done yet), with this stale time. */
+        var staleScan: Long? = null
+        /** Thrown from [deletePart] (a kill between the journal's `written` and the part's removal). */
+        var killOnPartDelete = false
         val media = HashMap<String, PhoneMedia>()
         override fun supported() = supported
         override fun absolute(volume: String, path: String) = if (volume == "primary") File(phone, path).absolutePath else null
@@ -83,6 +91,7 @@ class CompressEngineTest {
         override fun needsConsent(media: PhoneMedia) = media.owner != OWN && !manageMedia
         override suspend fun requestWrite(media: List<PhoneMedia>): Boolean {
             asks += media.size
+            duringDialog()
             return allow
         }
         override suspend fun write(row: CompressPhoneEntity, media: PhoneMedia, part: File, mtime: Long): PhoneWrite {
@@ -104,12 +113,22 @@ class CompressEngineTest {
             }
             target.writeBytes(bytes)
             target.setLastModified(mtime)
-            this.media[row.absolute] = media.copy(size = bytes.size.toLong())
+            this.media[row.absolute] = staleScan?.let { media.copy(modified = it) } ?: media.copy(size = bytes.size.toLong())
             return PhoneWrite(pending = true)
         }
         override suspend fun setDateTaken(mediaId: Long, dateTaken: Long) = true
         override fun consentWaiting(count: Int) {
             waitingTold = count
+        }
+        override fun reported(count: Int) {
+            reported += count
+        }
+        override fun deletePart(part: File) {
+            if (killOnPartDelete) {
+                killOnPartDelete = false
+                throw Killed()
+            }
+            part.delete()
         }
     }
 
@@ -150,7 +169,12 @@ class CompressEngineTest {
         db.close()
     }
 
-    private fun backup() = BackupEngine(db, { sync.api() }, BackupEngineTest.DirSource(phone).apply { conditions = dev.hfps.hoard.server.backup.Conditions(unmetered = true, charging = true) }, now = { clock }, throttle = null)
+    private var writingReads = 0
+
+    private fun backup() = BackupEngine(
+        db, { sync.api() }, BackupEngineTest.DirSource(phone).apply { conditions = dev.hfps.hoard.server.backup.Conditions(unmetered = true, charging = true) }, now = { clock }, throttle = null,
+        writingPaths = { writingReads++; db.compress().writingPaths().toHashSet() },
+    )
 
     private fun engine() = CompressEngine(db, { sync.api() }, source, now = { clock }, downloaderOf = { CompressDownloader(it, chunk = 65_536, sleep = {}) })
 
@@ -522,5 +546,131 @@ class CompressEngineTest {
         fake.items.clear()
         fake.pending = 2
         assertThat(engine().run().serverPending).isTrue()
+    }
+
+    // --- Hoard 2.8.1 (Amendment (2.8.1)) -------------------------------------------------------------------------
+
+    @Test
+    fun aReplaceOrRestoreReportAsksTheGalleryToSyncOnce() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.manageMedia = false
+        // Waiting for consent: nothing reported, no sync.
+        engine().run()
+        assertThat(source.reported).isEmpty()
+        source.manageMedia = true
+        engine().run()
+        assertThat(source.reported).containsExactly(1)
+        // The sync's own run (nothing new to report) asks for nothing: no loop.
+        engine().run()
+        assertThat(source.reported).containsExactly(1)
+        // A restore reported asks again.
+        fake.items["7"] = fake.items["7"]!!.copy(state = Compress.STATE_REPLACING, direction = Compress.DIRECTION_RESTORE)
+        server.originals[origFp] = original
+        engine().run()
+        assertThat(source.reported).containsExactly(1, 1).inOrder()
+    }
+
+    @Test
+    fun theInteractiveConsentPathAsksTheGalleryToSyncToo() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.manageMedia = false
+        engine().run()
+        assertThat(engine().run(interactive = true).replaced).isEqualTo(1)
+        assertThat(source.reported).containsExactly(1)
+    }
+
+    @Test
+    fun theFileIsCheckedAgainAfterTheConsentDialog() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.manageMedia = false
+        engine().run()
+        // The owner trims the video in another app while the dialog is up, then allows.
+        val edited = original.copyOf().also { it[0] = 9 }
+        source.duringDialog = { video.writeBytes(edited) }
+        engine().run(interactive = true)
+        assertThat(source.writes).isEqualTo(0)
+        assertThat(video.readBytes()).isEqualTo(edited)
+        assertThat(row()!!.state).isIn(listOf(PhoneState.ABANDON, PhoneState.ABANDONED))
+        assertThat(row()!!.abandonReason).isEqualTo(PhoneError.CHANGED)
+    }
+
+    @Test
+    fun aPartlyWrittenFileKeepsItsPartAndTheWriteIsRedone() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.killNextWrite = true
+        runCatching { engine().run() }
+        // The journal lost the start of the write (the row says verified, nothing started): the file is half the output.
+        db.compress().putPhone(row()!!.copy(state = PhoneState.VERIFIED, writeStarted = false))
+        val part = File(row()!!.part!!)
+        assertThat(part.isFile).isTrue()
+        val reads = fake.outputReads.size
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(fake.abandons).isEmpty()
+        assertThat(video.readBytes()).isEqualTo(output)
+        // Redone from the part: no second download.
+        assertThat(fake.outputReads.size).isEqualTo(reads)
+        assertThat(row()!!.state).isEqualTo(PhoneState.REPORTED)
+    }
+
+    @Test
+    fun aStartedWriteIsFinishedEvenWhenUnpaired() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.killNextWrite = true
+        runCatching { engine().run() }
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITING)
+        sync.unpair()
+        assertThat(row()).isNotNull() // a started write survives unpairing
+        val result = engine().run()
+        assertThat(result.outcome).isEqualTo(CompressOutcome.NotPaired)
+        assertThat(video.readBytes()).isEqualTo(output)
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITTEN)
+        assertThat(fake.reports).isEmpty()
+        assertThat(source.reported).isEmpty()
+    }
+
+    @Test
+    fun theReadBackSavesWrittenBeforeTheCopyIsDeleted() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.killOnPartDelete = true
+        runCatching { engine().run() }
+        // Killed between the two: the journal already says written, so the next run reports (no redo without a part).
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITTEN)
+        val writes = source.writes
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(source.writes).isEqualTo(writes)
+        assertThat(fake.reports.single().second).isEqualTo("replaced")
+    }
+
+    @Test
+    fun theIndexTakesTheFilesTimeWhenMediaStoreStillDescribesTheOldFile() = runBlocking<Unit> {
+        val rootId = backedUpAndCompressed()
+        // The scan has not run yet: MediaStore's row keeps the old size and another time.
+        source.staleScan = mtime + 50_000
+        engine().run()
+        val media = db.device().get(42L)!!
+        assertThat(media.size).isEqualTo(output.size.toLong())
+        assertThat(media.modified).isEqualTo(mtime / 1000 * 1000)
+        assertThat(media.fpModified).isEqualTo(media.modified)
+        assertThat(db.backup().file(rootId, path)!!.modified).isEqualTo(mtime / 1000 * 1000)
+    }
+
+    @Test
+    fun thePartsFolderIsCreatedBeforeItsFreeSpaceIsRead() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        File(tmp.root, "parts").deleteRecursively()
+        // A folder that does not exist reads as full.
+        source.free = { dir -> if (dir.isDirectory) null else 0L }
+        assertThat(engine().run().replaced).isEqualTo(1)
+        assertThat(video.readBytes()).isEqualTo(output)
+    }
+
+    @Test
+    fun theBackupReadsTheWritingPathsOncePerPass() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.killNextWrite = true
+        runCatching { engine().run() }
+        writingReads = 0
+        backup().run()
+        assertThat(writingReads).isEqualTo(1)
     }
 }

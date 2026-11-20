@@ -126,6 +126,8 @@ data class GalleryUi(
     val compressBackup: Boolean = false,
     /** Item id → "Compressed" / "Compressing" badge. */
     val compressBadges: Map<String, dev.hfps.hoard.app.compress.CompressBadge> = emptyMap(),
+    /** This phone's compressed videos waiting for the owner's consent (ADR 0025 Amendment (2.8.1)): the banner. */
+    val replaceReady: Int = 0,
 )
 
 /** Tab 1 (ADR 0021): one grid of the phone's shots and the server's items, newest first. */
@@ -147,6 +149,7 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
     val backupOffer by container.compress.backupOffer.collectAsStateWithLifecycle()
     val phoneOffer by container.compress.phoneOffer.collectAsStateWithLifecycle()
     val compressBadges by container.compress.badges.collectAsStateWithLifecycle()
+    val replaceReady by container.phoneCompress.waitingConsent.collectAsStateWithLifecycle(0)
     var compressing by remember { mutableStateOf<dev.hfps.hoard.app.ui.compress.CompressRequest?>(null) }
     var filters by remember { mutableStateOf(false) }
     var devicesOpen by remember { mutableStateOf(false) }
@@ -174,7 +177,12 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
             compressSelection = nasOffer != hidden || backupOffer != hidden || phoneOffer != hidden,
             compressBackup = backupOffer != hidden,
             compressBadges = compressBadges,
+            replaceReady = replaceReady,
         ),
+        onReplaceReady = {
+            dev.hfps.hoard.app.ui.shell.ShellRequests.compressConsent.value = true
+            dev.hfps.hoard.app.ui.shell.ShellRequests.openCompress.value = true
+        },
         onCompress = {
             val chosen = layout?.entries.orEmpty().filter { it.key in selection.keys }
             screenScope.launch {
@@ -316,6 +324,8 @@ fun GalleryContent(
     /** ADR 0025: compress the selected videos; compress the shown backup place's videos. */
     onCompress: () -> Unit = {},
     onCompressWhere: () -> Unit = {},
+    /** "Continue" on the "ready to replace" banner: Settings › Compress videos and its consent step. */
+    onReplaceReady: () -> Unit = {},
 ) {
     var searching by remember { mutableStateOf(ui.filter.query.isNotEmpty()) }
     var goTo by remember { mutableStateOf(false) }
@@ -361,6 +371,9 @@ fun GalleryContent(
     ) {
         Column(Modifier.fillMaxSize()) {
             Banner(ui.account, ui.status, ui.dismissed, onPair = onPair, onSettings = onOpenSettings, onDismiss = onDismiss)
+            if (!selection.active) {
+                dev.hfps.hoard.app.ui.compress.ReplaceReadyBanner(ui.replaceReady, onReplaceReady, Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            }
             ui.filter.where?.let { WhereBar(it, onClearWhere, onCompress = onCompressWhere.takeIf { ui.compressBackup }) }
             val current = ui.layout
             when {

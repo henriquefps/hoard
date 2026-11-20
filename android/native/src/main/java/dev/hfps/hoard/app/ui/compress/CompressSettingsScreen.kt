@@ -123,18 +123,28 @@ fun CompressSettingsScreen(container: AppContainer, onBack: () -> Unit, onOpenTr
             tick++
         }
     }
+    fun allow() {
+        if (asking) return
+        asking = true
+        scope.launch {
+            runCatching { container.phoneCompress.allow() }
+                .onSuccess { r -> if (r.replaced > 0) toaster.show(res.getQuantityString(R.plurals.compress_phone_replaced_toast, r.replaced, r.replaced.toString())) }
+                .onFailure { if (it is CancellationException) throw it else toaster.show(res.getString(R.string.compress_load_failed)) }
+            asking = false
+        }
+    }
+    // The Gallery's "ready to replace" banner opens this screen and starts the consent step (ADR 0025 2.8.1).
+    val consentAsked by dev.hfps.hoard.app.ui.shell.ShellRequests.compressConsent.collectAsState()
+    LaunchedEffect(consentAsked) {
+        if (consentAsked) {
+            dev.hfps.hoard.app.ui.shell.ShellRequests.compressConsent.value = false
+            allow()
+        }
+    }
     CompressSettingsContent(
         ui = CompressSettingsUi(overview, info, nas, loading, failed, PhoneCompressUi(dev.hfps.hoard.server.compress.PhoneOverview.of(phoneRows), phoneProgress, phoneOffer, asking)),
         onBack = onBack,
-        onAllow = {
-            asking = true
-            scope.launch {
-                runCatching { container.phoneCompress.allow() }
-                    .onSuccess { r -> if (r.replaced > 0) toaster.show(res.getQuantityString(R.plurals.compress_phone_replaced_toast, r.replaced, r.replaced.toString())) }
-                    .onFailure { if (it is CancellationException) throw it else toaster.show(res.getString(R.string.compress_load_failed)) }
-                asking = false
-            }
-        },
+        onAllow = ::allow,
         onKeep = { act { container.phoneCompress.keepOriginals(phoneRows.filter { it.error == dev.hfps.hoard.server.compress.PhoneError.PERMISSION }.map { it.id }) } },
         onReplaceNow = { container.phoneCompress.kick() },
         onRefresh = { tick++ },
@@ -182,6 +192,9 @@ fun CompressSettingsContent(
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
             LazyColumn(Modifier.widthIn(max = 840.dp).fillMaxSize().testTag("compress-settings")) {
                 if (ui.loading && ui.overview == null) item("loading") { LinearProgressIndicator(Modifier.fillMaxWidth(), color = HfpsTheme.colors.primary, trackColor = HfpsTheme.colors.muted) }
+                if (ui.phone.ready > 0) {
+                    item("ready") { ReplaceReadyBanner(ui.phone.ready, onAllow, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), enabled = !ui.phone.asking) }
+                }
                 item("status") { StatusBlock(ui) }
                 if (ui.phone.visible) item("phone") { PhoneCompressSection(ui.phone, onAllow, onKeep, onReplaceNow) }
                 val o = ui.overview

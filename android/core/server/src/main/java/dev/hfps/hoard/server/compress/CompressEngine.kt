@@ -12,6 +12,7 @@ import dev.hfps.hoard.server.backup.BackupState
 import dev.hfps.hoard.server.backup.Hasher
 import dev.hfps.hoard.server.db.CompressPhoneEntity
 import dev.hfps.hoard.server.db.GalleryDatabase
+import androidx.room.withTransaction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,11 +68,19 @@ interface CompressSource {
 
     fun file(absolute: String): File = File(absolute)
 
+    /** Deletes a downloaded part (a parameter for tests: a kill right there). */
+    fun deletePart(part: File) {
+        part.delete()
+    }
+
     /** The MediaStore row of the file at [absolute] now: [MediaLookup.Missing] when none, [MediaLookup.Unreadable] when the query failed. */
     suspend fun media(absolute: String): MediaLookup
 
-    /** Bytes free on the storage holding [dir] (null: unknown). */
-    fun usableSpace(dir: File): Long? = runCatching { dir.mkdirs(); dir.usableSpace }.getOrNull()
+    /**
+     * Bytes free on the storage holding [dir] (null: unknown). The engine creates [dir] first (Amendment (2.8.1)): a
+     * directory that does not exist answers 0, which would read as a full phone.
+     */
+    fun usableSpace(dir: File): Long? = runCatching { dir.usableSpace.takeIf { dir.isDirectory } }.getOrNull()
 
     /**
      * Whether the part plays as the phone file does: duration within 0.1 s, the same video and audio tracks, the same
@@ -104,6 +113,13 @@ interface CompressSource {
 
     /** Rows wait for the owner's consent and no screen could ask: tell the owner (a notification). */
     fun consentWaiting(count: Int) {}
+
+    /**
+     * [count] phone files were replaced or restored and reported this run (Amendment (2.8.1)): the Gallery syncs, so
+     * its cached item takes the new fingerprint and the rewritten file shows as one cell. Called once per run, only
+     * when something was reported, so a sync's own run (which reports nothing new) never triggers another.
+     */
+    fun reported(count: Int) {}
 }
 
 /** Where a run stands (Settings › Compress videos and the notification). */
@@ -155,6 +171,7 @@ class CompressEngine(
      */
     suspend fun run(stopped: () -> Boolean = { false }, interactive: Boolean = false): CompressRunResult = withContext(Dispatchers.IO) {
         if (!mutex.tryLock()) return@withContext CompressRunResult(CompressOutcome.Busy)
+        reportedThisRun = 0
         try {
             _progress.value = CompressProgress(running = true, phase = PHASE_LISTING)
             pass(stopped, interactive)
@@ -168,9 +185,14 @@ class CompressEngine(
             CompressRunResult(CompressOutcome.Offline)
         } finally {
             _progress.value = CompressProgress()
+            val reported = reportedThisRun
             mutex.unlock()
+            if (reported > 0) runCatching { source.reported(reported) }.onFailure { Log.w(TAG, "compress: the sync after a report was not scheduled", it) }
         }
     }
+
+    /** Replaces and restores the server accepted in this run (the Gallery sync after them, [CompressSource.reported]). */
+    @Volatile private var reportedThisRun = 0
 
     /** "Keep originals": rows waiting for consent are given up (`refused`); the server cancels them. */
     suspend fun keepOriginals(ids: Collection<String>) = withContext(Dispatchers.IO) {
@@ -183,8 +205,13 @@ class CompressEngine(
     }
 
     private suspend fun pass(stopped: () -> Boolean, interactive: Boolean): CompressRunResult {
-        db.account().get() ?: return CompressRunResult(CompressOutcome.NotPaired)
-        val api = apiOf() ?: return CompressRunResult(CompressOutcome.NotPaired)
+        val api = if (db.account().get() != null) apiOf() else null
+        if (api == null) {
+            // Unpaired (or the key gone): a write already started is still finished from its part (the phone file is
+            // neither version until then); nothing else moves without the server (Amendment (2.8.1)).
+            finishLocalWrites(stopped)
+            return CompressRunResult(CompressOutcome.NotPaired)
+        }
         // A journal already started always finishes; new items only with what the replace needs.
         var serverPending = false
         if (source.supported()) {
@@ -244,9 +271,19 @@ class CompressEngine(
                             waiting++
                             continue
                         }
-                        // Written under the grant at once, then read back and reported like any other (a write that
-                        // has to wait backs off and is finished by a later run).
-                        var row = write(r.copy(originalMtime = r.originalMtime ?: source.file(r.absolute).lastModified(), dateTaken = media.dateTaken), media)
+                        // The dialog may have stayed up for minutes: the phone file is checked again before the write
+                        // (Amendment (2.8.1)). Written under the grant at once only when it is still the row the owner
+                        // allowed, then read back and reported like any other (a write that has to wait backs off and is
+                        // finished by a later run).
+                        var row = when (val c = check(r)) {
+                            is Checked.Write -> if (c.media.mediaId != media.mediaId && source.needsConsent(c.media)) {
+                                waiting++
+                                r.copy(error = PhoneError.PERMISSION, updatedAt = now())
+                            } else {
+                                write(r.copy(originalMtime = c.mtime, dateTaken = c.media.dateTaken ?: r.dateTaken), c.media)
+                            }
+                            is Checked.Next -> c.row
+                        }
                         dao.putPhone(row)
                         while (true) {
                             val step = CompressPlan.resume(row, now())
@@ -256,7 +293,7 @@ class CompressEngine(
                                 else -> break
                             }
                             if (next == row) break
-                            if (next.state == PhoneState.REPORTED) replaced++
+                            if (next.state == PhoneState.REPORTED && next.report != PhoneReport.NONE) replaced++
                             row = next
                             dao.putPhone(row)
                         }
@@ -276,6 +313,24 @@ class CompressEngine(
         val retry = rows.mapNotNull { r -> (CompressPlan.resume(r, now()) as? PhoneStep.Wait)?.at }.minOrNull()
         val consent = waiting ?: rows.count { it.state == PhoneState.VERIFIED && it.error == PhoneError.PERMISSION }
         return CompressRunResult(outcome, replaced, consent, serverPending, retry)
+    }
+
+    /**
+     * Unpaired: rows whose write started are written and read back from their part (no server needed); they report once
+     * paired again, or stay `written` (Amendment (2.8.1)). A part gone, or a read-back failed twice, waits for a server.
+     */
+    private suspend fun finishLocalWrites(stopped: () -> Boolean) {
+        if (!source.supported()) return
+        for (initial in dao.phone()) {
+            var row = initial
+            while (row.writeStarted && row.state == PhoneState.WRITING && CompressPlan.resume(row, now()) == PhoneStep.Write) {
+                if (stopped()) return
+                val next = redo(row)
+                if (next == row) break
+                row = next
+                dao.putPhone(row)
+            }
+        }
     }
 
     /** Reads this phone's items waiting for it into the journal; true when the server still works on others of ours. */
@@ -331,6 +386,8 @@ class CompressEngine(
             row = row.copy(part = part.absolutePath, updatedAt = now())
             dao.putPhone(row)
         }
+        // The folder first: the free space of a folder that does not exist yet reads as 0 (Amendment (2.8.1)).
+        part.parentFile?.mkdirs()
         val free = part.parentFile?.let(source::usableSpace)
         if (free != null && free < row.targetSize - row.offset + SPACE_MARGIN) {
             return row.copy(error = PhoneError.SPACE, attempts = row.attempts + 1, nextAttemptAt = now() + CompressPlan.backoffMs(row.attempts + 1), updatedAt = now())
@@ -396,13 +453,17 @@ class CompressEngine(
         val file = source.file(row.absolute)
         val lookup = source.media(row.absolute)
         val media = lookup.found
+        val size = if (file.isFile) file.length() else -1
+        val fingerprint = if (file.isFile) runCatching { Fingerprint.of(file) }.getOrNull() else null
         val nowFile = PhoneFileNow(
             exists = file.isFile,
-            size = if (file.isFile) file.length() else -1,
+            size = size,
             modified = if (file.isFile) file.lastModified() else 0,
-            fingerprint = if (file.isFile) runCatching { Fingerprint.of(file) }.getOrNull() else null,
+            fingerprint = fingerprint,
             mediaPath = media?.path,
             mediaReadable = lookup != MediaLookup.Unreadable,
+            // Compared only when the file is not the source any more.
+            partlyWritten = file.isFile && (size != row.sourceSize || fingerprint != row.sourceFingerprint) && partlyWritten(file, row.part?.let(::File)),
         )
         return when (val c = CompressPlan.check(row, nowFile)) {
             // The plan answers Ok only with a row that names the file.
@@ -412,12 +473,34 @@ class CompressEngine(
                 Checked.Next(CompressPlan.retryLater(row, PhoneError.MEDIA, now()))
             }
             PhoneCheck.AlreadyTarget -> Checked.Next(readBack(row.copy(writeStarted = true, originalMtime = row.originalMtime ?: nowFile.modified), media))
+            PhoneCheck.PartlyWritten -> {
+                // The file holds the start of the part: a write of ours that the journal did not record. The part is
+                // kept and the write redone from it (Amendment (2.8.1)); deleting it would leave a broken video.
+                Log.w(TAG, "compress: the phone file is partly written, the write is redone from the part")
+                Checked.Next(row.copy(state = PhoneState.WRITING, writeStarted = true, error = null, nextAttemptAt = null, updatedAt = now()))
+            }
             is PhoneCheck.Abandon -> {
                 Log.i(TAG, "compress: the phone file is ${c.reason}")
                 row.part?.let { File(it).delete() }
                 Checked.Next(CompressPlan.abandon(row.copy(part = null, offset = 0), c.reason, now()))
             }
         }
+    }
+
+    /** Whether [file] is a prefix of the [part] (a write of ours cut short): no longer than it, the same first bytes. */
+    private fun partlyWritten(file: File, part: File?): Boolean {
+        if (part == null || !part.isFile) return false
+        val length = file.length()
+        if (length >= part.length()) return false
+        val head = minOf(length, PREFIX_BYTES).toInt()
+        if (head == 0) return true
+        return runCatching {
+            val a = ByteArray(head)
+            val b = ByteArray(head)
+            java.io.RandomAccessFile(file, "r").use { it.readFully(a) }
+            java.io.RandomAccessFile(part, "r").use { it.readFully(b) }
+            a.contentEquals(b)
+        }.getOrDefault(false)
     }
 
     /**
@@ -446,6 +529,7 @@ class CompressEngine(
         }
         val target = source.file(initial.absolute)
         val current = if (target.isFile) target.length() else 0L
+        target.parentFile?.mkdirs()
         val free = target.parentFile?.let(source::usableSpace)
         if (!CompressPlan.writeFits(initial, current, free)) {
             Log.w(TAG, "compress: no room to write ${initial.targetSize} bytes over $current ($free free), tried again later")
@@ -487,10 +571,16 @@ class CompressEngine(
         if (fresh != null && taken != null && (fresh.dateTaken == null || kotlin.math.abs(fresh.dateTaken - taken) > 1000)) {
             if (!source.setDateTaken(fresh.mediaId, taken)) error = PhoneError.DATE_TAKEN
         }
-        if (fresh != null && fresh.size != row.targetSize) Log.w(TAG, "compress: MediaStore still has the old size")
-        recordWritten(row, fresh, file)
-        row.part?.let { File(it).delete() }
-        return row.copy(state = PhoneState.WRITTEN, part = null, error = error, nextAttemptAt = null, attempts = 0, updatedAt = now())
+        // Read again after the scan and the `DATE_TAKEN` write: the index takes the row as it is now (Amendment (2.8.1)).
+        val current = source.media(row.absolute).found ?: fresh
+        if (current != null && current.size != row.targetSize) Log.w(TAG, "compress: MediaStore still has the old size")
+        recordWritten(row, current, file)
+        // `written` is saved before the part goes: a kill between the two leaves a row that reports, never one whose
+        // redo has no part (Amendment (2.8.1)).
+        val written = row.copy(state = PhoneState.WRITTEN, part = null, error = error, nextAttemptAt = null, attempts = 0, updatedAt = now())
+        dao.putPhone(written)
+        row.part?.let { source.deletePart(File(it)) }
+        return written
     }
 
     /**
@@ -499,9 +589,16 @@ class CompressEngine(
      */
     private suspend fun recordWritten(row: CompressPhoneEntity, media: PhoneMedia?, file: File) {
         val size = row.targetSize
-        val modified = media?.modified ?: (file.lastModified() / 1000 * 1000)
+        // MediaStore's time only when its row has been scanned with the new file (its size): a row still describing the
+        // old file has a stale `DATE_MODIFIED`, so the file's own time (whole seconds, as MediaStore keeps it) is used.
+        val modified = media?.takeIf { it.size == size }?.modified ?: (file.lastModified() / 1000 * 1000)
         val mediaId = media?.mediaId ?: row.mediaId
         if (mediaId != null) db.device().replaced(mediaId, size, modified, row.targetFingerprint, row.targetSha256)
+        // Read and written in one transaction: a backup pass between the two cannot be overwritten with stale values.
+        db.withTransaction { recordBackup(row, size, modified, mediaId) }
+    }
+
+    private suspend fun recordBackup(row: CompressPhoneEntity, size: Long, modified: Long, mediaId: Long?) {
         val backup = db.backup()
         val rows = backup.filesAt(row.absolute)
         if (rows.isNotEmpty()) {
@@ -540,6 +637,7 @@ class CompressEngine(
         val body = CompressPhoneReport(row.targetFingerprint, row.targetSha256, row.targetSize, file.lastModified())
         return try {
             api.compressPhoneReport(row.id, restored, body)
+            reportedThisRun++
             settledBackupRow(row)
             row.copy(state = PhoneState.REPORTED, nextAttemptAt = null, attempts = 0, updatedAt = now())
         } catch (e: ServerException) {
@@ -549,6 +647,8 @@ class CompressEngine(
                 // target and the backup's next report tells the server what is there.
                 e.status == 409 || e.status == 404 -> {
                     Log.i(TAG, "compress: report answered ${e.status} ${e.reason ?: e.code}")
+                    // The server may have swapped meanwhile (a backup report): the Gallery syncs as after a report.
+                    reportedThisRun++
                     row.copy(state = PhoneState.REPORTED, error = row.error ?: (e.reason ?: e.code), updatedAt = now())
                 }
                 else -> row.copy(attempts = row.attempts + 1, nextAttemptAt = now() + CompressPlan.backoffMs(row.attempts + 1), updatedAt = now())
@@ -592,6 +692,8 @@ class CompressEngine(
         const val PHASE_WRITING = "writing"
         const val PHASE_REPORTING = "reporting"
         private const val MAX_PAGES = 20
+        /** Bytes compared to tell a partly written file from another one. */
+        private const val PREFIX_BYTES = 1L shl 20
         /** Room kept free beyond the part (the phone must not fill up with a download). */
         const val SPACE_MARGIN = 512L shl 20
     }

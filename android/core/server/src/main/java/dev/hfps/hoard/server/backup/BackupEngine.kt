@@ -116,6 +116,8 @@ class BackupEngine(
     private val now: () -> Long = System::currentTimeMillis,
     /** Throttle of identity reads and hashing while not charging (bytes per second; null = none, for tests). */
     private val throttle: Long? = Hasher.THROTTLE_BYTES_PER_SECOND,
+    /** The paths a compression replace is writing (ADR 0025 A2); read once per pass. A parameter for tests. */
+    private val writingPaths: suspend () -> Set<String> = { db.compress().writingPaths().toHashSet() },
 ) {
     private val dao = db.backup()
     private val mutex = Mutex()
@@ -228,6 +230,8 @@ class BackupEngine(
         val types = source.types()
         val listings = HashMap<String, Listing>()
         val freedPaths = dao.freed().associateBy { it.path }
+        // Read once per pass (Amendment (2.8.1)): the paths a compression replace is writing in place.
+        val writing = compressWriting()
         // 1. Each folder: list, identify, report, report removals.
         for (initial in dao.roots()) {
             if (stopped()) return BackupRunResult(BackupOutcome.Stopped)
@@ -239,9 +243,9 @@ class BackupEngine(
             val merge = BackupPlan.merge(root.id, listing, dao.files(root.id), now())
             if (merge.rows.isNotEmpty()) for (chunk in merge.rows.chunked(500)) dao.putFiles(chunk)
             for (id in merge.abandoned) runCatching { api.deleteUpload(id) }
-            if (!identify(root, stopped)) return BackupRunResult(BackupOutcome.Stopped)
+            if (!identify(root, stopped, writing)) return BackupRunResult(BackupOutcome.Stopped)
             _progress.value = _progress.value.copy(phase = PHASE_REPORTING)
-            val live = report(api, root, batch) ?: continue
+            val live = report(api, root, batch, writing) ?: continue
             // Files free up deleted whose report did not reach the server go first, as `freed` (ADR 0024 A3).
             val freed = BackupPlan.freedRemovals(dao.files(live.id), freedPaths) { source.file(it).exists() }
             if (freed.isNotEmpty()) reportRemovals(api, live, freed, batch)
@@ -249,10 +253,10 @@ class BackupEngine(
             reportRemovals(api, live, removals, batch)
         }
         // 2. Uploads, newest first, under the rules.
-        val upload = upload(api, info.limits.chunkSize ?: BackupUploader.DEFAULT_CHUNK, stopped, foreground)
+        val upload = upload(api, info.limits.chunkSize ?: BackupUploader.DEFAULT_CHUNK, stopped, foreground, writing)
         if (upload.outcome == BackupOutcome.Stopped) return upload
         // 3. What changed state (uploaded files) is reported again.
-        for (root in dao.roots()) if (!root.paused) report(api, root, batch)
+        for (root in dao.roots()) if (!root.paused) report(api, root, batch, writing)
         if (upload.outcome == BackupOutcome.Done) {
             val stats = runCatching { api.backupRoots().roots.associateBy { it.id } }.getOrNull()
             val at = now()
@@ -269,7 +273,7 @@ class BackupEngine(
      * must not identify, report or upload the half-written file as a new version (ADR 0025 Amendment (A2), "Review of
      * #81"). The replace's read-back puts the backup row right afterwards.
      */
-    private suspend fun compressWriting(): Set<String> = db.compress().writingPaths().toHashSet()
+    private suspend fun compressWriting(): Set<String> = writingPaths()
 
     /** Videos of every root the server holds now, by root and path. */
     private suspend fun storedVideos(): Set<String> =
@@ -314,8 +318,7 @@ class BackupEngine(
     }
 
     /** Fingerprints (and small files' SHA-256) the rows still lack, newest first, in batches with yields. */
-    private suspend fun identify(root: BackupRootEntity, stopped: () -> Boolean): Boolean {
-        val writing = compressWriting()
+    private suspend fun identify(root: BackupRootEntity, stopped: () -> Boolean, writing: Set<String>): Boolean {
         val todo = dao.files(root.id).filter { !BackupPlan.identified(it) && it.state != BackupState.REFUSED && it.absolute !in writing }.sortedByDescending { it.taken }
         if (todo.isEmpty()) return true
         _progress.value = _progress.value.copy(phase = PHASE_HASHING)
@@ -373,9 +376,8 @@ class BackupEngine(
      * server's `422` for one entry (`details.index`) refuses that entry and sends the batch again without it, so one
      * bad file never blocks a folder. Null when the root is gone (made again failed or covered).
      */
-    private suspend fun report(api: ServerApi, initial: BackupRootEntity, batch: Int): BackupRootEntity? {
+    private suspend fun report(api: ServerApi, initial: BackupRootEntity, batch: Int, writing: Set<String>): BackupRootEntity? {
         var root = initial
-        val writing = compressWriting()
         val due = BackupPlan.toReport(dao.files(root.id)).filter { it.absolute !in writing }
         for (part in due.chunked(batch)) {
             var pending = part
@@ -428,9 +430,8 @@ class BackupEngine(
         }
     }
 
-    private suspend fun upload(api: ServerApi, chunkSize: Long, stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit): BackupRunResult {
+    private suspend fun upload(api: ServerApi, chunkSize: Long, stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit, writing: Set<String>): BackupRunResult {
         val roots = dao.roots().filter { !it.paused }
-        val writing = compressWriting()
         val candidates = roots.flatMap { BackupPlan.uploads(dao.files(it.id), now()) }.filter { it.absolute !in writing }.sortedByDescending { it.taken }
         if (candidates.isEmpty()) return BackupRunResult(BackupOutcome.Done)
         val rules = source.rules()

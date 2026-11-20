@@ -919,6 +919,13 @@
     <string name="compress_job_phone">This phone</string>
     <string name="compress_auto_phone_desc">New videos of this folder, after their backup</string>
     <string name="compress_channel">Video compression</string>
+    <string name="compress_consent_channel">Videos ready to replace</string>
+    <plurals name="compress_phone_ready_banner">
+        <item quantity="one">%1$s compressed video is ready to replace on this phone</item>
+        <item quantity="other">%1$s compressed videos are ready to replace on this phone</item>
+    </plurals>
+    <string name="compress_phone_ready_continue">Continue</string>
+    <string name="compress_phone_writing_warning">A video is being replaced. Don\'t uninstall Hoard or clear its storage until it finishes: the copy that finishes it is kept there.</string>
     <string name="compress_notification_title">Replacing compressed videos</string>
     <string name="compress_notification_downloading">Downloading %1$s (%2$s of %3$s)</string>
     <string name="compress_notification_writing">Replacing %1$s</string>
