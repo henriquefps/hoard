@@ -12,7 +12,7 @@ Compress the videos on this phone: the photo server makes the compressed copy, a
 - **Compress automatically** on a backed-up phone folder: new videos are compressed after their backup, and replaced on the phone when they are ready.
 - Settings › Compress videos shows **This phone**: what is downloading or being replaced, what was replaced, and how much smaller the phone is.
 
-## 2.7.1 (unreleased)
+## 2.7.1 (2026-11-20)
 
 Compression follow-ups ([ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.7.1)"). Works with hoard-server 0.13.x.
 
