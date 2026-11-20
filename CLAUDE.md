@@ -45,6 +45,9 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
 - Test containers and images on a shared build host: remove only your own, by name or id (`docker rm`, `docker image rm`).
   Never run a host-wide `docker image prune`, `docker system prune` or `docker builder prune`: other projects' images,
   build caches and services live on the same host.
+- Shared caches on that host (Playwright browsers in `~/.cache/ms-playwright`, Gradle/npm/bun/Go caches, Android
+  AVDs and system images): never remove or reinstall over entries you did not create. Use a project-local path
+  (e.g. `PLAYWRIGHT_BROWSERS_PATH` in your temp dir) when a tool wants to change them.
 - Image core (`dev.hfps.hoard.image`, LibRaw vendored in `android/core/image/src/main/cpp`): see
   `docs/adr/0006-image-core.md` for the device harness (`ImageCoreHarnessTest`) and the opt-in
   `HOARD_ARW_DIR` JVM tests. Real photos are private: never commit them, use copies.
