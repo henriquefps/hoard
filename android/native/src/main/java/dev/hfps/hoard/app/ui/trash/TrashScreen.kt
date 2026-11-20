@@ -303,6 +303,8 @@ fun refusedText(res: android.content.res.Resources, reason: String, n: Int): Str
         "not_writable" -> res.getString(R.string.compress_refused_not_writable)
         "output_missing", "live_missing" -> res.getString(R.string.compress_refused_output_missing)
         "busy", "state" -> res.getString(R.string.compress_refused_busy)
+        "path_taken" -> res.getString(R.string.compress_refused_path_taken)
+        "not_found" -> res.getString(R.string.compress_refused_not_found)
         dev.hfps.hoard.app.trash.CompressedTrashActions.UNREACHABLE -> res.getString(R.string.compress_refused_offline)
         else -> res.getString(R.string.compress_refused_other, reason)
     }

@@ -396,7 +396,8 @@ class TrashService(private val container: AppContainer) {
         val all = wholeUnits(dao.byIds(ids))
         // ADR 0025: a compressed original comes back through the server (it undoes the replace; a rename would find
         // the path taken by the output). Held ones wait for their journal.
-        val split = TrashSplit.of(all, compression(refresh = false))
+        // The held state is synced first (a restore must not act on a stale cache: a replace may have started since).
+        val split = TrashSplit.of(all, compression(refresh = true))
         val out = ArrayList<RestoreOutcome>()
         if (split.compressed.isNotEmpty()) {
             val result = compressedActions.restore(split.compressed.keys.toList())
@@ -495,7 +496,7 @@ class TrashService(private val container: AppContainer) {
         val account = runCatching { gallery.db.account().get() }.getOrNull() ?: return@withContext TrashCompressionState.NONE
         // Any failed sync with a paired server makes the held state unknown (review of #76): a device that never
         // synced since the server gained compression cannot know from its cache that the server compresses.
-        val unknown = refresh && !runCatching { gallery.syncNow() }.getOrDefault(false)
+        val unknown = heldUnknown(refresh) { gallery.syncNow() }
         val mappings = runCatching { container.serverLinks.paths.mappings() }.getOrDefault(emptyList()).filter { it.serverId == account.serverId }
         val trashed = gallery.db.items().trashed().mapNotNull { row ->
             runCatching { dev.hfps.hoard.server.api.ServerJson.decodeFromString(dev.hfps.hoard.server.api.Item.serializer(), row.json) }.getOrNull()?.let { it to (row.trashedSince ?: 0L) }
@@ -598,7 +599,7 @@ class TrashService(private val container: AppContainer) {
         ensureRecovered()
         return running.withLock {
             val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
-            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true, held = compression(refresh = false).protect)
+            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true, held = compression(refresh = true).protect)
             AutoEmptyPreview(expired.sumOf { it.files }, expired.sumOf { it.bytes }, expired.map { it.root.place }.distinct().size, expired.any { it.othersIncluded })
         }
     }

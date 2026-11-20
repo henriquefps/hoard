@@ -155,12 +155,7 @@ fun CompressSheet(container: AppContainer, request: CompressRequest, onDismiss: 
                         throw e
                     } catch (e: Throwable) {
                         val s = e as? ServerException
-                        val text = when (s?.reason) {
-                            "exists" -> res.getString(R.string.compress_exists)
-                            "busy" -> res.getString(R.string.compress_busy)
-                            else -> res.getString(R.string.compress_start_failed, s?.reason ?: s?.code ?: res.getString(R.string.compress_load_failed))
-                        }
-                        toaster.show(text)
+                        toaster.show(CompressReasonTexts.inline(res, CompressReasonTexts.start(res, s?.reason ?: s?.code ?: "offline")))
                         state = state.copy(starting = false)
                     }
                 }
@@ -214,7 +209,7 @@ fun CompressSheetContent(
             Text(pluralStringResource(R.plurals.compress_left_out, leftOut, formatNumber(leftOut, locale())), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(top = 4.dp))
         }
         if (unavailable != null) {
-            Text(unavailableText(unavailable), style = HfpsTheme.typography.body, color = HfpsTheme.colors.warning, modifier = Modifier.padding(top = 12.dp).testTag("compress-unavailable"))
+            ReasonLine(unavailableText(unavailable), HfpsTheme.typography.body, HfpsTheme.colors.warning, Modifier.padding(top = 12.dp).testTag("compress-unavailable"))
             Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.End) { GhostButton(stringResource(R.string.t_common_close), onCancel) }
             return@Column
         }
@@ -244,7 +239,7 @@ fun CompressSheetContent(
         Eyebrow(stringResource(R.string.compress_estimate_title), Modifier.padding(top = 16.dp, bottom = 4.dp))
         val e = state.estimate
         when {
-            state.error != null -> Text(stringResource(R.string.compress_start_failed, state.error.orEmpty()), style = HfpsTheme.typography.body, color = HfpsTheme.colors.destructive)
+            state.error != null -> ReasonLine(CompressReasonTexts.start(LocalResources.current, state.error.orEmpty()), HfpsTheme.typography.body, HfpsTheme.colors.destructive)
             e == null -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CircularProgressIndicator(Modifier.size(16.dp), color = HfpsTheme.colors.primary, strokeWidth = 2.dp)
                 Text(stringResource(R.string.compress_estimating), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground)
@@ -253,8 +248,9 @@ fun CompressSheetContent(
                 if (e.videos == 0) {
                     Text(stringResource(R.string.compress_estimate_nothing), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground)
                 } else {
+                    val summary = pluralStringResource(R.plurals.compress_estimate_summary, e.videos, formatNumber(e.encode, locale()), formatNumber(e.videos, locale()))
                     Text(
-                        pluralStringResource(R.plurals.compress_estimate_summary, e.videos, formatNumber(e.encode, locale()), formatNumber(e.videos, locale())),
+                        if (e.subfolders > 0) pluralStringResource(R.plurals.compress_estimate_with_subfolders, e.subfolders, summary, formatNumber(e.subfolders, locale())) else summary,
                         style = HfpsTheme.typography.body,
                         color = HfpsTheme.colors.cardForeground,
                     )
@@ -267,7 +263,7 @@ fun CompressSheetContent(
                     }
                 }
                 for ((reason, n) in e.skipped) {
-                    Text(skipText(reason, n), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+                    ReasonLine(skipText(reason, n), HfpsTheme.typography.ui, HfpsTheme.colors.mutedForeground)
                 }
                 if (e.pending > 0) {
                     Text(stringResource(R.string.compress_estimate_pending), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)

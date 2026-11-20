@@ -258,4 +258,36 @@ class CompressModelTest {
             assertThat(bodies.first { it.startsWith("GET /v1/compress/items") }).contains("state=queued,encoding")
         }
     }
+
+    @Test
+    fun theSubfoldersCountIsReadFromTheTotalsAndIsZeroFromAnOlderServer() {
+        val newer = ServerJson.decodeFromString(CompressEstimate.serializer(), """{"items":[],"totals":{"items":5,"encode":5,"subfolders":1},"pending":0}""")
+        assertThat(EstimateSummary.of(listOf(newer)).subfolders).isEqualTo(1)
+        val older = ServerJson.decodeFromString(CompressEstimate.serializer(), """{"items":[],"totals":{"items":5,"encode":5},"pending":0}""")
+        assertThat(EstimateSummary.of(listOf(older)).subfolders).isEqualTo(0)
+        // Beside `pending` instead, and never more than the videos.
+        val beside = ServerJson.decodeFromString(CompressEstimate.serializer(), """{"items":[],"totals":{"items":5},"pending":0,"subfolders":9}""")
+        assertThat(EstimateSummary.of(listOf(beside)).subfolders).isEqualTo(5)
+    }
+
+    /** Drift guard: every reason constant of the server's compression package is one the app has a sentence for. */
+    @Test
+    fun everyReasonOfTheServerIsListed() {
+        val dir = generateSequence(java.io.File("").absoluteFile) { it.parentFile }.map { java.io.File(it, "server/internal/compress") }.firstOrNull { it.isDirectory }
+        org.junit.Assume.assumeTrue("server sources not next to the app", dir != null)
+        val estimate = java.io.File(dir, "estimate.go").readText()
+        val consts = Regex("""Reason\w+\s*=\s*"([a-z_]+)"""").findAll(estimate).map { it.groupValues[1] }.toSet()
+        assertThat(consts).isNotEmpty()
+        val known = (CompressReasons.SKIP + CompressReasons.FAILED + CompressReasons.ROUTE).toSet()
+        assertThat(consts.filter { it !in known }).isEmpty()
+        val gpu = java.io.File(dir, "gpu.go").readText()
+        val targets = Regex("""st\.Reason(?:, st\.Detail)? = "([a-z_]+)"""").findAll(gpu).map { it.groupValues[1] }.toSet()
+        assertThat(targets).isNotEmpty()
+        assertThat(targets.filter { it !in CompressReasons.TARGET }).isEmpty()
+        val gate = java.io.File(dir, "..").listFiles().orEmpty().filter { it.isDirectory }.flatMap { d -> d.listFiles().orEmpty().filter { it.extension == "go" && !it.name.endsWith("_test.go") } }
+            .joinToString("\n") { it.readText() }
+        for (r in listOf("no_write_mount", "write_mount_mismatch", "write_mount_read_only", "unstable_inode", "no_backup_root")) {
+            if (r in gate) assertThat(CompressReasons.TARGET).contains(r)
+        }
+    }
 }

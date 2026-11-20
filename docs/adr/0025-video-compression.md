@@ -1439,3 +1439,40 @@ Caveat for 2 and 3: the 1 % low of a short clip is a handful of frames (3 frames
 mode (clips over 30 s) it covers only the spots, so it is noisier than the mean; 85 sits under every calibration
 class's 1 % low (86.7–94), so today's approved results would not change. The owner decides; a change would bump
 nothing in the protocol (`vmaf.low` is already served).
+
+**Owner's decision (2026-11-20) on the 1 % low:** option (a), report only: the quality rule stays mode C on the VMAF mean (floor 93); the 1 % low is shown, never gated.
+
+## Amendment (2.7.1)
+
+Hoard 2.7.1 (app only; works with hoard-server 0.13.x): the follow-ups of phase A1. Nothing in the protocol changes; one
+optional field is read when a server sends it.
+
+- **Human reasons.** Every reason the server can show is a short sentence in `en` and `pt-BR`, in
+  `ui/compress/CompressTexts.kt` (`CompressReasonTexts`), never the raw code. The lists are
+  `CompressReasons` (`:core:server`): **targets** (`no_gpu`, `no_tools`, `no_backup_root`, `no_write_mount`,
+  `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`; each write-mount reason has its own sentence),
+  **skips** (`not_video`, `unreadable`, `already_compressed`, `older_compression`, `efficient`, `small_saving`,
+  `dolby_vision`, `reveal_record`, `sync_artifact`, `trashed`, `busy`, `not_in_target`, `not_writable`: plurals),
+  **failures** (`encoder`, `source_changed`, `no_space`, `trash_failed`, `not_writable`, `unreadable`,
+  `output_missing`, and the `verify_*` family in three sentences: quality, camera data, "the compressed copy did not
+  match the original"), and **route errors** (`exists`, `busy`, `state`, `not_found`, `path_taken`, `output_missing`,
+  `live_missing`, which the Trash screen's refusals and the sheet's start errors use). A code in none of them (a newer
+  server) gets a generic sentence and the code in small type (a toast or a list row, which have no small type, appends
+  it in parentheses). `CompressModelTest.everyReasonOfTheServerIsListed` reads the server's `Reason*` constants and
+  GPU reasons when the sources are next to the app and fails when one is not listed; `CompressReasonTextsTest` checks
+  every listed code in both languages (no raw code, no generic fallback).
+- **Restore and the auto-empty preview sync first.** `TrashService.restore` and `previewAutoEmpty` call
+  `compression(refresh = true)`, as Empty and auto-empty did: the held state is synced from the server, and a failed
+  sync makes it unknown (`heldUnknown`), which holds every share row (a restore waits, the preview shows nothing for
+  shares) rather than act on a stale cache. A restore of a plain share row while the photo server is unreachable is
+  therefore refused as held; it works again once a sync succeeds.
+- **Badge colours.** The Gallery's badges and the viewer's chrome sit on photos, so they use `HfpsMedia`
+  (`:core:designsystem`): `scrim`, `onScrim`, `onScrimMuted`, `caution`, `positive`, `negative` and the viewer's black.
+  They do not follow the palette (the picture decides the background) and no screen holds a raw `Color(0x…)` for them.
+- **Sub-folders.** An estimate may report `subfolders` (hoard-server 0.13.2, additive; absent = 0), the number of the
+  selection's videos that sit in a sub-folder of a chosen folder. Hoard reads it from `totals.subfolders` (or beside
+  `pending`, whichever the server sends, never more than the videos), and the sheet says "129 of 312 videos, including 4
+  in sub-folders". The field is Hoard's reading of an unreleased server: if 0.13.2 names it differently, only
+  `CompressTotals` changes.
+- **Not in 2.7.1.** A "Waiting: the GPU is busy" state (`attention.gpuBusy`, items with `gpu_busy`) was considered and
+  dropped by the owner: a queued video stays "Compressing".

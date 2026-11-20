@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.7.1 (unreleased)
+
+Compression follow-ups ([ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.7.1)"). Works with hoard-server 0.13.x.
+
+- **Plain words instead of codes.** When the photo server cannot compress, or a video is skipped or fails, Settings › Compress videos and the sheet now say why in a sentence ("The photo server's write access to the library is read-only", "3 not in this place", "the compressed copy did not match the original") instead of codes such as `no_write_mount`. A reason Hoard does not know yet shows a general sentence with the server's code in small type.
+- **Restore and the auto-empty preview check the server first.** Like Empty, they now ask the photo server which originals a compression is still holding before they act, so a restore or a preview never goes by an out-of-date list.
+- **Compressing a folder says what is in it:** "129 of 312 videos, including 4 in sub-folders" (with hoard-server 0.13.2 or later).
+- The Gallery's badges (on a photo or video, over its thumbnail) use the app's colours instead of fixed ones; they look the same.
+
 ## 2.7.0 (2026-11-19)
 
 Compress your videos on the photo server: the same look in a fraction of the space, with the originals in the trash until you empty it ([ADR 0025](docs/adr/0025-video-compression.md)). Needs hoard-server 0.13.0 with its GPU image; with an older server, or one without a usable GPU, nothing changes.

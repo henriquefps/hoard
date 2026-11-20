@@ -81,7 +81,7 @@ class CompressScreenshotTest {
     private val estimate = EstimateSummary(
         videos = 312, encode = 129, size = 29_100_000_000, estSize = 5_600_000_000, estMs = 2_100_000,
         skipped = listOf("older_compression" to 180, "efficient" to 2, "unreadable" to 1),
-        warnings = setOf(EstimateSummary.WARN_HDR10PLUS, EstimateSummary.WARN_META), pending = 0,
+        warnings = setOf(EstimateSummary.WARN_HDR10PLUS, EstimateSummary.WARN_META), pending = 0, subfolders = 4,
     )
     private val sheet = CompressSheetState(Compress.TARGET_NAS, profiles).withEstimate(estimate)
 
@@ -98,7 +98,7 @@ class CompressScreenshotTest {
     }
 
     @Test fun sheetUnavailablePhoneLight() = shoot("compress_sheet_unavailable_phone_light") {
-        Sheet { CompressSheetContent(CompressSheetState(Compress.TARGET_NAS, profiles, loading = false), listOf(Compress.TARGET_NAS), 0, 30, unavailable = "no_write_mount") }
+        Sheet { CompressSheetContent(CompressSheetState(Compress.TARGET_NAS, profiles, loading = false), listOf(Compress.TARGET_NAS), 0, 30, unavailable = "write_mount_read_only") }
     }
 
     @Test fun sheetAutoPhoneDark() = shoot("compress_sheet_auto_phone_dark", dark = true) {
@@ -137,6 +137,10 @@ class CompressScreenshotTest {
     @Test fun settingsTabletDark() = shoot("compress_settings_tablet_dark", TABLET, dark = true) { CompressSettingsContent(settings, onBack = {}) }
     @Test fun settingsUnavailablePhoneLight() = shoot("compress_settings_unavailable_phone_light") {
         CompressSettingsContent(CompressSettingsUi(CompressOverview(emptyList(), emptyList(), emptyList()), info.copy(attention = null), CompressOffer.Unavailable("no_gpu"), loading = false), onBack = {})
+    }
+
+    @Test fun settingsUnknownReasonPhoneLight() = shoot("compress_settings_unknown_reason_phone_light") {
+        CompressSettingsContent(CompressSettingsUi(CompressOverview(emptyList(), emptyList(), emptyList()), info.copy(attention = null), CompressOffer.Unavailable("quantum_flux"), loading = false), onBack = {})
     }
 
     // --- The Trash screen with compressed originals and held entries ---

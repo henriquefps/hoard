@@ -58,6 +58,7 @@ object CompressTargets {
             skipped = skipped.toList().sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first }),
             warnings = parts.flatMap { it.warnings }.toSet(),
             pending = parts.sumOf { it.pending },
+            subfolders = parts.sumOf { it.subfolders },
         )
     }
 
