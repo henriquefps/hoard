@@ -1405,6 +1405,9 @@ write mount). No schema change; `/v1` additions only.
   as too little space: the replace goes back to `ready` with `reason: no_space` (tried again after 10 minutes, nothing
   moved), the encode back to `queued` with `reason: no_space` (the same wait, no attempt counted). The server log says
   it once per check (`nas`, `work`) until a reading succeeds again; the item's log says it every time.
+- **No manifest in the server's trash day folders** (deliberate, as ADR 0023 "No manifest: the path is the manifest"
+  decided): `.hoard-trash/<day>/<path>` is the record, listing rebuilds everything, and a manifest file would show up
+  in Hoard's trash scan as a trashed file.
 - **`subfolders` in the estimate.** `POST /v1/compress/estimate` answers `subfolders`: how many folders below the
   selected folders (or a root's own folder, or its `path`) hold videos of the selection (a video counts in the most
   specific selected folder it is under; 0 for an `itemIds` selection). A client can say "includes videos in 3
