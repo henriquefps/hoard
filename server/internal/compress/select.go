@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -514,4 +515,46 @@ func (m *Manager) autoAppend(ctx context.Context) error {
 func (m *Manager) SidecarAvailable(outFP string) bool {
 	_, err := os.Stat(m.MetaPath(outFP))
 	return err == nil
+}
+
+// Subfolders counts the folders below a folder (or root) selection's own folder that hold videos of it (ADR 0025
+// Amendment (0.13.2)): a client says the selection reaches into sub-folders. A candidate counts in the most specific
+// selected folder it is under; rootPath gives a root's own path (a root named without a path). An itemIds selection
+// has none.
+func Subfolders(sel Selection, cands []Candidate, rootPath func(rootID string) string) int {
+	if len(sel.ItemIDs) > 0 {
+		return 0
+	}
+	under := func(rel, base string) bool { return base == "" || rel == base || strings.HasPrefix(rel, base+"/") }
+	dirs := map[string]bool{}
+	for _, c := range cands {
+		dir := path.Dir(c.RelPath)
+		if dir == "." {
+			dir = ""
+		}
+		best, found := "", false
+		consider := func(base string) {
+			if under(c.RelPath, base) && (!found || len(base) > len(best)) {
+				best, found = base, true
+			}
+		}
+		for _, f := range sel.Folders {
+			if c.FolderID != "" && f.FolderID == c.FolderID {
+				consider(f.Path)
+			}
+		}
+		for _, r := range sel.Roots {
+			if c.RootID != "" && r.RootID == c.RootID {
+				base := r.Path
+				if base == "" && rootPath != nil {
+					base = rootPath(r.RootID)
+				}
+				consider(base)
+			}
+		}
+		if found && dir != best {
+			dirs[c.FolderID+c.RootID+"\x00"+c.Volume+"\x00"+dir] = true
+		}
+	}
+	return len(dirs)
 }

@@ -233,3 +233,31 @@ func TestOptionsAndWindow(t *testing.T) {
 }
 
 func durMs(ms int64, speed float64) int64 { return int64(float64(ms) / speed) }
+
+func TestSubfolders(t *testing.T) {
+	no := false
+	c := func(folder, rel string) Candidate { return Candidate{FolderID: folder, RelPath: rel} }
+	r := func(root, rel string) Candidate { return Candidate{RootID: root, Volume: "primary", RelPath: rel} }
+	cases := []struct {
+		name  string
+		sel   Selection
+		cands []Candidate
+		want  int
+	}{
+		{"items", Selection{ItemIDs: []string{"x"}}, []Candidate{c("f", "a/b/1.mp4")}, 0},
+		{"folder root, flat", Selection{Folders: []SelFolder{{FolderID: "f"}}}, []Candidate{c("f", "1.mp4"), c("f", "2.mp4")}, 0},
+		{"folder root, two sub-folders", Selection{Folders: []SelFolder{{FolderID: "f"}}},
+			[]Candidate{c("f", "1.mp4"), c("f", "a/2.mp4"), c("f", "a/3.mp4"), c("f", "a/b/4.mp4")}, 2},
+		{"a sub-folder", Selection{Folders: []SelFolder{{FolderID: "f", Path: "a"}}}, []Candidate{c("f", "a/2.mp4"), c("f", "a/b/4.mp4")}, 1},
+		{"the most specific folder", Selection{Folders: []SelFolder{{FolderID: "f"}, {FolderID: "f", Path: "a", Recursive: &no}}},
+			[]Candidate{c("f", "a/2.mp4")}, 0},
+		{"two NAS folders", Selection{Folders: []SelFolder{{FolderID: "f"}, {FolderID: "g"}}}, []Candidate{c("f", "x/1.mp4"), c("g", "x/1.mp4")}, 2},
+		{"root by its own path", Selection{Roots: []SelFolder{{RootID: "r"}}}, []Candidate{r("r", "DCIM/1.mp4"), r("r", "DCIM/Trip/2.mp4")}, 1},
+		{"root with a path", Selection{Roots: []SelFolder{{RootID: "r", Path: "DCIM/Trip"}}}, []Candidate{r("r", "DCIM/Trip/2.mp4")}, 0},
+	}
+	for _, tc := range cases {
+		if got := Subfolders(tc.sel, tc.cands, func(string) string { return "DCIM" }); got != tc.want {
+			t.Errorf("%s: %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}

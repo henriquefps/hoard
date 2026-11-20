@@ -793,7 +793,19 @@ func TestCompressQueue(t *testing.T) {
 		t.Fatalf("restart: %+v", back)
 	}
 
-	// Pause while busy: another process's NVENC session.
+	// Pause while busy is off by default (0.13.2): another process's NVENC session does not hold the queue.
+	ch.nvml.mu.Lock()
+	ch.nvml.load = compress.GPULoad{Sessions: 1, Utilization: 20}
+	ch.nvml.mu.Unlock()
+	ch.srv.compress.SampleGPU(ctx)
+	if ch.srv.compress.PauseWhileBusy(ctx) {
+		t.Fatal("pause-while-busy on by default")
+	}
+	if !ch.srv.compress.RunOnce(ctx) {
+		t.Fatal("default (off): nothing leased")
+	}
+	// Turned on: another process's NVENC session holds it.
+	_ = ch.st.SetSetting(ctx, compress.SettingPauseWhileBusy, "1")
 	ch.nvml.mu.Lock()
 	ch.nvml.load = compress.GPULoad{Sessions: 1, Utilization: 20}
 	ch.nvml.mu.Unlock()
@@ -983,16 +995,16 @@ func TestCompressAdmin(t *testing.T) {
 	w := ch.do("GET", "/admin/api/compress", nil, adminHeaders())
 	expect(t, w, 200, "")
 	m := decode(t, w)
-	if m["gpu"].(map[string]any)["available"] != true || m["nasWrite"] != true || m["pauseWhileBusy"] != true || m["trashDays"].(float64) != 30 ||
+	if m["gpu"].(map[string]any)["available"] != true || m["nasWrite"] != true || m["pauseWhileBusy"] != false || m["trashDays"].(float64) != 30 ||
 		m["accounting"].(map[string]any)["inTrash"].(float64) != 1 || len(m["items"].([]any)) != 1 {
 		t.Fatalf("%v", m)
 	}
 	expect(t, ch.do("PUT", "/admin/api/compress/settings", map[string]any{"window": "25:00-01:00"}, adminHeaders()), 422, "invalid_request")
 	expect(t, ch.do("PUT", "/admin/api/compress/settings", map[string]any{"trashDays": 0}, adminHeaders()), 422, "invalid_request")
-	w = ch.do("PUT", "/admin/api/compress/settings", map[string]any{"window": "01:00-08:00", "offerAv1": true, "trashDays": 14, "pauseWhileBusy": false},
+	w = ch.do("PUT", "/admin/api/compress/settings", map[string]any{"window": "01:00-08:00", "offerAv1": true, "trashDays": 14, "pauseWhileBusy": true},
 		adminHeaders())
 	expect(t, w, 200, "")
-	if m := decode(t, w); m["window"] != "01:00-08:00" || m["offerAv1"] != true || m["trashDays"].(float64) != 14 || m["pauseWhileBusy"] != false {
+	if m := decode(t, w); m["window"] != "01:00-08:00" || m["offerAv1"] != true || m["trashDays"].(float64) != 14 || m["pauseWhileBusy"] != true {
 		t.Fatalf("%v", m)
 	}
 	if srv := decode(t, ch.do("GET", "/v1/server", nil, bearer(ch.key))); srv["compress"].(map[string]any)["offerAv1"] != true {

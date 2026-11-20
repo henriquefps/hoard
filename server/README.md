@@ -279,8 +279,21 @@ failed verification fails the item); the retry only partly hides it.
 same with older toolkits. At start (and every 10 minutes while it fails) the server lists ffmpeg's encoders, makes a
 0.2 s `hevc_nvenc` test encode and decodes it with CUDA, and checks libvmaf and exiftool; the result is on the setup
 page (Compression) and in `GET /v1/server` (`features` gains `compress`). The GPU is shared: one encode at a time by
-default, and nothing new starts while another program holds an NVENC session or the GPU was over 50 % busy in the last
-minute ("Pause while the GPU is busy", setup page); an optional night window holds back automatic work only.
+default; "Pause while the GPU is busy" (setup page, off by default since 0.13.2) starts nothing new while another
+program holds an NVENC session or the GPU was over 50 % busy in the last minute; an optional night window holds back
+automatic work only.
+
+## Upgrading to 0.13.2 (compression follow-ups)
+
+0.13.2 is a set of small compression fixes (ADR 0025 "Amendment (0.13.2)"); no schema change, `/v1` additions only:
+replace the image and restart.
+
+- "Pause while the GPU is busy" is now **off by default**. A server where the admin saved the switch keeps that choice;
+  turn it on in the setup page (Compression) to hold new work while another program uses NVENC.
+- When the free space of the NAS or of the work directory cannot be read (`statfs` fails), the server now waits as if
+  space were short (`reason: no_space`, tried again after 10 minutes) instead of going on; the log says so once.
+- `POST /v1/compress/estimate` answers `subfolders` (how many folders below the selected ones hold its videos).
+- Phone reports (`…/replaced`, `…/restored`) after a rename on the phone check the mtime of the file at its new path.
 
 ## Upgrading to 0.13.1 (the trash link held until the swap)
 

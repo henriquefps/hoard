@@ -273,7 +273,20 @@ func (s *Server) handleCompressEstimate(w http.ResponseWriter, r *http.Request) 
 	if pending > 0 {
 		w.Header().Set("Retry-After", "2")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": page, "totals": totals, "pending": pending, "next": next})
+	// The folders below the selected ones that hold its videos (0.13.2; additive): "includes N sub-folders".
+	roots := map[string]string{}
+	subfolders := compress.Subfolders(sel, cands, func(id string) string {
+		if p, ok := roots[id]; ok {
+			return p
+		}
+		root, err := s.store.MirrorRoot(r.Context(), id)
+		roots[id] = root.Path
+		if err != nil {
+			roots[id] = ""
+		}
+		return roots[id]
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"items": page, "totals": totals, "pending": pending, "next": next, "subfolders": subfolders})
 }
 
 func (s *Server) handleCompressJobCreate(w http.ResponseWriter, r *http.Request) {
@@ -914,6 +927,17 @@ func (s *Server) compressItemsJSON(ctx context.Context, list []store.CompressIte
 			entries[e.ID] = e
 		}
 	}
+	// The live owners of the served phone items, in one read transaction (#73 review).
+	var liveIDs []int64
+	for _, it := range list {
+		if it.Source == "blob" && it.MirrorEntryID != nil {
+			switch it.State {
+			case store.CompressReady, store.CompressReplacing, store.CompressReplaced, store.CompressRestored:
+				liveIDs = append(liveIDs, it.ID)
+			}
+		}
+	}
+	lives, _ := s.store.CompressLiveOwners(ctx, liveIDs)
 	out := make([]map[string]any, 0, len(list))
 	for _, it := range list {
 		m := s.compressItemJSON(it)
@@ -936,7 +960,7 @@ func (s *Server) compressItemsJSON(ctx context.Context, list []store.CompressIte
 				case store.CompressReady, store.CompressReplacing, store.CompressReplaced, store.CompressRestored:
 					// The file where the phone keeps it now (S2 follow-ups): after a rename on the phone the item's own
 					// entry is the old path (the kept side's), and a restore naming it would be abandoned as gone.
-					if live, err := s.store.CompressLiveOwner(ctx, it.ID); err == nil {
+					if live, found := lives[it.ID]; found {
 						e, ok = live, true
 					}
 				}
