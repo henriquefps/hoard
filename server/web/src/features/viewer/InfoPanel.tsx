@@ -1,8 +1,9 @@
 import { DownloadSimpleIcon, MapPinIcon } from "@phosphor-icons/react"
-import type { ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
-import { fileUrl } from "@/lib/api"
+import { api, fileUrl } from "@/lib/api"
+import { metaUrl } from "@/lib/compress"
 import { formatBytes, formatDateTime, formatDuration, formatNumber, formatShutter } from "@/lib/format"
 import type { Edit, Row } from "@/lib/types"
 import { wallClock } from "@/lib/types"
@@ -30,6 +31,8 @@ export interface ItemDetail {
       audio?: string
     }
     files: (ItemFile & { locations: { source: string; folderName?: string; path?: string }[] })[]
+    /** A compression's output (ADR 0025): its record. */
+    compressed?: { from: string; fromItem: string; profile: string; q: number; at: number; original: "trashed" | "purged"; originalSize: number; metaSidecar?: boolean }
   }
   culling: Record<string, { value: unknown; modifiedAt: number; deviceId: string }> | null
   edited: boolean
@@ -174,6 +177,7 @@ export function InfoPanel({
           </p>
         )}
       </Section>
+      {it?.compressed && <CompressedSection item={it} />}
       {it && (
         <Section label={t("info.files")}>
           <ul className="flex flex-col gap-2">
@@ -206,5 +210,53 @@ export function InfoPanel({
         </Section>
       )}
     </div>
+  )
+}
+
+/** A compressed video (ADR 0025): the profile and q, the original's size and where it is, and the metadata the server kept. */
+function CompressedSection({ item }: { item: ItemDetail["item"] }) {
+  const { t, i18n } = useTranslation()
+  const lang = i18n.language
+  const c = item.compressed!
+  const [found, setFound] = useState<{ fp: string; id: string | null } | null>(null)
+  useEffect(() => {
+    let stop = false
+    api<{ fingerprints: Record<string, { id: string; role: string }> }>("/web/compress/lookup", {
+      method: "POST",
+      json: { fingerprints: [item.mainFingerprint] },
+    })
+      .then((d) => !stop && setFound({ fp: item.mainFingerprint, id: d.fingerprints[item.mainFingerprint]?.id ?? null }))
+      .catch(() => !stop && setFound({ fp: item.mainFingerprint, id: null }))
+    return () => {
+      stop = true
+    }
+  }, [item.mainFingerprint])
+  const id = found?.fp === item.mainFingerprint ? found.id : null
+  const size = item.files.find((f) => f.fingerprint === item.mainFingerprint)?.size ?? 0
+  const profile = c.profile === "hevc-cq30" ? "smaller" : c.profile.startsWith("av1") ? "av1" : "same"
+  return (
+    <Section label={t("compress.item.title")}>
+      <Line>
+        {t(`compress.profile.${profile}`)} · {t("compress.item.q", { q: c.q })} · {formatDateTime(c.at, lang)}
+      </Line>
+      <p className="text-[0.8125rem] text-muted-foreground">
+        {t("compress.item.sizes", {
+          from: formatBytes(c.originalSize, lang),
+          to: formatBytes(size, lang),
+          saving: new Intl.NumberFormat(lang, { style: "percent", maximumFractionDigits: 0 }).format(c.originalSize ? 1 - size / c.originalSize : 0),
+        })}
+        {" · "}
+        {c.original === "trashed" ? t("compress.item.originalTrashed") : t("compress.item.originalPurged")}
+      </p>
+      {c.metaSidecar && <p className="text-[0.8125rem] text-muted-foreground">{t("compress.item.metaSaved")}</p>}
+      {id && (
+        <Button asChild variant="outline" size="sm" className="mt-1 w-fit">
+          <a href={metaUrl(id)} download data-testid="info-meta">
+            <DownloadSimpleIcon data-icon="inline-start" />
+            {t("compress.item.meta")}
+          </a>
+        </Button>
+      )}
+    </Section>
   )
 }

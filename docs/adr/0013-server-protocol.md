@@ -410,6 +410,17 @@ at full resolution: the original file, or a JPEG made on demand for a lone RAW o
 `Content-Disposition` carries `filename*=UTF-8''…`; with `TRUST_TAILSCALE_SERVE=1` the gallery and `/admin` also
 answer requests `tailscale serve` proxies on the same machine. Still nothing under `/v1`.
 
+**Video compression in the gallery** (ADR 0025 phase S3, Amendment (S3)): the gallery's twins of `/v1/compress/*`
+under `/web/compress/` (`estimate`, `jobs`, `jobs/{jobId}` GET and PATCH, `items`, `cancel`, `restore`, `purge`,
+`lookup`: the same handlers and answers, a job the gallery starts is created by `admin`), plus `GET /web/compress`
+(`{"compress": <GET /v1/server's compress object> | null, "roots": [phone backup roots]}`),
+`GET /web/compress/items/{id}/log` (the item's log, as the setup page's), `GET /web/compress/items/{id}/meta` (the
+output's metadata sidecar, gzip JSON, as an attachment) and `GET /web/trash` (the trashed items, with each compressed
+original's compression and the held entries, including live items whose file has a held trash link). The library
+index's rows gain `cz` (`trashed` | `purged`: a compression's output and where its original is). `PATCH` is a write
+like `POST` (`X-Hoard-Web: 1`). The app serves `/compression` and `/trash` too. Still nothing under `/v1`; `/web/trash`
+is the one gallery route that lists trashed items (every other one still leaves them out).
+
 ## Edited previews (hoard-server 0.9.0)
 
 Added by ADR 0020, which is the reference (and holds the client rules Reveal follows). Additions only; `features`
@@ -449,7 +460,8 @@ pushes on a trashed item apply. `GET /v1/originals/{fingerprint}` and `POST /v1/
 file until it is purged. The **NAS feed** never lists files in a trash: a file moved to a trash is its original row with
 `"removed": true, "trashed": true`; a restore is `"removed": false` (same path and fingerprint); a purge sends the row
 again with `"removed": true` and no `trashed`. `counts.nasFiles` and `counts.items` count live files and items only.
-The web gallery serves nothing in a trash: trashed items are absent from every `/web/` route, and a live item's
+The web gallery serves nothing in a trash: trashed items are absent from every `/web/` route but `GET /web/trash`
+(ADR 0025 Amendment (S3)), and a live item's
 members only in a trash are left out of its files, downloads and library row.
 
 ## Phone backup (hoard-server 0.12.0)

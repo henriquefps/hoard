@@ -18,17 +18,24 @@ export interface E2EState {
 export const statePath = (name: string) => path.join(LIB, `${name}.json`)
 export const readState = (name = "state"): E2EState => JSON.parse(readFileSync(statePath(name), "utf8"))
 
-/** Builds the web app and the server binary (embedding it) once per run. */
+/**
+ * Builds the web app and the server binary (embedding it) once per run. The tag hoarde2e compiles in the fake video
+ * encoder (e2e_compress_fake.go), switched on only by HOARD_E2E_FAKE_COMPRESS=1: no release build has it.
+ */
 export function buildBinary(): string {
   execFileSync("bun", ["run", "build"], { cwd: WEB, stdio: "inherit" })
   mkdirSync(LIB, { recursive: true })
   const bin = path.join(LIB, "hoard-server")
-  execFileSync("go", ["build", "-o", bin, "."], { cwd: SERVER, stdio: "inherit" })
+  execFileSync("go", ["build", "-tags", "hoarde2e", "-o", bin, "."], { cwd: SERVER, stdio: "inherit" })
   return bin
 }
 
 /** Writes a library with one of the Go generators (TestWriteWebFixture or TestWriteWebBench) into dir. */
-export function writeLibrary(dir: string, test: "TestWriteWebFixture" | "TestWriteWebBench", env: Record<string, string>) {
+export function writeLibrary(
+  dir: string,
+  test: "TestWriteWebFixture" | "TestWriteWebBench" | "TestWriteWebCompressFixture",
+  env: Record<string, string>
+) {
   if (existsSync(path.join(dir, "mnt"))) return
   mkdirSync(dir, { recursive: true })
   execFileSync("go", ["test", "-run", `^${test}$`, "-count=1", "./internal/server/"], {

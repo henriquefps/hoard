@@ -48,6 +48,7 @@ type libRow struct {
 	Fields string    `json:"cr,omitempty"`   // culling field revisions "rating.flag.label" (baseRev of the next push)
 	Size   int64     `json:"size,omitempty"` // bytes of all files
 	Ed     []libEdit `json:"ed,omitempty"`   // Reveal's edited previews (ADR 0020), the primary first
+	Cz     string    `json:"cz,omitempty"`   // a compression's output (ADR 0025): its original is "trashed" or "purged"
 }
 
 // libEdit is one edit of an item in the index.
@@ -222,6 +223,9 @@ func (x *libraryIndex) applyItem(r store.ItemRow) {
 	}
 	d = d.Live() // sizes, folder and name from live files only (ADR 0023)
 	row := libRow{ID: r.ID, T: r.SortTime, K: r.Kind, W: d.Width, H: d.Height, Lens: d.Lens}
+	if d.Compressed != nil {
+		row.Cz = d.Compressed.Original
+	}
 	row.Cam = cameraName(d.Make, d.Model)
 	if d.Capture != nil && d.Capture.Local != "" {
 		if t, err := time.Parse("2006-01-02T15:04:05.000", padMs(d.Capture.Local)); err == nil && t.UnixMilli() != r.SortTime {

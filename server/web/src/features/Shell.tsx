@@ -1,4 +1,5 @@
 import {
+  ArrowsInIcon,
   CircleNotchIcon,
   FolderSimpleIcon,
   GearSixIcon,
@@ -7,6 +8,7 @@ import {
   MagnifyingGlassIcon,
   SignOutIcon,
   TranslateIcon,
+  TrashIcon,
   XIcon,
 } from "@phosphor-icons/react"
 import { useEffect, useRef, useState } from "react"
@@ -31,9 +33,12 @@ import { filtersToSearch } from "@/lib/filters"
 import { useFilters } from "@/lib/useFilters"
 import { navigate, useLocation, viewerItem } from "@/lib/router"
 import { startPolling, useLibraryState } from "@/lib/store"
+import { startCompressPolling, useCompress } from "@/lib/compress"
 import { cn } from "@/lib/utils"
 import { GalleryPage } from "./gallery/GalleryPage"
 import { FoldersPage } from "./folders/FoldersPage"
+import { CompressionPage } from "./compress/CompressionPage"
+import { TrashPage } from "./trash/TrashPage"
 import { Viewer } from "./viewer/Viewer"
 
 /**
@@ -91,8 +96,13 @@ export function Shell({ session, onSignedOut }: { session: Session; onSignedOut:
   const searchRef = useRef<HTMLInputElement>(null)
   const itemId = viewerItem(loc.path)
   const onFolders = loc.path.startsWith("/folders")
+  const onCompression = loc.path.startsWith("/compression")
+  const onTrash = loc.path === "/trash"
+  const onGallery = !onFolders && !onCompression && !onTrash
+  const { info } = useCompress()
 
   useEffect(() => startPolling(), [])
+  useEffect(() => startCompressPolling(), [])
   useEffect(() => {
     // "/" focuses search (not while typing or in the viewer).
     const onKey = (e: KeyboardEvent) => {
@@ -112,7 +122,7 @@ export function Shell({ session, onSignedOut }: { session: Session; onSignedOut:
   }
 
   const search = (text: string) => {
-    if (onFolders) navigate("/", filtersToSearch({ ...filters, text }))
+    if (!onGallery) navigate("/", filtersToSearch({ ...filters, text }))
     else setFilters({ ...filters, text }, true)
   }
 
@@ -126,12 +136,12 @@ export function Shell({ session, onSignedOut }: { session: Session; onSignedOut:
         navigate(to, to === "/" ? filtersToSearch(filters) : undefined)
       }}
       className={cn(
-        "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors hover:bg-sidebar-accent",
+        "inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition-colors hover:bg-sidebar-accent max-lg:px-2.5",
         active ? "bg-sidebar-accent text-foreground" : "text-muted-foreground"
       )}
     >
       <Icon className="size-4" />
-      <span className="max-md:sr-only">{label}</span>
+      <span className="max-lg:sr-only">{label}</span>
     </a>
   )
 
@@ -139,11 +149,13 @@ export function Shell({ session, onSignedOut }: { session: Session; onSignedOut:
     <div className="flex h-dvh flex-col bg-background pt-[env(safe-area-inset-top)] [--header-height:--spacing(14)]">
       <header className="flex h-(--header-height) shrink-0 items-center gap-2 px-3 md:px-4">
         <AppLogo />
-        <nav aria-label={t("nav.label")} className="ml-2 flex items-center gap-1 md:ml-4">
-          {navLink("/", !onFolders, ImagesIcon, t("nav.gallery"))}
+        <nav aria-label={t("nav.label")} className="ml-1 flex items-center gap-0.5 sm:ml-2 sm:gap-1 md:ml-4">
+          {navLink("/", onGallery, ImagesIcon, t("nav.gallery"))}
           {navLink("/folders", onFolders, FolderSimpleIcon, t("nav.folders"))}
+          {(info || onCompression) && navLink("/compression", onCompression, ArrowsInIcon, t("nav.compression"))}
+          {navLink("/trash", onTrash, TrashIcon, t("nav.trash"))}
         </nav>
-        <div className="mx-auto flex w-full max-w-md min-w-0 flex-1 items-center px-2">
+        <div className="mx-auto flex w-full max-w-md min-w-0 flex-1 items-center px-1 sm:px-2">
           <label className="relative flex w-full items-center">
             <span className="sr-only">{t("search.label")}</span>
             <MagnifyingGlassIcon className="pointer-events-none absolute left-3 size-4 text-muted-foreground" />
@@ -227,7 +239,7 @@ export function Shell({ session, onSignedOut }: { session: Session; onSignedOut:
       </header>
       <HttpsHint />
       <main className="mx-2 mb-[max(0.5rem,env(safe-area-inset-bottom))] flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card shadow-xs md:mx-3 md:mb-3">
-        {onFolders ? <FoldersPage /> : <GalleryPage previews={session.previews} />}
+        {onFolders ? <FoldersPage /> : onCompression ? <CompressionPage /> : onTrash ? <TrashPage /> : <GalleryPage previews={session.previews} />}
       </main>
       {itemId && <Viewer itemId={itemId} />}
     </div>

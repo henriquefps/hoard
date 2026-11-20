@@ -32,6 +32,8 @@ export interface Row {
   size?: number
   /** Reveal's edited previews (ADR 0020), the primary first. */
   ed?: Edit[]
+  /** A compression's output (ADR 0025): its original is "trashed" (the "Compressed" badge) or "purged". */
+  cz?: "trashed" | "purged"
 }
 
 /** One of Reveal's edits of an item (ADR 0020): a version's rendering uploaded by Reveal. */
