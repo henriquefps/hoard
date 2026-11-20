@@ -1,7 +1,18 @@
 {
-  "app": { "name": "Hoard" },
-  "common": { "loading": "Carregando", "retry": "Tentar de novo" },
-  "nav": { "label": "Seções", "gallery": "Galeria", "folders": "Pastas" },
+  "app": {
+    "name": "Hoard"
+  },
+  "common": {
+    "loading": "Carregando",
+    "retry": "Tentar de novo"
+  },
+  "nav": {
+    "label": "Seções",
+    "gallery": "Galeria",
+    "folders": "Pastas",
+    "compression": "Compressão",
+    "trash": "Lixeira"
+  },
   "search": {
     "label": "Buscar",
     "placeholder": "Buscar nomes de arquivos e pastas",
@@ -18,14 +29,23 @@
     "setup": "Página de configuração",
     "signOut": "Sair"
   },
-  "languages": { "en": "English", "pt-BR": "Português (Brasil)" },
+  "languages": {
+    "en": "English",
+    "pt-BR": "Português (Brasil)"
+  },
   "theme": {
     "label": "Tema",
     "light": "Claro",
     "dark": "Escuro",
     "system": "Sistema",
     "palette": "Paleta",
-    "palettes": { "blue": "Azul", "olive": "Oliva", "violet": "Violeta", "rose": "Rosa", "graphite": "Grafite" }
+    "palettes": {
+      "blue": "Azul",
+      "olive": "Oliva",
+      "violet": "Violeta",
+      "rose": "Rosa",
+      "graphite": "Grafite"
+    }
   },
   "signIn": {
     "password": "Senha de administrador",
@@ -42,9 +62,16 @@
     "rawJpg": "RAW+JPG",
     "video": "Vídeo",
     "motion": "Movimento",
-    "name": { "photo": "Foto", "pair": "RAW+JPG", "video": "Vídeo", "motion": "Foto com movimento" }
+    "name": {
+      "photo": "Foto",
+      "pair": "RAW+JPG",
+      "video": "Vídeo",
+      "motion": "Foto com movimento"
+    }
   },
-  "badges": { "edited": "Editada no Reveal" },
+  "badges": {
+    "edited": "Editada no Reveal"
+  },
   "edits": {
     "edited": "Editada",
     "original": "Original",
@@ -87,7 +114,11 @@
     "atLeast_one": "{{count}} estrela ou mais",
     "atLeast_other": "{{count}} estrelas ou mais",
     "flag": "Marcação",
-    "flags": { "pick": "Escolhidas", "reject": "Rejeitadas", "none": "Sem marcação" },
+    "flags": {
+      "pick": "Escolhidas",
+      "reject": "Rejeitadas",
+      "none": "Sem marcação"
+    },
     "dates": "Datas",
     "from": "De",
     "to": "Até",
@@ -107,7 +138,11 @@
     "shownOf": "{{shown}} de {{total}}",
     "jumpBar": "Ir para um mês",
     "cellSize": "Tamanho das miniaturas",
-    "sizes": { "s": "Pequeno", "m": "Médio", "l": "Grande" },
+    "sizes": {
+      "s": "Pequeno",
+      "m": "Médio",
+      "l": "Grande"
+    },
     "noMatch": "Nada encontrado",
     "noMatchHint": "Nenhum item corresponde à busca e aos filtros.",
     "emptyTitle": "Ainda não há fotos",
@@ -178,8 +213,17 @@
     "byWeb": "galeria web",
     "byDevice": "dispositivo {{id}}",
     "editedInReveal": "Editada no Reveal",
-    "field": { "flag": "Marcação", "rating": "Estrelas", "label": "Rótulo" },
-    "role": { "raw": "RAW", "rendered": "Imagem", "video": "Vídeo", "sidecar": "Sidecar XMP" },
+    "field": {
+      "flag": "Marcação",
+      "rating": "Estrelas",
+      "label": "Rótulo"
+    },
+    "role": {
+      "raw": "RAW",
+      "rendered": "Imagem",
+      "video": "Vídeo",
+      "sidecar": "Sidecar XMP"
+    },
     "timeSource": {
       "exif-gps": "Fuso horário pelo GPS",
       "quicktime": "Horário do arquivo de vídeo",
@@ -203,6 +247,283 @@
       "unavailable": "Indisponível",
       "disabled": "Desligada",
       "removed": "Removida"
-    }
+    },
+    "backups": "Backups de celulares"
+  },
+  "trash": {
+    "eyebrow": "Servidor",
+    "title": "Lixeira",
+    "loadFailed": "Não foi possível carregar a lixeira.",
+    "emptyTitle": "A lixeira está vazia",
+    "emptyHint": "Arquivos movidos para uma pasta .hoard-trash, e os originais de vídeos comprimidos, aparecem aqui até a lixeira ser esvaziada.",
+    "otherSection": "Outros arquivos na lixeira",
+    "otherHint": "O Hoard restaura e esvazia estes pelo compartilhamento; o servidor só os lista."
+  },
+  "compress": {
+    "title": "Comprimir vídeos",
+    "eyebrow": "Servidor",
+    "heading": "Comprimir {{name}}",
+    "action": "Comprimir vídeos",
+    "actionFolder": "Comprimir vídeos desta pasta",
+    "folderMenu": "Mais opções de {{name}}",
+    "selectionLabel_one": "{{name}} e mais {{count}}",
+    "selectionLabel_other": "{{name}} e mais {{count}}",
+    "target": {
+      "nas": "Vídeos da biblioteca: o servidor substitui os arquivos na biblioteca.",
+      "backup": "Backups que não estão mais num celular são comprimidos no servidor.",
+      "phone": "Vídeos do celular substituem os arquivos desse celular: comece pelo Hoard no celular."
+    },
+    "targetName": {
+      "nas": "Biblioteca",
+      "backup": "Backup de celular",
+      "phone": "Celular"
+    },
+    "profile": {
+      "label": "Aparência",
+      "same": "Mesma aparência",
+      "sameDesc": "HEVC cq 28: a aparência aprovada, cerca de um quinto do tamanho.",
+      "smaller": "Menor",
+      "smallerDesc": "HEVC cq 30: cerca de 1 ponto de VMAF a menos por mais 15–25 % de tamanho.",
+      "av1": "AV1",
+      "av1Desc": "AV1 cq 34: 14–22 % menor que HEVC; só toca onde o AV1 é decodificado em hardware."
+    },
+    "quality": {
+      "advanced": "Avançado",
+      "label": "Qualidade",
+      "floor": "Piso (padrão)",
+      "floorDesc": "cq 28, codificado de novo com q menor só quando o VMAF fica abaixo de 93.",
+      "fixed": "Fixa",
+      "fixedDesc": "Uma codificação no q do perfil, sem recodificar.",
+      "target": "VMAF alvo",
+      "targetDesc": "Procura o q que atinge o VMAF abaixo (2–3 codificações por vídeo).",
+      "vmaf": "VMAF"
+    },
+    "estimate": {
+      "title": "Estimativa",
+      "estimating": "Estimando…",
+      "failed": "Não foi possível estimar. Tente de novo.",
+      "summary_one": "{{encode}} de {{total}} vídeo · {{size}} → cerca de {{est}} · {{time}}",
+      "summary_other": "{{encode}} de {{total}} vídeos · {{size}} → cerca de {{est}} · {{time}}",
+      "nothing": "Nada a comprimir aqui: todos os vídeos são ignorados.",
+      "pending_one": "{{count}} vídeo ainda está sendo lido; a tarefa o estima de novo.",
+      "pending_other": "{{count}} vídeos ainda estão sendo lidos; a tarefa os estima de novo.",
+      "skipped": "{{count}} {{reason}}",
+      "leftOut_one": "{{count}} vídeo deixado de fora (não está na biblioteca nem num backup que o servidor comprime).",
+      "leftOut_other": "{{count}} vídeos deixados de fora (não estão na biblioteca nem num backup que o servidor comprime).",
+      "warnings": {
+        "hdr10plus": "Os metadados dinâmicos HDR10+ não podem ser mantidos: o vídeo continua HDR10.",
+        "pcm_audio": "O áudio PCM é codificado em AAC 256k.",
+        "av1_playback": "AV1 só toca em aparelhos que o decodificam em hardware.",
+        "per_frame_metadata": "Os dados da câmera por quadro são guardados no servidor."
+      }
+    },
+    "trash": {
+      "note_one": "Os originais vão para a lixeira: restaure-os lá até ela ser esvaziada ({{count}} dia).",
+      "note_other": "Os originais vão para a lixeira: restaure-os lá até ela ser esvaziada ({{count}} dias).",
+      "section": "Originais de vídeos comprimidos",
+      "label": "Original de um vídeo comprimido",
+      "labelOutput": "Vídeo comprimido (o original foi restaurado)",
+      "saves": "libera {{size}} ao esvaziar",
+      "until": "esvaziado em {{date}}",
+      "autoEmpty_one": "Esvaziado automaticamente depois de {{count}} dia.",
+      "autoEmpty_other": "Esvaziado automaticamente depois de {{count}} dias.",
+      "restore": "Restaurar original",
+      "restoreAgain": "Comprimir de novo",
+      "restored": "Restauração iniciada",
+      "deletePermanently": "Excluir definitivamente",
+      "emptyNow": "Esvaziar agora",
+      "emptyNowTitle": "Esvaziar este original agora?",
+      "emptyNowBody": "{{name}}: o original é excluído de vez e o espaço é liberado. O vídeo comprimido continua.",
+      "emptyAll_one": "Esvaziar {{count}} original",
+      "emptyAll_other": "Esvaziar {{count}} originais",
+      "purgeTitle_one": "Excluir {{count}} original definitivamente?",
+      "purgeTitle_other": "Excluir {{count}} originais definitivamente?",
+      "purgeBody_one": "{{count}} original ({{size}}) é excluído de vez pelo servidor. O vídeo comprimido continua.",
+      "purgeBody_other": "{{count}} originais ({{size}}) são excluídos de vez pelo servidor. Os vídeos comprimidos continuam.",
+      "purged_one": "{{count}} original esvaziado",
+      "purged_other": "{{count}} originais esvaziados",
+      "refused_one": "{{count}} continua na lixeira: {{reason}}",
+      "refused_other": "{{count}} continuam na lixeira: {{reason}}",
+      "refusal": {
+        "no_write_mount": "o servidor não pode gravar na biblioteca agora",
+        "not_writable": "as verificações de segurança do servidor falharam",
+        "output_missing": "o vídeo comprimido sumiu",
+        "busy": "uma compressão está mexendo nele",
+        "state": "não pode ser alterado no estado em que está",
+        "not_found": "não é mais conhecido",
+        "live_missing": "o vídeo não está mais onde estava"
+      },
+      "alsoKept_one": "Os bytes de {{count}} original continuam: também guardados por um backup ou pelo Reveal.",
+      "alsoKept_other": "Os bytes de {{count}} originais continuam: também guardados por um backup ou pelo Reveal.",
+      "held": "Retido por uma compressão em andamento",
+      "heldSection": "Retidos por uma compressão em andamento",
+      "heldNote": "Uma compressão ainda está movendo estes arquivos; nada os esvazia até ela terminar.",
+      "busy": "Uma compressão está mexendo nele."
+    },
+    "auto": {
+      "title": "Comprimir automaticamente",
+      "heading": "Comprimir {{name}} automaticamente",
+      "switch": "Comprimir automaticamente",
+      "desc": "Os vídeos novos desta pasta serão comprimidos depois do backup (ou quando o servidor os encontrar). Os originais vão para a lixeira.",
+      "existing_one": "Comprimir também o {{count}} vídeo que já está lá",
+      "existing_other": "Comprimir também os {{count}} vídeos que já estão lá",
+      "turnOn": "Ativar",
+      "turnOff": "Desativar",
+      "compressExisting": "Comprimir os que já estão lá",
+      "on": "Comprimir automaticamente está ativado",
+      "off": "Comprimir automaticamente está desativado",
+      "exists": "Esta pasta já é comprimida automaticamente.",
+      "list": "Pastas comprimidas automaticamente",
+      "none": "Nenhuma pasta ainda.",
+      "badge": "Automática"
+    },
+    "jobs": {
+      "title": "Em andamento",
+      "none": "Nada está sendo comprimido.",
+      "progress": "{{done}} de {{total}}",
+      "current": "vídeo atual {{percent}} %",
+      "eta": "faltam {{time}}",
+      "paused": "pausada",
+      "progressLabel": "Progresso de {{name}}",
+      "pause": "Pausar",
+      "resume": "Retomar",
+      "cancel": "Cancelar",
+      "cancelTitle": "Cancelar esta tarefa?",
+      "cancelBody": "Os vídeos ainda não comprimidos ficam como estão. Os já comprimidos continuam comprimidos: restaure-os pela lixeira.",
+      "cancelled": "Tarefa cancelada",
+      "readOnly": "No celular",
+      "videos_one": "{{count}} vídeo",
+      "videos_other": "{{count}} vídeos",
+      "state": {
+        "active": "Ativa",
+        "paused": "Pausada",
+        "cancelled": "Cancelada",
+        "done": "Concluída"
+      }
+    },
+    "history": {
+      "title": "Histórico",
+      "none": "Nenhuma tarefa concluída ainda.",
+      "saved": "Economizado",
+      "inTrash": "Na lixeira",
+      "compressed": "Vídeos comprimidos",
+      "savedValue": "{{size}} economizados",
+      "inTrashValue": "{{size}} na lixeira",
+      "failed": "{{count}} com falha: {{reason}}"
+    },
+    "item": {
+      "title": "Comprimido",
+      "log": "Registro",
+      "logFailed": "Não foi possível carregar o registro.",
+      "meta": "Baixar metadados",
+      "metaSaved": "Dados da câmera por quadro guardados no servidor",
+      "q": "q {{q}}",
+      "vmaf": "VMAF {{mean}} (1 % pior {{low}}, {{mode}})",
+      "sizes": "{{from}} → {{to}} ({{saving}} menor)",
+      "timings": "codificação {{encode}} s, verificação {{verify}} s",
+      "originalTrashed": "original na lixeira",
+      "originalPurged": "original esvaziado",
+      "vmafMode": {
+        "full": "vídeo inteiro",
+        "spot": "3 trechos"
+      },
+      "state": {
+        "queued": "Na fila",
+        "estimating": "Estimando",
+        "skipped": "Ignorado",
+        "encoding": "Codificando",
+        "verifying": "Verificando",
+        "failed": "Falhou",
+        "ready": "Pronto",
+        "replacing": "Substituindo",
+        "replaced": "Comprimido",
+        "restored": "Restaurado",
+        "purged": "Original esvaziado",
+        "cancelled": "Cancelado"
+      },
+      "skip": {
+        "already_compressed_one": "já comprimido",
+        "already_compressed_other": "já comprimidos",
+        "older_compression_one": "já comprimido por uma ferramenta antiga",
+        "older_compression_other": "já comprimidos por uma ferramenta antiga",
+        "efficient_one": "já eficiente",
+        "efficient_other": "já eficientes",
+        "small_saving_one": "economizaria menos de 20 %",
+        "small_saving_other": "economizariam menos de 20 %",
+        "unreadable_one": "ilegível",
+        "unreadable_other": "ilegíveis",
+        "not_video_one": "não é vídeo",
+        "not_video_other": "não são vídeos",
+        "dolby_vision_one": "em Dolby Vision (mantido como está)",
+        "dolby_vision_other": "em Dolby Vision (mantidos como estão)",
+        "reveal_record_one": "editado no Reveal (mantido como está)",
+        "reveal_record_other": "editados no Reveal (mantidos como estão)",
+        "sync_artifact_one": "cópia de uma ferramenta de sincronização",
+        "sync_artifact_other": "cópias de ferramentas de sincronização",
+        "not_writable_one": "numa pasta em que o servidor não grava",
+        "not_writable_other": "em pastas em que o servidor não grava",
+        "trashed_one": "na lixeira",
+        "trashed_other": "na lixeira",
+        "busy_one": "já em outra tarefa",
+        "busy_other": "já em outras tarefas",
+        "not_in_target_one": "fora da biblioteca e dos backups",
+        "not_in_target_other": "fora da biblioteca e dos backups",
+        "other_one": "ignorado por outro motivo",
+        "other_other": "ignorados por outros motivos"
+      },
+      "reason": {
+        "verify": "uma verificação falhou: o original não foi tocado",
+        "encoder": "o codificador falhou",
+        "source_changed": "o arquivo mudou nesse meio-tempo",
+        "no_space": "falta espaço",
+        "unreadable": "ilegível",
+        "trash_failed": "o original não pôde ir para a lixeira",
+        "not_writable": "o servidor não grava na pasta",
+        "other": "outro motivo"
+      }
+    },
+    "unavailable": {
+      "no_gpu": "Este servidor não comprime vídeos: nenhum codificador NVIDIA funcionando.",
+      "no_tools": "Este servidor não comprime vídeos: faltam ferramentas.",
+      "no_write_mount": "Os vídeos da biblioteca não podem ser substituídos: o servidor não tem montagem de escrita (NAS_WRITE_ROOT).",
+      "write_mount_mismatch": "Os vídeos da biblioteca não podem ser substituídos: a montagem de escrita não é a pasta da biblioteca.",
+      "write_mount_read_only": "Os vídeos da biblioteca não podem ser substituídos: a montagem de escrita é somente leitura para o servidor.",
+      "unstable_inode": "Os vídeos da biblioteca não podem ser substituídos: a montagem de escrita não mantém a identidade dos arquivos (CIFS sem serverino, FUSE).",
+      "no_backup_root": "Escolha antes uma pasta de backup na página de configuração.",
+      "other": "Este servidor não pode comprimir estes vídeos agora."
+    },
+    "status": {
+      "gpu": "GPU: {{gpu}}",
+      "av1On": "AV1 oferecido",
+      "av1Off": "AV1 não oferecido (página de configuração)",
+      "stalled_one": "{{count}} compressão aguardando: veja a aba Compressão da página de configuração.",
+      "stalled_other": "{{count}} compressões aguardando: veja a aba Compressão da página de configuração."
+    },
+    "badge": {
+      "compressed": "Comprimido",
+      "compressing": "Comprimindo",
+      "original": "Original"
+    },
+    "backup": {
+      "phone": "Celular"
+    },
+    "duration": {
+      "underMinute": "menos de um minuto",
+      "minutes_one": "cerca de {{count}} min",
+      "minutes_other": "cerca de {{count}} min",
+      "hours_one": "cerca de {{count}} h",
+      "hours_other": "cerca de {{count}} h",
+      "hoursMinutes": "cerca de {{h}} h {{m}} min"
+    },
+    "start": "Começar",
+    "close": "Fechar",
+    "started_one": "{{count}} vídeo na fila",
+    "started_other": "{{count}} vídeos na fila",
+    "nothingQueued": "Nada entrou na fila: todos os vídeos foram ignorados ou estão ocupados.",
+    "busy_one": "{{count}} vídeo já está numa tarefa não concluída",
+    "busy_other": "{{count}} vídeos já estão em tarefas não concluídas",
+    "startFailed": "Não foi possível começar a tarefa.",
+    "actionFailed": "Não deu certo. Tente de novo.",
+    "loadFailed": "Não foi possível carregar as tarefas."
   }
 }

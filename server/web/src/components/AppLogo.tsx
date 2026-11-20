@@ -28,7 +28,7 @@ export function AppLogo() {
   return (
     <div className="flex items-center gap-2">
       <HoardMark className="size-6 text-primary" />
-      <span className="text-[0.9375rem] font-semibold">{t("app.name")}</span>
+      <span className="text-[0.9375rem] font-semibold max-sm:sr-only">{t("app.name")}</span>
     </div>
   )
 }

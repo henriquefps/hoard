@@ -1,3 +1,4 @@
+import { cpSync, rmSync } from "node:fs"
 import path from "node:path"
 import { buildBinary, LIB, prepare, save, setupOnly, startServer, writeLibrary } from "./server"
 
@@ -17,6 +18,25 @@ export default async function globalSetup() {
   const t = await startServer(bin, tdir, tport, { TRUST_TAILSCALE_SERVE: "1" })
   await setupOnly(`http://127.0.0.1:${tport}`, t.code)
   save("tailscale", { base: `http://127.0.0.1:${tport}`, pid: t.child.pid!, deviceKey: "", folderId: "", items: [] })
+
+  // A third server for video compression (ADR 0025 phase S3): the e2e build's fake encoder, the library folder as its
+  // own write mount (the same directory), a backup root. Synthetic clips only.
+  // A run replaces files and fills the trash: every run starts from a pristine copy of the library.
+  const cdir = path.join(LIB, "compress")
+  const pristine = path.join(LIB, "compress-pristine")
+  writeLibrary(pristine, "TestWriteWebCompressFixture", { HOARD_WEB_COMPRESS_FIXTURE: pristine })
+  const mnt = path.join(cdir, "mnt")
+  rmSync(mnt, { recursive: true, force: true })
+  cpSync(path.join(pristine, "mnt"), mnt, { recursive: true, preserveTimestamps: true })
+  const cport = port + 3
+  const c = await startServer(bin, cdir, cport, {
+    HOARD_E2E_FAKE_COMPRESS: "1",
+    NAS_READ_ROOT: mnt,
+    NAS_WRITE_ROOT: mnt,
+    BACKUP_ROOT: path.join(mnt, "backup"),
+  })
+  const cready = await prepare(`http://127.0.0.1:${cport}`, c.code, cdir, { previews: ["thumb"], waitItems: 8 })
+  save("compress", { base: `http://127.0.0.1:${cport}`, pid: c.child.pid!, ...cready })
 
   // The 20,000-item library for the measurements (opt-in: HOARD_WEB_BENCH=1).
   if (process.env.HOARD_WEB_BENCH) {

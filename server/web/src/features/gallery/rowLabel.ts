@@ -14,6 +14,7 @@ export function useRowLabel() {
       row.x === "pick" ? t("cull.picked") : row.x === "reject" ? t("cull.rejected") : null,
       row.r ? t("cull.stars", { count: row.r }) : null,
       isEdited(row) ? t("badges.edited") : null,
+      row.cz === "trashed" ? t("compress.badge.compressed") : null,
     ]
       .filter(Boolean)
       .join(", ")

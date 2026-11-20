@@ -298,13 +298,15 @@ func serve(args []string, stderr io.Writer) int {
 		}
 		logger.Info("trusting tailscale serve for the gallery and the setup page", "peers", append([]string{"loopback"}, addrStrings(peers)...))
 	}
-	srv, err := server.New(ctx, server.Config{Version: version, Mounts: mountList, BackupRoot: o.backupRoot,
+	cfg := server.Config{Version: version, Mounts: mountList, BackupRoot: o.backupRoot,
 		NasInterval: o.nasInterval, Logger: logger, FFprobe: o.ffprobe, ProbeWorkers: o.probeWorkers, ProbeTimeout: o.probeTimeout,
 		PreviewsDir: previewsDir, EditsDir: filepath.Join(dir, "edits"), Vips: o.vips, FFmpeg: o.ffmpeg, PreviewWorkers: o.previewWorkers, ProxyWorkers: o.proxyWorkers,
 		PreviewThreads: o.previewThreads, PreviewBacklog: backlog, FullCacheBytes: int64(o.fullCacheMB) << 20,
 		TrustTailscaleServe: o.trustTailscaleServe, TailscaleServePeers: peers,
 		NasReadRoot: o.nasReadRoot, NasWriteRoot: o.nasWriteRoot, CompressSessions: o.compressSessions, VMAFThreads: o.vmafThreads,
-		Exiftool: o.exiftool, NvidiaSMI: o.nvidiaSMI}, st)
+		Exiftool: o.exiftool, NvidiaSMI: o.nvidiaSMI}
+	e2eCompress(&cfg, logger) // only in a binary built with -tags hoarde2e (the web gallery's e2e tests)
+	srv, err := server.New(ctx, cfg, st)
 	if err != nil {
 		logger.Error("cannot start", "err", err)
 		return 1

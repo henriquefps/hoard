@@ -268,3 +268,53 @@ func TestWriteWebBench(t *testing.T) {
 		f.write(fmt.Sprintf("%04d/%02d/IMG_%06d.jpg", y, m, i), spliceEXIF(tiles[i%len(tiles)], s, ""))
 	}
 }
+
+// TestWriteWebCompressFixture writes the web gallery's video-compression library (ADR 0025 phase S3; server/web/e2e
+// runs it with the e2e build's fake encoder):
+//
+//	HOARD_WEB_COMPRESS_FIXTURE=/abs/dir go test -run TestWriteWebCompressFixture ./internal/server/
+//
+// Synthetic clips only (ffmpeg testsrc2 with noise at a camera's bitrate, so the estimate encodes them): Videos/Drone
+// (DJI_0001, DJI_0002, DJI_HOLD_0003 whose replace the fake linker holds, OLD_0004 an HEVC by libx265: "older
+// compression"), Videos/Trips (C0010, C0011) and two photos.
+func TestWriteWebCompressFixture(t *testing.T) {
+	dir := os.Getenv("HOARD_WEB_COMPRESS_FIXTURE")
+	if dir == "" {
+		t.Skip("HOARD_WEB_COMPRESS_FIXTURE not set")
+	}
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not found")
+	}
+	f := fixtureWriter{t, filepath.Join(dir, "mnt", "nas")}
+	tmp := t.TempDir()
+	clip := func(name, created string, hevc bool) {
+		out := filepath.Join(tmp, filepath.Base(name))
+		args := []string{"-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3",
+			"-f", "lavfi", "-i", "sine=frequency=330:duration=3", "-shortest", "-vf", "noise=alls=30:allf=t"}
+		if hevc {
+			args = append(args, "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error", "-b:v", "6M", "-tag:v", "hvc1")
+		} else {
+			args = append(args, "-c:v", "libx264", "-preset", "veryfast", "-b:v", "16M", "-maxrate", "16M", "-bufsize", "32M")
+		}
+		args = append(args, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "64k", "-metadata", "creation_time="+created, out)
+		if b, err := exec.Command("ffmpeg", args...).CombinedOutput(); err != nil {
+			t.Fatalf("ffmpeg: %v %s", err, b)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.write(name, b)
+	}
+	clip("Videos/Drone/DJI_0001.MP4", "2025-06-01T10:00:00Z", false)
+	clip("Videos/Drone/DJI_0002.MP4", "2025-06-01T10:05:00Z", false)
+	clip("Videos/Drone/DJI_HOLD_0003.MP4", "2025-06-01T10:10:00Z", false)
+	clip("Videos/Drone/OLD_0004.MP4", "2025-06-01T10:15:00Z", true)
+	clip("Videos/Trips/C0010.MP4", "2025-07-12T16:00:00Z", false)
+	clip("Videos/Trips/C0011.MP4", "2025-07-12T16:20:00Z", false)
+	for i := range 2 {
+		s := mediatest.Shot{Make: "SONY", Model: "ILCE-7M4", DateTime: fmt.Sprintf("2025:06:01 09:%02d:00", 50+i), Offset: "-03:00",
+			Width: 1200, Height: 800, Unique: uint64(9000 + i)}
+		f.write(fmt.Sprintf("Videos/Drone/DSC%05d.JPG", 9000+i), spliceEXIF(drawPhoto(1200, 800, float64(30+i*90), i), s, ""))
+	}
+}

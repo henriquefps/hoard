@@ -1,4 +1,5 @@
 import {
+  ArrowsInIcon,
   CheckCircleIcon,
   CheckIcon,
   CircleIcon,
@@ -12,6 +13,7 @@ import {
 import { memo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { previewUrl } from "@/lib/api"
+import { useIsCompressing } from "@/lib/compress"
 import { isEdited } from "@/lib/edits"
 import { formatDuration } from "@/lib/format"
 import type { Edit, Row } from "@/lib/types"
@@ -95,6 +97,27 @@ export function Stars({ rating, className }: { rating: number; className?: strin
   )
 }
 
+/** "Compressed" on a compression's output while its original is in the trash; "Compressing" while one is unfinished. */
+function CompressBadge({ row }: { row: Row }) {
+  const { t } = useTranslation()
+  const compressing = useIsCompressing(row.id)
+  if (!compressing && row.cz !== "trashed") return null
+  const label = compressing ? t("compress.badge.compressing") : t("compress.badge.compressed")
+  return (
+    <span
+      className={cn(
+        "inline-flex size-6 items-center justify-center rounded-md bg-viewer/75 text-viewer-foreground",
+        compressing && "animate-pulse motion-reduce:animate-none"
+      )}
+      title={label}
+      aria-label={label}
+      data-testid={compressing ? "compressing-badge" : "compressed-badge"}
+    >
+      <ArrowsInIcon className="size-3.5" aria-hidden />
+    </span>
+  )
+}
+
 interface CellProps {
   row: Row
   /** The edit the cell shows (the item's primary, or a stack cell's), ADR 0020. */
@@ -169,6 +192,7 @@ export const Cell = memo(function Cell({
             <PaintBrushIcon className="size-3.5" aria-hidden />
           </span>
         )}
+        {!stackCell && <CompressBadge row={row} />}
         {stack > 0 && (
           <button
             type="button"

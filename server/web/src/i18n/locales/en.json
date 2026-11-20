@@ -1,7 +1,18 @@
 {
-  "app": { "name": "Hoard" },
-  "common": { "loading": "Loading", "retry": "Try again" },
-  "nav": { "label": "Sections", "gallery": "Gallery", "folders": "Folders" },
+  "app": {
+    "name": "Hoard"
+  },
+  "common": {
+    "loading": "Loading",
+    "retry": "Try again"
+  },
+  "nav": {
+    "label": "Sections",
+    "gallery": "Gallery",
+    "folders": "Folders",
+    "compression": "Compression",
+    "trash": "Trash"
+  },
   "search": {
     "label": "Search",
     "placeholder": "Search file and folder names",
@@ -18,14 +29,23 @@
     "setup": "Setup page",
     "signOut": "Sign out"
   },
-  "languages": { "en": "English", "pt-BR": "Português (Brasil)" },
+  "languages": {
+    "en": "English",
+    "pt-BR": "Português (Brasil)"
+  },
   "theme": {
     "label": "Theme",
     "light": "Light",
     "dark": "Dark",
     "system": "System",
     "palette": "Palette",
-    "palettes": { "blue": "Blue", "olive": "Olive", "violet": "Violet", "rose": "Rose", "graphite": "Graphite" }
+    "palettes": {
+      "blue": "Blue",
+      "olive": "Olive",
+      "violet": "Violet",
+      "rose": "Rose",
+      "graphite": "Graphite"
+    }
   },
   "signIn": {
     "password": "Admin password",
@@ -42,9 +62,16 @@
     "rawJpg": "RAW+JPG",
     "video": "Video",
     "motion": "Motion",
-    "name": { "photo": "Photo", "pair": "RAW+JPG", "video": "Video", "motion": "Motion photo" }
+    "name": {
+      "photo": "Photo",
+      "pair": "RAW+JPG",
+      "video": "Video",
+      "motion": "Motion photo"
+    }
   },
-  "badges": { "edited": "Edited in Reveal" },
+  "badges": {
+    "edited": "Edited in Reveal"
+  },
   "edits": {
     "edited": "Edited",
     "original": "Original",
@@ -87,7 +114,11 @@
     "atLeast_one": "{{count}} star or more",
     "atLeast_other": "{{count}} stars or more",
     "flag": "Flag",
-    "flags": { "pick": "Picked", "reject": "Rejected", "none": "Not flagged" },
+    "flags": {
+      "pick": "Picked",
+      "reject": "Rejected",
+      "none": "Not flagged"
+    },
     "dates": "Dates",
     "from": "From",
     "to": "To",
@@ -107,7 +138,11 @@
     "shownOf": "{{shown}} of {{total}}",
     "jumpBar": "Jump to a month",
     "cellSize": "Thumbnail size",
-    "sizes": { "s": "Small", "m": "Medium", "l": "Large" },
+    "sizes": {
+      "s": "Small",
+      "m": "Medium",
+      "l": "Large"
+    },
     "noMatch": "Nothing matches",
     "noMatchHint": "No item matches the search and filters.",
     "emptyTitle": "No photos yet",
@@ -178,8 +213,17 @@
     "byWeb": "web gallery",
     "byDevice": "device {{id}}",
     "editedInReveal": "Edited in Reveal",
-    "field": { "flag": "Flag", "rating": "Stars", "label": "Label" },
-    "role": { "raw": "RAW", "rendered": "Image", "video": "Video", "sidecar": "XMP sidecar" },
+    "field": {
+      "flag": "Flag",
+      "rating": "Stars",
+      "label": "Label"
+    },
+    "role": {
+      "raw": "RAW",
+      "rendered": "Image",
+      "video": "Video",
+      "sidecar": "XMP sidecar"
+    },
     "timeSource": {
       "exif-gps": "Time zone from GPS",
       "quicktime": "Time from the video file",
@@ -203,6 +247,283 @@
       "unavailable": "Unavailable",
       "disabled": "Off",
       "removed": "Removed"
-    }
+    },
+    "backups": "Phone backups"
+  },
+  "trash": {
+    "eyebrow": "Server",
+    "title": "Trash",
+    "loadFailed": "Could not load the trash.",
+    "emptyTitle": "The trash is empty",
+    "emptyHint": "Files moved to a .hoard-trash folder, and the originals of compressed videos, show here until the trash is emptied.",
+    "otherSection": "Other files in the trash",
+    "otherHint": "Hoard restores and empties these on the share; the server only lists them."
+  },
+  "compress": {
+    "title": "Compress videos",
+    "eyebrow": "Server",
+    "heading": "Compress {{name}}",
+    "action": "Compress videos",
+    "actionFolder": "Compress videos in this folder",
+    "folderMenu": "More for {{name}}",
+    "selectionLabel_one": "{{name}} and {{count}} more",
+    "selectionLabel_other": "{{name}} and {{count}} more",
+    "target": {
+      "nas": "Library videos: the server replaces the files in the library.",
+      "backup": "Backups no longer on a phone are compressed on the server.",
+      "phone": "Phone videos replace that phone's files: start them from Hoard on the phone."
+    },
+    "targetName": {
+      "nas": "Library",
+      "backup": "Phone backup",
+      "phone": "Phone"
+    },
+    "profile": {
+      "label": "Look",
+      "same": "Same look",
+      "sameDesc": "HEVC cq 28: the approved look, about a fifth of the size.",
+      "smaller": "Smaller",
+      "smallerDesc": "HEVC cq 30: about 1 VMAF point less for another 15–25 % of size.",
+      "av1": "AV1",
+      "av1Desc": "AV1 cq 34: 14–22 % smaller than HEVC; plays only where AV1 decodes in hardware."
+    },
+    "quality": {
+      "advanced": "Advanced",
+      "label": "Quality",
+      "floor": "Floor (default)",
+      "floorDesc": "cq 28, encoded again at a lower q only when VMAF is under 93.",
+      "fixed": "Fixed",
+      "fixedDesc": "One encode at the profile's q, no re-encode.",
+      "target": "Target VMAF",
+      "targetDesc": "Searches the q that reaches the VMAF below (2–3 encodes per video).",
+      "vmaf": "VMAF"
+    },
+    "estimate": {
+      "title": "Estimate",
+      "estimating": "Estimating…",
+      "failed": "The estimate could not be made. Try again.",
+      "summary_one": "{{encode}} of {{total}} video · {{size}} → about {{est}} · {{time}}",
+      "summary_other": "{{encode}} of {{total}} videos · {{size}} → about {{est}} · {{time}}",
+      "nothing": "Nothing to compress here: every video is skipped.",
+      "pending_one": "{{count}} video is still being read; the job estimates it again.",
+      "pending_other": "{{count}} videos are still being read; the job estimates them again.",
+      "skipped": "{{count}} {{reason}}",
+      "leftOut_one": "{{count}} video left out (not on the library or a phone backup the server compresses).",
+      "leftOut_other": "{{count}} videos left out (not on the library or a phone backup the server compresses).",
+      "warnings": {
+        "hdr10plus": "HDR10+ dynamic metadata cannot be kept: the video stays HDR10.",
+        "pcm_audio": "PCM audio is encoded to AAC 256k.",
+        "av1_playback": "AV1 plays only on devices that decode it in hardware.",
+        "per_frame_metadata": "Per-frame camera data is saved on the server."
+      }
+    },
+    "trash": {
+      "note_one": "Originals go to the trash: restore them there until it is emptied ({{count}} day).",
+      "note_other": "Originals go to the trash: restore them there until it is emptied ({{count}} days).",
+      "section": "Originals of compressed videos",
+      "label": "Original of a compressed video",
+      "labelOutput": "Compressed video (the original was restored)",
+      "saves": "saves {{size}} when emptied",
+      "until": "emptied on {{date}}",
+      "autoEmpty_one": "Emptied automatically after {{count}} day.",
+      "autoEmpty_other": "Emptied automatically after {{count}} days.",
+      "restore": "Restore original",
+      "restoreAgain": "Compress again",
+      "restored": "Restore started",
+      "deletePermanently": "Delete permanently",
+      "emptyNow": "Empty now",
+      "emptyNowTitle": "Empty this original now?",
+      "emptyNowBody": "{{name}}: the original is deleted for good and its space is saved. The compressed video stays.",
+      "emptyAll_one": "Empty {{count}} original",
+      "emptyAll_other": "Empty {{count}} originals",
+      "purgeTitle_one": "Delete {{count}} original permanently?",
+      "purgeTitle_other": "Delete {{count}} originals permanently?",
+      "purgeBody_one": "{{count}} original ({{size}}) is deleted for good by the server. The compressed video stays.",
+      "purgeBody_other": "{{count}} originals ({{size}}) are deleted for good by the server. The compressed videos stay.",
+      "purged_one": "{{count}} original emptied",
+      "purged_other": "{{count}} originals emptied",
+      "refused_one": "{{count}} stays in the trash: {{reason}}",
+      "refused_other": "{{count}} stay in the trash: {{reason}}",
+      "refusal": {
+        "no_write_mount": "the server cannot write the library now",
+        "not_writable": "the server's safety checks failed",
+        "output_missing": "the compressed video is missing",
+        "busy": "a compression is working on it",
+        "state": "it cannot be changed in its state",
+        "not_found": "it is no longer known",
+        "live_missing": "the video is no longer where it was"
+      },
+      "alsoKept_one": "{{count}} original's bytes stay: also kept by a backup or Reveal.",
+      "alsoKept_other": "{{count}} originals' bytes stay: also kept by a backup or Reveal.",
+      "held": "Held by a compression in progress",
+      "heldSection": "Held by a compression in progress",
+      "heldNote": "A compression is still moving these files; nothing empties them until it finishes.",
+      "busy": "A compression is working on it."
+    },
+    "auto": {
+      "title": "Compress automatically",
+      "heading": "Compress {{name}} automatically",
+      "switch": "Compress automatically",
+      "desc": "New videos in this folder will be compressed after they are backed up (or found on the server). Originals go to the trash.",
+      "existing_one": "Also compress the {{count}} video already there",
+      "existing_other": "Also compress the {{count}} videos already there",
+      "turnOn": "Turn on",
+      "turnOff": "Turn off",
+      "compressExisting": "Compress those already there",
+      "on": "Compress automatically is on",
+      "off": "Compress automatically is off",
+      "exists": "This folder is compressed automatically already.",
+      "list": "Folders compressed automatically",
+      "none": "No folder yet.",
+      "badge": "Automatic"
+    },
+    "jobs": {
+      "title": "In progress",
+      "none": "Nothing is being compressed.",
+      "progress": "{{done}} of {{total}}",
+      "current": "current video {{percent}} %",
+      "eta": "{{time}} left",
+      "paused": "paused",
+      "progressLabel": "Progress of {{name}}",
+      "pause": "Pause",
+      "resume": "Resume",
+      "cancel": "Cancel",
+      "cancelTitle": "Cancel this job?",
+      "cancelBody": "Videos not compressed yet stay as they are. Videos already compressed stay compressed: restore them from the trash.",
+      "cancelled": "Job cancelled",
+      "readOnly": "On the phone",
+      "videos_one": "{{count}} video",
+      "videos_other": "{{count}} videos",
+      "state": {
+        "active": "Active",
+        "paused": "Paused",
+        "cancelled": "Cancelled",
+        "done": "Done"
+      }
+    },
+    "history": {
+      "title": "History",
+      "none": "No finished job yet.",
+      "saved": "Saved",
+      "inTrash": "In the trash",
+      "compressed": "Videos compressed",
+      "savedValue": "{{size}} saved",
+      "inTrashValue": "{{size}} in the trash",
+      "failed": "{{count}} failed: {{reason}}"
+    },
+    "item": {
+      "title": "Compressed",
+      "log": "Log",
+      "logFailed": "The log could not be loaded.",
+      "meta": "Download metadata",
+      "metaSaved": "Per-frame camera data saved on the server",
+      "q": "q {{q}}",
+      "vmaf": "VMAF {{mean}} (1 % low {{low}}, {{mode}})",
+      "sizes": "{{from}} → {{to}} ({{saving}} smaller)",
+      "timings": "encode {{encode}} s, verify {{verify}} s",
+      "originalTrashed": "original in the trash",
+      "originalPurged": "original emptied",
+      "vmafMode": {
+        "full": "full clip",
+        "spot": "3 spots"
+      },
+      "state": {
+        "queued": "Queued",
+        "estimating": "Estimating",
+        "skipped": "Skipped",
+        "encoding": "Encoding",
+        "verifying": "Verifying",
+        "failed": "Failed",
+        "ready": "Ready",
+        "replacing": "Replacing",
+        "replaced": "Compressed",
+        "restored": "Restored",
+        "purged": "Original emptied",
+        "cancelled": "Cancelled"
+      },
+      "skip": {
+        "already_compressed_one": "already compressed",
+        "already_compressed_other": "already compressed",
+        "older_compression_one": "already compressed by an older tool",
+        "older_compression_other": "already compressed by an older tool",
+        "efficient_one": "already efficient",
+        "efficient_other": "already efficient",
+        "small_saving_one": "would save under 20 %",
+        "small_saving_other": "would save under 20 %",
+        "unreadable_one": "unreadable",
+        "unreadable_other": "unreadable",
+        "not_video_one": "not a video",
+        "not_video_other": "not videos",
+        "dolby_vision_one": "in Dolby Vision (kept as it is)",
+        "dolby_vision_other": "in Dolby Vision (kept as they are)",
+        "reveal_record_one": "edited in Reveal (kept as it is)",
+        "reveal_record_other": "edited in Reveal (kept as they are)",
+        "sync_artifact_one": "a sync tool's copy",
+        "sync_artifact_other": "sync tools' copies",
+        "not_writable_one": "in a folder the server cannot write",
+        "not_writable_other": "in folders the server cannot write",
+        "trashed_one": "in the trash",
+        "trashed_other": "in the trash",
+        "busy_one": "already in another job",
+        "busy_other": "already in other jobs",
+        "not_in_target_one": "not on the library or a backup",
+        "not_in_target_other": "not on the library or a backup",
+        "other_one": "skipped for another reason",
+        "other_other": "skipped for other reasons"
+      },
+      "reason": {
+        "verify": "a check failed: the original is untouched",
+        "encoder": "the encoder failed",
+        "source_changed": "the file changed meanwhile",
+        "no_space": "not enough space",
+        "unreadable": "unreadable",
+        "trash_failed": "the original could not be moved to the trash",
+        "not_writable": "the server cannot write the folder",
+        "other": "another reason"
+      }
+    },
+    "unavailable": {
+      "no_gpu": "This server cannot compress videos: no working NVIDIA encoder.",
+      "no_tools": "This server cannot compress videos: tools are missing.",
+      "no_write_mount": "Library videos cannot be replaced: the server has no write mount (NAS_WRITE_ROOT).",
+      "write_mount_mismatch": "Library videos cannot be replaced: the write mount is not the library's folder.",
+      "write_mount_read_only": "Library videos cannot be replaced: the write mount is read-only for the server.",
+      "unstable_inode": "Library videos cannot be replaced: the write mount does not keep file identities (CIFS without serverino, FUSE).",
+      "no_backup_root": "Choose a backup folder on the setup page first.",
+      "other": "This server cannot compress these videos now."
+    },
+    "status": {
+      "gpu": "GPU: {{gpu}}",
+      "av1On": "AV1 offered",
+      "av1Off": "AV1 not offered (setup page)",
+      "stalled_one": "{{count}} compression waits: see the setup page's Compression tab.",
+      "stalled_other": "{{count}} compressions wait: see the setup page's Compression tab."
+    },
+    "badge": {
+      "compressed": "Compressed",
+      "compressing": "Compressing",
+      "original": "Original"
+    },
+    "backup": {
+      "phone": "Phone"
+    },
+    "duration": {
+      "underMinute": "under a minute",
+      "minutes_one": "about {{count}} min",
+      "minutes_other": "about {{count}} min",
+      "hours_one": "about {{count}} h",
+      "hours_other": "about {{count}} h",
+      "hoursMinutes": "about {{h}} h {{m}} min"
+    },
+    "start": "Start",
+    "close": "Close",
+    "started_one": "{{count}} video queued",
+    "started_other": "{{count}} videos queued",
+    "nothingQueued": "Nothing was queued: every video is skipped or busy.",
+    "busy_one": "{{count}} video is in an unfinished job already",
+    "busy_other": "{{count}} videos are in unfinished jobs already",
+    "startFailed": "The job could not start.",
+    "actionFailed": "That did not work. Try again.",
+    "loadFailed": "Could not load the jobs."
   }
 }

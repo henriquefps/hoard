@@ -1,7 +1,25 @@
-import { CaretDownIcon, CaretRightIcon, DevicesIcon, FolderOpenIcon, FolderSimpleIcon, HardDrivesIcon } from "@phosphor-icons/react"
+import {
+  ArrowsInIcon,
+  CaretDownIcon,
+  CaretRightIcon,
+  DevicesIcon,
+  DeviceMobileIcon,
+  DotsThreeVerticalIcon,
+  FolderOpenIcon,
+  FolderSimpleIcon,
+  HardDrivesIcon,
+} from "@phosphor-icons/react"
 import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "@/lib/api"
@@ -10,6 +28,45 @@ import { formatNumber } from "@/lib/format"
 import { navigate } from "@/lib/router"
 import { useLibraryState } from "@/lib/store"
 import { buildTree, type DirNode } from "@/lib/tree"
+import { type CompressInfo, type Job, sameFolder, type SelFolder, type Target, useCompress } from "@/lib/compress"
+import { CompressDialog, type CompressRequest } from "../compress/CompressDialog"
+
+/** What a folder row can ask: compress what is there now, or turn its "Compress automatically" switch. */
+interface FolderActions {
+  info: CompressInfo | null
+  autoJobs: Job[]
+  ask: (r: CompressRequest) => void
+}
+
+/** The ⋮ menu of a NAS folder, a directory or a phone backup (ADR 0025 "Triggering"). */
+function CompressMenu({ actions, target, folder, label }: { actions: FolderActions; target: Target; folder: SelFolder; label: string }) {
+  const { t } = useTranslation()
+  if (!actions.info) return null
+  const autoJob = actions.autoJobs.find((j) => j.target === target && sameFolder(j.select, folder)) ?? null
+  const part = { target, select: folder.rootId ? { roots: [folder] } : { folders: [{ ...folder, recursive: true }] } }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label={t("compress.folderMenu", { name: label })} data-testid="folder-menu">
+          <DotsThreeVerticalIcon />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => actions.ask({ parts: [part], label, mode: "once", target })} data-testid="compress-folder">
+          <ArrowsInIcon />
+          {t("compress.actionFolder")}
+        </DropdownMenuItem>
+        <DropdownMenuCheckboxItem
+          checked={!!autoJob}
+          onSelect={() => actions.ask({ parts: [part], label, mode: "auto", autoJob, target })}
+          data-testid="compress-auto"
+        >
+          {t("compress.auto.switch")}
+        </DropdownMenuCheckboxItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 interface FolderInfo {
   id: string
@@ -21,7 +78,23 @@ interface FolderInfo {
 
 const openInGallery = (id: string, dir: string) => navigate("/", filtersToSearch({ ...NO_FILTERS, folder: { id, dir } }))
 
-function TreeNode({ folder, node, depth, open, toggle }: { folder: string; node: DirNode; depth: number; open: Set<string>; toggle: (key: string) => void }) {
+function TreeNode({
+  folder,
+  folderName,
+  node,
+  depth,
+  open,
+  toggle,
+  actions,
+}: {
+  folder: string
+  folderName: string
+  node: DirNode
+  depth: number
+  open: Set<string>
+  toggle: (key: string) => void
+  actions: FolderActions
+}) {
   const { i18n, t } = useTranslation()
   const key = `${folder}:${node.path}`
   const expanded = open.has(key)
@@ -49,11 +122,12 @@ function TreeNode({ folder, node, depth, open, toggle }: { folder: string; node:
           <span className="truncate">{node.name}</span>
         </button>
         <span className="text-sm text-muted-foreground tabular-nums">{formatNumber(node.total, i18n.language)}</span>
+        <CompressMenu actions={actions} target="nas" folder={{ folderId: folder, path: node.path }} label={`${folderName}/${node.path}`} />
       </div>
       {expanded && node.children.length > 0 && (
         <ul role="group">
           {node.children.map((c) => (
-            <TreeNode key={c.path} folder={folder} node={c} depth={depth + 1} open={open} toggle={toggle} />
+            <TreeNode key={c.path} folder={folder} folderName={folderName} node={c} depth={depth + 1} open={open} toggle={toggle} actions={actions} />
           ))}
         </ul>
       )}
@@ -68,6 +142,22 @@ export function FoldersPage() {
   const [data, setData] = useState<{ folders: FolderInfo[]; uploads: number } | null>(null)
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState<Set<string>>(new Set())
+  const { info, roots, tick } = useCompress()
+  const [autoJobs, setAutoJobs] = useState<Job[]>([])
+  const [request, setRequest] = useState<CompressRequest | null>(null)
+  const actions: FolderActions = { info, autoJobs, ask: setRequest }
+
+  // The folders compressed automatically (their switch's state), again after each change.
+  useEffect(() => {
+    if (!info) return
+    let stop = false
+    api<{ jobs: Job[] }>("/web/compress/jobs?auto=true&limit=100")
+      .then((d) => !stop && setAutoJobs(d.jobs.filter((j) => j.state !== "cancelled")))
+      .catch(() => {})
+    return () => {
+      stop = true
+    }
+  }, [info, tick])
 
   // Reload when the library changes (a walk added items).
   useEffect(() => {
@@ -95,7 +185,7 @@ export function FoldersPage() {
       </div>
     )
   }
-  if (data.folders.length === 0 && data.uploads === 0) {
+  if (data.folders.length === 0 && data.uploads === 0 && roots.length === 0) {
     return (
       <Empty className="flex-1">
         <EmptyHeader>
@@ -130,11 +220,12 @@ export function FoldersPage() {
             <span className="ml-auto text-sm text-muted-foreground tabular-nums">
               {t("gallery.itemsCount", { count: root.total, formatted: formatNumber(root.total, i18n.language) })}
             </span>
+            <CompressMenu actions={actions} target="nas" folder={{ folderId: f.id, path: "" }} label={f.name || t("folders.unknown")} />
           </div>
           {root.children.length > 0 && (
             <ul role="tree" aria-labelledby={`folder-${f.id}`}>
               {root.children.map((c) => (
-                <TreeNode key={c.path} folder={f.id} node={c} depth={0} open={open} toggle={toggle} />
+                <TreeNode key={c.path} folder={f.id} folderName={f.name} node={c} depth={0} open={open} toggle={toggle} actions={actions} />
               ))}
             </ul>
           )}
@@ -155,7 +246,24 @@ export function FoldersPage() {
           </button>
         </section>
       )}
-      <p className="px-4 py-3 text-sm text-muted-foreground md:px-6">{t("folders.backupsLater")}</p>
+      {roots.length > 0 && info && (
+        <section aria-labelledby="phone-backups" data-testid="phone-backups">
+          <h2 id="phone-backups" className="eyebrow border-b px-4 pt-4 pb-2 md:px-6">
+            {t("folders.backups")}
+          </h2>
+          {roots.map((r) => (
+            <div key={r.id} className="flex h-14 items-center gap-3 border-b px-4 md:px-6">
+              <DeviceMobileIcon className="size-5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 truncate text-[0.9375rem] font-semibold">{r.device || t("compress.backup.phone")}</span>
+              <span className="min-w-0 truncate font-mono text-[0.8125rem] text-muted-foreground">{r.path}</span>
+              <span className="ml-auto" />
+              <CompressMenu actions={actions} target="backup" folder={{ rootId: r.id, path: "" }} label={`${r.device || t("compress.backup.phone")} · ${r.path}`} />
+            </div>
+          ))}
+        </section>
+      )}
+      {roots.length === 0 && <p className="px-4 py-3 text-sm text-muted-foreground md:px-6">{t("folders.backupsLater")}</p>}
+      <CompressDialog request={request} info={info} onClose={() => setRequest(null)} />
     </div>
   )
 }

@@ -38,6 +38,7 @@ import (
 //	POST   /web/culling      as POST /v1/culling, written by the session's writer id "web:<16 hex>"
 //	POST   /web/downloads    {items: [ids]}  → {url}: a zip of the items' files, valid 10 minutes
 //	GET    /web/downloads/{token}[/{name}]    the zip, streamed
+//	…      /web/compress/*, /web/trash        video compression (ADR 0025 phase S3, web_compress.go)
 
 const (
 	webCookieName = "hoard_web"
@@ -71,7 +72,8 @@ func (s *Server) routesWeb(mux *http.ServeMux) {
 	s.webInit()
 	gated := s.webGate(http.HandlerFunc(s.serveWebApp))
 	// The app's own routes (client-side) and its files.
-	for _, p := range []string{"GET /folders", "GET /folders/{rest...}", "GET /items/{rest...}", "GET /assets/{file...}",
+	for _, p := range []string{"GET /folders", "GET /folders/{rest...}", "GET /items/{rest...}", "GET /compression",
+		"GET /compression/{rest...}", "GET /trash", "GET /assets/{file...}",
 		"GET /favicon.svg", "GET /manifest.webmanifest"} {
 		mux.Handle(p, gated)
 	}
@@ -103,6 +105,7 @@ func (s *Server) routesWeb(mux *http.ServeMux) {
 	authed("POST /web/downloads", s.handleWebDownloadCreate)
 	authed("GET /web/downloads/{token}", s.handleWebDownload)
 	authed("GET /web/downloads/{token}/{name}", s.handleWebDownload)
+	s.routesWebCompress(authed)
 }
 
 // serveWebApp serves the gallery's built files; paths without an extension (the app's own routes) get index.html.

@@ -1476,3 +1476,59 @@ optional field is read when a server sends it.
   `CompressTotals` changes.
 - **Not in 2.7.1.** A "Waiting: the GPU is busy" state (`attention.gpuBusy`, items with `gpu_busy`) was considered and
   dropped by the owner: a queued video stays "Compressing".
+
+## Amendment (S3)
+
+Phase S3 (the web gallery, hoard-server 0.13.x) as built; each point is a detail the text above left open or a small
+deviation. Tests and screenshots: `docs/testing/web-compression.md`.
+
+- **Routes.** The gallery calls the `/v1/compress/*` handlers through twins under `/web/compress/` (ADR 0013 "Web
+  gallery"), signed in with the gallery's session; `PATCH /web/compress/jobs/{jobId}` is a write like `POST`. A job the
+  gallery starts is created by `admin` (`compress_jobs.created_by`, as "Tables" says), not by the session's writer id.
+  New: `GET /web/compress` (the `compress` object of `GET /v1/server`, or `null`, and the phone backup roots for the
+  Folders page), `GET /web/compress/items/{id}/log` (the item's log; the gallery's session is the admin password's, like
+  the setup page's) and `GET /web/compress/items/{id}/meta` (the output's metadata sidecar of Amendment (N4), gzip JSON
+  as stored, `Content-Disposition: attachment; filename="<stem>.metadata.json.gz"`). Phone jobs are never started from
+  the gallery (no physical device) and are listed read-only.
+- **The gate** is Hoard 2.7.0's (Amendment (A1)): everything shows with the `compress` object (the feature, or jobs
+  left on a server that lost its GPU); a library action needs `targets.nas.ok`, a backup action `targets.backup.ok`;
+  otherwise the dialog shows the server's reason instead of the estimate. A server without `targets` (S1) is read from
+  `available` and `nasWrite`. The feature's state comes from `GET /web/compress`, polled every 5 s while the tab is
+  visible, with the unfinished items (`state=queued,…,replacing`) for the "Compressing" badge.
+- **Where the actions are.** A gallery selection with videos (**Compress videos**: its videos in a NAS folder are a
+  `nas` part, the others a `backup` part whose server answers `not_in_target` for those still on a phone, shown as left
+  out; photos are left out; one dialog, one job per part); a NAS folder or directory in Folders (⋮: **Compress videos in
+  this folder**, **Compress automatically** with its check mark when the folder's standing job exists); the Folders
+  page's new **Phone backups** section (each backup root, `target: "backup"`, root path `""`). The viewer has no action.
+- **The dialog** reads every estimate page (warnings from the pages, totals from the server), asks again every 2 s while
+  probes are pending (at most 15 times), and allows Start while some are pending. Profiles: Same look, Smaller, AV1 only
+  when `offerAv1` and never for automatic folders. **Advanced** (web only, "Quality mode C"): Floor (default), Fixed,
+  Target VMAF (90–99) sent as `options.quality`. The automatic form: the default profile, "Also compress the N videos
+  already there" (a second, one-off job), **Turn off** when the switch is on (`PATCH … {"auto": false}`).
+- **The Compression view** (`/compression`): the GPU, whether AV1 is offered, each target that is not ok with its
+  reason, `attention.stalled`; totals (saved = purged, in the trash, videos compressed); jobs in progress (progress bar,
+  current item's percent, ETA, Pause/Resume, Cancel with a confirmation); folders compressed automatically (Turn off);
+  history. A job opens its items: state with reason, sizes and saving, q, VMAF (mean, 1 % low, full/spot), timings,
+  when auto-empty takes the trashed side, "per-frame camera data saved", **Log**, **Download metadata**, **Restore
+  original** / **Compress again**, **Empty now** (with a confirmation).
+- **The trash** (`/trash`, `GET /web/trash`): the gallery had no trash view; it lists the server's trashed items. A
+  compressed original (a trashed item with `compressedTo` and a `replaced`/`restored` record: the original, or the output
+  after a restore) is labelled "Original of a compressed video · saves … when emptied" with **Restore original** (or
+  **Compress again**) and **Delete permanently**, both through the routes (only the server deletes it), and **Empty N
+  originals** for all of them. A held entry (any item with a `held` trash location, live ones included: a replace that
+  waits after its hard link) is listed "Held by a compression in progress", without actions and not counted. A row the
+  record already settled (purged, or swapped back by a restore) is left out before the next walk catches up. Other
+  trashed files are listed for reference only: Hoard restores and empties them over the share.
+- **Badges** in the grid: "Compressed" (Phosphor `arrows-in`) on an output whose original is in the trash, from the
+  library index's new `cz` (`compressed.original`); "Compressing" (the same icon, pulsing) on an item with an unfinished
+  compression. The viewer's info panel gains a Compressed section (profile, q, sizes and saving, where the original is,
+  per-frame data, Download metadata through `POST /web/compress/lookup`).
+- **The fake encoder** (S3 row: "a server flag only tests can set"): `server/e2e_compress_fake.go` is built only with
+  `-tags hoarde2e` (the web e2e builds its binary so; no release, image or workflow does) and switched on by
+  `HOARD_E2E_FAKE_COMPRESS=1`: libx264 at 1 Mb/s with the marker, a passing verifier (VMAF 95.4 / 92.1), a detected GPU
+  that is never busy, and a linker that makes a `HOLD` source's trash link and then answers `EIO` every time (a held
+  entry for as long as the test runs). Without the tag, `e2eCompress` is an empty function.
+- **Strings** under `compress.*` in `server/web/src/i18n/locales/{en,pt-BR}.json` as listed in "Web gallery and admin
+  page", with `compress.item.skip.*` (plural) apart from `compress.item.reason.*` (failures), and `nav.compression`,
+  `nav.trash`, `trash.*`, `folders.backups`.
+
