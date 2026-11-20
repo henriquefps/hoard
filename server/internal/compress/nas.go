@@ -280,8 +280,13 @@ func (m *Manager) runReplace(ctx context.Context, it *store.CompressItem, log io
 			fail(ReasonNotWritable, err)
 			return
 		}
-		if free, err := f.Free(); err == nil && it.OutSize != nil && free < *it.OutSize+64<<20 {
-			fmt.Fprintf(log, "replace: waiting for space on the NAS (%d free)\n", free)
+		// An unreadable free space fails closed: back to ready, tried again later (ADR 0025 Amendment (0.13.2)).
+		if free, ok := m.checkFree("nas", f.Free); !ok || (it.OutSize != nil && free < *it.OutSize+64<<20) {
+			if ok {
+				fmt.Fprintf(log, "replace: waiting for space on the NAS (%d free)\n", free)
+			} else {
+				fmt.Fprintln(log, "replace: waiting: the NAS's free space cannot be read")
+			}
 			it.State, it.Reason, it.ReplaceStep = store.CompressReady, ReasonNoSpace, ""
 			it.NotBefore = m.now().Add(noSpaceWait).UnixMilli()
 			m.save(ctx, it, store.CompressReplacing)

@@ -385,7 +385,7 @@ func TestCompressPurgeOutputTrashedByHand(t *testing.T) {
 	ch.job(map[string]any{"itemIds": []string{store.ItemID(orig)}}, nil)
 	ch.runAll()
 	it := ch.one()
-	ch.move("A.MP4", ".hoard-trash/2026-11-20/A.MP4")
+	ch.move("A.MP4", ".hoard-trash/2020-01-01/A.MP4") // a day folder other than today's (the original's)
 	ch.walkAll()
 	if a := ch.srv.compress.Purge(t.Context(), []int64{it.ID}); a[0].Error != compress.ReasonOutputMissing {
 		t.Fatalf("purge answered %+v", a)

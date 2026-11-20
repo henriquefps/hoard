@@ -1889,6 +1889,11 @@ paths:
                       estMs: { type: integer, format: int64 }
                   pending: { type: integer }
                   next: { type: string, nullable: true, description: "The cursor of the next page (send it as `cursor`)" }
+                  subfolders:
+                    type: integer
+                    description: >-
+                      0.13.2 (additive): how many folders below the selected folders (or roots) hold videos of the
+                      selection; 0 for an itemIds selection or when every video is directly in a selected folder.
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }

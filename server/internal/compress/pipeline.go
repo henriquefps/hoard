@@ -225,8 +225,12 @@ func (m *Manager) encodeItem(ctx context.Context, it *store.CompressItem, log io
 		m.fail(ctx, it, ReasonNoSpace, log, err)
 		return false
 	}
-	if free, err := FreeBytes(work); err == nil && free < est.EstSize*3/2+1<<30 {
-		fmt.Fprintf(log, "waiting for space: %d bytes free in the work directory\n", free)
+	if free, ok := m.checkFree("work", func() (int64, error) { return FreeBytes(work) }); !ok || free < est.EstSize*3/2+1<<30 {
+		if ok {
+			fmt.Fprintf(log, "waiting for space: %d bytes free in the work directory\n", free)
+		} else {
+			fmt.Fprintln(log, "waiting for space: the work directory's free space cannot be read")
+		}
 		it.State, it.Reason = store.CompressQueued, ReasonNoSpace
 		it.NotBefore = m.now().Add(noSpaceWait).UnixMilli()
 		m.save(ctx, it, store.CompressEstimating)

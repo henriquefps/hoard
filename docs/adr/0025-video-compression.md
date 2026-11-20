@@ -1389,3 +1389,50 @@ point is a detail the text above left open or a small deviation. E2E and tests: 
   `compress_none_in_selection`, `compress_load_failed`, `compress_night_window`, `compress_av1_*`, `compress_gpu`.
   The phone-only keys (`compress_target_phone`, `compress_warn_other_backup_apps`, `compress_phone_*`) come with A2.
 - **Icon**: Phosphor `arrows-in` (added to `android/scripts/icons/icons.txt`).
+
+## Amendment (0.13.2)
+
+hoard-server 0.13.2: follow-ups from the first real compression on the owner's host (5 videos, 0.13.1 with the NAS
+write mount). No schema change; `/v1` additions only.
+
+- **"Pause while the GPU is busy" is off by default** (the owner's decision): `PauseWhileBusy` is true only when the
+  admin turned it on (`compress.pauseWhileBusy` = `1`); the setting, the setup page's switch and the busy check itself
+  are unchanged, and a server whose admin saved the switch (on or off) keeps that choice. This replaces "(default
+  taken, on)" in "Queue" and in Amendment (S1)'s "GPU sharing". (On the owner's host an idle remote-desktop session held an
+  NVENC session and kept the queue waiting for 50 minutes; a check on encoder load was considered and not taken.)
+- **An unreadable free space fails closed.** The NAS check before a replace's copy (output + 64 MiB free) and the work
+  directory's check before an encode (estimate × 1.5 + 1 GiB) used to go on when `statfs` failed. Now an error counts
+  as too little space: the replace goes back to `ready` with `reason: no_space` (tried again after 10 minutes, nothing
+  moved), the encode back to `queued` with `reason: no_space` (the same wait, no attempt counted). The server log says
+  it once per check (`nas`, `work`) until a reading succeeds again; the item's log says it every time.
+- **`subfolders` in the estimate.** `POST /v1/compress/estimate` answers `subfolders`: how many folders below the
+  selected folders (or a root's own folder, or its `path`) hold videos of the selection (a video counts in the most
+  specific selected folder it is under; 0 for an `itemIds` selection). A client can say "includes videos in 3
+  sub-folders" before a recursive job starts. Additive (ADR 0013, `openapi.yaml`).
+- **Review nits (#73).** The items list (`GET /v1/compress/items`, the admin page) reads the live owners of its phone
+  items in one read transaction (`CompressLiveOwners`), not one transaction per item. `…/replaced` and `…/restored`
+  check the reported `modifiedAt` (± 2 s) against the **live** entry, the one that holds the side being replaced now
+  (after a rename on the phone, the entry at the new path), not the item's first entry; a report again is checked
+  against the side it already put there.
+
+### Open question for the owner: gating on the 1 % low
+
+The quality rule (mode C) looks at the VMAF **mean** only (floor 93; under it, q − 2, then q − 4). The first real job:
+four clips with means 93.2–97.2 and 1 % lows 88.9–91.1, and one clip with mean **94.0** and 1 % low **83.5**, clearly below
+the rest. It passed, as the rule says. No behaviour
+changes in 0.13.2; the options:
+
+1. **Report only** (no change to what is encoded): the item's history row and the setup page flag a 1 % low under 85
+   ("dips in quality: 83.5"), so the owner can restore that original from the trash before it is purged. Size: none.
+2. **A 1 % low floor of 85, one step** (recommended if the owner wants a guard): when the mean reaches 93 but the 1 %
+   low is under 85, re-encode once at q − 2 and keep that output whatever its 1 % low (no second step for the low;
+   the mean rule keeps its own two steps). Size: one q step costs about +30 % output bytes for that clip (calibration:
+   the 2.7K60 drone clip went from 44 % to 57 % of the original, cq 28 → 26); one clip in five on the first job, so
+   about +6 % on that job's output if the clips are of similar size, and one more encode and VMAF for that clip.
+3. **The same floor, up to two steps** (q − 2, then q − 4, like the mean): up to about +70 % for such a clip, two
+   more encodes; the 2.7K60 calibration clip (1 % low 86.7 at cq 26) would still pass at one step.
+
+Caveat for 2 and 3: the 1 % low of a short clip is a handful of frames (3 frames of a 10 s 30 fps clip), and in spot
+mode (clips over 30 s) it covers only the spots, so it is noisier than the mean; 85 sits under every calibration
+class's 1 % low (86.7–94), so today's approved results would not change. The owner decides; a change would bump
+nothing in the protocol (`vmaf.low` is already served).

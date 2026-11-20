@@ -92,6 +92,10 @@ type Manager struct {
 	afterStep func(step string) error
 	// beforeSwap, in tests, runs right before a swap checks its trash entry again (a pause between link and swap).
 	beforeSwap func(trash string)
+	// freeErr, in tests, fails a free-space check ("nas" or "work") as a statfs error would.
+	freeErr func(where string) error
+	// spaceUnknown: the free-space checks whose last statfs failed (logged once until one succeeds again).
+	spaceUnknown map[string]bool
 }
 
 // wideFrame is the frame size above which a verification takes every CPU slot (more than 2.7K, about 4.2 MP): a 4K
@@ -168,7 +172,7 @@ func New(cfg Config) *Manager {
 		cfg.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Manager{cfg: cfg, log: cfg.Log, running: map[int64]context.CancelFunc{}, progress: map[int64]float64{},
-		probing: map[string]bool{}, gpu: make(chan struct{}, cfg.Sessions), cpu: make(chan struct{}, cfg.CPUWorkers),
+		probing: map[string]bool{}, spaceUnknown: map[string]bool{}, gpu: make(chan struct{}, cfg.Sessions), cpu: make(chan struct{}, cfg.CPUWorkers),
 		wake: make(chan struct{}, cfg.Sessions+cfg.CPUWorkers), ops: make(chan op, 64), status: GPUStatus{Codecs: []string{}, Reason: "no_gpu"}}
 }
 
@@ -260,9 +264,9 @@ func (m *Manager) TrashDays(ctx context.Context) int {
 	return DefaultTrashDays
 }
 
-// PauseWhileBusy is on unless the admin turned it off.
+// PauseWhileBusy is off unless the admin turned it on (default off since 0.13.2, ADR 0025 Amendment (0.13.2)).
 func (m *Manager) PauseWhileBusy(ctx context.Context) bool {
-	return m.setting(ctx, SettingPauseWhileBusy) != "0"
+	return m.setting(ctx, SettingPauseWhileBusy) == "1"
 }
 
 // OfferAV1 is off until the owner's playback check.
@@ -601,6 +605,33 @@ func (m *Manager) SetJournalHook(fn func(step string) error) { m.afterStep = fn 
 
 // SetSwapHook sets a function run right before a swap checks its trash entry again (tests only).
 func (m *Manager) SetSwapHook(fn func(trash string)) { m.beforeSwap = fn }
+
+// SetFreeHook sets a function that can fail a free-space check ("nas" or "work") as a statfs error would (tests only).
+func (m *Manager) SetFreeHook(fn func(where string) error) { m.freeErr = fn }
+
+// checkFree reads the free bytes for a space check through read. An error fails closed (ADR 0025 Amendment (0.13.2)):
+// ok is false and the caller waits as if the space were short; the error is logged once until a check succeeds again.
+func (m *Manager) checkFree(where string, read func() (int64, error)) (free int64, ok bool) {
+	var err error
+	if m.freeErr != nil {
+		err = m.freeErr(where)
+	}
+	if err == nil {
+		free, err = read()
+	}
+	m.mu.Lock()
+	first := err != nil && !m.spaceUnknown[where]
+	if err != nil {
+		m.spaceUnknown[where] = true
+	} else {
+		delete(m.spaceUnknown, where)
+	}
+	m.mu.Unlock()
+	if first {
+		m.log.Warn("compress: the free space cannot be read: waiting as if it were short", "where", where, "err", err)
+	}
+	return free, err == nil
+}
 
 // SampleGPU reads the GPU's load now (tests; the server samples every 30 s).
 func (m *Manager) SampleGPU(ctx context.Context) { m.sampleBusy(ctx) }

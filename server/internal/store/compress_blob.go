@@ -210,6 +210,48 @@ func (s *Store) CompressLiveOwner(ctx context.Context, id int64) (MirrorEntry, e
 	return out, err
 }
 
+// CompressLiveOwners is CompressLiveOwner for several items in one read transaction (a list of items served at once:
+// one snapshot, one transaction). Items without a live owner (ErrNotFound) are left out.
+func (s *Store) CompressLiveOwners(ctx context.Context, ids []int64) (map[int64]MirrorEntry, error) {
+	out := map[int64]MirrorEntry{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, id := range ids {
+		it, err := compressItemTx(ctx, tx, id)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if it.MirrorEntryID == nil {
+			continue
+		}
+		orig, err := entryTx(ctx, tx, *it.MirrorEntryID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		e, err := liveOwnerTx(ctx, tx, orig, liveFingerprint(it), 0)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[id] = e
+	}
+	return out, nil
+}
+
 // Reasons of a cancel that settles a served phone item (S2 follow-ups): the phone's backup no longer has the original
 // (phone_gone), or the admin forced it (forced; a phone restore given up on by the admin keeps this reason too).
 const (
@@ -325,8 +367,21 @@ func compressSwapTx(ctx context.Context, tx *sql.Tx, it CompressItem, in Compres
 		if p.Fingerprint != newFP || p.Size != newSize || (p.SHA256 != "" && newSHA != "" && p.SHA256 != newSHA) {
 			return out, ErrCompressMismatch
 		}
-		if p.CheckMTime && (p.ModifiedAt < orig.ModifiedAt-2000 || p.ModifiedAt > orig.ModifiedAt+2000) {
-			return out, ErrCompressMismatch
+		if p.CheckMTime {
+			// The mtime the phone keeps is the live entry's (#73 review): after a rename on the phone that is not the
+			// item's own entry. A report again is checked against the side it already put there.
+			ref, fp := orig, liveFP
+			if it.State == final {
+				fp = newFP
+			}
+			if e, err := liveOwnerTx(ctx, tx, orig, fp, in.OwnerID); err == nil {
+				ref = e
+			} else if !errors.Is(err, ErrNotFound) {
+				return out, err
+			}
+			if p.ModifiedAt < ref.ModifiedAt-2000 || p.ModifiedAt > ref.ModifiedAt+2000 {
+				return out, ErrCompressMismatch
+			}
 		}
 	}
 	if it.State == final && !contains(in.From, final) { // the same report again
