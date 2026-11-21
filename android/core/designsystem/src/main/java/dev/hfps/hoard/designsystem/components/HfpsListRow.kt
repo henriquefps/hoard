@@ -25,7 +25,7 @@ import dev.hfps.hoard.designsystem.theme.HfpsTheme
 /**
  * A settings-like list row inside the card: at least 56dp, [title] (15sp, up to 2 lines) with an optional muted
  * [subtitle] (13sp), an optional leading [icon] (tinted [iconTint]: `warning` for an item that needs attention)
- * and a [trailing] slot (value, switch, caret). Whole row tappable
+ * and a [trailing] slot (value, switch, caret). The subtitle shows up to [subtitleMaxLines] lines. Whole row tappable
  * when [onClick] is set. Separate rows with [HfpsRowDivider].
  */
 @Composable
@@ -37,6 +37,7 @@ fun HfpsListRow(
     iconTint: Color = HfpsTheme.colors.mutedForeground,
     onClick: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
+    subtitleMaxLines: Int = 2,
 ) {
     val rowModifier = if (onClick != null) modifier.clickable(role = Role.Button, onClick = onClick) else modifier
     Row(
@@ -68,7 +69,7 @@ fun HfpsListRow(
                     text = subtitle,
                     style = HfpsTheme.typography.mono.copy(fontFamily = HfpsTheme.typography.ui.fontFamily),
                     color = HfpsTheme.colors.mutedForeground,
-                    maxLines = 2,
+                    maxLines = subtitleMaxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
             }

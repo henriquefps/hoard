@@ -85,8 +85,8 @@ import dev.hfps.hoard.app.ui.gallery.GalleryScreen
 import dev.hfps.hoard.app.ui.machines.MachineFormScreen
 import dev.hfps.hoard.app.ui.machines.MachineFormViewModel
 import dev.hfps.hoard.app.ui.save.SaveScreen
-import dev.hfps.hoard.app.ui.settings.FilesSettingsSection
 import dev.hfps.hoard.app.ui.settings.LicencesScreen
+import dev.hfps.hoard.app.ui.settings.SettingsPage
 import dev.hfps.hoard.app.ui.settings.SettingsScreen
 import dev.hfps.hoard.app.ui.settings.SettingsViewModel
 import dev.hfps.hoard.app.ui.storage.StorageAccessIntents
@@ -190,7 +190,15 @@ fun HoardShell(container: AppContainer) {
                             popEnterTransition = { fadeIn(HfpsMotion.standard()) },
                             popExitTransition = { fadeOut(HfpsMotion.fast()) },
                         ) {
-                            composable<GalleryRoute> { dev.hfps.hoard.app.ui.gallery.GalleryScreen(container, onOpenSettings = { navController.navigate(SettingsRoute) }, onPair = { navController.navigate(PairRoute) }, onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } }) }
+                            composable<GalleryRoute> {
+                                dev.hfps.hoard.app.ui.gallery.GalleryScreen(
+                                    container,
+                                    onOpenSettings = { navController.navigate(SettingsRoute) },
+                                    onPair = { navController.navigate(PairRoute) },
+                                    onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } },
+                                    onOpenServerSettings = { openSettingsPage(navController, SettingsPage.Server) },
+                                )
+                            }
                             composable<PairRoute> { dev.hfps.hoard.app.ui.server.PairScreen(container, onBack = { navController.popBackStack() }) }
                             composable<FilesRoute> {
                                 FilesTab(container, files, navController, ::openLocation, ::openTransfers)
@@ -272,30 +280,56 @@ fun HoardShell(container: AppContainer) {
                                 })
                             }
                             composable<SettingsRoute> {
-                                val state by settings.state.collectAsStateWithLifecycle()
                                 SettingsScreen(
-                                    state = state,
                                     onBack = { navController.popBackStack() },
-                                    onThemeMode = settings::setThemeMode,
-                                    onPalette = settings::setPalette,
-                                    onOpenLicences = { navController.navigate(LicencesRoute) },
-                                    server = {
-                                        dev.hfps.hoard.app.ui.server.ServerSettingsSection(
-                                            container,
-                                            onPair = { navController.navigate(PairRoute) },
-                                            onBackup = { navController.navigate(BackupRoute) },
-                                            onCompress = { navController.navigate(CompressRoute) { launchSingleTop = true } },
-                                        )
-                                    },
-                                    files = { FilesSettingsSection() },
-                                    culling = { dev.hfps.hoard.app.ui.cull.AssistSettingsFields(container) },
-                                    trash = { dev.hfps.hoard.app.ui.trash.TrashSettingsSection(container, onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } }) },
-                                    language = remember { dev.hfps.hoard.app.data.AppLanguage.current(context) },
-                                    onLanguage = { tag ->
-                                        scope.launch { container.settingsStore.putString("language", tag ?: "") }
-                                        dev.hfps.hoard.app.data.AppLanguage.set(context.findActivityOrSelf(), tag)
-                                    },
+                                    onOpen = { page -> navController.navigate(SettingsPageRoute(page.id)) { launchSingleTop = true } },
                                 )
+                            }
+                            composable<SettingsPageRoute> { entry ->
+                                val back: () -> Unit = { navController.popBackStack() }
+                                when (SettingsPage.of(entry.toRoute<SettingsPageRoute>().page)) {
+                                    SettingsPage.Server -> dev.hfps.hoard.app.ui.settings.ServerSettingsScreen(
+                                        container,
+                                        onBack = back,
+                                        onPair = { navController.navigate(PairRoute) },
+                                        onCompress = { navController.navigate(CompressRoute) { launchSingleTop = true } },
+                                    )
+                                    SettingsPage.BackupFolders -> dev.hfps.hoard.app.ui.settings.BackupFoldersSettingsScreen(
+                                        container,
+                                        onBack = back,
+                                        onBackup = { navController.navigate(BackupRoute) },
+                                    )
+                                    SettingsPage.Storage -> dev.hfps.hoard.app.ui.settings.StorageSettingsScreen(container, onBack = back)
+                                    SettingsPage.Appearance -> {
+                                        val state by settings.state.collectAsStateWithLifecycle()
+                                        dev.hfps.hoard.app.ui.settings.AppearanceSettingsScreen(
+                                            state = state,
+                                            onBack = back,
+                                            onThemeMode = settings::setThemeMode,
+                                            onPalette = settings::setPalette,
+                                            language = remember { dev.hfps.hoard.app.data.AppLanguage.current(context) },
+                                            onLanguage = { tag ->
+                                                scope.launch { container.settingsStore.putString("language", tag ?: "") }
+                                                dev.hfps.hoard.app.data.AppLanguage.set(context.findActivityOrSelf(), tag)
+                                            },
+                                        )
+                                    }
+                                    SettingsPage.Browsing -> dev.hfps.hoard.app.ui.settings.BrowsingSettingsScreen(onBack = back)
+                                    SettingsPage.Trash -> dev.hfps.hoard.app.ui.settings.TrashSettingsScreen(
+                                        container,
+                                        onBack = back,
+                                        onOpenTrash = { navController.navigate(TrashRoute) { launchSingleTop = true } },
+                                    )
+                                    SettingsPage.Culling -> dev.hfps.hoard.app.ui.settings.CullingSettingsScreen(container, onBack = back)
+                                    SettingsPage.About -> {
+                                        val state by settings.state.collectAsStateWithLifecycle()
+                                        dev.hfps.hoard.app.ui.settings.AboutSettingsScreen(
+                                            state = state,
+                                            onBack = back,
+                                            onOpenLicences = { navController.navigate(LicencesRoute) },
+                                        )
+                                    }
+                                }
                             }
                             composable<LicencesRoute> { LicencesScreen(onBack = { navController.popBackStack() }) }
                             composable<TrashRoute> { dev.hfps.hoard.app.ui.trash.TrashScreen(container, onBack = { navController.popBackStack() }) }
@@ -347,6 +381,15 @@ fun HoardShell(container: AppContainer) {
 }
 
 private fun android.content.Context.findActivityOrSelf(): android.content.Context = findActivity() ?: this
+
+/**
+ * A Settings screen opened from elsewhere (a deep link): Settings under it, so back returns to the Settings list
+ * (Hoard 2.9.0).
+ */
+private fun openSettingsPage(nav: NavHostController, page: SettingsPage) {
+    nav.navigate(SettingsRoute) { launchSingleTop = true }
+    nav.navigate(SettingsPageRoute(page.id)) { launchSingleTop = true }
+}
 
 /** A breadcrumb or "up": back to that folder when it is on the back stack, a new entry otherwise. */
 private fun navigateToFolder(nav: NavHostController, locationId: String, share: String?, path: String) {

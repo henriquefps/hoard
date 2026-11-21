@@ -615,5 +615,6 @@ fun BackupSettingsRow(container: AppContainer, onOpen: () -> Unit) {
         icon = PhosphorRegular.UploadSimple,
         onClick = onOpen,
         modifier = Modifier.testTag("settings-backup"),
+        subtitleMaxLines = Int.MAX_VALUE,
     )
 }

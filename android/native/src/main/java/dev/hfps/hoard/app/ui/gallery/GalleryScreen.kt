@@ -132,7 +132,14 @@ data class GalleryUi(
 
 /** Tab 1 (ADR 0021): one grid of the phone's shots and the server's items, newest first. */
 @Composable
-fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: () -> Unit, onOpenTrash: (() -> Unit)? = null) {
+fun GalleryScreen(
+    container: AppContainer,
+    onOpenSettings: () -> Unit,
+    onPair: () -> Unit,
+    onOpenTrash: (() -> Unit)? = null,
+    /** Settings › Photo server (the banner of a revoked phone); Settings when not given. */
+    onOpenServerSettings: () -> Unit = onOpenSettings,
+) {
     val vm: GalleryViewModel = viewModel(factory = GalleryViewModelFactory(container))
     val layout by vm.layout.collectAsStateWithLifecycle()
     val filter by vm.filter.collectAsStateWithLifecycle()
@@ -201,6 +208,7 @@ fun GalleryScreen(container: AppContainer, onOpenSettings: () -> Unit, onPair: (
         thumbs = container.gallery.thumbs,
         grid = grid,
         onOpenSettings = onOpenSettings,
+        onOpenServerSettings = onOpenServerSettings,
         onOpenTrash = onOpenTrash,
         onPair = onPair,
         onAskPermission = { askMedia.launch(GalleryPermissions.permissions()) },
@@ -300,6 +308,8 @@ fun GalleryContent(
     thumbs: ThumbSource,
     grid: LazyGridState = rememberLazyGridState(),
     onOpenSettings: () -> Unit = {},
+    /** Settings › Photo server, from the banner of a revoked phone. */
+    onOpenServerSettings: () -> Unit = onOpenSettings,
     /** The trash (ADR 0023); no button when null. */
     onOpenTrash: (() -> Unit)? = null,
     onPair: () -> Unit = {},
@@ -370,7 +380,7 @@ fun GalleryContent(
         },
     ) {
         Column(Modifier.fillMaxSize()) {
-            Banner(ui.account, ui.status, ui.dismissed, onPair = onPair, onSettings = onOpenSettings, onDismiss = onDismiss)
+            Banner(ui.account, ui.status, ui.dismissed, onPair = onPair, onSettings = onOpenServerSettings, onDismiss = onDismiss)
             if (!selection.active) {
                 dev.hfps.hoard.app.ui.compress.ReplaceReadyBanner(ui.replaceReady, onReplaceReady, Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
             }

@@ -935,4 +935,16 @@
         <item quantity="other">%1$s being replaced by compressed copies</item>
     </plurals>
     <string name="freeup_reason_compressing">Being replaced by its compressed copy</string>
+    <!-- Settings reorganized (Hoard 2.9.0, docs/design/settings-2026-11) -->
+    <string name="settings_server_summary">hoard-server, sync, mapped folders</string>
+    <string name="settings_backup_title">Backup and phone folders</string>
+    <string name="settings_backup_summary">Backup, folders and file access</string>
+    <string name="settings_storage_title">Cache and storage</string>
+    <string name="settings_storage_summary">Previews, thumbnails, originals, Reveal copies and links</string>
+    <string name="settings_appearance_title">Appearance and language</string>
+    <string name="settings_appearance_summary">Theme, palette, language</string>
+    <string name="settings_browsing_title">Browsing and transfers</string>
+    <string name="settings_browsing_summary">Sort order, hidden files, existing files</string>
+    <string name="settings_culling_summary">Culling assist and XMP</string>
+    <string name="settings_about_summary">Version and licences</string>
 </resources>

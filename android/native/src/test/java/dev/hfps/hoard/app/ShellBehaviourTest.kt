@@ -15,7 +15,13 @@ import com.google.common.truth.Truth.assertThat
 import dev.hfps.hoard.app.ui.files.FilesScreen
 import dev.hfps.hoard.app.ui.importer.ImportScreen
 import dev.hfps.hoard.app.ui.importer.ImportUiState
-import dev.hfps.hoard.app.ui.settings.SettingsScreen
+import dev.hfps.hoard.app.ui.settings.AboutSettingsScreen
+import dev.hfps.hoard.app.ui.settings.AppearanceSettingsScreen
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollTo
 import dev.hfps.hoard.app.ui.settings.SettingsUiState
 import dev.hfps.hoard.app.ui.shell.Tab
 import dev.hfps.hoard.app.ui.shell.TabbedLayout
@@ -103,14 +109,18 @@ class ShellBehaviourTest {
         var licences = 0
         compose.setContent {
             HfpsTheme(darkTheme = false) {
-                SettingsScreen(SettingsUiState(), {}, { modes += it }, { palettes += it }, { licences++ })
+                Column {
+                    Box(Modifier.weight(1f)) { AppearanceSettingsScreen(SettingsUiState(), {}, { modes += it }, { palettes += it }) }
+                    Box(Modifier.weight(1f)) { AboutSettingsScreen(SettingsUiState(), {}, { licences++ }) }
+                }
             }
         }
+        compose.onNodeWithTag("settings-theme").performClick()
         compose.onNodeWithText("Dark").performClick()
+        compose.onNodeWithTag("settings-palette").performClick()
         compose.onNodeWithText("Olive").performClick()
-        compose.onNode(hasScrollAction()).performScrollToNode(hasText("Open-source licences"))
-        compose.onNodeWithText("Not imported").assertIsDisplayed()
-        compose.onNodeWithText("Open-source licences").performClick()
+        compose.onNodeWithText("Not imported").assertExists()
+        compose.onNodeWithTag("settings-licences").performScrollTo().performClick()
         assertThat(modes).containsExactly(ThemeMode.Dark)
         assertThat(palettes).containsExactly(HfpsPalette.Olive)
         assertThat(licences).isEqualTo(1)

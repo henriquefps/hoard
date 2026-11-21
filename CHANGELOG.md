@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.9.0 (unreleased)
+
+Settings reorganized, after the owner's wireframes ([`docs/design/settings-2026-11/`](docs/design/settings-2026-11/)).
+
+- **Settings is now a list of eight screens**: Photo server, Backup and phone folders, Cache and storage, Appearance and language, Browsing and transfers, Trash, Culling, and About. Each opens its own screen, and back returns to the list. Every setting is still there and works as before; [`MAPPING.md`](docs/design/settings-2026-11/MAPPING.md) says where each one went.
+- **Drop-down lists** replace the long lists of options: theme, palette, language, default sort and its direction, "If the file already exists", the route check timeout, the preview cache limit, the kept originals budget, and "Empty the trash automatically".
+- **Sync now** is a button of its own at the top of Settings › Photo server; the Gallery's "pair again" banner opens that screen directly.
+- Long texts in Settings are no longer cut after two lines: the plain HTTP warning, every sync error, the kept originals' size and the Reveal copies' explanation now show in full.
+
 ## 2.8.1 (unreleased)
 
 Fixes after the first phone compressions ([ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.8.1)").

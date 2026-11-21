@@ -3,7 +3,7 @@ package dev.hfps.hoard.app.ui.trash
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -26,7 +26,6 @@ import dev.hfps.hoard.app.AppContainer
 import dev.hfps.hoard.app.R
 import dev.hfps.hoard.app.data.AppSettings
 import dev.hfps.hoard.designsystem.components.Eyebrow
-import dev.hfps.hoard.designsystem.components.HfpsChoiceRow
 import dev.hfps.hoard.designsystem.components.HfpsListRow
 import dev.hfps.hoard.designsystem.components.HfpsRowDivider
 import dev.hfps.hoard.designsystem.icons.PhosphorRegular
@@ -140,8 +139,8 @@ fun ShortenBody(days: Int, preview: TrashService.AutoEmptyPreview) {
 }
 
 /**
- * The section itself: "Empty the trash automatically" (7 / 30 / 90 days or never; 30 by default), "Open the trash",
- * and Media management, which comes with the phone's trash (A3).
+ * The section itself (Settings › Trash): "Open the trash", "Empty the trash automatically" (7 / 30 / 90 days or never;
+ * 30 by default) and Media management, which comes with the phone's trash (A3).
  */
 @Composable
 fun TrashSettingsContent(
@@ -153,13 +152,22 @@ fun TrashSettingsContent(
     onMedia: () -> Unit = {},
 ) {
     Eyebrow(stringResource(R.string.trash_title), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
-    HfpsListRow(title = stringResource(R.string.trash_settings_open), icon = PhosphorRegular.Trash, onClick = onOpenTrash, modifier = Modifier.testTag("settings-open-trash"))
+    HfpsListRow(
+        title = stringResource(R.string.trash_settings_open),
+        icon = PhosphorRegular.Trash,
+        onClick = onOpenTrash,
+        modifier = Modifier.testTag("settings-open-trash"),
+        trailing = { androidx.compose.material3.Icon(PhosphorRegular.CaretRight, null, Modifier.size(18.dp), tint = HfpsTheme.colors.mutedForeground) },
+    )
     HfpsRowDivider(Modifier.padding(start = 54.dp))
-    Text(
-        stringResource(R.string.trash_settings_auto),
-        style = HfpsTheme.typography.body,
-        color = HfpsTheme.colors.foreground,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+    dev.hfps.hoard.designsystem.components.HfpsSelect(
+        options = AppSettings.TRASH_AUTO_EMPTY_DAYS,
+        selected = days,
+        optionLabel = { option -> if (option == 0) stringResource(R.string.trash_settings_never) else stringResource(R.string.trash_settings_days, option) },
+        onSelect = onDays,
+        label = stringResource(R.string.trash_settings_auto),
+        enabled = !checking,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).testTag("settings-trash-days"),
     )
     Text(
         stringResource(R.string.trash_settings_auto_hint),
@@ -168,12 +176,6 @@ fun TrashSettingsContent(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
     )
     if (checking) Text(stringResource(R.string.trash_checking), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp))
-    Column(Modifier.selectableGroup().padding(horizontal = 16.dp).testTag("settings-trash-days")) {
-        for (option in AppSettings.TRASH_AUTO_EMPTY_DAYS) {
-            val label = if (option == 0) stringResource(R.string.trash_settings_never) else stringResource(R.string.trash_settings_days, option)
-            HfpsChoiceRow(label, days == option, { onDays(option) })
-        }
-    }
     MediaManagementRow(media, onMedia)
     HfpsRowDivider(Modifier.padding(top = 8.dp))
 }
