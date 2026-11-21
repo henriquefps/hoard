@@ -11,15 +11,12 @@ import dev.hfps.hoard.app.ui.gallery.GalleryUi
 import dev.hfps.hoard.app.ui.importer.ImportScreen
 import dev.hfps.hoard.app.ui.importer.ImportUiState
 import dev.hfps.hoard.app.ui.settings.SettingsScreen
-import dev.hfps.hoard.app.ui.settings.SettingsUiState
 import dev.hfps.hoard.app.ui.shell.Tab
 import dev.hfps.hoard.app.ui.shell.TabbedLayout
-import dev.hfps.hoard.data.LegacyImportEntity
 import dev.hfps.hoard.data.legacy.ImportFailure
 import dev.hfps.hoard.data.legacy.ImportProgress
 import dev.hfps.hoard.designsystem.theme.HfpsPalette
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
-import dev.hfps.hoard.designsystem.theme.ThemeMode
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,17 +66,8 @@ class ShellScreenshotTest {
         TabbedLayout(selected = Tab.Gallery, onSelect = {}) { GalleryContent(GalleryUi(dev.hfps.hoard.app.gallery.layout(emptyList(), false)), dev.hfps.hoard.app.gallery.FakeThumbs) }
     }
 
-    private val settings: @Composable () -> Unit = {
-        SettingsScreen(
-            state = SettingsUiState(
-                themeMode = ThemeMode.System,
-                palette = HfpsPalette.Blue,
-                version = "2.0.0-dev",
-                legacyImport = LegacyImportEntity("capacitor", "imported", 1, 7, "{}", "2026-11-14T12:00:00.000Z"),
-            ),
-            onBack = {}, onThemeMode = {}, onPalette = {}, onOpenLicences = {},
-        )
-    }
+    // Hoard 2.9.0: Settings is a list of its parts (each screen's goldens: settings/SettingsScreensTest).
+    private val settings: @Composable () -> Unit = { SettingsScreen(onBack = {}, onOpen = {}) }
 
     @Test fun settingsPhoneLight() = shoot("settings_phone_light", PHONE, dark = false, content = settings)
     @Test fun settingsPhoneDark() = shoot("settings_phone_dark", PHONE, dark = true, content = settings)

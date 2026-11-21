@@ -25,14 +25,10 @@ import dev.hfps.hoard.app.ShellScreenshotTest
 import dev.hfps.hoard.app.ui.gallery.GalleryContent
 import dev.hfps.hoard.app.ui.gallery.GalleryUi
 import dev.hfps.hoard.app.ui.server.ClaimDialog
-import dev.hfps.hoard.app.ui.server.ServerSettingsSection
-import dev.hfps.hoard.app.ui.settings.SettingsScreen
-import dev.hfps.hoard.app.ui.settings.SettingsUiState
+import dev.hfps.hoard.app.ui.settings.ServerSettingsScreen
 import dev.hfps.hoard.app.ui.shell.Tab
 import dev.hfps.hoard.app.ui.shell.TabbedLayout
-import dev.hfps.hoard.designsystem.theme.HfpsPalette
 import dev.hfps.hoard.app.FixedNowTheme
-import dev.hfps.hoard.designsystem.theme.ThemeMode
 import dev.hfps.hoard.server.api.Candidate
 import dev.hfps.hoard.server.api.CandidateDevice
 import dev.hfps.hoard.server.db.ServerAccountEntity
@@ -155,11 +151,7 @@ class GalleryScreenTest {
         val container = Samples2b.container
         runBlocking { if (paired) container.gallery.db.account().put(account) else container.gallery.db.account().clear() }
         return {
-            Samples2b.Toasts { SettingsScreen(
-                state = SettingsUiState(themeMode = ThemeMode.System, palette = HfpsPalette.Blue, version = "2.0.0-dev", legacyImport = null),
-                onBack = {}, onThemeMode = {}, onPalette = {}, onOpenLicences = {},
-                server = { ServerSettingsSection(container, onPair = {}) },
-            ) }
+            Samples2b.Toasts { ServerSettingsScreen(container, onBack = {}, onPair = {}, onCompress = {}) }
         }
     }
 

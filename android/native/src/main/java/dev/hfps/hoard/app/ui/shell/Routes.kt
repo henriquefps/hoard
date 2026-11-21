@@ -9,6 +9,9 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object SettingsRoute
 
+/** One Settings screen (Hoard 2.9.0): `page` is a `SettingsPage.id`. */
+@Serializable data class SettingsPageRoute(val page: String)
+
 @Serializable data object LicencesRoute
 
 /** A folder (or a machine's share list: `share` null) of any location (ADR 0005): part of the Files tab. */

@@ -2,7 +2,6 @@ package dev.hfps.hoard.app.ui.server
 
 import android.content.ClipboardManager
 import android.content.Context
-import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,9 +38,11 @@ import dev.hfps.hoard.app.ui.common.ConfirmDialog
 import dev.hfps.hoard.app.ui.common.HoardDialog
 import dev.hfps.hoard.app.ui.common.LocalToaster
 import dev.hfps.hoard.app.ui.common.fieldColors
+import dev.hfps.hoard.app.ui.common.formatRelativeTime
+import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.designsystem.components.Eyebrow
 import dev.hfps.hoard.designsystem.components.GhostButton
-import dev.hfps.hoard.designsystem.components.HfpsChoiceRow
+import dev.hfps.hoard.designsystem.components.HfpsSelect
 import dev.hfps.hoard.designsystem.components.HfpsListRow
 import dev.hfps.hoard.designsystem.components.HfpsRowDivider
 import dev.hfps.hoard.designsystem.components.HfpsScaffold
@@ -58,38 +59,31 @@ import dev.hfps.hoard.server.sync.PairingException
 import dev.hfps.hoard.server.sync.SyncEngine
 import kotlinx.coroutines.launch
 
+
 /** Settings key of the preview cache limit, in MiB (ADR 0021). */
 const val CACHE_LIMIT_KEY = "galleryCacheMb"
 private val CACHE_CHOICES = listOf(256L, 1024L, 4096L)
+private val ORIGINAL_CHOICES = listOf(512L, 2048L, 8192L)
 
 /**
- * Settings › Photo server (ADR 0021): pair, status, sync now, this phone (ADR 0017), the preview cache, phone
- * folders, unpair.
+ * Settings › Photo server (ADR 0021): pair; once paired, sync now, the server (its address), status, this phone
+ * (ADR 0017), "Compress videos" (ADR 0025, with the feature), mapped folders (ADR 0022) and unpair.
  */
 @Composable
-fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup: () -> Unit = {}, onCompress: () -> Unit = {}) {
+fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onCompress: () -> Unit = {}) {
     val repo = container.gallery
     val account by repo.account.collectAsState(initial = null)
     val status by repo.sync.status.collectAsState()
     val items by repo.db.items().observeCount().collectAsState(initial = 0)
     val pending by repo.db.culling().observePendingCount().collectAsState(initial = 0)
-    val folders by repo.db.device().observeFolders().collectAsState(initial = emptyList())
     val context = LocalContext.current
-    val res = androidx.compose.ui.platform.LocalResources.current
-    val toaster = LocalToaster.current
     val scope = rememberCoroutineScope()
     var unpair by remember { mutableStateOf(false) }
-    var addFolder by remember { mutableStateOf(false) }
     var changeAddress by remember { mutableStateOf(false) }
     var device by remember { mutableStateOf<DeviceView?>(null) }
-    var cacheBytes by remember { mutableLongStateOf(0L) }
-    val limitMb by container.settingsStore.observeString(CACHE_LIMIT_KEY).collectAsState(initial = null)
-    val limit = (limitMb?.toLongOrNull() ?: 1024L) shl 20
     LaunchedEffect(account?.serverId) {
         if (account != null) device = runCatching { repo.sync.deviceView() }.getOrNull()
-        cacheBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { repo.previews.bytes() }
     }
-    LaunchedEffect(limit) { repo.previews.maxBytes = limit }
 
     Eyebrow(stringResource(R.string.server_section), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
     Text(stringResource(R.string.server_section_hint), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 4.dp))
@@ -102,107 +96,68 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup:
             onClick = onPair,
             modifier = Modifier.testTag("server-pair"),
         )
-    } else {
-        val plain = a.url.startsWith("http://")
-        HfpsListRow(
-            title = stringResource(R.string.server_paired, a.serverName ?: "hoard-server"),
-            subtitle = stringResource(R.string.server_paired_subtitle, a.serverVersion ?: "?", a.url) +
-                if (plain) "\n" + stringResource(R.string.server_plain_http) else "",
-            icon = if (plain) PhosphorRegular.Warning else PhosphorRegular.LockSimple,
-            iconTint = if (plain) HfpsTheme.colors.destructive else HfpsTheme.colors.mutedForeground,
-            modifier = Modifier.testTag("server-paired"),
-            trailing = { GhostButton(stringResource(R.string.server_address_change), { changeAddress = true }, modifier = Modifier.testTag("server-address")) },
-        )
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        val now = System.currentTimeMillis()
-        val lines = listOfNotNull(
-            a.lastSyncAt?.let { stringResource(R.string.server_status_synced, DateUtils.getRelativeTimeSpanString(it, now, DateUtils.MINUTE_IN_MILLIS).toString()) } ?: stringResource(R.string.server_status_never),
-            stringResource(R.string.server_status_items, items),
-            if (pending > 0) stringResource(R.string.server_status_pending, pending) else null,
-            when (a.lastError) {
-                null -> null
-                SyncEngine.ERROR_OFFLINE -> stringResource(R.string.server_status_error_offline)
-                SyncEngine.ERROR_UNAUTHORIZED -> stringResource(R.string.server_status_error_revoked)
-                else -> stringResource(R.string.server_status_error_other, a.lastError!!)
-            },
-            // The pull went on; refused decisions wait for their backoff (ADR 0021 "Sync passes").
-            status.pushError?.let { stringResource(R.string.server_status_push_refused, it) },
-        )
-        HfpsListRow(
-            title = stringResource(R.string.server_status),
-            subtitle = lines.joinToString("\n"),
-            icon = if (a.lastError != null) PhosphorRegular.WarningCircle else PhosphorRegular.CheckCircle,
-            modifier = Modifier.testTag("server-status"),
-            trailing = {
-                SecondaryButton(stringResource(R.string.server_sync_now), {
-                    scope.launch { repo.syncNow() }
-                }, enabled = !status.running, modifier = Modifier.testTag("server-sync-now"))
-            },
-        )
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        val group = device?.physicalDevice?.devices.orEmpty().filter { it.id != a.deviceId }
-        HfpsListRow(
-            title = stringResource(R.string.server_this_phone),
-            subtitle = if (group.isEmpty()) stringResource(R.string.server_this_phone_alone) else stringResource(R.string.server_this_phone_group, group.joinToString { it.app ?: it.name ?: "?" }),
-            icon = PhosphorRegular.DeviceMobile,
-        )
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        // The phone backup (ADR 0024): its summary, opening Settings › Backup.
-        dev.hfps.hoard.app.ui.backup.BackupSettingsRow(container, onBackup)
-        dev.hfps.hoard.app.ui.compress.CompressSettingsRow(container, onCompress)
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        HfpsListRow(
-            title = stringResource(R.string.server_cache),
-            subtitle = stringResource(R.string.server_cache_subtitle, Formatter.formatShortFileSize(context, cacheBytes), Formatter.formatShortFileSize(context, limit)),
-            icon = PhosphorRegular.Database,
-            trailing = {
-                GhostButton(stringResource(R.string.server_cache_clear), {
-                    scope.launch {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { repo.previews.clear() }
-                        repo.thumbs.clear()
-                        cacheBytes = 0
-                        toaster.show(res.getString(R.string.server_cache_cleared))
-                    }
-                })
-            },
-        )
-        Column(Modifier.padding(start = 54.dp, end = 16.dp)) {
-            Text(stringResource(R.string.server_cache_limit), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
-            CACHE_CHOICES.forEach { mb ->
-                HfpsChoiceRow(Formatter.formatShortFileSize(context, mb shl 20), limit == (mb shl 20), { scope.launch { container.settingsStore.putString(CACHE_LIMIT_KEY, mb.toString()) } })
-            }
-        }
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        OfflineStorage(container)
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        MappedFolders(container)
-        HfpsRowDivider(Modifier.padding(start = 54.dp))
-        HfpsListRow(
-            title = stringResource(R.string.server_unpair),
-            icon = PhosphorRegular.XCircle,
-            iconTint = HfpsTheme.colors.destructive,
-            onClick = { unpair = true },
-            modifier = Modifier.testTag("server-unpair"),
-        )
+        return
     }
+    SecondaryButton(
+        stringResource(R.string.server_sync_now),
+        { scope.launch { repo.syncNow() } },
+        enabled = !status.running,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).testTag("server-sync-now"),
+    )
+    val plain = a.url.startsWith("http://")
+    HfpsListRow(
+        title = stringResource(R.string.server_paired, a.serverName ?: "hoard-server"),
+        subtitle = stringResource(R.string.server_paired_subtitle, a.serverVersion ?: "?", a.url) +
+            if (plain) "\n" + stringResource(R.string.server_plain_http) else "",
+        icon = if (plain) PhosphorRegular.Warning else PhosphorRegular.LockSimple,
+        iconTint = if (plain) HfpsTheme.colors.destructive else HfpsTheme.colors.mutedForeground,
+        modifier = Modifier.testTag("server-paired"),
+        subtitleMaxLines = Int.MAX_VALUE,
+        trailing = { GhostButton(stringResource(R.string.server_address_change), { changeAddress = true }, modifier = Modifier.testTag("server-address")) },
+    )
+    HfpsRowDivider(Modifier.padding(start = 54.dp))
+    val now = System.currentTimeMillis()
+    val lines = listOfNotNull(
+        a.lastSyncAt?.let { stringResource(R.string.server_status_synced, formatRelativeTime(it, now, locale())) } ?: stringResource(R.string.server_status_never),
+        stringResource(R.string.server_status_items, items),
+        if (pending > 0) stringResource(R.string.server_status_pending, pending) else null,
+        when (a.lastError) {
+            null -> null
+            SyncEngine.ERROR_OFFLINE -> stringResource(R.string.server_status_error_offline)
+            SyncEngine.ERROR_UNAUTHORIZED -> stringResource(R.string.server_status_error_revoked)
+            else -> stringResource(R.string.server_status_error_other, a.lastError!!)
+        },
+        // The pull went on; refused decisions wait for their backoff (ADR 0021 "Sync passes").
+        status.pushError?.let { stringResource(R.string.server_status_push_refused, it) },
+    )
+    HfpsListRow(
+        title = stringResource(R.string.server_status),
+        subtitle = lines.joinToString("\n"),
+        icon = if (a.lastError != null) PhosphorRegular.WarningCircle else PhosphorRegular.CheckCircle,
+        modifier = Modifier.testTag("server-status"),
+        subtitleMaxLines = Int.MAX_VALUE,
+    )
+    HfpsRowDivider(Modifier.padding(start = 54.dp))
+    val group = device?.physicalDevice?.devices.orEmpty().filter { it.id != a.deviceId }
+    HfpsListRow(
+        title = stringResource(R.string.server_this_phone),
+        subtitle = if (group.isEmpty()) stringResource(R.string.server_this_phone_alone) else stringResource(R.string.server_this_phone_group, group.joinToString { it.app ?: it.name ?: "?" }),
+        icon = PhosphorRegular.DeviceMobile,
+    )
+    // Compress videos (ADR 0025): only when the server has the feature.
+    dev.hfps.hoard.app.ui.compress.CompressSettingsRow(container, onCompress)
+    HfpsRowDivider(Modifier.padding(start = 54.dp))
+    MappedFolders(container)
     HfpsRowDivider(Modifier.padding(start = 54.dp))
     HfpsListRow(
-        title = stringResource(R.string.server_device_folders),
-        subtitle = (listOf(stringResource(R.string.server_device_folders_subtitle)) + folders.map { it.path }).joinToString("\n"),
-        icon = PhosphorRegular.FolderSimple,
-        trailing = { GhostButton(stringResource(R.string.server_device_folder_add), { addFolder = true }) },
+        title = stringResource(R.string.server_unpair),
+        icon = PhosphorRegular.LinkBreak,
+        iconTint = HfpsTheme.colors.destructive,
+        onClick = { unpair = true },
+        modifier = Modifier.testTag("server-unpair"),
     )
-    folders.forEach { f ->
-        HfpsListRow(
-            title = f.path,
-            icon = PhosphorRegular.X,
-            onClick = { scope.launch { repo.deviceIndex.removeFolder(f.path) } },
-            modifier = Modifier.padding(start = 38.dp),
-        )
-    }
-    HfpsRowDivider(Modifier.padding(top = 8.dp))
 
-    if (unpair && a != null) {
+    if (unpair) {
         ConfirmDialog(
             title = stringResource(R.string.server_unpair_title, a.serverName ?: "hoard-server"),
             body = stringResource(R.string.server_unpair_body),
@@ -218,7 +173,7 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup:
             },
         )
     }
-    if (changeAddress && a != null) {
+    if (changeAddress) {
         var url by remember { mutableStateOf(a.url) }
         var failed by remember { mutableStateOf(false) }
         HoardDialog(
@@ -239,6 +194,89 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onBackup:
                 colors = fieldColors(), modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("server-address-field"))
         }
     }
+}
+
+/**
+ * Settings › Cache and storage › the photo server's caches on this phone (ADR 0021), shown while paired: previews
+ * (and their limit), offline thumbnails, kept originals (and their budget).
+ */
+@Composable
+fun GalleryCacheSection(container: AppContainer) {
+    val repo = container.gallery
+    val account by repo.account.collectAsState(initial = null)
+    if (account == null) return
+    val context = LocalContext.current
+    val res = androidx.compose.ui.platform.LocalResources.current
+    val toaster = LocalToaster.current
+    val scope = rememberCoroutineScope()
+    var cacheBytes by remember { mutableLongStateOf(0L) }
+    val limitMb by container.settingsStore.observeString(CACHE_LIMIT_KEY).collectAsState(initial = null)
+    val limit = (limitMb?.toLongOrNull() ?: 1024L) shl 20
+    LaunchedEffect(account?.serverId) {
+        cacheBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { repo.previews.bytes() }
+    }
+    LaunchedEffect(limit) { repo.previews.maxBytes = limit }
+
+    HfpsListRow(
+        title = stringResource(R.string.server_cache),
+        subtitle = stringResource(R.string.server_cache_subtitle, Formatter.formatShortFileSize(context, cacheBytes), Formatter.formatShortFileSize(context, limit)),
+        icon = PhosphorRegular.Database,
+        modifier = Modifier.testTag("server-cache"),
+        subtitleMaxLines = Int.MAX_VALUE,
+        trailing = {
+            GhostButton(stringResource(R.string.server_cache_clear), {
+                scope.launch {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { repo.previews.clear() }
+                    repo.thumbs.clear()
+                    cacheBytes = 0
+                    toaster.show(res.getString(R.string.server_cache_cleared))
+                }
+            })
+        },
+    )
+    HfpsSelect(
+        options = CACHE_CHOICES,
+        selected = limit shr 20,
+        optionLabel = { mb -> Formatter.formatShortFileSize(context, mb shl 20) },
+        onSelect = { mb -> scope.launch { container.settingsStore.putString(CACHE_LIMIT_KEY, mb.toString()) } },
+        label = stringResource(R.string.server_cache_limit),
+        modifier = Modifier.padding(horizontal = 16.dp).padding(bottom = 8.dp).testTag("server-cache-limit"),
+    )
+    HfpsRowDivider(Modifier.padding(start = 54.dp))
+    OfflineStorage(container)
+    HfpsRowDivider(Modifier.padding(top = 8.dp))
+}
+
+/**
+ * Settings › Backup and phone folders › Phone folders (ADR 0021): the folders the Gallery shows besides the usual
+ * ones, each removable, and "Add a folder".
+ */
+@Composable
+fun PhoneFoldersSection(container: AppContainer) {
+    val repo = container.gallery
+    val folders by repo.db.device().observeFolders().collectAsState(initial = emptyList())
+    val scope = rememberCoroutineScope()
+    var addFolder by remember { mutableStateOf(false) }
+    HfpsListRow(
+        title = stringResource(R.string.server_device_folders),
+        subtitle = stringResource(R.string.server_device_folders_subtitle),
+        icon = PhosphorRegular.FolderSimple,
+        modifier = Modifier.testTag("server-device-folders"),
+    )
+    folders.forEach { f ->
+        HfpsListRow(
+            title = f.path,
+            icon = PhosphorRegular.X,
+            onClick = { scope.launch { repo.deviceIndex.removeFolder(f.path) } },
+            modifier = Modifier.padding(start = 38.dp),
+        )
+    }
+    GhostButton(
+        stringResource(R.string.server_device_folder_add),
+        { addFolder = true },
+        icon = PhosphorRegular.Plus,
+        modifier = Modifier.padding(start = 46.dp).testTag("server-device-folder-add"),
+    )
     if (addFolder) {
         var path by remember { mutableStateOf("/storage/emulated/0/") }
         HoardDialog(
@@ -381,10 +419,6 @@ fun ClaimDialog(candidates: List<Candidate>, onAnswer: (String?) -> Unit) {
     }
 }
 
-
-private val ORIGINAL_CHOICES = listOf(512L, 2048L, 8192L)
-
-/** Settings › Photo server › storage on this phone (ADR 0021): offline thumbnails and kept originals. */
 /**
  * Settings › Photo server › Mapped folders (ADR 0022): each SMB share folder Hoard learned is one of the server's NAS
  * folders, with "Forget" (it is learned again the next time a folder there opens).
@@ -400,6 +434,7 @@ private fun MappedFolders(container: AppContainer) {
         subtitle = stringResource(if (mappings.isEmpty()) R.string.server_mapped_folders_none else R.string.server_mapped_folders_hint),
         icon = PhosphorRegular.LinkSimple,
         modifier = Modifier.testTag("server-mapped-folders"),
+        subtitleMaxLines = Int.MAX_VALUE,
     )
     mappings.forEach { m ->
         val machine = machines.firstOrNull { it.machine.id == m.machineId }?.machine?.name ?: m.machineId
@@ -415,6 +450,7 @@ private fun MappedFolders(container: AppContainer) {
     }
 }
 
+/** Offline thumbnails (with their Wi-Fi and charging switches) and kept originals (with their budget). */
 @Composable
 private fun OfflineStorage(container: AppContainer) {
     val repo = container.gallery
@@ -443,6 +479,7 @@ private fun OfflineStorage(container: AppContainer) {
         subtitle = stringResource(R.string.server_offline_thumbs_subtitle, thumbs.first, items, Formatter.formatShortFileSize(context, thumbs.second)),
         icon = PhosphorRegular.Images,
         modifier = Modifier.testTag("server-offline-thumbs"),
+        subtitleMaxLines = Int.MAX_VALUE,
         trailing = {
             GhostButton(stringResource(R.string.server_cache_clear), {
                 scope.launch {
@@ -472,6 +509,7 @@ private fun OfflineStorage(container: AppContainer) {
         title = stringResource(R.string.server_originals),
         subtitle = stringResource(R.string.server_originals_subtitle, Formatter.formatShortFileSize(context, originals), Formatter.formatShortFileSize(context, budget)),
         icon = PhosphorRegular.HardDrive,
+        subtitleMaxLines = Int.MAX_VALUE,
         trailing = {
             GhostButton(stringResource(R.string.server_cache_clear), {
                 scope.launch {
@@ -481,9 +519,11 @@ private fun OfflineStorage(container: AppContainer) {
             })
         },
     )
-    Column(Modifier.padding(start = 54.dp, end = 16.dp)) {
-        ORIGINAL_CHOICES.forEach { mb ->
-            HfpsChoiceRow(Formatter.formatShortFileSize(context, mb shl 20), budget == (mb shl 20), { scope.launch { store.putString(dev.hfps.hoard.app.gallery.GalleryRepository.KEY_ORIGINALS_MB, mb.toString()) } })
-        }
-    }
+    HfpsSelect(
+        options = ORIGINAL_CHOICES,
+        selected = budget shr 20,
+        optionLabel = { mb -> Formatter.formatShortFileSize(context, mb shl 20) },
+        onSelect = { mb -> scope.launch { store.putString(dev.hfps.hoard.app.gallery.GalleryRepository.KEY_ORIGINALS_MB, mb.toString()) } },
+        modifier = Modifier.padding(horizontal = 16.dp).testTag("server-originals-budget"),
+    )
 }

@@ -132,3 +132,6 @@ sim-card
 broom
 # Video compression (ADR 0025 A1)
 arrows-in
+# Settings reorganized (Hoard 2.9.0)
+palette
+link-break

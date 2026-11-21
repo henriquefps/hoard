@@ -1,6 +1,5 @@
 package dev.hfps.hoard.app.ui.backup
 
-import android.text.format.DateUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -50,6 +49,7 @@ import dev.hfps.hoard.app.ui.common.LocalToaster
 import dev.hfps.hoard.app.ui.common.bytes
 import dev.hfps.hoard.app.ui.common.fieldColors
 import dev.hfps.hoard.app.ui.common.formatNumber
+import dev.hfps.hoard.app.ui.common.formatRelativeTime
 import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.designsystem.components.Eyebrow
 import dev.hfps.hoard.designsystem.components.GhostButton
@@ -358,7 +358,7 @@ fun statusText(row: FolderRow, now: Long): String {
     if (s.refused > 0) parts += pluralStringResource(R.plurals.backup_status_refused, s.refused, formatNumber(s.refused, l))
     val second = listOf(
         stringResource(R.string.backup_status_bytes, bytes(s.backedUpBytes), bytes(s.bytes)),
-        row.lastPassAt?.let { stringResource(R.string.backup_status_last_pass, DateUtils.getRelativeTimeSpanString(it, now, DateUtils.MINUTE_IN_MILLIS).toString()) }
+        row.lastPassAt?.let { stringResource(R.string.backup_status_last_pass, formatRelativeTime(it, now, l)) }
             ?: stringResource(R.string.backup_status_never),
     )
     return parts.joinToString(" · ") + "\n" + second.joinToString(" · ")
@@ -615,5 +615,6 @@ fun BackupSettingsRow(container: AppContainer, onOpen: () -> Unit) {
         icon = PhosphorRegular.UploadSimple,
         onClick = onOpen,
         modifier = Modifier.testTag("settings-backup"),
+        subtitleMaxLines = Int.MAX_VALUE,
     )
 }

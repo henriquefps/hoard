@@ -1017,4 +1017,16 @@
         <item quantity="other">%1$s sendo substituídos por cópias comprimidas</item>
     </plurals>
     <string name="freeup_reason_compressing">Sendo substituído pela cópia comprimida</string>
+    <!-- Settings reorganized (Hoard 2.9.0, docs/design/settings-2026-11) -->
+    <string name="settings_server_summary">hoard-server, sincronização, pastas mapeadas</string>
+    <string name="settings_backup_title">Backup e pastas do celular</string>
+    <string name="settings_backup_summary">Backup, pastas e acesso aos arquivos</string>
+    <string name="settings_storage_title">Cache e armazenamento</string>
+    <string name="settings_storage_summary">Prévias, miniaturas, originais, cópias e links do Reveal</string>
+    <string name="settings_appearance_title">Aparência e idioma</string>
+    <string name="settings_appearance_summary">Tema, paleta, idioma</string>
+    <string name="settings_browsing_title">Navegação e transferências</string>
+    <string name="settings_browsing_summary">Ordem, arquivos ocultos, arquivos existentes</string>
+    <string name="settings_culling_summary">Assistência na seleção e XMP</string>
+    <string name="settings_about_summary">Versão e licenças</string>
 </resources>

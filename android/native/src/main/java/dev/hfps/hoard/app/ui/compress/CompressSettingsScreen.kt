@@ -360,5 +360,6 @@ fun CompressSettingsRow(container: AppContainer, onOpen: () -> Unit) {
         icon = PhosphorRegular.ArrowsIn,
         onClick = onOpen,
         modifier = Modifier.testTag("settings-compress"),
+        subtitleMaxLines = Int.MAX_VALUE,
     )
 }

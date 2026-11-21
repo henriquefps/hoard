@@ -31,9 +31,8 @@ import dev.hfps.hoard.app.ui.machines.MachineDraft
 import dev.hfps.hoard.app.ui.machines.MachineFormScreen
 import dev.hfps.hoard.app.ui.machines.MachineFormState
 import dev.hfps.hoard.app.ui.machines.MachineFormViewModel
-import dev.hfps.hoard.app.ui.settings.FilesSettingsContent
-import dev.hfps.hoard.app.ui.settings.SettingsScreen
-import dev.hfps.hoard.app.ui.settings.SettingsUiState
+import dev.hfps.hoard.app.ui.settings.BrowsingSettingsContent
+import dev.hfps.hoard.app.ui.settings.SettingsPageScaffold
 import dev.hfps.hoard.app.ui.shell.Tab
 import dev.hfps.hoard.app.ui.shell.TabbedLayout
 import dev.hfps.hoard.app.ui.storage.StorageAccessScreen
@@ -252,9 +251,9 @@ class FilesTabTest {
 
     @Test fun settingsFilesPhoneDark() = shoot("settings_files_phone_dark", PHONE, dark = true) {
         Samples2b.Toasts {
-            SettingsScreen(SettingsUiState(), {}, {}, {}, {}, files = {
-                FilesSettingsContent(FilesSettings(showHiddenFiles = true, defaultSort = SortOrder(SortKey.Modified, false), defaultConflict = "rename"), null)
-            })
+            SettingsPageScaffold("Browsing and transfers", {}) {
+                BrowsingSettingsContent(FilesSettings(showHiddenFiles = true, defaultSort = SortOrder(SortKey.Modified, false), defaultConflict = "rename"), null)
+            }
         }
     }
 }
