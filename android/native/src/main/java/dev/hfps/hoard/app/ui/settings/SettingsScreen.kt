@@ -20,6 +20,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.hfps.hoard.app.R
+import dev.hfps.hoard.app.ui.common.formatIsoDay
+import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.data.LegacyImportEntity
 import dev.hfps.hoard.designsystem.components.Eyebrow
 import dev.hfps.hoard.designsystem.components.HfpsListRow
@@ -214,7 +216,7 @@ const val REPOSITORY = "https://github.com/henriquefps/hoard"
 private fun importSubtitle(record: LegacyImportEntity?): String = when (record?.status) {
     null -> stringResource(R.string.settings_import_pending)
     "none" -> stringResource(R.string.settings_import_none)
-    else -> stringResource(R.string.settings_import_done, record.importedAt.take(10))
+    else -> stringResource(R.string.settings_import_done, formatIsoDay(record.importedAt, locale()))
 }
 
 fun themeName(mode: ThemeMode): Int = when (mode) {

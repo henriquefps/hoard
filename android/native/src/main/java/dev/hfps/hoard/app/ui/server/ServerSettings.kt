@@ -2,7 +2,6 @@ package dev.hfps.hoard.app.ui.server
 
 import android.content.ClipboardManager
 import android.content.Context
-import android.text.format.DateUtils
 import android.text.format.Formatter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,6 +38,8 @@ import dev.hfps.hoard.app.ui.common.ConfirmDialog
 import dev.hfps.hoard.app.ui.common.HoardDialog
 import dev.hfps.hoard.app.ui.common.LocalToaster
 import dev.hfps.hoard.app.ui.common.fieldColors
+import dev.hfps.hoard.app.ui.common.formatRelativeTime
+import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.designsystem.components.Eyebrow
 import dev.hfps.hoard.designsystem.components.GhostButton
 import dev.hfps.hoard.designsystem.components.HfpsSelect
@@ -117,7 +118,7 @@ fun ServerSettingsSection(container: AppContainer, onPair: () -> Unit, onCompres
     HfpsRowDivider(Modifier.padding(start = 54.dp))
     val now = System.currentTimeMillis()
     val lines = listOfNotNull(
-        a.lastSyncAt?.let { stringResource(R.string.server_status_synced, DateUtils.getRelativeTimeSpanString(it, now, DateUtils.MINUTE_IN_MILLIS).toString()) } ?: stringResource(R.string.server_status_never),
+        a.lastSyncAt?.let { stringResource(R.string.server_status_synced, formatRelativeTime(it, now, locale())) } ?: stringResource(R.string.server_status_never),
         stringResource(R.string.server_status_items, items),
         if (pending > 0) stringResource(R.string.server_status_pending, pending) else null,
         when (a.lastError) {
