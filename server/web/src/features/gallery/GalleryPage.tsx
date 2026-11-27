@@ -1,4 +1,4 @@
-import { ArrowsInIcon, CheckIcon, DownloadSimpleIcon, ImagesIcon, MinusCircleIcon, StarIcon, XIcon } from "@phosphor-icons/react"
+import { ArrowsInIcon, CheckIcon, ChecksIcon, DownloadSimpleIcon, ImagesIcon, MinusCircleIcon, StarIcon, TrashIcon, XIcon } from "@phosphor-icons/react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -24,6 +24,7 @@ import { CELL_SIZES, type CellSize } from "@/lib/cellSize"
 import { takeLastViewed } from "@/lib/viewState"
 import { selectionParts, useCompress } from "@/lib/compress"
 import { CompressDialog, type CompressRequest } from "../compress/CompressDialog"
+import { MoveToTrashDialog } from "../trash/MoveToTrashDialog"
 
 const SIZE_KEY = "hoard-web.cellSize"
 const readSize = (): CellSize => {
@@ -56,6 +57,7 @@ export function GalleryPage({ previews }: { previews: boolean }) {
   const viewerOpen = loc.path.startsWith("/items/")
   const { info: compressInfo } = useCompress()
   const [compress, setCompress] = useState<CompressRequest | null>(null)
+  const [trash, setTrash] = useState<string[] | null>(null)
 
   const rows = useMemo(() => applyFilters(library.rows, filters, library.folders), [library.rows, filters, library.folders])
   const cells = useMemo(() => expandStacks(rows, expanded), [rows, expanded])
@@ -263,6 +265,16 @@ export function GalleryPage({ previews }: { previews: boolean }) {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          {selected.size < rows.length && (
+            <Button variant="ghost" onClick={() => setSelected(new Set(rows.map((r) => r.id)))} data-testid="select-all">
+              <ChecksIcon data-icon="inline-start" />
+              {t("select.all", { count: rows.length, formatted: formatNumber(rows.length, i18n.language) })}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => setTrash([...selected])} data-testid="trash-selection">
+            <TrashIcon data-icon="inline-start" />
+            {t("trash.move.button")}
+          </Button>
           {selectedVideos.length > 0 && (
             <Button variant="outline" onClick={openCompress} data-testid="compress-selection">
               <ArrowsInIcon data-icon="inline-start" />
@@ -283,6 +295,7 @@ export function GalleryPage({ previews }: { previews: boolean }) {
           onChange={(f) => setFilters(f)}
           cellSize={cellSize}
           onCellSize={changeSize}
+          onSelectAll={() => setSelected(new Set(rows.map((r) => r.id)))}
         />
       )}
       {rows.length === 0 ? (
@@ -315,6 +328,7 @@ export function GalleryPage({ previews }: { previews: boolean }) {
         />
       )}
       <CompressDialog request={compress} info={compressInfo} onClose={() => setCompress(null)} />
+      <MoveToTrashDialog ids={trash} onClose={() => setTrash(null)} onMoved={(moved) => setSelected((prev) => new Set([...prev].filter((id) => !moved.includes(id))))} />
       {!previews && (
         <p className="border-t px-4 py-2 text-sm text-muted-foreground" role="note">
           {t("gallery.noPreviews")}

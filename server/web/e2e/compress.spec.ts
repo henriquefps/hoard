@@ -236,6 +236,7 @@ test("the trash: compressed originals with Restore and Delete permanently, the h
   const open = async () => {
     await go(page, "/trash")
     await expect(page.getByTestId("trash")).toBeVisible()
+    for (const g of await page.getByTestId("trash-group-toggle").all()) await g.click()
   }
   await open()
   const entry = (name: string) => page.locator(`[data-testid="trash-entry"][data-name="${name}"]`)
@@ -245,15 +246,18 @@ test("the trash: compressed originals with Restore and Delete permanently, the h
   await expect(entry("DJI_0002.MP4")).toContainText("Original of a compressed video")
   const held = entry("DJI_HOLD_0003.MP4")
   await expect(held).toContainText("Held by a compression in progress")
-  await expect(held.getByRole("button")).toHaveCount(0) // nothing empties a held entry
+  await expect(held.getByRole("checkbox")).toHaveCount(0) // nothing empties a held entry
   await shots(page, "trash", open)
 
-  // Empty: only compressed originals are counted, never the held one.
-  await expect(page.getByTestId("trash-empty-compressed")).toHaveText("Empty 2 originals")
+  // Empty counts the compressed originals, never the held one.
+  await page.getByTestId("trash-empty").click()
+  await expect(page.getByTestId("confirm-dialog")).toContainText(/2 shots \([\d.]+ MB\) will be deleted for good/)
+  await page.keyboard.press("Escape")
 
   // Restore DJI_0001: the original is back at its path; the output goes to the trash ("Compress again").
-  await entry("DJI_0001.MP4").getByTestId("trash-restore").click()
-  await expect(page.getByText("Restore started")).toBeVisible()
+  await entry("DJI_0001.MP4").getByRole("checkbox").click()
+  await page.getByTestId("trash-restore-selection").click()
+  await expect(page.getByText("1 shot restored")).toBeVisible()
   await expect
     .poll(
       async () =>
@@ -266,23 +270,82 @@ test("the trash: compressed originals with Restore and Delete permanently, the h
     )
     .toBe("restored")
 
-  // Delete DJI_0002 permanently: the server purges it; it leaves the list at once.
-  await entry("DJI_0002.MP4").getByTestId("trash-purge").click()
-  await expect(page.getByTestId("confirm-dialog")).toContainText(
-    /1 original \([\d.]+ MB\) is deleted for good by the server\./
-  )
+  // Delete DJI_0002 permanently: the server's compression purges it; it leaves the list.
+  await open()
+  await entry("DJI_0002.MP4").getByRole("checkbox").click()
+  await page.getByTestId("trash-delete-selection").click()
+  await expect(page.getByTestId("confirm-dialog")).toContainText(/1 shot \([\d.]+ MB\) will be deleted for good/)
   await shot(page, "trash-purge-confirm-desktop-light")
   await page.getByTestId("confirm-action").click()
-  await expect(page.getByText("1 original emptied")).toBeVisible()
+  await expect(page.getByText(/1 shot deleted/)).toBeVisible()
   await expect(entry("DJI_0002.MP4")).toHaveCount(0)
   await expect(held).toBeVisible() // still there, still held
 
-  // After the next walk the restored output of DJI_0001 is the trashed side ("Compress again").
-  await expect(entry("DJI_0001.MP4")).toContainText(
-    "Compressed video (the original was restored)",
-    { timeout: 150_000 }
-  )
-  await expect(entry("DJI_0001.MP4").getByTestId("trash-restore")).toHaveText("Compress again")
+  // After the next walk the restored output of DJI_0001 is the trashed side.
+  await expect
+    .poll(
+      async () => {
+        await open()
+        return entry("DJI_0001.MP4").textContent()
+      },
+      { timeout: 150_000, intervals: [5_000] }
+    )
+    .toContain("Compressed video (the original was restored)")
+})
+
+test("the whole library's estimate: videos, sizes, skips and the NAS's room", async ({ page }) => {
+  test.setTimeout(90_000)
+  await signIn(page)
+  const open = async () => {
+    await go(page, "/compression")
+    await page.getByTestId("library-estimate").click()
+    await expect(page.getByTestId("library-summary")).toContainText(/of \d+ videos/, { timeout: 30_000 })
+  }
+  await open()
+  await expect(page.getByTestId("compress-library").getByTestId("space-note")).toHaveAttribute("data-state", "fits")
+  await shots(page, "library-estimate", open)
+  // Not enough room (the answer as a full NAS gives it): "compress in parts or empty the trash first".
+  await page.route("**/web/compress/estimate", async (route) => {
+    const res = await route.fetch()
+    const body = await res.json()
+    body.space = { ...body.space, needed: 52e9, free: 39e9, trash: 20e9, fits: false, known: true }
+    await route.fulfill({ response: res, json: body })
+  })
+  await open()
+  const note = page.getByTestId("compress-library").getByTestId("space-note")
+  await expect(note).toHaveAttribute("data-state", "short")
+  await expect(note).toContainText("Needs about 52 GB free on the NAS while the originals stay in the trash; you have 39 GB.")
+  await expect(note).toContainText("Empty the trash first (20 GB in it now), or compress in parts.")
+  await shots(page, "library-estimate-short", open)
+  await page.unroute("**/web/compress/estimate")
+})
+
+test("no_space is a wait, not a failure: the item says what it needs and links the trash", async ({ page }) => {
+  await signIn(page)
+  // An item waiting for room (as nas.go leaves it: ready, no_space), shown from the server's own answer.
+  await page.route("**/web/compress/items?*", async (route) => {
+    const res = await route.fetch()
+    const body = await res.json()
+    if (body.items?.length) {
+      body.items[0] = { ...body.items[0], state: "ready", reason: "no_space", space: { where: "nas", needed: 412e6, free: 120e6 } }
+    }
+    await route.fulfill({ response: res, json: body })
+  })
+  const open = async () => {
+    await go(page, "/compression")
+    await page.getByTestId("job").first().getByTestId("job-open").click()
+    await expect(page.getByTestId("item-no-space")).toBeVisible()
+  }
+  await open()
+  const row = page.getByTestId("item-no-space")
+  await expect(row).toContainText("Waiting for free space on the NAS: empty the trash or wait.")
+  await expect(row).toContainText("needs 412 MB, 120 MB free")
+  await expect(page.getByTestId("job-item").first()).toContainText("Waiting")
+  await expect(page.getByTestId("job-item").first()).not.toContainText("not enough space")
+  await shots(page, "no-space", open)
+  await row.getByRole("link", { name: "Open the trash" }).click()
+  await expect(page.getByTestId("trash")).toBeVisible()
+  await page.unroute("**/web/compress/items?*")
 })
 
 test("compress a gallery selection: library videos only, photos left out", async ({ page }) => {
@@ -343,6 +406,7 @@ test("Portuguese: the Compression view and the trash", async ({ page }) => {
   await shot(page, "compression-pt-BR-desktop-light")
   await go(page, "/trash")
   await expect(page.getByRole("heading", { name: "Lixeira" })).toBeVisible()
+  for (const g of await page.getByTestId("trash-group-toggle").all()) await g.click()
   await expect(page.getByText("Retido por uma compressão em andamento").first()).toBeVisible()
   await shot(page, "trash-pt-BR-desktop-light")
 })

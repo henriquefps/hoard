@@ -230,6 +230,9 @@ func (s *Server) handleWebTrash(w http.ResponseWriter, r *http.Request) {
 		if e.Live && !e.Held { // a live item is listed only for its held trash entry
 			continue
 		}
+		if len(e.Units) == 0 && !e.Held && e.To == "" { // nothing left in a trash (a server trash emptied a moment ago)
+			continue
+		}
 		if e.To != "" || e.Held {
 			fps = append(fps, d.MainFingerprint)
 		}

@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/henriquefps/hoard/server/internal/fingerprint"
 	"github.com/henriquefps/hoard/server/internal/media/mediatest"
 )
 
@@ -317,4 +319,50 @@ func TestWriteWebCompressFixture(t *testing.T) {
 			Width: 1200, Height: 800, Unique: uint64(9000 + i)}
 		f.write(fmt.Sprintf("Videos/Drone/DSC%05d.JPG", 9000+i), spliceEXIF(drawPhoto(1200, 800, float64(30+i*90), i), s, ""))
 	}
+}
+
+// TestWriteWebTrashFixture writes the trash e2e's library (hoard-server 0.14.0, ADR 0023 Amendment (0.14.0)):
+// Trips/2025-06 with six JPEGs, a RAW+JPEG pair with every sidecar convention (DSC07000.xmp, DSC07000.ARW.xmp and the
+// hidden .DSC07000.xmp), and Home with two JPEGs; uploads/ holds three phone photos the e2e backs up from a "phone"
+// (then frees on it: server-only items).
+func TestWriteWebTrashFixture(t *testing.T) {
+	dir := os.Getenv("HOARD_WEB_TRASH_FIXTURE")
+	if dir == "" {
+		t.Skip("HOARD_WEB_TRASH_FIXTURE not set")
+	}
+	f := fixtureWriter{t, filepath.Join(dir, "mnt", "nas")}
+	photo := func(i int, model string) []byte {
+		s := mediatest.Shot{Make: "SONY", Model: model, DateTime: fmt.Sprintf("2025:06:%02d 10:%02d:00", 10+i/4, i), Offset: "-03:00",
+			Width: 900, Height: 600, Unique: uint64(7000 + i)}
+		return spliceEXIF(drawPhoto(900, 600, float64(20+i*40), i), s, "")
+	}
+	for i := 1; i <= 6; i++ {
+		f.write(fmt.Sprintf("Trips/2025-06/DSC%05d.JPG", 7000+i), photo(i, "ILCE-7M4"))
+	}
+	f.write("Trips/2025-06/DSC07000.JPG", photo(0, "ILCE-7M4"))
+	raw := mediatest.Shot{Make: "SONY", Model: "ILCE-7M4", DateTime: "2025:06:10 10:00:00", Offset: "-03:00", Width: 900, Height: 600, Unique: 7100}
+	f.write("Trips/2025-06/DSC07000.ARW", mediatest.RAW(raw))
+	f.write("Trips/2025-06/DSC07000.xmp", []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"/>`))
+	f.write("Trips/2025-06/DSC07000.ARW.xmp", []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"/>`))
+	f.write("Trips/2025-06/.DSC07000.xmp", []byte(`<x:xmpmeta xmlns:x="adobe:ns:meta/"/>`))
+	for i := 0; i < 2; i++ {
+		f.write(fmt.Sprintf("Home/IMG_%04d.JPG", 100+i), photo(20+i, "ILCE-6400"))
+	}
+	up := fixtureWriter{t, filepath.Join(dir, "uploads")}
+	type upload struct {
+		Name        string `json:"name"`
+		SHA256      string `json:"sha256"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	var list []upload
+	for i := 0; i < 3; i++ {
+		s := mediatest.Shot{Make: "Google", Model: "Pixel 8", DateTime: fmt.Sprintf("2025:11:%02d 18:%02d:00", 1+i, i), Offset: "-03:00",
+			Width: 800, Height: 600, Unique: uint64(7200 + i)}
+		b := spliceEXIF(drawPhoto(800, 600, float64(200+i*30), 50+i), s, "")
+		name := fmt.Sprintf("PXL_2025110%d_180000.jpg", 1+i)
+		up.write(name, b)
+		list = append(list, upload{name, sum(b), fingerprint.Bytes(b)})
+	}
+	js, _ := json.Marshal(list)
+	up.write("manifest.json", js)
 }

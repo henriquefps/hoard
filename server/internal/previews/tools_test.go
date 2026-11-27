@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/henriquefps/hoard/server/internal/store"
@@ -80,9 +81,10 @@ func TestImageDecodesCameraClips(t *testing.T) {
 		} {
 			cmd := exec.Command("docker", append([]string{"run", "--rm", "--network", "none", "-v", dir + ":/in:ro", "--entrypoint", "/opt/hoard/bin/ffmpeg",
 				image, "-hide_banner", "-nostdin"}, args...)...)
-			cmd.Stdout = io.Discard
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Errorf("%s: %v: %s", name, err, out)
+			var stderr strings.Builder
+			cmd.Stdout, cmd.Stderr = io.Discard, &stderr
+			if err := cmd.Run(); err != nil {
+				t.Errorf("%s: %v: %s", name, err, stderr.String())
 			}
 		}
 	}

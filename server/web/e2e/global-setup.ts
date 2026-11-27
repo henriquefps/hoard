@@ -1,6 +1,6 @@
 import { cpSync, rmSync } from "node:fs"
 import path from "node:path"
-import { buildBinary, LIB, prepare, save, setupOnly, startServer, writeLibrary } from "./server"
+import { buildBinary, LIB, prepare, save, seedPhoneBackup, setupOnly, startServer, writeLibrary } from "./server"
 
 export default async function globalSetup() {
   const port = Number(process.env.HOARD_E2E_PORT ?? 3990)
@@ -37,6 +37,22 @@ export default async function globalSetup() {
   })
   const cready = await prepare(`http://127.0.0.1:${cport}`, c.code, cdir, { previews: ["thumb"], waitItems: 8 })
   save("compress", { base: `http://127.0.0.1:${cport}`, pid: c.child.pid!, ...cready })
+
+  // A fourth server for the trash from the web gallery (ADR 0023 Amendment (0.14.0)): the library's folder as its own
+  // write mount, a backup root, a phone's backup of three photos freed on the phone. Every run starts from a pristine
+  // copy (moves change the library).
+  const tdir2 = path.join(LIB, "trash")
+  const tpristine = path.join(LIB, "trash-pristine")
+  writeLibrary(tpristine, "TestWriteWebTrashFixture", { HOARD_WEB_TRASH_FIXTURE: tpristine })
+  const tmnt = path.join(tdir2, "mnt")
+  rmSync(tmnt, { recursive: true, force: true })
+  cpSync(path.join(tpristine, "mnt"), tmnt, { recursive: true, preserveTimestamps: true })
+  const trport = port + 4
+  const tr = await startServer(bin, tdir2, trport, { NAS_READ_ROOT: tmnt, NAS_WRITE_ROOT: tmnt, BACKUP_ROOT: path.join(tmnt, "backup") })
+  const trBase = `http://127.0.0.1:${trport}`
+  const trReady = await prepare(trBase, tr.code, tdir2, { previews: ["thumb"], waitItems: 9 })
+  await seedPhoneBackup(trBase, path.join(tpristine, "uploads"))
+  save("trash", { base: trBase, pid: tr.child.pid!, ...trReady })
 
   // The 20,000-item library for the measurements (opt-in: HOARD_WEB_BENCH=1).
   if (process.env.HOARD_WEB_BENCH) {

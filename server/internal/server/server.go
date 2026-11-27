@@ -154,6 +154,7 @@ type Server struct {
 	freeBytesFn func(dir string) (int64, error) // tests: a filesystem's free bytes
 
 	previewMisses map[string]time.Time // logPreviewMiss's last log per item, route and reason (under touchMu)
+	trashSettled  map[string]time.Time // trash files the web gallery restored or deleted, until the walk follows (under touchMu)
 }
 
 // ErrorEvent is one recent server-side failure, for the status page (no paths, names or keys).

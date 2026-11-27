@@ -2,6 +2,7 @@ import {
   CalendarBlankIcon,
   CameraIcon,
   CaretDownIcon,
+  ChecksIcon,
   FolderSimpleIcon,
   ImagesIcon,
   PaintBrushIcon,
@@ -74,10 +75,12 @@ interface FilterBarProps {
   onChange: (f: Filters) => void
   cellSize: CellSize
   onCellSize: (s: CellSize) => void
+  /** Selects every item the filters show (Select all; then Move to trash, Compress, …). */
+  onSelectAll?: () => void
 }
 
 /** The gallery's toolbar: kind, camera, rating, flag, folder, dates, edited; the count and the cell size. */
-export function FilterBar({ all, shown, filters: f, folders, onChange, cellSize, onCellSize }: FilterBarProps) {
+export function FilterBar({ all, shown, filters: f, folders, onChange, cellSize, onCellSize, onSelectAll }: FilterBarProps) {
   const { t, i18n } = useTranslation()
   const cameras = useMemo(() => cameraFacets(all), [all])
   const set = (patch: Partial<Filters>) => onChange({ ...f, ...patch })
@@ -232,6 +235,12 @@ export function FilterBar({ all, shown, filters: f, folders, onChange, cellSize,
             ? t("gallery.itemsCount", { count: all.length, formatted: formatNumber(all.length, lang) })
             : t("gallery.shownOf", { shown: formatNumber(shown, lang), total: formatNumber(all.length, lang) })}
         </span>
+        {onSelectAll && shown > 0 && (
+          <Button variant="ghost" size="sm" onClick={onSelectAll} data-testid="filter-select-all">
+            <ChecksIcon data-icon="inline-start" />
+            {t("select.allShort")}
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" aria-label={t("gallery.cellSize")}>

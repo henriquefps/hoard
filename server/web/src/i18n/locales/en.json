@@ -156,7 +156,10 @@
     "clear": "Clear selection",
     "toolbar": "Selection",
     "count_one": "{{formatted}} selected",
-    "count_other": "{{formatted}} selected"
+    "count_other": "{{formatted}} selected",
+    "all_one": "Select all {{formatted}}",
+    "all_other": "Select all {{formatted}}",
+    "allShort": "Select all"
   },
   "download": {
     "zip": "Download zip",
@@ -256,8 +259,102 @@
     "loadFailed": "Could not load the trash.",
     "emptyTitle": "The trash is empty",
     "emptyHint": "Files moved to a .hoard-trash folder, and the originals of compressed videos, show here until the trash is emptied.",
-    "otherSection": "Other files in the trash",
-    "otherHint": "Hoard restores and empties these on the share; the server only lists them."
+    "open": "Open the trash",
+    "restore": "Restore",
+    "deletePermanently": "Delete permanently",
+    "empty": "Empty trash",
+    "totals_one": "{{formatted}} shot · {{size}}",
+    "totals_other": "{{formatted}} shots · {{size}}",
+    "autoEmpty_one": "what the server trashed is emptied after {{count}} day",
+    "autoEmpty_other": "what the server trashed is emptied after {{count}} days",
+    "groupCount_one": "{{formatted}} shot · {{size}}",
+    "groupCount_other": "{{formatted}} shots · {{size}}",
+    "heldCount_one": "{{count}} held by a compression",
+    "heldCount_other": "{{count}} held by a compression",
+    "serverPlace": "Server backup · {{device}}",
+    "nasFolder": "NAS folder",
+    "selectGroup": "Select every shot of {{place}}",
+    "edited": "Edited in Reveal",
+    "until": "Emptied automatically on {{date}}",
+    "restored_one": "{{count}} shot restored",
+    "restored_other": "{{count}} shots restored",
+    "deleted_one": "{{count}} shot deleted · {{size}} freed",
+    "deleted_other": "{{count}} shots deleted · {{size}} freed",
+    "refused_one": "{{count}} shot was not changed: {{reason}}",
+    "refused_other": "{{count}} shots were not changed: {{reason}}",
+    "refusedTaken_one": "{{count}} shot was not restored: another file is at {{name}}. Move it, then restore again.",
+    "refusedTaken_other": "{{count}} shots were not restored: another file is at {{name}} (and others). Move them, then restore again.",
+    "keptBy": "Some bytes stay on the server: {{by}}.",
+    "kept": {
+      "mirror": "a phone still has the file",
+      "record": "Reveal's library has it",
+      "compress": "a compression keeps it",
+      "claim": "a device asked to keep it",
+      "trash": "another trashed item has the same file"
+    },
+    "actionFailed": "That did not work. Try again.",
+    "changed": "The trash changed meanwhile: check the figures and try again.",
+    "emptyTitleConfirm": "Empty the trash?",
+    "emptyBody_one": "{{formatted}} shot ({{size}}) will be deleted for good. This cannot be undone. Shots a compression holds stay.",
+    "emptyBody_other": "{{formatted}} shots ({{size}}) will be deleted for good. This cannot be undone. Shots a compression holds stay.",
+    "deleteTitle_one": "Delete {{count}} shot permanently?",
+    "deleteTitle_other": "Delete {{count}} shots permanently?",
+    "deleteBody_one": "{{count}} shot ({{size}}) will be deleted for good, with Reveal's edits of it. This cannot be undone.",
+    "deleteBody_other": "{{count}} shots ({{size}}) will be deleted for good, with Reveal's edits of them. This cannot be undone.",
+    "reason": {
+      "not_found": "not found (already gone)",
+      "trashed": "already in the trash",
+      "held": "held by a compression in progress",
+      "busy": "its video is being compressed",
+      "on_phone": "still on a phone: delete it there with Hoard; its backup stays",
+      "nothing": "nothing the server can trash",
+      "changed": "the file changed since the library was read",
+      "path_taken": "another file took its place",
+      "not_writable": "the server cannot write that folder",
+      "not_same_device": "the trash would be on another disk",
+      "partial": "only some of its files moved (the others stay)",
+      "unreadable": "a folder could not be read",
+      "state": "its compression cannot be changed now",
+      "error": "a server error",
+      "output_missing": "the compressed video is missing",
+      "no_write_mount": "the server has no write access to the NAS",
+      "write_mount_mismatch": "the server's write access is not the library's folder",
+      "write_mount_read_only": "the server's write access to the NAS is read-only",
+      "unstable_inode": "the NAS mount does not keep file identities (CIFS without serverino, FUSE)"
+    },
+    "move": {
+      "button": "Move to trash",
+      "title_one": "Move {{formatted}} item to the trash?",
+      "title_other": "Move {{formatted}} items to the trash?",
+      "description": "Shots on the NAS go to the folder's .hoard-trash, as Hoard does; phone backups and uploads go to the server's trash. Everything can be restored until the trash is emptied.",
+      "checking": "Checking the selection…",
+      "planFailed": "The selection could not be checked. Try again.",
+      "summary_one": "{{formatted}} shot · {{size}}",
+      "summary_other": "{{formatted}} shots · {{size}}",
+      "nothing": "Nothing in this selection can go to the trash.",
+      "nas_one": "{{count}} on the NAS ({{files}} files with their sidecars)",
+      "nas_other": "{{count}} on the NAS ({{files}} files with their sidecars)",
+      "server_one": "{{count}} only on the server (phone backups, uploads)",
+      "server_other": "{{count}} only on the server (phone backups, uploads)",
+      "skipped_one": "{{count}} left out: {{reason}}",
+      "skipped_other": "{{count}} left out: {{reason}}",
+      "blocked": "The NAS shots cannot move now: {{reason}}. Nothing will be moved.",
+      "onlyCopy_one": "{{count}} is the only copy anywhere (not on the NAS or a phone): emptying the trash deletes it for good.",
+      "onlyCopy_other": "{{count}} are the only copies anywhere (not on the NAS or a phone): emptying the trash deletes them for good.",
+      "edits_one": "{{count}} has Reveal's edits: they stay in the trash and come back on a restore.",
+      "edits_other": "{{count}} have Reveal's edits: they stay in the trash and come back on a restore.",
+      "restoreNote": "Restore puts each shot back exactly where it was.",
+      "moving": "Moving to the trash…",
+      "action": "Move to trash",
+      "done_one": "{{formatted}} moved to the trash",
+      "done_other": "{{formatted}} moved to the trash",
+      "skippedNote_one": "{{count}} left out",
+      "skippedNote_other": "{{count}} left out",
+      "someFailed_one": "{{count}} was not moved: {{reason}}",
+      "someFailed_other": "{{count}} were not moved: {{reason}}",
+      "refused": "Nothing more was moved: {{reason}}",
+      "failed": "Moving to the trash did not work. Try again."
+    }
   },
   "compress": {
     "title": "Compress videos",
@@ -439,7 +536,8 @@
         "replaced": "Compressed",
         "restored": "Restored",
         "purged": "Original emptied",
-        "cancelled": "Cancelled"
+        "cancelled": "Cancelled",
+        "waiting": "Waiting"
       },
       "skip": {
         "already_compressed_one": "already compressed",
@@ -480,6 +578,13 @@
         "trash_failed": "the original could not be moved to the trash",
         "not_writable": "the server cannot write the folder",
         "other": "another reason"
+      },
+      "space": {
+        "nas": "Waiting for free space on the NAS: empty the trash or wait.",
+        "work": "Waiting for free space on the backup disk (the compression's work folder).",
+        "numbers": "needs {{needed}}, {{free}} free",
+        "free": "{{free}} free",
+        "openTrash": "Open the trash"
       }
     },
     "unavailable": {
@@ -524,6 +629,27 @@
     "busy_other": "{{count}} videos are in unfinished jobs already",
     "startFailed": "The job could not start.",
     "actionFailed": "That did not work. Try again.",
-    "loadFailed": "Could not load the jobs."
+    "loadFailed": "Could not load the jobs.",
+    "space": {
+      "where": {
+        "nas": "the NAS",
+        "backup": "the backup disk"
+      },
+      "unknown": "The free space on {{where}} cannot be read: a replace waits until it can.",
+      "fits": "Needs about {{needed}} free on {{where}} while the originals stay in the trash; {{free}} free.",
+      "short": "Needs about {{needed}} free on {{where}} while the originals stay in the trash; you have {{free}}.",
+      "adviceTrash": "Empty the trash first ({{trash}} in it now), or compress in parts.",
+      "adviceParts": "Compress in parts (a folder at a time), emptying the trash between them. Videos that do not fit wait for room; nothing is lost."
+    },
+    "library": {
+      "title": "Whole library",
+      "hint": "Before a big job: how many videos, the size now and after, what is skipped and why, and whether the NAS has room.",
+      "summary_one": "{{encode}} of {{total}} videos · {{from}} → about {{to}} (saves about {{saved}})",
+      "summary_other": "{{encode}} of {{total}} videos · {{from}} → about {{to}} (saves about {{saved}})",
+      "estimate": "Estimate the whole library",
+      "again": "Estimate again",
+      "start": "Compress the whole library…",
+      "label": "the whole library"
+    }
   }
 }

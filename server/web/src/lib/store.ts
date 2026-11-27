@@ -83,6 +83,19 @@ export async function refreshLibrary(): Promise<void> {
   }
 }
 
+/**
+ * Takes items out of the grid at once (moved to the trash, ADR 0023 Amendment (0.14.0)): the server's walk follows
+ * within seconds and the next poll confirms (removed); the cursor stays, so nothing is skipped.
+ */
+export function hideItems(ids: string[]): void {
+  const lib = state.library
+  const gone = new Set(ids.filter((id) => lib.byId.has(id)))
+  if (!gone.size) return
+  const byId = new Map(lib.byId)
+  for (const id of gone) byId.delete(id)
+  set({ library: { ...lib, rows: lib.rows.filter((r) => !gone.has(r.id)), byId } })
+}
+
 export function startPolling(): () => void {
   void refreshLibrary()
   const tick = () => {

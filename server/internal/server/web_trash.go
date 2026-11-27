@@ -521,6 +521,9 @@ func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, it
 			return moved, trashNotWritable
 		}
 		_ = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
+		s.touchMu.Lock()
+		delete(s.trashSettled, u.folderID+"|"+targets[i]) // trashed again at a path restored a moment ago
+		s.touchMu.Unlock()
 		moved++
 	}
 	return moved, ""
@@ -553,7 +556,7 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 			switch {
 			case l.Source == items.SourceNAS && l.Trash != "":
 				day := trashDayDir(l.Trash)
-				if day == "" {
+				if day == "" || s.trashSettledNow(l.FolderID, l.Trash) {
 					continue
 				}
 				k := key{l.FolderID, day}
@@ -594,6 +597,12 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 	out := make([]trashUnitView, 0, len(order)+1)
 	for _, k := range order {
 		out = append(out, *byKey[k])
+	}
+	if srv != nil {
+		// Emptied already: the item leaves at the backup pass that drops its sources.
+		if st, err := s.store.ServerTrashOf(ctx, row.ID); err != nil || st.PurgedAt != nil {
+			srv = nil
+		}
 	}
 	if srv != nil {
 		for _, f := range d.Files {
@@ -1023,9 +1032,36 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 			return trashNotWritable, ""
 		}
 		_ = s.store.DeleteTrashMove(ctx, id)
+		s.noteTrashSettled(folderID, p.trash)
 		f.RemoveEmptyDirs(path.Dir(p.trash), trashRoot)
 	}
 	return "", ""
+}
+
+// trashSettledFor is how long a restored or deleted trash file is left out of GET /web/trash before the walk (asked at
+// once, WalkGap after the folder's last one) updates its item.
+const trashSettledFor = 10 * time.Minute
+
+func (s *Server) noteTrashSettled(folderID, trash string) {
+	s.touchMu.Lock()
+	defer s.touchMu.Unlock()
+	if s.trashSettled == nil {
+		s.trashSettled = map[string]time.Time{}
+	}
+	now := time.Now()
+	for k, at := range s.trashSettled {
+		if now.Sub(at) > trashSettledFor {
+			delete(s.trashSettled, k)
+		}
+	}
+	s.trashSettled[folderID+"|"+trash] = now
+}
+
+func (s *Server) trashSettledNow(folderID, trash string) bool {
+	s.touchMu.Lock()
+	defer s.touchMu.Unlock()
+	at, ok := s.trashSettled[folderID+"|"+trash]
+	return ok && time.Since(at) <= trashSettledFor
 }
 
 // purgeServerTrash empties items from the server trash: the backup's entries and links, claims, and the blobs nothing

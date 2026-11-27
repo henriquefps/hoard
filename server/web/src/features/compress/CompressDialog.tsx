@@ -28,6 +28,7 @@ import {
 import { formatBytes, formatNumber } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { formatEta } from "./format"
+import { SpaceNote } from "./parts"
 
 export interface CompressRequest {
   /** What to compress: one part per target (a selection can make a nas and a backup part). */
@@ -250,6 +251,7 @@ function CompressBody({ request, info, onClose }: { request: CompressRequest; in
                   </ul>
                 )}
                 {leftOut > 0 && <p className="text-sm text-muted-foreground">{t("compress.estimate.leftOut", { count: leftOut })}</p>}
+                {(tot?.encode ?? 0) > 0 && <SpaceNote space={estimate.space} lang={lang} />}
                 {estimate.warnings.includes("hdr10plus") && <Note icon="warn">{t("compress.estimate.warnings.hdr10plus")}</Note>}
                 {estimate.warnings.includes("pcm_audio") && <Note>{t("compress.estimate.warnings.pcm_audio")}</Note>}
                 {estimate.warnings.includes("av1_playback") && <Note icon="warn">{t("compress.estimate.warnings.av1_playback")}</Note>}
