@@ -269,8 +269,15 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		var fps []string
 		hasMain := false
 		trashed := len(rows) > 0
+		// The server trash (ADR 0023 Amendment (0.14.0)): the item's server copies (backup, mirror, kept) count as
+		// trashed while its row exists; a live NAS file keeps it live.
+		since, purgeAfter, inServerTrash, err := tx.ServerTrashed(id)
+		if err != nil {
+			return n, err
+		}
 		for _, r := range rows {
-			trashed = trashed && (r.Source == SourceTrash || r.Source == SourceKept)
+			serverCopy := r.Source == SourceBackup || r.Source == SourceMirror
+			trashed = trashed && (r.Source == SourceTrash || r.Source == SourceKept || inServerTrash && serverCopy)
 			var ms []Member
 			if err := json.Unmarshal(r.Members, &ms); err != nil {
 				return n, err
@@ -303,6 +310,9 @@ func (y *Syncer) rebuild(tx *store.ItemTx, ids []string) (int, error) {
 		}
 		if err := markHeld(&d); err != nil {
 			return n, err
+		}
+		if inServerTrash && trashed {
+			d.ServerTrash = &ServerTrash{Since: since, PurgeAfter: purgeAfter}
 		}
 		if trashed && d.Kind == KindVideo { // after the live ones: its heir may be one of them
 			trashedLater = append(trashedLater, trashedItem{id, main, d})

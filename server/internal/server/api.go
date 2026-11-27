@@ -627,6 +627,9 @@ func (s *Server) handleOriginalDelete(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, store.ErrCompressed): // ADR 0025 rule 5: a compression keeps it until the purge; the claim was released
 		fail(w, r, http.StatusConflict, "conflict", "A video compression keeps this file until it is emptied from the trash.", map[string]any{"reason": "compressed"})
 		return
+	case errors.Is(err, store.ErrTrashed): // ADR 0023 Amendment (0.14.0): in the server trash until it is emptied; the claim was released
+		fail(w, r, http.StatusConflict, "conflict", "This file is in the server's trash; it stays until the trash is emptied.", map[string]any{"reason": "trashed"})
+		return
 	case errors.Is(err, store.ErrNotFound):
 		fail(w, r, http.StatusNotFound, "not_found", "No uploaded original with this fingerprint.", nil)
 		return

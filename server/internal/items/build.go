@@ -84,6 +84,15 @@ type Data struct {
 	Compressed   *Compressed `json:"compressed,omitempty"`
 	CompressedTo string      `json:"compressedTo,omitempty"`
 	ReplacedBy   string      `json:"replacedBy,omitempty"`
+	// ServerTrash (ADR 0023 Amendment (0.14.0)): the web gallery's admin moved the item's server copies (phone backups,
+	// uploads) into the server trash; its blobs stay until purgeAfter (auto-empty) or Delete permanently.
+	ServerTrash *ServerTrash `json:"serverTrash,omitempty"`
+}
+
+// ServerTrash is the "serverTrash" object of an item in the server trash.
+type ServerTrash struct {
+	Since      int64 `json:"since"`      // ms
+	PurgeAfter int64 `json:"purgeAfter"` // ms
 }
 
 // Compressed is the "compressed" object of an output item (ADR 0025 "What the walk and the items do").

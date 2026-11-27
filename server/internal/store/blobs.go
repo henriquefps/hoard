@@ -324,6 +324,11 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string
 		} else if held {
 			return ErrCompressed // ADR 0025 rule 5: until the purge; the caller's claim is released below
 		}
+		if trashed, err := serverTrashHolds(ctx, tx, fp); err != nil {
+			return err
+		} else if trashed {
+			return ErrTrashed // pinned in the server trash until its purge; the caller's claim is released below
+		}
 		mirrored, err := mirrorNames(ctx, tx, fp, sha)
 		if err != nil {
 			return err
@@ -353,7 +358,7 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string
 		removed = sha
 		return nil
 	})
-	if errors.Is(err, ErrMirror) || errors.Is(err, ErrCompressed) {
+	if errors.Is(err, ErrMirror) || errors.Is(err, ErrCompressed) || errors.Is(err, ErrTrashed) {
 		// The device's claim goes (so the bytes go when the mirror no longer needs them).
 		if _, cerr := s.db.ExecContext(ctx, "DELETE FROM original_claims WHERE fingerprint = ? AND device_id = ?", fp, deviceID); cerr != nil {
 			return "", cerr
@@ -361,3 +366,6 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string
 	}
 	return removed, err
 }
+
+// RecordNames reports whether a live Reveal photo record names a fingerprint (Reveal's library has the photo).
+func (s *Store) RecordNames(ctx context.Context, fp string) (bool, error) { return originalNamed(ctx, s.db, fp) }

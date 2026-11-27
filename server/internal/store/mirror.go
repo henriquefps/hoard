@@ -1155,6 +1155,9 @@ func contentKept(ctx context.Context, tx *sql.Tx, fp, sha string) (bool, error) 
 	if held, err := compressHolds(ctx, tx, fp, sha); err != nil || held {
 		return held, err
 	}
+	if held, err := serverTrashHolds(ctx, tx, fp); err != nil || held {
+		return held, err
+	}
 	var one int
 	err := tx.QueryRowContext(ctx, "SELECT 1 FROM original_claims WHERE fingerprint = ? LIMIT 1", fp).Scan(&one)
 	if err == nil {

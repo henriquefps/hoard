@@ -137,6 +137,11 @@ type webTrashEntry struct {
 	Compress  map[string]any  `json:"compression,omitempty"`
 	Duration  int64           `json:"durationMs,omitempty"`
 	Live      bool            `json:"live,omitempty"` // a live item listed for its held trash entry
+	// The trash from the web gallery (ADR 0023 Amendment (0.14.0)): the units Restore and Delete permanently act on,
+	// the server trash's dates, and whether Reveal edited it (its edits come back on a restore, go at the purge).
+	Units       []trashUnitView    `json:"units"`
+	ServerTrash *items.ServerTrash `json:"serverTrash,omitempty"`
+	Edits       bool               `json:"edits,omitempty"`
 }
 
 type webTrashPlace struct {
@@ -196,7 +201,9 @@ func (s *Server) handleWebTrash(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(row.Data, &d) != nil {
 			continue
 		}
-		e := webTrashEntry{ID: row.ID, Kind: row.Kind, TrashedAt: row.TrashedAt, To: d.CompressedTo, Places: []webTrashPlace{}, Live: !row.Trashed()}
+		e := webTrashEntry{ID: row.ID, Kind: row.Kind, TrashedAt: row.TrashedAt, To: d.CompressedTo, Places: []webTrashPlace{}, Live: !row.Trashed(),
+			ServerTrash: d.ServerTrash, Edits: len(row.Edits) > 2}
+		e.Units = s.trashUnitsOf(r.Context(), d, row)
 		if d.Video != nil {
 			e.Duration = d.Video.DurationMs
 		}
@@ -206,7 +213,8 @@ func (s *Server) handleWebTrash(w http.ResponseWriter, r *http.Request) {
 			}
 			trashed := false
 			for _, l := range f.Locations {
-				if l.Trash == "" && l.Gone != store.RemovedCompressed {
+				serverTrash := d.ServerTrash != nil && (l.Source == items.SourceBackup || l.Source == items.SourceMirror)
+				if l.Trash == "" && l.Gone != store.RemovedCompressed && !serverTrash {
 					continue
 				}
 				trashed = true

@@ -525,3 +525,145 @@ func (f *Folder) Free() (int64, error) {
 	defer file.Close()
 	return freeBytesFile(file)
 }
+
+// ErrTaken: the target of a move exists (a move never replaces a file).
+var ErrTaken = errors.New("the target path is taken")
+
+// TrashUnitPaths picks where the files rels (one shot's files of one directory) go in the trash today: the first day
+// folder (<yyyy-MM-dd>, then -2, -3 …) where none of their paths is taken, so every file of a shot shares one day
+// folder (ADR 0023 Amendment (A1) item 6). The trash root is TrashRoot's (the nearest existing .hoard-trash, else the
+// folder's root).
+func (f *Folder) TrashUnitPaths(rels []string, now time.Time) ([]string, error) {
+	if len(rels) == 0 {
+		return nil, nil
+	}
+	day := now.Format("2006-01-02")
+	for n := 1; n < 1000; n++ {
+		d := day
+		if n > 1 {
+			d = day + "-" + strconv.Itoa(n)
+		}
+		out := make([]string, 0, len(rels))
+		free := true
+		for _, rel := range rels {
+			troot := f.TrashRoot(rel)
+			inner, base := rel, TrashDirName
+			if troot != "" {
+				inner, base = strings.TrimPrefix(rel, troot+"/"), troot+"/"+TrashDirName
+			}
+			p := base + "/" + d + "/" + inner
+			if _, err := f.root.Lstat(p); err == nil {
+				free = false
+				break
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return nil, err
+			}
+			out = append(out, p)
+		}
+		if free {
+			return out, nil
+		}
+	}
+	return nil, errors.New("no free day folder")
+}
+
+// Move moves the file at from to to inside the folder, never replacing a file at to (ErrTaken): a hard link then the
+// unlink of from (link fails with EEXIST atomically), else, where hard links are refused, a check then a rename. Missing
+// parents of to are created with the mode of their nearest existing ancestor. EXDEV is ErrCrossDevice: nothing moved.
+// Used by the web gallery's trash (ADR 0023 Amendment (0.14.0)) for a move into a trash and a restore out of it: the
+// same filesystem, no byte copied, size and mtime kept.
+func (f *Folder) Move(from, to string) error {
+	fi, err := f.root.Lstat(from)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path.Base(from))
+	}
+	if err := f.mkdirLikeParent(path.Dir(to)); err != nil {
+		return err
+	}
+	defer f.syncDirs(path.Dir(to), path.Dir(from))
+	err = f.link(f.root, from, to)
+	switch {
+	case err == nil:
+		if rerr := f.root.Remove(from); rerr != nil {
+			_ = f.root.Remove(to) // undo: the file keeps its one name
+			return rerr
+		}
+		return nil
+	case errors.Is(err, fs.ErrExist):
+		return ErrTaken
+	case errors.Is(err, syscall.EXDEV):
+		return ErrCrossDevice
+	case errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EOPNOTSUPP) || errors.Is(err, syscall.EMLINK):
+		if _, err := f.root.Lstat(to); err == nil {
+			return ErrTaken
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if err := f.root.Rename(from, to); err != nil {
+			if errors.Is(err, syscall.EXDEV) {
+				return ErrCrossDevice
+			}
+			return err
+		}
+		return nil
+	}
+	return err
+}
+
+// List names the entries of a directory of the folder ("" = its root): the shot rule needs the hidden sidecars
+// (".X.xmp") the walk never indexes.
+func (f *Folder) List(dir string) ([]string, error) {
+	if dir == "" {
+		dir = "."
+	}
+	entries, err := fs.ReadDir(f.root.FS(), dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.Type().IsRegular() {
+			out = append(out, e.Name())
+		}
+	}
+	return out, nil
+}
+
+// RemoveEmptyDirs removes the directories left empty from dir up to (not including) stop, e.g. after a restore or a
+// purge, up to the day folder's .hoard-trash (which stays, like Hoard's).
+func (f *Folder) RemoveEmptyDirs(dir, stop string) {
+	for dir != stop && dir != "." && dir != "" && strings.HasPrefix(dir, stop+"/") {
+		if err := f.root.Remove(dir); err != nil { // fails on a non-empty directory
+			return
+		}
+		f.syncDirs(path.Dir(dir))
+		dir = path.Dir(dir)
+	}
+}
+
+// Lstat reads a path of the folder without following a symlink.
+func (f *Folder) Lstat(rel string) (fs.FileInfo, error) { return f.root.Lstat(rel) }
+
+// FinishMove completes a Move a kill interrupted between its link and its unlink: when from and to are two names of
+// one file, from goes (the file keeps its trash name). Anything else is left alone.
+func (f *Folder) FinishMove(from, to string) error {
+	a, err1 := f.root.Lstat(from)
+	if errors.Is(err1, fs.ErrNotExist) {
+		return nil
+	}
+	b, err2 := f.root.Lstat(to)
+	if err1 != nil || err2 != nil {
+		return errors.Join(err1, err2)
+	}
+	if !sameFile(a, b) {
+		return nil
+	}
+	if err := f.root.Remove(from); err != nil {
+		return err
+	}
+	f.syncDirs(path.Dir(from))
+	return nil
+}

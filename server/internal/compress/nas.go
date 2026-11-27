@@ -944,3 +944,13 @@ func (m *Manager) AfterWalk(ctx context.Context) {
 		m.log.Error("compress: automatic folders", "err", err)
 	}
 }
+
+// WriteFolder opens a NAS folder's write path, proven as for a replace (the same directory as the read path), for the
+// web gallery's trash (ADR 0023 Amendment (0.14.0)): its moves into a trash, restores and deletes in a trash go through
+// the same os.Root and the same few operations as the journals'.
+func (m *Manager) WriteFolder(ctx context.Context, folderID string) (*Folder, error) {
+	return m.folder(ctx, folderID)
+}
+
+// NoteMountProblem records a problem a folder's probe found (unstable_inode): the feature is off until "Check again".
+func (m *Manager) NoteMountProblem(p string) { m.setMountProblem(p) }

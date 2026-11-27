@@ -148,6 +148,8 @@ type Server struct {
 	web webState // the web gallery (ADR 0018)
 
 	compress *compress.Manager // video compression (ADR 0025)
+
+	trashMu sync.Mutex // the web gallery's trash moves, restores and deletes, and the auto-empty (one at a time)
 }
 
 // ErrorEvent is one recent server-side failure, for the status page (no paths, names or keys).
@@ -292,6 +294,7 @@ func (s *Server) Run(ctx context.Context) {
 			s.settleMoves(ctx)
 			s.sweepWeb(ctx)
 			s.sweepEdits(ctx)
+			s.trashHousekeeping(ctx)
 			select {
 			case <-ctx.Done():
 				return
