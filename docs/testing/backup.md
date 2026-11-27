@@ -138,3 +138,46 @@ Emulator rerun: a new `hoard-a3` AVD (port 5600) and my own hoard-server built f
 Not on the emulator (JVM only): an id naming another file after a media index rebuild, a sidecar rewritten during the
 dialog, and the "not grouped" gate (no Reveal build was installed). During the rerun another session launched its own
 app (`com.hfps.dbinspector.sample`) on this AVD; it was left alone, and the AVD was deleted after the run.
+
+## Emulator run (0.14.0): Hoard 2.9.0 after the admin purges its phone's backup
+
+Run on cachyos-fps on 2026-11-26 (ADR 0024 "Amendment (0.14.0)"). Server: this branch's hoard-server built with
+`-tags hoarde2e` (`HOARD_E2E_FAKE_COMPRESS=1`, the fake libx264 encoder), in a container `w0140-g-server` of my own
+`-nvidia` image build (its ffmpeg, vips and exiftool; no GPU used), `--cpus 2 --memory 1536m`,
+`-p 127.0.0.1:3297:3071`, temporary `/data` and `/mnt/backup`. App: Hoard 2.9.0 debug from `main` (545bc04), on my own
+AVD `w0140-g` (API 36, port 5598, `-memory 3072 -no-window`), All files access and media permissions granted, paired
+with the link typed by hand. Synthetic files: four noise JPEGs and two 6 s 720p H.264 clips in `DCIM/Camera`. The
+container, the image, the emulator and the AVD were removed afterwards. Screenshots: [`backup-purge-0140/`](backup-purge-0140/).
+
+| Step | Result |
+| --- | --- |
+| Settings › Phone backup: Camera on | 6 of 6 backed up |
+| Camera › Compress videos in this folder › Start; Settings › Compress videos › Allow (Android's dialog: Allow) | both clips `replaced` (16.5 → 1.8 MB on the phone) |
+| Free up space ("Keep the last 30 days" off), two JPEGs and one compressed clip | "Freed 3 files · 4.1 MB"; server: 8 entries, 5 pinned, `compressedKept` 2 |
+| Gallery before the purge | freed cells "On the server · Freed from the phone", "Compressed" badges ([`g01`](backup-purge-0140/g01-gallery-before.png)) |
+| Admin purge with `confirmPinned: 5` only | `409 confirm_pinned`, `compressedKept: 2` |
+| Admin purge with `confirmPinned: 5, confirmCompressed: 2` | `compressPurged: 2`, `removedFiles: 8`; no blob left; no phone in `GET /admin/api/backup`; both compression rows `purged` (`backup_purged`), no entry id left |
+| Hoard: Sync now, Gallery | **clean**: the freed cells and the Compressed badges are gone (the items are tombstones in the feed); the three files still on the phone show "On this phone" (not backed up); the Devices button is gone (no other device's backup) ([`g02`](backup-purge-0140/g02-gallery-after.png)) |
+| Settings › Phone backup | **stale**: "1 folder · 3 of 3 backed up", "3 of 3 backed up · 4.1 MB" ([`g03`](backup-purge-0140/g03-backup-after-purge.png)) |
+| Back up now (and the periodic runs) | **stale**: `backup run: Done, 0 uploaded`; the server still has no phone, no root and no blob: nothing is backed up again |
+| Settings › Phone backup › Free up space row | **stale**: "4.1 MB freed · 3 files" and "Freed photos stay in the Gallery from the server" (they are gone) ([`g04`](backup-purge-0140/g04-backup-freed-after.png)) |
+
+**Why the backup never starts over.** A pass reports only rows that are due (`BackupPlan.toReport`); rows already
+`stored` are not, so no request names the purged root, and `ensureTypes` only `PATCH`es when the types change. The 404 →
+`POST` path (`recreate`) exists but is never reached. `GET /v1/backup/roots` is read at the end of a pass for the stats
+only. Nothing server-side can trigger it (the server answers what it is asked; it cannot tell an app its backup was
+purged other than by the roots list).
+
+**App fixes (a small Hoard PR; nothing changed in the app here):**
+
+1. At the start of each pass, read `GET /v1/backup/roots` (it is already read at the end): a local root whose id the
+   server does not list (and that is not paused) is **gone**: `recreate` it (`POST /v1/backup/roots`, which already
+   handles `covered`), and reset that root's rows: `stored`/`nas`/verified rows back to *identified, not reported*
+   (keep fingerprints and SHA-256), upload ids dropped, so the same pass reports them (`missing`) and uploads them again.
+2. Rows `freed` of a root the server forgot: the phone has no file and the server no copy. Drop them (and their
+   `freed` history), so Settings › Phone backup stops counting "4.1 MB freed · 3 files" and the "Freed photos stay in
+   the Gallery from the server" note is not shown for them. The Gallery already drops them at the sync.
+3. Compression rows (`compress_phone`) of the purged items: settled rows need nothing; an unsettled one gets `404` from
+   `…/replaced`/`…/output` and is abandoned by the existing rules (not seen in this run: both were reported).
+4. Optional: when `GET /v1/backup/roots` is empty and the account had roots, say it once on Settings › Phone backup
+   ("The photo server's backup of this phone was deleted; Hoard is backing it up again").
