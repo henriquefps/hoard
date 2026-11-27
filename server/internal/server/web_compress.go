@@ -266,12 +266,16 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"items": list, "cursor": next, "hasMore": more}
 	if cursor == "" {
 		// The figures Empty confirms, per group (ADR 0023 Amendment (0.15.0)): the first page carries them.
-		_, _, _, groups, err := s.allTrashUnits(r.Context(), nil)
+		byDevice := isDeviceRequest(r)
+		tot, err := s.allTrashUnits(r.Context(), nil, byDevice)
 		if err != nil {
 			s.internal(w, r, err)
 			return
 		}
-		out["groups"] = groups
+		out["groups"] = tot.groups
+		if byDevice {
+			out["webOnly"] = tot.webOnly
+		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, out)

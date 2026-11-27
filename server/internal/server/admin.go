@@ -416,7 +416,12 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("device revoked", "device", id)
-	go s.sweep(context.WithoutCancel(r.Context())) // drop its unfinished uploads
+	ctx := context.WithoutCancel(r.Context())
+	s.sweeps.Add(1)
+	go func() { // drop its unfinished uploads
+		defer s.sweeps.Done()
+		s.sweep(ctx)
+	}()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

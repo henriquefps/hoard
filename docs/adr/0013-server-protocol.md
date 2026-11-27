@@ -606,11 +606,11 @@ key, one implementation for both; Hoard uses them instead of SMB for every photo
 
 | Method and path | Answer |
 | --- | --- |
-| `GET /v1/trash?cursor=` | `{"items": [...], "cursor", "hasMore", "groups"? (first page)}`: each trashed item with its `units` (`key`, `source` `nas` \| `server`, `day`, `folderId`, `folderName`, `dir`, `device`, `files`, `size`, `held`, `purgeAfter`, `byServer`, `by`, `group` `web` \| `hoard` \| `compressed`); `groups`: each group's `count` and `size` (units not held) |
+| `GET /v1/trash?cursor=` | `{"items": [...], "cursor", "hasMore", "groups"? (first page)}`: each trashed item with its `units` (`key`, `source` `nas` \| `server`, `day`, `folderId`, `folderName`, `dir`, `device`, `files`, `size`, `held`, `purgeAfter`, `byServer`, `by`, `group` `web` \| `hoard` \| `compressed`, `webOnly`); `groups`: each group's `count` and `size` (units not held and, for a device, not `webOnly`); `webOnly`: `{count, size}` of the backup-only units a device cannot delete; `403 forbidden` `details.reason` `not_hoard` on every `/v1/trash` route when the device's app is not `hoard`/`hoard-debug` |
 | `POST /v1/trash/move` `{"itemIds": [...] (1-500), "dryRun"?}` | `200 {"moved", "skipped", "failed", "counts", "warnings", "nasShots", "nasFiles", "serverItems", "size", "nasBlocked"?}`; `503 unavailable` (`details.reason`: the write mount's problem) with NAS shots and no usable write mount, nothing moved; `422 invalid_request` |
 | `POST /v1/trash/restore` `{"units": [{"itemId", "key"}] (1-500)}` | `200 {"done", "refused", "names"?, "size"}`; `422 invalid_request` |
-| `POST /v1/trash/delete` `{"units"}` | `200 {"done", "refused", "names"?, "keptBy"?, "size"}`; `422 invalid_request` |
-| `POST /v1/trash/empty` `{"confirm": {"count", "size"}, "groups"?}` | `200` as delete; `409 conflict` (`details`: `reason` `confirm`, `count`, `size`, `groups`) when the figures are not the trash's now; `422 invalid_request` (an unknown group) |
+| `POST /v1/trash/delete` `{"units"}` | `200 {"done", "refused", "names"?, "keptBy"?, "size"}` (`refused` `web_only`: a backup-only unit, only the web gallery deletes it); `403 not_hoard`; `422 invalid_request` |
+| `POST /v1/trash/empty` `{"confirm": {"count", "size"}, "groups"?}` | `200` as delete; `409 conflict` (`details`: `reason` `confirm`, `count`, `size`, `groups`, `webOnly`; backup-only units are left out of the figures and of what is emptied) when the figures are not the trash's now; `403 not_hoard`; `422 invalid_request` (an unknown group) |
 
 Any paired device may call them (writes are logged with its id). The server's auto-empty stays the only time-based
 purge; a device deletes only what it names.
@@ -660,7 +660,7 @@ Every error is JSON:
 | --- | --- |
 | 400 | `invalid_request`, `invalid_cursor`, `invalid_json` |
 | 401 | `unauthorized`, `invalid_pairing_token` |
-| 403 | `forbidden` (admin: missing `X-Hoard-Admin` or foreign `Origin`; `DELETE /v1/blobs`: an original or another device's preview; `DELETE /v1/originals`: a NAS file) |
+| 403 | `forbidden` (0.15.0: `details.reason` `not_hoard` on `/v1/trash/*`, the device's app is not `hoard`/`hoard-debug`; admin: missing `X-Hoard-Admin` or foreign `Origin`; `DELETE /v1/blobs`: an original or another device's preview; `DELETE /v1/originals`: a NAS file) |
 | 404 | `not_found`, `preview_unavailable` (0.6.0, `details.reason`) |
 | 422 (0.9.0) | `invalid_image` (an edited preview, ADR 0020, `details.reason`) |
 | 405 | `method_not_allowed` |

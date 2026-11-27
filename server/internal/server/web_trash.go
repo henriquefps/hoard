@@ -57,6 +57,7 @@ const (
 	trashPartial       = "partial"         // some files of the shot moved, the others failed (the moved ones are in the trash)
 	trashUnreadable    = "unreadable"      // a directory could not be listed
 	trashState         = "state"           // a compressed original the compression cannot restore or empty now
+	trashWebOnly       = "web_only"        // a backup-only unit: a device cannot delete it for good, only the web gallery can
 )
 
 // unfinishedCompress are the compression states during which an item's files must not move.
@@ -632,6 +633,9 @@ type trashUnitView struct {
 	// the server trash), "hoard" (trashed by Hoard on a device: through /v1 since 0.15.0, or over SMB), "compressed"
 	// (an original of a compressed video, or an output a restore put in the trash).
 	Group string `json:"group"`
+	// WebOnly (0.15.0 review): a backup-only unit (the server trash: no NAS file, only phone backups / uploads) that a
+	// device may restore but never delete for good or empty (ADR 0024); only the web gallery's admin does.
+	WebOnly bool `json:"webOnly,omitempty"`
 }
 
 // Groups of the trash for Empty.
@@ -737,6 +741,7 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 			srv.Files++
 			srv.Size += f.Size
 		}
+		srv.WebOnly = true
 		srv.Group = trashGroupWeb
 		if srv.By != "admin" {
 			srv.Group = trashGroupHoard
@@ -824,13 +829,14 @@ func (s *Server) handleTrashDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveTrashAction(w http.ResponseWriter, r *http.Request, purge bool) {
+	byDevice := isDeviceRequest(r)
 	units, ok := s.readUnits(w, r)
 	if !ok {
 		return
 	}
 	s.trashMu.Lock()
 	defer s.trashMu.Unlock()
-	ans := s.trashAction(r.Context(), units, purge)
+	ans := s.trashAction(r.Context(), units, purge, byDevice)
 	what := "restored"
 	if purge {
 		what = "deleted"
@@ -876,19 +882,24 @@ func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	s.trashMu.Lock()
 	defer s.trashMu.Unlock()
-	all, count, size, groups, err := s.allTrashUnits(ctx, want)
+	byDevice := isDeviceRequest(r)
+	tot, err := s.allTrashUnits(ctx, want, byDevice)
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
-	if req.Confirm == nil || req.Confirm.Count != count || req.Confirm.Size != size {
-		fail(w, r, http.StatusConflict, "conflict", "Confirm the number of shots and the size the trash holds now.",
-			map[string]any{"reason": "confirm", "count": count, "size": size, "groups": groups})
+	all := tot.units
+	if req.Confirm == nil || req.Confirm.Count != tot.count || req.Confirm.Size != tot.size {
+		details := map[string]any{"reason": "confirm", "count": tot.count, "size": tot.size, "groups": tot.groups}
+		if byDevice {
+			details["webOnly"] = tot.webOnly
+		}
+		fail(w, r, http.StatusConflict, "conflict", "Confirm the number of shots and the size the trash holds now.", details)
 		return
 	}
 	ans := trashActionAnswer{Done: []trashUnitRef{}, Refused: map[string]string{}, Names: map[string]string{}}
 	for start := 0; start < len(all); start += maxTrashBatch {
-		part := s.trashAction(ctx, all[start:min(start+maxTrashBatch, len(all))], true)
+		part := s.trashAction(ctx, all[start:min(start+maxTrashBatch, len(all))], true, byDevice)
 		ans.Done = append(ans.Done, part.Done...)
 		for k, v := range part.Refused {
 			ans.Refused[k] = v
@@ -919,19 +930,29 @@ type groupFigures struct {
 	Size  int64 `json:"size"`
 }
 
+// trashTotals is what Empty takes: the units, the number of shots and their size, the figures of every group, and
+// (for a device) the backup-only units it leaves to the web gallery.
+type trashTotals struct {
+	units   []trashUnitRef
+	count   int
+	size    int64
+	groups  map[string]groupFigures
+	webOnly groupFigures
+}
+
 // allTrashUnits lists every unit Empty takes (not held) in the wanted groups, with the number of shots and their size,
-// and the figures of every group.
-func (s *Server) allTrashUnits(ctx context.Context, want map[string]bool) ([]trashUnitRef, int, int64, map[string]groupFigures, error) {
-	var out []trashUnitRef
-	var size int64
+// and the figures of every group. For a device the backup-only units (webOnly) are left out of all of it and counted
+// apart.
+func (s *Server) allTrashUnits(ctx context.Context, want map[string]bool, byDevice bool) (trashTotals, error) {
+	t := trashTotals{groups: map[string]groupFigures{trashGroupWeb: {}, trashGroupHoard: {}, trashGroupCompressed: {}}}
 	shots := map[string]bool{}
-	groups := map[string]groupFigures{trashGroupWeb: {}, trashGroupHoard: {}, trashGroupCompressed: {}}
+	webOnlyShots := map[string]bool{}
 	groupShots := map[string]map[string]bool{}
 	iq := store.ItemQuery{Trashed: true, Limit: 500}
 	for {
 		rows, more, err := s.store.QueryItems(ctx, iq)
 		if err != nil {
-			return nil, 0, 0, nil, err
+			return trashTotals{}, err
 		}
 		for _, row := range rows {
 			var d items.Data
@@ -942,7 +963,15 @@ func (s *Server) allTrashUnits(ctx context.Context, want map[string]bool) ([]tra
 				if u.Held {
 					continue
 				}
-				g := groups[u.Group]
+				if byDevice && u.WebOnly {
+					if !webOnlyShots[row.ID] {
+						webOnlyShots[row.ID] = true
+						t.webOnly.Count++
+					}
+					t.webOnly.Size += u.Size
+					continue
+				}
+				g := t.groups[u.Group]
 				if groupShots[u.Group] == nil {
 					groupShots[u.Group] = map[string]bool{}
 				}
@@ -951,13 +980,13 @@ func (s *Server) allTrashUnits(ctx context.Context, want map[string]bool) ([]tra
 					g.Count++
 				}
 				g.Size += u.Size
-				groups[u.Group] = g
+				t.groups[u.Group] = g
 				if !want[u.Group] {
 					continue
 				}
-				out = append(out, trashUnitRef{ItemID: row.ID, Key: u.Key})
+				t.units = append(t.units, trashUnitRef{ItemID: row.ID, Key: u.Key})
 				shots[row.ID] = true
-				size += u.Size
+				t.size += u.Size
 			}
 		}
 		if !more || len(rows) == 0 {
@@ -966,11 +995,29 @@ func (s *Server) allTrashUnits(ctx context.Context, want map[string]bool) ([]tra
 		last := rows[len(rows)-1]
 		iq.After = &store.ItemKey{SortTime: last.SortTime, ID: last.ID}
 	}
-	return out, len(shots), size, groups, nil
+	t.count = len(shots)
+	return t, nil
+}
+
+// isDeviceRequest is true for a /v1 request (a paired device's key), false for the web gallery's admin session.
+func isDeviceRequest(r *http.Request) bool {
+	return strings.HasPrefix(r.URL.Path, "/v1/") && info(r).device.ID != ""
+}
+
+// hoardOnly lets only Hoard's devices (ADR 0017: app hoard or hoard-debug) through to /v1/trash: a Reveal-only pairing
+// (or a device that has not said its app) never trashes.
+func (s *Server) hoardOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if app := info(r).device.App; app == nil || *app != "hoard" && *app != "hoard-debug" {
+			fail(w, r, http.StatusForbidden, "forbidden", "The trash is for Hoard's devices.", map[string]any{"reason": "not_hoard"})
+			return
+		}
+		next(w, r)
+	}
 }
 
 // trashAction restores (or, with purge, deletes for good) trashed units. Called with s.trashMu held.
-func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bool) trashActionAnswer {
+func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge, byDevice bool) trashActionAnswer {
 	ans := trashActionAnswer{Done: []trashUnitRef{}, Refused: map[string]string{}, Names: map[string]string{}}
 	folders := map[string]bool{}
 	open := map[string]*compress.Folder{}
@@ -1003,6 +1050,10 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 		}
 		if view == nil {
 			ans.Refused[refKey(u)] = trashNotFound
+			continue
+		}
+		if purge && byDevice && view.WebOnly {
+			ans.Refused[refKey(u)] = trashWebOnly
 			continue
 		}
 		if view.Held {

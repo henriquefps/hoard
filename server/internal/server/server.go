@@ -155,6 +155,9 @@ type Server struct {
 
 	trashMu   sync.Mutex // the trash's moves, restores and deletes (web gallery and /v1), and the auto-empty (one at a time)
 	trashWalk trashWalkState
+	// sweeps counts the sweeps a request started in the background (a revoked device's unfinished uploads): tests wait
+	// for them before the store closes and the directory goes.
+	sweeps sync.WaitGroup
 
 	freeBytesFn func(dir string) (int64, error) // tests: a filesystem's free bytes
 

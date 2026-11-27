@@ -637,8 +637,9 @@ row (and `server_trash_files`, its member fingerprints) makes the item's `backup
 trashed while it exists (`items.Syncer.rebuild`): the item is trashed with the usual shapes (`include=trash` whole, else
 a tombstone), plus `"serverTrash": {"since", "purgeAfter"}` in its data. A live NAS copy keeps it live. Nothing is
 deleted while it is there: its contents count as kept (`contentKept`) and `DELETE /v1/originals` answers `409
-conflict` reason `trashed` (the caller's claim is released, as for `mirror`). **Devices still cannot delete backups**:
-only this admin action and the setup page's backup purge can.
+conflict` reason `trashed` (the caller's claim is released, as for `mirror`). **Devices cannot delete backups for
+good** (ADR 0024, the owner's decision): amended in 0.15.0 (below), they may *move* a backup item to the trash and
+*restore* it, never purge it.
 
 - **Restore** removes the row: the item is live again, same id, edits and culling as they were.
 - **Purge** (Delete permanently, Empty, or the auto-empty after `trashDays`): the backup's entries of its files **that no
@@ -809,3 +810,29 @@ moved by the web gallery; older Hoards keep their SMB trash (their files are `by
      data also names a compression went to compression's restore or purge, which refused or acted on the wrong side).
      A server-trash purge whose content a compression still holds reports `keptBy` `compress`: the bytes stay until
      that compression is emptied.
+
+### Review of #86: who may use `/v1/trash`, and what a device cannot delete (0.15.0)
+
+1. **Only Hoard's devices.** A device whose app (ADR 0017) is not `hoard` or `hoard-debug` (Reveal's `reveal`,
+   `reveal-debug`, `reveal-bench`, or a device that never said its app) gets **`403 forbidden`**, `details.reason`
+   **`not_hoard`**, on every `/v1/trash` route (list, move, restore, delete, empty). A Reveal-only pairing cannot trash.
+   The web gallery's `/web/trash/*` is unchanged.
+2. **Backup-only items: a device moves and restores, never deletes for good.** The owner's decision (ADR 0024: devices
+   cannot delete backups) still stands, with this scope: **Hoard may move a backup item to the trash and restore it;
+   permanent deletion of backup-only items stays web-only** (the owner has not decided otherwise). A *backup-only*
+   unit is the `server` unit (no NAS file: its copies are phone backups and uploads); it carries `webOnly: true`.
+   - `POST /v1/trash/delete` refuses it for a device: `refused["<itemId>|server"] = "web_only"` (nothing happens).
+   - `POST /v1/trash/empty` leaves it out of what a device empties: the confirmation's `count` and `size`, the `groups`
+     figures and the `409`'s figures exclude it; the `409`'s `details` and the first page of `GET /v1/trash` carry
+     **`webOnly: {count, size}`** (the units a device cannot empty), so the app can say "N items can only be deleted from
+     the web gallery". The web gallery (admin session) deletes and empties them as before, and its figures include them
+     (no `webOnly` figure there).
+   - NAS units (moved by the server for the web or a device, or by Hoard over SMB) and compressed originals stay
+     deletable by a device; the auto-empty after `trashDays` still purges what the server moved, as it always did.
+3. **Known limits.** A stale `move` row (its file left the trash without the server) is replaced only by a later
+   server move to the same path; a later **SMB trash by Hoard to the same path** leaves the old row, which the
+   housekeeping settles by looking at both paths, so it can briefly show that unit as moved by the server (`by`) and
+   `purgeAfter` of the old move.
+4. `TestRevokedKeyIsRejected` was flaky: a revoke's background sweep wrote into the test's directory while its cleanup
+   removed it; the server now counts those sweeps (`Server.sweeps`) and the harness waits for them before it closes.
+   Tests: `trash_review_test.go`.

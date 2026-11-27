@@ -87,11 +87,11 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/restored", s.device(s.handleCompressPhoneReport(false)))
 	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/abandon", s.device(s.handleCompressAbandon))
 	// The trash for paired devices (ADR 0023 Amendment (0.15.0), hoard-server 0.15.0): the web gallery's operations.
-	mux.HandleFunc("GET /v1/trash", s.device(s.handleTrashList))
-	mux.HandleFunc("POST /v1/trash/move", s.device(s.handleTrashMove))
-	mux.HandleFunc("POST /v1/trash/restore", s.device(s.handleTrashRestore))
-	mux.HandleFunc("POST /v1/trash/delete", s.device(s.handleTrashDelete))
-	mux.HandleFunc("POST /v1/trash/empty", s.device(s.handleTrashEmpty))
+	mux.HandleFunc("GET /v1/trash", s.device(s.hoardOnly(s.handleTrashList)))
+	mux.HandleFunc("POST /v1/trash/move", s.device(s.hoardOnly(s.handleTrashMove)))
+	mux.HandleFunc("POST /v1/trash/restore", s.device(s.hoardOnly(s.handleTrashRestore)))
+	mux.HandleFunc("POST /v1/trash/delete", s.device(s.hoardOnly(s.handleTrashDelete)))
+	mux.HandleFunc("POST /v1/trash/empty", s.device(s.hoardOnly(s.handleTrashEmpty)))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
