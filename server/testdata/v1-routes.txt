@@ -39,3 +39,9 @@ GET /v1/compress/items/{compressItemId}/output
 POST /v1/compress/items/{compressItemId}/replaced
 POST /v1/compress/items/{compressItemId}/restored
 POST /v1/compress/items/{compressItemId}/abandon
+# Added since, frozen the same way (ADR 0023 Amendment (0.15.0), hoard-server 0.15.0):
+GET /v1/trash
+POST /v1/trash/move
+POST /v1/trash/restore
+POST /v1/trash/delete
+POST /v1/trash/empty

@@ -42,7 +42,7 @@ func (s *Server) routesWebCompress(authed func(string, http.HandlerFunc)) {
 	authed("POST /web/compress/lookup", s.handleCompressLookup)
 	authed("GET /web/compress/items/{id}/log", s.handleAdminCompressLog)
 	authed("GET /web/compress/items/{id}/meta", s.handleWebCompressMeta)
-	authed("GET /web/trash", s.handleWebTrash)
+	authed("GET /web/trash", s.handleTrashList)
 }
 
 // webAsAdmin runs h as the web gallery's admin (compress_jobs.created_by = "admin", ADR 0025 "Tables").
@@ -153,11 +153,11 @@ type webTrashPlace struct {
 	Held   bool   `json:"held,omitempty"`
 }
 
-// handleWebTrash lists the trashed items (ADR 0023), newest first, with each compressed original's compression (ADR
+// handleTrashList (GET /web/trash, GET /v1/trash) lists the trashed items (ADR 0023), newest first, with each compressed original's compression (ADR
 // 0025 "Originals: the trash"): what restoring and emptying it through /web/compress/restore and …/purge does. An entry
 // a compression journal holds is marked held: nothing empties it. The first page also lists the live items whose file
 // has a held trash entry (a replace that waits after its hard link keeps the original at its path and in the trash).
-func (s *Server) handleWebTrash(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 	iq := store.ItemQuery{Trashed: true, Desc: true, Limit: 200}
 	cursor := r.URL.Query().Get("cursor")
 	if cursor != "" {
@@ -263,8 +263,18 @@ func (s *Server) handleWebTrash(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		next = s.itemCursor(store.ItemKey{SortTime: last.SortTime, ID: last.ID}, true)
 	}
+	out := map[string]any{"items": list, "cursor": next, "hasMore": more}
+	if cursor == "" {
+		// The figures Empty confirms, per group (ADR 0023 Amendment (0.15.0)): the first page carries them.
+		_, _, _, groups, err := s.allTrashUnits(r.Context(), nil)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
+		out["groups"] = groups
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]any{"items": list, "cursor": next, "hasMore": more})
+	writeJSON(w, http.StatusOK, out)
 }
 
 // webTrashCompression is the newest compression that names fp (newest first in recs), as the trash row shows it: the

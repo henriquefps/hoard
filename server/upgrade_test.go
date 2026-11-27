@@ -92,7 +92,7 @@ func TestUpgradesHoardServer040DataDir(t *testing.T) {
 	defer st.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if v, _ := st.SchemaVersion(ctx); v != 13 {
+	if v, _ := st.SchemaVersion(ctx); v != 14 {
 		t.Fatalf("schema after upgrade %d", v)
 	}
 	if err := st.SetSetting(ctx, "backupRoot", realBackup); err != nil {

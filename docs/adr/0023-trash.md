@@ -719,3 +719,47 @@ too, with its own clock guard: the shorter setting wins, as between two devices.
    its `409 confirm` carries each group's `count` and `size`. The gallery's Empty dialog lists the groups with their
    counts and sizes, each with a checkbox (all on); a group left out stays (`TestWebTrashEmptyByGroup`, e2e
    `empty-groups-*` screenshots).
+
+## Amendment (0.15.0): the trash for paired devices
+
+The owner's decision (2026-11-27): **Hoard does not use SMB to trash, restore or empty photos the server indexes**; the
+server does it, for the web gallery and for devices alike. hoard-server 0.15.0 opens the web gallery's trash
+(Amendment (0.14.0)) to paired devices under `/v1`, with the device key: **one implementation** (the same planning, shot
+rule, trash root, `trash_moves` journal, server trash, held/busy/on_phone rules and answers; the `/web/trash/*` handlers
+and the `/v1/trash/*` ones call the same functions). Schema 14 (`0014_trash_by.sql`: `trash_moves.moved_by`). Tests:
+`trash_v1_test.go` (every web case run through both APIs), `trash_fixes_test.go`.
+
+### Routes (`/v1`, device key; additions only)
+
+| Route | What it does |
+| --- | --- |
+| `GET /v1/trash?cursor=` | The trash, newest first, 200 items a page: the entries of `GET /web/trash` (`id`, `kind`, `name`, `size`, `trashedAt`, `places`, `held`, `compressedTo`, `compression`, `units`, `serverTrash`, `edits`, `live`), `cursor`, `hasMore`; the first page (no cursor) also carries `groups`: `{"web" \| "hoard" \| "compressed": {"count", "size"}}`, the figures `POST /v1/trash/empty` confirms (units not held). Includes what Hoard trashed over SMB before (any `.hoard-trash` the walk indexed). |
+| `POST /v1/trash/move` `{"itemIds", "dryRun"?}` (1–500) | As `POST /web/trash/move`: the dry run first (`nasShots`, `nasFiles`, `serverItems`, `size`, `warnings.onlyCopy`, `warnings.edits`, `nasBlocked`), then the move; per item `moved`, `skipped` (`not_found`, `trashed`, `held`, `busy`, `on_phone`, `nothing`) or `failed` (`changed`, `path_taken`, `not_writable`, `not_same_device`, `unreadable`, `partial`, `error`); `counts` (`moved`, `skipped.<reason>`, `failed.<reason>`). With NAS shots and the write mount unusable: `503 unavailable`, `details.reason` (`no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`), nothing moved. |
+| `POST /v1/trash/restore` `{"units": [{"itemId", "key"}]}` (1–500) | As the web: `{"done", "refused": {"<itemId>\|<key>": reason}, "names", "size"}`. |
+| `POST /v1/trash/delete` `{"units"}` (1–500) | As the web, plus `keptBy`. |
+| `POST /v1/trash/empty` `{"confirm": {"count", "size"}, "groups"?}` | As the web: every unit not held of the groups (absent: all), only when `count` and `size` are still theirs; else `409 conflict`, `details`: `reason` `confirm`, `count`, `size`, `groups`. |
+
+`GET /v1/server` `features` gains **`trash-actions`** (the existing `trash`, 0.11.0, stays the `include=trash` reads).
+Any paired device that is not revoked may read and write (the owner's devices, as for compression); every write is
+logged with the device id. The per-device request budget applies as to any `/v1` route.
+
+### Units: who moved them, and the groups
+
+A unit (Amendment (0.14.0)) gains **`by`**: `"admin"` (moved from the web gallery), a **device id** (moved through
+`/v1/trash/move` by that device), or absent (the server did not move it: Hoard's own moves over SMB). `trash_moves.moved_by`
+records it for NAS moves (rows before 0.15.0: `admin`, the only mover then); `server_trash.trashed_by` for the server
+trash (already there). The **group** follows `by`: `web` = by `admin`; `hoard` = by a device (through `/v1`, now) or
+not moved by the server (over SMB, before); `compressed` unchanged. `byServer` and `purgeAfter` are unchanged: what the
+server moved, whoever asked, is what its auto-empty takes.
+
+### Who purges by time
+
+The server's auto-empty (after `compress.trashDays`) stays the **only time-based purge** of what the server moved,
+whoever asked (`byServer` units, the server trash). No `/v1` route purges by age: a device deletes only the units it
+names (`delete`, or `empty` with the confirmed figures). The server still never auto-empties a file it did not move
+(Hoard's SMB moves before 0.15.0, `by` absent); a device that wants those gone deletes them explicitly.
+
+### Unchanged for Reveal and older Hoards
+
+Nothing a client already uses changes: a device-moved shot is a trashed file and a trashed item in the feed, as one
+moved by the web gallery; older Hoards keep their SMB trash (their files are `by`-less `hoard` units).

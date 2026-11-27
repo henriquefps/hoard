@@ -43,6 +43,10 @@ const serverTrashCols = "item_id, main_fp, trashed_at, purge_after, trashed_by, 
 
 // AddServerTrash puts items into the server trash (an item already there keeps its dates).
 func (s *Store) AddServerTrash(ctx context.Context, rows []ServerTrash) error {
+	return retryBusy(ctx, func() error { return s.addServerTrash(ctx, rows) })
+}
+
+func (s *Store) addServerTrash(ctx context.Context, rows []ServerTrash) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		for _, r := range rows {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO server_trash (item_id, main_fp, trashed_at, purge_after, trashed_by, size)
@@ -319,6 +323,8 @@ type TrashMove struct {
 	// Kind is MoveKindMove (the server moved the file into the trash) or MoveKindOp (a row written only while a restore
 	// or a delete of a file the server did not move runs: never due for the auto-empty, forgotten when it ends).
 	Kind string
+	// MovedBy is who asked the server to move it (0.15.0): "admin" (the web gallery) or a device id.
+	MovedBy string
 }
 
 // Kinds of a trash move row.
@@ -335,14 +341,14 @@ const (
 	MovePurging   = "purging"
 )
 
-const trashMoveCols = "id, folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after, kind"
+const trashMoveCols = "id, folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after, kind, moved_by"
 
 func scanTrashMoves(rows *sql.Rows) ([]TrashMove, error) {
 	defer rows.Close()
 	var out []TrashMove
 	for rows.Next() {
 		var m TrashMove
-		if err := rows.Scan(&m.ID, &m.FolderID, &m.RelPath, &m.TrashPath, &m.State, &m.Size, &m.MTime, &m.ItemID, &m.MovedAt, &m.PurgeAfter, &m.Kind); err != nil {
+		if err := rows.Scan(&m.ID, &m.FolderID, &m.RelPath, &m.TrashPath, &m.State, &m.Size, &m.MTime, &m.ItemID, &m.MovedAt, &m.PurgeAfter, &m.Kind, &m.MovedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -350,30 +356,45 @@ func scanTrashMoves(rows *sql.Rows) ([]TrashMove, error) {
 	return out, rows.Err()
 }
 
-// PutTrashMove writes a journal row (before its operation runs): a new one, or an existing row (same folder and trash
-// path) in its new state; an existing row keeps its kind, times and purge_after (a failed restore or delete puts it
-// back exactly as it was by setting its state again).
+// PutTrashMove writes a journal row (before its operation runs). A new move (state moving) replaces whatever row was at
+// that trash path (a stale row whose file left the trash without the server: its size, mtime, item, times, kind and
+// mover go with it); a restore or a delete (restoring, purging) over an existing row changes only its state and path, so
+// the row keeps its kind, times and purge_after and a failed operation puts it back exactly as it was by setting its
+// state again. SQLITE_BUSY is retried with back-off.
 func (s *Store) PutTrashMove(ctx context.Context, m TrashMove) (int64, error) {
 	if m.Kind == "" {
 		m.Kind = MoveKindMove
 	}
+	if m.MovedBy == "" {
+		m.MovedBy = "admin"
+	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO trash_moves (folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after, kind)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (folder_id, trash_path) DO UPDATE SET state = excluded.state, rel_path = excluded.rel_path
-		RETURNING id`, m.FolderID, m.RelPath, m.TrashPath, m.State, m.Size, m.MTime, m.ItemID, m.MovedAt, m.PurgeAfter, m.Kind).Scan(&id)
+	err := retryBusy(ctx, func() error {
+		return s.db.QueryRowContext(ctx, `INSERT INTO trash_moves (folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after, kind, moved_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (folder_id, trash_path) DO UPDATE SET state = excluded.state, rel_path = excluded.rel_path,
+			size = iif(excluded.state = 'moving', excluded.size, size), mtime = iif(excluded.state = 'moving', excluded.mtime, mtime),
+			item_id = iif(excluded.state = 'moving', excluded.item_id, item_id), moved_at = iif(excluded.state = 'moving', excluded.moved_at, moved_at),
+			purge_after = iif(excluded.state = 'moving', excluded.purge_after, purge_after), kind = iif(excluded.state = 'moving', excluded.kind, kind),
+			moved_by = iif(excluded.state = 'moving', excluded.moved_by, moved_by)
+		RETURNING id`, m.FolderID, m.RelPath, m.TrashPath, m.State, m.Size, m.MTime, m.ItemID, m.MovedAt, m.PurgeAfter, m.Kind, m.MovedBy).Scan(&id)
+	})
 	return id, err
 }
 
-// SetTrashMoveState settles a journal row.
+// SetTrashMoveState settles a journal row (SQLITE_BUSY retried).
 func (s *Store) SetTrashMoveState(ctx context.Context, id int64, state string) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE trash_moves SET state = ? WHERE id = ?", state, id)
-	return err
+	return retryBusy(ctx, func() error {
+		_, err := s.db.ExecContext(ctx, "UPDATE trash_moves SET state = ? WHERE id = ?", state, id)
+		return err
+	})
 }
 
-// DeleteTrashMove forgets a journal row (the file left the trash: restored or deleted).
+// DeleteTrashMove forgets a journal row (the file left the trash: restored or deleted; SQLITE_BUSY retried).
 func (s *Store) DeleteTrashMove(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM trash_moves WHERE id = ?", id)
-	return err
+	return retryBusy(ctx, func() error {
+		_, err := s.db.ExecContext(ctx, "DELETE FROM trash_moves WHERE id = ?", id)
+		return err
+	})
 }
 
 // TrashMoves lists the journal rows in the given states ("" = all).

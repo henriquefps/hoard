@@ -598,12 +598,29 @@ additions only. Schema 13 (`0013_web_trash.sql`: `server_trash`, `server_trash_f
 - `POST /v1/uploads` and `PATCH /v1/uploads/{uploadId}`: `507 storage_full` (`details`: `reason`, `needed`, `free`,
   `offset`?; `Retry-After`) when the backup volume has no room, before anything is written.
 
+## Trash for paired devices (hoard-server 0.15.0)
+
+Added by ADR 0023 Amendment (0.15.0), which is the reference. Additions only; `features` gains `"trash-actions"`.
+Schema 14 (`0014_trash_by.sql`: `trash_moves.moved_by`). The web gallery's trash operations (0.14.0) under the device
+key, one implementation for both; Hoard uses them instead of SMB for every photo the server indexes.
+
+| Method and path | Answer |
+| --- | --- |
+| `GET /v1/trash?cursor=` | `{"items": [...], "cursor", "hasMore", "groups"? (first page)}`: each trashed item with its `units` (`key`, `source` `nas` \| `server`, `day`, `folderId`, `folderName`, `dir`, `device`, `files`, `size`, `held`, `purgeAfter`, `byServer`, `by`, `group` `web` \| `hoard` \| `compressed`); `groups`: each group's `count` and `size` (units not held) |
+| `POST /v1/trash/move` `{"itemIds": [...] (1-500), "dryRun"?}` | `200 {"moved", "skipped", "failed", "counts", "warnings", "nasShots", "nasFiles", "serverItems", "size", "nasBlocked"?}`; `503 unavailable` (`details.reason`: the write mount's problem) with NAS shots and no usable write mount, nothing moved; `422 invalid_request` |
+| `POST /v1/trash/restore` `{"units": [{"itemId", "key"}] (1-500)}` | `200 {"done", "refused", "names"?, "size"}`; `422 invalid_request` |
+| `POST /v1/trash/delete` `{"units"}` | `200 {"done", "refused", "names"?, "keptBy"?, "size"}`; `422 invalid_request` |
+| `POST /v1/trash/empty` `{"confirm": {"count", "size"}, "groups"?}` | `200` as delete; `409 conflict` (`details`: `reason` `confirm`, `count`, `size`, `groups`) when the figures are not the trash's now; `422 invalid_request` (an unknown group) |
+
+Any paired device may call them (writes are logged with its id). The server's auto-empty stays the only time-based
+purge; a device deletes only what it names.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
 | --- | --- | --- |
 | `GET /v1/health` | none | `{"status": "ok", "version", "api": 1, "counts": {"devices", "photos", "versions", "blobs", "nasFiles", "pendingUploads", "items" (0.5.0)}}`: counts only, no names or paths |
-| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "items-by-path" (0.10.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0), "edits" (0.9.0), "trash" (0.11.0), "backup" (0.12.0)], "previews": {…} (0.6.0, when enabled), "edits": {…} (0.9.0), "backup": {…} (0.12.0)}` |
+| `GET /v1/server` | key | `{"serverId", "serverName", "version", "api": 1, "deviceId", "limits": {…}, "storageConfigured": bool, "features": ["items" (0.5.0), "items-by-path" (0.10.0), "previews" (0.6.0), "culling" (0.7.0), "device-identity" (0.7.0), "edits" (0.9.0), "trash" (0.11.0), "backup" (0.12.0), "compress" (0.13.0), "trash-actions" (0.15.0)], "previews": {…} (0.6.0, when enabled), "edits": {…} (0.9.0), "backup": {…} (0.12.0)}` |
 | `GET /v1/devices` | key | `{"devices": [{"id", "name", "platform", "physicalDeviceId" (0.7.0), "app" (0.7.0)}]}`: the paired devices that are not revoked (no keys), so a client can name the device of a conflict copy (`deviceId`) |
 | `POST /v1/pair` | pairing token | see "Pairing" |
 
@@ -647,7 +664,7 @@ Every error is JSON:
 | 404 | `not_found`, `preview_unavailable` (0.6.0, `details.reason`) |
 | 422 (0.9.0) | `invalid_image` (an edited preview, ADR 0020, `details.reason`) |
 | 405 | `method_not_allowed` |
-| 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced; 0.12.0: `details.reason` `mirror` on `DELETE /v1/originals`, `covered` and `stopped` on backup roots; 0.13.0 `compressed`, 0.14.0 `trashed` on `DELETE /v1/originals`) |
+| 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced; 0.12.0: `details.reason` `mirror` on `DELETE /v1/originals`, `covered` and `stopped` on backup roots; 0.13.0 `compressed`, 0.14.0 `trashed` on `DELETE /v1/originals`; 0.15.0 `confirm` on `POST /v1/trash/empty`) |
 | 413 | `too_large` |
 | 415 | `unsupported_media_type` |
 | 422 | `invalid_change`, `checksum_mismatch` |
