@@ -1207,9 +1207,15 @@ func compressItemsOfPhysical(ctx context.Context, q rowsQueryer, physicalID stri
 func (s *Store) CompressOfPhysical(ctx context.Context, physicalID string) (kept, journals, unfinished int, list []CompressItem, err error) {
 	list, err = compressItemsOfPhysical(ctx, s.db, physicalID)
 	for _, it := range list {
-		switch it.State {
-		case CompressReplaced, CompressRestored:
+		switch {
+		case it.State == CompressReplaced || it.State == CompressRestored:
 			kept++
+		case it.State == CompressReady && it.ReplaceStep == StepServed:
+			// The phone downloaded the output and may have written it: the original the server holds may be the only
+			// one, so it is confirmed like the kept ones (and cancelled with the backup).
+			kept++
+		}
+		switch it.State {
 		case CompressReplacing:
 			journals++
 		case CompressQueued, CompressEstimating, CompressEncoding, CompressVerifying, CompressReady:

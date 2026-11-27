@@ -61,6 +61,7 @@ func (c *CPU) ToolsID(ctx context.Context) string {
 			continue
 		}
 		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		//nolint:gosec // the configured vips/ffmpeg with fixed arguments
 		out, err := exec.CommandContext(cctx, cmd[0], cmd[1:]...).Output()
 		cancel()
 		if err != nil {

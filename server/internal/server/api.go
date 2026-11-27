@@ -945,7 +945,7 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusServiceUnavailable, "storage_not_configured", "Choose a backup folder on the server's setup page first.", nil)
 		return
 	}
-	ctx := context.WithoutCancel(r.Context()) // record what arrived even when the client is gone
+	ctx := context.WithoutCancel(r.Context())                     // record what arrived even when the client is gone
 	if ok, free, needed := s.uploadSpace(ctx, limit, u.ID); !ok { // nothing written (0.14.0)
 		uploadHeaders(w, u, u.Offset)
 		storageFull(w, r, free, needed, &u.Offset)

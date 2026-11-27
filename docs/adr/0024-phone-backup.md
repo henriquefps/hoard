@@ -994,6 +994,8 @@ compressed`) and the kept trashed items stayed. Now, in the purge's transaction 
 - a compression journal the phone is in the middle of (`replacing`: a phone restore or restore again) **refuses** the
   purge, `409 conflict` reason `compress_journal` with the count: the admin waits, or uses the Compression tab's Force
   cancel first; never a journal left half-done;
+- a `ready` phone item whose output the phone downloaded (`phone:served`: the phone may have written it, so the
+  original the server holds may be the only one) is confirmed with the kept originals and ended with the backup;
 - the phone's unfinished compressions (`queued` … `ready`) become `cancelled`, reason `backup_purged` (running encodes
   are stopped first, `Manager.Stop`, and their work folders removed); finished ones (`replaced`, `restored`) become
   `purged`, reason `backup_purged`; every row of the phone loses its entry ids; its standing jobs (automatic folders)

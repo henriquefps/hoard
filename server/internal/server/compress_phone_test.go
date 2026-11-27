@@ -502,23 +502,22 @@ func TestCompressPhoneOwnership(t *testing.T) {
 		t.Fatal("not purged")
 	}
 
-	// The admin's backup purge: both sides of B stay (rule 5) until the compression's purge by trashDays.
+	// The admin's backup purge (0.14.0, ADR 0024 Amendment (0.14.0)): it settles the phone's compressions in its
+	// transaction: B (replaced) becomes purged, its kept original and its output go with the backup; C's claimed
+	// original stays (a device asked to keep it).
 	_, pinned, err := p.st.MirrorPurgeInfo(ctx, p.ph.physical)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expect(t, p.do("POST", "/admin/api/backup/"+p.ph.physical+"/purge", map[string]any{"confirmPinned": pinned}, adminHeaders()), 200, "")
-	if !exists(p.blobFile(ib.SHA256)) || !exists(p.blobFile(ib.OutSHA256)) {
-		t.Fatal("the backup purge removed a compression's blob")
+	expect(t, p.do("POST", "/admin/api/backup/"+p.ph.physical+"/purge", map[string]any{"confirmPinned": pinned, "confirmCompressed": 1}, adminHeaders()), 200, "")
+	if it := p.item(ib.ID); it.State != store.CompressPurged || it.Reason != store.ReasonBackupPurged || it.MirrorEntryID != nil {
+		t.Fatalf("the backup purge left the compression: %+v", it)
 	}
-	if p.item(ib.ID).State != store.CompressReplaced {
-		t.Fatal("the backup purge changed the compression")
+	if exists(p.blobFile(ib.SHA256)) || exists(p.blobFile(ib.OutSHA256)) {
+		t.Fatal("the backup purge kept a blob only that backup named")
 	}
-	p.st.SetNow(func() time.Time { return time.Now().Add(31 * 24 * time.Hour) })
-	p.srv.compress.Housekeeping(ctx)
-	p.st.SetNow(time.Now)
-	if it := p.item(ib.ID); it.State != store.CompressPurged || exists(p.blobFile(ib.SHA256)) {
-		t.Fatalf("purge by trashDays: %+v", it)
+	if !exists(p.blobFile(ic.SHA256)) {
+		t.Fatal("a claimed original went with the backup")
 	}
 }
 
