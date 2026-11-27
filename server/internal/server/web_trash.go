@@ -817,10 +817,14 @@ func (s *Server) readUnits(w http.ResponseWriter, r *http.Request) ([]trashUnitR
 }
 
 // handleTrashRestore serves POST /web/trash/restore and POST /v1/trash/restore.
-func (s *Server) handleTrashRestore(w http.ResponseWriter, r *http.Request) { s.serveTrashAction(w, r, false) }
+func (s *Server) handleTrashRestore(w http.ResponseWriter, r *http.Request) {
+	s.serveTrashAction(w, r, false)
+}
 
 // handleTrashDelete serves POST /web/trash/delete and POST /v1/trash/delete.
-func (s *Server) handleTrashDelete(w http.ResponseWriter, r *http.Request) { s.serveTrashAction(w, r, true) }
+func (s *Server) handleTrashDelete(w http.ResponseWriter, r *http.Request) {
+	s.serveTrashAction(w, r, true)
+}
 
 func (s *Server) serveTrashAction(w http.ResponseWriter, r *http.Request, purge bool) {
 	units, ok := s.readUnits(w, r)
