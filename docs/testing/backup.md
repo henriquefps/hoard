@@ -181,3 +181,41 @@ purged other than by the roots list).
    `…/replaced`/`…/output` and is abandoned by the existing rules (not seen in this run: both were reported).
 4. Optional: when `GET /v1/backup/roots` is empty and the account had roots, say it once on Settings › Phone backup
    ("The photo server's backup of this phone was deleted; Hoard is backing it up again").
+
+## Hoard 2.9.1: after an admin purge, and a full backup volume (ADR 0024/0025 "Amendment (2.9.1)")
+
+### JVM and Robolectric
+
+| Suite | What it checks |
+| --- | --- |
+| `:core:server` `BackupPurgeTest` (fake hoard-server 0.14.0: purge, `507 storage_full`) | one root of two purged: made again with a new id, its files reported and uploaded again in the same pass, its `freed` history dropped (the other root's kept), said once; a whole purge; the roots list read each pass; a stopped root not reset; a full volume at `POST /v1/uploads`: one request, rows `queued` with no attempt and no error, the wait's figures and back-off (1 h with `Retry-After: 3600`), no upload before it is due, Back up now tries again, resumed and cleared once there is room; a disk that fills during a `PATCH`: one refused chunk, never retried, the upload id kept, resumed with `HEAD`; the pure back-off and reset |
+| `:core:server` `CompressEngineTest` ("after a purge …") | a write whose `…/replaced` answers `404` is settled (`reported`, no report) and the restarted backup uploads the output; a row waiting for consent is dropped without a write; a download answered `404` is abandoned |
+| `:core:server` `CompressModelTest`, `GalleryMigrationTest` | `SpaceWait` (0.14.0 `space`, `failed.no_space`, never under failures); `gallery.db` 6 → 7 |
+| `:native` `BackupWaitTextsTest`, `CompressReasonTextsTest` | the new sentences in English and Portuguese |
+| `:native` `BackupScreenshotTest`, `CompressScreenshotTest` | goldens (copies in [`backup-291/goldens/`](backup-291/goldens/)): `backup_restarted_phone_{light,dark}`, `backup_server_full_phone_{light,dark}`, `compress_settings_space_wait_phone_{light,dark}` |
+
+### Emulator run (2026-11-26)
+
+On cachyos-fps. Server: `origin/server-0140` (5d34104, hoard-server 0.14.0) built locally (`go build`, web gallery not
+embedded) over the tools of `hoard-server:0.13.2-nvidia`, as my own image `hoard291-server:test`; container
+`hoard291-srv`, `--cpus 2 --memory 1536m`, `127.0.0.1:3391`, temporary `/data`, the backup root `/mnt/backup` on an
+**800 MB tmpfs**. App: this branch's debug build on my own AVD `hoard291` (API 36, port 5594, `-memory 3072
+-no-window`), media permissions and All files access granted, paired with the link typed by hand
+(`http://10.0.2.2:3391`). Synthetic files: six noise JPEGs (1.7 MB each) in `DCIM/Camera`, dated October 2026. The
+container, the image, the emulator and the AVD were removed afterwards. Screenshots: [`backup-291/e2e/`](backup-291/e2e/).
+
+| Step | Result |
+| --- | --- |
+| Settings › Phone backup: Camera on ("Only on Wi-Fi" off: the emulator's network is metered) | 5 of 5 backed up |
+| Free up space, two photos, Android's dialog: Allow | "Freed 2 files · 3.3 MB"; Settings: "3.3 MB freed · 2 files" and the "Freed photos stay…" note ([`p02`](backup-291/e2e/p02-before-purge-freed.png)) |
+| Admin purge without confirmation, then `{"confirmPinned": 2, "confirmCompressed": 0}` | `409 confirm_pinned` (`pinned: 2`); then `removedFiles: 5`, no phone in `GET /admin/api/backup`, the tmpfs empty |
+| Hoard: Back up now | `1 folder(s) gone from the server (purged): backing them up again`, `Done, 3 uploaded, … 1 folder(s) started over`; the server: a new root, 3 files stored; `gallery.db`: `freed` empty, `backup_restarted_at` set |
+| Settings › Phone backup | "The photo server's backup of this phone was deleted; Hoard is backing it up again" with OK; no freed totals, no "Freed photos stay…" note ([`p05`](backup-291/e2e/p05-restarted-notice.png), [`p06`](backup-291/e2e/p06-restarted-freeup.png)); OK clears it |
+| A 600 MB filler in the backup tmpfs (196 MB free, under the 512 MiB reserve), a new photo, Back up now | one `POST /v1/uploads` → `507 storage_full`; `ServerFull, 0 uploaded, waiting for room until` +1 h; the row `queued`, attempts 0, no error; the folder: "3 of 4 backed up · Waiting: the photo server's drive is full (195 MB free)" ([`p07`](backup-291/e2e/p07-server-full.png)) |
+| Back up now again, still full | one more `507` (two in all), the wait renewed; no other request |
+| Filler removed, Back up now | `Done, 1 uploaded`; "4 of 4 backed up"; `backup_wait` cleared ([`p08`](backup-291/e2e/p08-resumed.png)) |
+| A second purge with the screen open, Back up now | 4 uploaded again; the notice appears at the top of the open screen ([`p09`](backup-291/e2e/p09-second-purge-notice.png)) |
+
+Found and fixed during the run: the notice was first a list item of its own above the summary; with the screen
+already open (scrolled to its top) the list kept the summary in place and the new item appeared above the visible
+area, so the owner would not have seen it. It is now part of the first item.

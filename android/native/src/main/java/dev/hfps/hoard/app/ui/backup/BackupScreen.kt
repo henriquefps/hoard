@@ -266,8 +266,14 @@ fun BackupContent(
                     }
                     return@LazyColumn
                 }
-                if (ui.restarted) item("restarted") { Restarted(onRestartedSeen) }
-                item("summary") { Summary(ui, onNow) }
+                // The notice is part of the first item: a new item above it would appear off-screen (the list keeps
+                // its first visible item in place while the screen is open).
+                item("summary") {
+                    Column {
+                        if (ui.restarted) Restarted(onRestartedSeen)
+                        Summary(ui, onNow)
+                    }
+                }
                 if (ui.revealNotGrouped) item("reveal") { RevealNotGrouped(onThisPhone) }
                 item("folders-head") {
                     Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp)) {
