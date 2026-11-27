@@ -799,6 +799,10 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 			s.internal(w, r, err)
 			return
 		}
+		if ok, free, needed := s.uploadSpace(ctx, u.Size-u.Offset, u.ID); !ok {
+			storageFull(w, r, free, needed, &u.Offset)
+			return
+		}
 		writeJSON(w, http.StatusOK, s.uploadResponse(u, "resume"))
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -824,6 +828,10 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if n >= maxUploadsPerDev {
 		rateLimited(w, r, time.Minute)
+		return
+	}
+	if ok, free, needed := s.uploadSpace(ctx, req.Size, ""); !ok { // before any row or file (0.14.0)
+		storageFull(w, r, free, needed, nil)
 		return
 	}
 	u, err := s.store.CreateUpload(ctx, store.Upload{DeviceID: dev.ID, SHA256: req.SHA256, Size: req.Size, Kind: req.Kind, Fingerprint: req.Fingerprint})
@@ -938,12 +946,23 @@ func (s *Server) handleUploadPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := context.WithoutCancel(r.Context()) // record what arrived even when the client is gone
+	if ok, free, needed := s.uploadSpace(ctx, limit, u.ID); !ok { // nothing written (0.14.0)
+		uploadHeaders(w, u, u.Offset)
+		storageFull(w, r, free, needed, &u.Offset)
+		return
+	}
+	before := u.Offset
 	newOffset, readErr := bs.WriteChunk(u.ID, u.Offset, r.Body, limit)
 	if err := s.store.SetUploadOffset(ctx, u.ID, newOffset); err != nil {
 		s.internal(w, r, err)
 		return
 	}
 	u.Offset = newOffset
+	if readErr != nil && isNoSpace(readErr) {
+		uploadHeaders(w, u, newOffset)
+		storageFull(w, r, -1, limit-(newOffset-before), &newOffset)
+		return
+	}
 	if readErr != nil {
 		uploadHeaders(w, u, newOffset)
 		fail(w, r, http.StatusBadRequest, "invalid_request", "The chunk was interrupted; HEAD the upload and continue from Upload-Offset.", map[string]any{"offset": newOffset})

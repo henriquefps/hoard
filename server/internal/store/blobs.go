@@ -368,4 +368,14 @@ func (s *Store) DeleteOriginal(ctx context.Context, fp, deviceID string) (string
 }
 
 // RecordNames reports whether a live Reveal photo record names a fingerprint (Reveal's library has the photo).
-func (s *Store) RecordNames(ctx context.Context, fp string) (bool, error) { return originalNamed(ctx, s.db, fp) }
+func (s *Store) RecordNames(ctx context.Context, fp string) (bool, error) {
+	return originalNamed(ctx, s.db, fp)
+}
+
+// UploadsRemaining sums what the unfinished uploads updated since `since` (ms) still have to send, except one: the
+// space they will take on the backup volume (hoard-server 0.14.0, the 507 storage_full check).
+func (s *Store) UploadsRemaining(ctx context.Context, since int64, except string) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT coalesce(sum(size - "offset"), 0) FROM uploads WHERE updated_at >= ? AND id != ?`, since, except).Scan(&n)
+	return n, err
+}

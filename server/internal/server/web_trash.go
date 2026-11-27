@@ -44,19 +44,19 @@ func (s *Server) routesWebTrash(authed func(string, http.HandlerFunc)) {
 
 // Skip and failure reasons of the trash routes.
 const (
-	trashNotFound      = "not_found"      // no such item, or a tombstone
-	trashAlready       = "trashed"        // already in the trash
-	trashHeld          = "held"           // a compression journal holds one of its files
-	trashBusy          = "busy"           // a compression of one of its files is in flight
-	trashOnPhone       = "on_phone"       // only a phone backup whose phone still has the file: delete it on the phone
-	trashNothing       = "nothing"        // no copy the server can trash (no NAS file, no server copy)
-	trashChanged       = "changed"        // the file at the path is not the indexed one any more
-	trashPathTaken     = "path_taken"     // restore: another file took the original path
-	trashNotWritable   = "not_writable"   // the folder cannot be written through the write mount
+	trashNotFound      = "not_found"       // no such item, or a tombstone
+	trashAlready       = "trashed"         // already in the trash
+	trashHeld          = "held"            // a compression journal holds one of its files
+	trashBusy          = "busy"            // a compression of one of its files is in flight
+	trashOnPhone       = "on_phone"        // only a phone backup whose phone still has the file: delete it on the phone
+	trashNothing       = "nothing"         // no copy the server can trash (no NAS file, no server copy)
+	trashChanged       = "changed"         // the file at the path is not the indexed one any more
+	trashPathTaken     = "path_taken"      // restore: another file took the original path
+	trashNotWritable   = "not_writable"    // the folder cannot be written through the write mount
 	trashNotSameDevice = "not_same_device" // the trash would be on another filesystem
-	trashPartial       = "partial"        // some files of the shot moved, the others failed (the moved ones are in the trash)
-	trashUnreadable    = "unreadable"     // a directory could not be listed
-	trashState         = "state"          // a compressed original the compression cannot restore or empty now
+	trashPartial       = "partial"         // some files of the shot moved, the others failed (the moved ones are in the trash)
+	trashUnreadable    = "unreadable"      // a directory could not be listed
+	trashState         = "state"           // a compressed original the compression cannot restore or empty now
 )
 
 // unfinishedCompress are the compression states during which an item's files must not move.
@@ -643,7 +643,7 @@ type trashUnitRef struct {
 
 type trashActionAnswer struct {
 	Done    []trashUnitRef    `json:"done"`
-	Refused map[string]string `json:"refused"` // "<itemId>|<key>" -> reason
+	Refused map[string]string `json:"refused"`         // "<itemId>|<key>" -> reason
 	Names   map[string]string `json:"names,omitempty"` // path_taken: the file in the way
 	// What a server purge kept (Reveal's library, a phone that has the file again, a compression).
 	KeptBy []string `json:"keptBy,omitempty"`

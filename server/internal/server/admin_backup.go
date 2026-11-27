@@ -60,8 +60,13 @@ func (s *Server) handleAdminBackup(w http.ResponseWriter, r *http.Request) {
 		}
 		u := usage[d.PhysicalID]
 		u.PhysicalID = d.PhysicalID
+		kept, journals, unfinished, _, err := s.store.CompressOfPhysical(ctx, d.PhysicalID)
+		if err != nil {
+			s.internal(w, r, err)
+			return
+		}
 		phones = append(phones, map[string]any{"physicalDeviceId": d.PhysicalID, "name": name, "folder": d.DirName, "createdAt": d.CreatedAt,
-			"live": c.live[d.PhysicalID], "roots": rs, "usage": u})
+			"live": c.live[d.PhysicalID], "roots": rs, "usage": u, "compressedKept": kept, "compressJournals": journals, "compressUnfinished": unfinished})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"phones": phones, "lost": lost, "keepNasCopies": s.keepNasCopies(ctx),
 		"available": s.mirrorTree() != nil, "queue": s.backupStatusLine()})
@@ -98,7 +103,8 @@ func (s *Server) handleAdminBackupSettings(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleAdminBackupPurge(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("physicalId")
 	var req struct {
-		ConfirmPinned *int `json:"confirmPinned"`
+		ConfirmPinned     *int `json:"confirmPinned"`
+		ConfirmCompressed *int `json:"confirmCompressed"` // 0.14.0: the compressed originals the backup keeps in the trash
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -117,13 +123,44 @@ func (s *Server) handleAdminBackupPurge(w http.ResponseWriter, r *http.Request) 
 		s.internal(w, r, err)
 		return
 	}
-	if req.ConfirmPinned == nil || *req.ConfirmPinned != pinned {
-		fail(w, r, http.StatusConflict, "conflict", "Confirm the number of files that are only in this backup (freed on the phone).",
-			map[string]any{"reason": "confirm_pinned", "pinned": pinned})
+	// The phone's compressions (ADR 0025 S2; 0.14.0): a journal the phone is in the middle of refuses the purge (Force
+	// cancel it on the Compression tab first); the compressed originals its backup keeps are confirmed like the pinned.
+	kept, journals, _, comps, err := s.store.CompressOfPhysical(ctx, id)
+	if err != nil {
+		s.internal(w, r, err)
 		return
 	}
+	if journals > 0 {
+		fail(w, r, http.StatusConflict, "conflict", "This phone is replacing or restoring compressed videos: wait, or force-cancel them on the Compression tab.",
+			map[string]any{"reason": "compress_journal", "journals": journals})
+		return
+	}
+	confirmCompressed := 0
+	if req.ConfirmCompressed != nil {
+		confirmCompressed = *req.ConfirmCompressed
+	}
+	if req.ConfirmPinned == nil || *req.ConfirmPinned != pinned || confirmCompressed != kept {
+		fail(w, r, http.StatusConflict, "conflict", "Confirm the number of files that are only in this backup (freed on the phone) and of compressed originals it keeps.",
+			map[string]any{"reason": "confirm_pinned", "pinned": pinned, "compressedKept": kept})
+		return
+	}
+	// Running encodes of its videos stop before their rows are ended.
+	var unfinished []int64
+	for _, it := range comps {
+		switch it.State {
+		case store.CompressQueued, store.CompressEstimating, store.CompressEncoding, store.CompressVerifying, store.CompressReady:
+			unfinished = append(unfinished, it.ID)
+		}
+	}
+	s.compress.Stop(unfinished)
 	s.backup.fsMu.Lock()
 	res, err := s.store.PurgeMirror(ctx, id)
+	if errors.Is(err, store.ErrCompressJournal) {
+		s.backup.fsMu.Unlock()
+		fail(w, r, http.StatusConflict, "conflict", "This phone started replacing or restoring compressed videos: try again later.",
+			map[string]any{"reason": "compress_journal"})
+		return
+	}
 	if err != nil {
 		s.backup.fsMu.Unlock()
 		s.internal(w, r, err)
@@ -131,7 +168,7 @@ func (s *Server) handleAdminBackupPurge(w http.ResponseWriter, r *http.Request) 
 	}
 	// Only what the server made goes: its hard links (while their blobs are still there to recognise them), the
 	// manifests, then the directories left empty. Files the owner put in the folder stay.
-	kept := 0
+	keptFiles := 0
 	if t := s.mirrorTree(); t != nil {
 		for _, e := range res.Links {
 			if err := t.Remove(res.DirName, e.TreePath, e.SHA256); err != nil {
@@ -141,15 +178,25 @@ func (s *Server) handleAdminBackupPurge(w http.ResponseWriter, r *http.Request) 
 		for _, rid := range res.Roots {
 			_ = t.RemoveFile(res.DirName, mirror.ManifestPath(rid))
 		}
-		kept = t.PruneDevice(res.DirName)
+		keptFiles = t.PruneDevice(res.DirName)
 	}
 	s.backup.fsMu.Unlock()
 	if err := s.removeReleasedBlobs(ctx, res.Removed); err != nil {
 		s.log.Warn("a released blob's file stays", "err", errorClassOf(err))
 	}
+	var fps []string
+	for _, it := range append(append([]store.CompressItem{}, res.Cancelled...), res.CompressPurged...) {
+		s.compress.Forget(it.ID)
+		fps = append(fps, it.Fingerprint, it.OutFingerprint)
+	}
+	if len(fps) > 0 {
+		s.refreshItems(ctx, fps)
+	}
 	s.indexer.TriggerBackup()
-	s.log.Info("backup: phone purged", "physicalDevice", id, "entries", res.Entries, "pinned", res.Pinned, "blobs", len(res.Removed), "keptFiles", kept)
-	writeJSON(w, http.StatusOK, map[string]any{"entries": res.Entries, "pinned": res.Pinned, "removedFiles": len(res.Removed), "keptFiles": kept})
+	s.log.Info("backup: phone purged", "physicalDevice", id, "entries", res.Entries, "pinned", res.Pinned, "blobs", len(res.Removed), "keptFiles", keptFiles,
+		"compressCancelled", len(res.Cancelled), "compressPurged", len(res.CompressPurged))
+	writeJSON(w, http.StatusOK, map[string]any{"entries": res.Entries, "pinned": res.Pinned, "removedFiles": len(res.Removed), "keptFiles": keptFiles,
+		"compressCancelled": len(res.Cancelled), "compressPurged": len(res.CompressPurged)})
 }
 
 func (s *Server) handleAdminBackupRename(w http.ResponseWriter, r *http.Request) {

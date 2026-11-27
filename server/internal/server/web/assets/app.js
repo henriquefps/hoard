@@ -400,10 +400,12 @@ async function renderBackup() {
     const purge = async () => {
       let msg = t("backupPurgeConfirm", { name: p.name, entries: num(u.entries) });
       if (u.pinned) msg += "\n\n" + t("backupPurgePinned", { pinned: num(u.pinned) });
+      if (p.compressedKept) msg += "\n\n" + t("backupPurgeCompressed", { n: num(p.compressedKept) });
+      if (p.compressJournals) { toast(t("backupPurgeJournal")); return; }
       msg += "\n\n" + t("backupPurgeForeign", { folder: p.folder });
       if (!confirm(msg)) return;
       try {
-        const res = await api("POST", `backup/${encodeURIComponent(p.physicalDeviceId)}/purge`, { confirmPinned: u.pinned || 0 });
+        const res = await api("POST", `backup/${encodeURIComponent(p.physicalDeviceId)}/purge`, { confirmPinned: u.pinned || 0, confirmCompressed: p.compressedKept || 0 });
         toast(res.keptFiles ? t("backupPurgedKept", { n: num(res.keptFiles), folder: p.folder }) : t("backupPurged"));
         route();
       }

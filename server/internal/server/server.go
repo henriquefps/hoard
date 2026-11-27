@@ -150,6 +150,10 @@ type Server struct {
 	compress *compress.Manager // video compression (ADR 0025)
 
 	trashMu sync.Mutex // the web gallery's trash moves, restores and deletes, and the auto-empty (one at a time)
+
+	freeBytesFn func(dir string) (int64, error) // tests: a filesystem's free bytes
+
+	previewMisses map[string]time.Time // logPreviewMiss's last log per item, route and reason (under touchMu)
 }
 
 // ErrorEvent is one recent server-side failure, for the status page (no paths, names or keys).

@@ -404,3 +404,12 @@ func (s *Store) TrashMovesDue(ctx context.Context, now int64) ([]TrashMove, erro
 	}
 	return scanTrashMoves(rows)
 }
+
+// NasTrashBytes sums the size of the files in a NAS folder's trashes (indexed trash rows): what emptying the trash would
+// free on that folder's filesystem.
+func (s *Store) NasTrashBytes(ctx context.Context, folderID string) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, "SELECT coalesce(sum(size), 0) FROM nas_files WHERE folder_id = ? AND removed = 0 AND origin_path IS NOT NULL",
+		folderID).Scan(&n)
+	return n, err
+}

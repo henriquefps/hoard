@@ -310,6 +310,16 @@ func (s *Store) ResetRunningPreviews(ctx context.Context) (int64, error) {
 	return res.RowsAffected()
 }
 
+// RetryFailedPreviews makes every failed preview pending again (the tools changed: a decoder may have been added).
+func (s *Store) RetryFailedPreviews(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, "UPDATE previews SET state = 'pending', attempts = 0, error = '', not_before = 0, updated_at = ? WHERE state = 'failed'",
+		s.nowMs())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // PreviewKeys returns every key with files on disk (for sweeping files no row names).
 func (s *Store) PreviewKeys(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT DISTINCT key FROM previews WHERE key != ''")
