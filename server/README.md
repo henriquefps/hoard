@@ -283,6 +283,23 @@ default; "Pause while the GPU is busy" (setup page, off by default since 0.13.2)
 program holds an NVENC session or the GPU was over 50 % busy in the last minute; an optional night window holds back
 automatic work only.
 
+## Upgrading to 0.15.0 (the trash for paired devices)
+
+0.15.0 adds schema 14 (`0014_trash_by.sql`: one column, `trash_moves.moved_by`) and `/v1` additions only; replace the
+image and restart. ADR 0023 "Amendment (0.15.0)", ADR 0013 "Trash for paired devices".
+
+- **Hoard trashes through the server**: `GET /v1/trash`, `POST /v1/trash/move`, `…/restore`, `…/delete` and `…/empty`
+  (device key; `features` gains `trash-actions`) are the web gallery's trash for paired devices: the same rules, the
+  same journal, the write mount (`NAS_WRITE_ROOT`) for the NAS. A Hoard that sees `trash-actions` no longer moves,
+  restores or empties the server's photos over SMB. The Trash lists who moved each shot; Empty's groups are "Moved
+  from the web gallery" and "Trashed by Hoard on your devices" (through the server now, or over SMB before).
+- **Large selections under a NAS walk**: journal writes wait for a long walk instead of failing (`not_writable` in
+  0.14.0), the batches of one selection share one walk a few seconds after the last, and a shot that fails half-way is
+  put back whole. The log line of each batch says how many failed for each reason; the gallery lists them with
+  **Retry the failed ones**.
+- **The web Trash page no longer polls** (it fetched the whole trash several times a second while open): it loads on
+  open, after its own actions and on **Refresh**.
+
 ## Upgrading to 0.14.0 (the trash from the web gallery)
 
 0.14.0 adds schema 13 (`0013_web_trash.sql`, new tables only: the migration needs no temporary files) and `/v1`
