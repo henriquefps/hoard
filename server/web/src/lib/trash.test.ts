@@ -47,6 +47,10 @@ describe("trash", () => {
     expect(trip.size).toBe(120)
     // Empty takes every unit not held: 4 shots (c is held), their sizes.
     expect(emptyFigures(list)).toEqual({ count: 4, size: 158 })
+    // By group (review of #84): the server trash is the web's; NAS units without byServer are Hoard's.
+    expect(emptyFigures(list, ["web"])).toEqual({ count: 1, size: 5 })
+    expect(emptyFigures(list, ["hoard"])).toEqual({ count: 3, size: 153 })
+    expect(emptyFigures(list, ["compressed"])).toEqual({ count: 0, size: 0 })
     expect(unitsOfEntries([list[2], list[4]])).toHaveLength(2)
   })
 

@@ -316,7 +316,16 @@ type TrashMove struct {
 	ItemID     string
 	MovedAt    int64
 	PurgeAfter int64
+	// Kind is MoveKindMove (the server moved the file into the trash) or MoveKindOp (a row written only while a restore
+	// or a delete of a file the server did not move runs: never due for the auto-empty, forgotten when it ends).
+	Kind string
 }
+
+// Kinds of a trash move row.
+const (
+	MoveKindMove = "move"
+	MoveKindOp   = "op"
+)
 
 // States of a trash move.
 const (
@@ -326,14 +335,14 @@ const (
 	MovePurging   = "purging"
 )
 
-const trashMoveCols = "id, folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after"
+const trashMoveCols = "id, folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after, kind"
 
 func scanTrashMoves(rows *sql.Rows) ([]TrashMove, error) {
 	defer rows.Close()
 	var out []TrashMove
 	for rows.Next() {
 		var m TrashMove
-		if err := rows.Scan(&m.ID, &m.FolderID, &m.RelPath, &m.TrashPath, &m.State, &m.Size, &m.MTime, &m.ItemID, &m.MovedAt, &m.PurgeAfter); err != nil {
+		if err := rows.Scan(&m.ID, &m.FolderID, &m.RelPath, &m.TrashPath, &m.State, &m.Size, &m.MTime, &m.ItemID, &m.MovedAt, &m.PurgeAfter, &m.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -342,12 +351,16 @@ func scanTrashMoves(rows *sql.Rows) ([]TrashMove, error) {
 }
 
 // PutTrashMove writes a journal row (before its operation runs): a new one, or an existing row (same folder and trash
-// path) in its new state.
+// path) in its new state; an existing row keeps its kind, times and purge_after (a failed restore or delete puts it
+// back exactly as it was by setting its state again).
 func (s *Store) PutTrashMove(ctx context.Context, m TrashMove) (int64, error) {
+	if m.Kind == "" {
+		m.Kind = MoveKindMove
+	}
 	var id int64
-	err := s.db.QueryRowContext(ctx, `INSERT INTO trash_moves (folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (folder_id, trash_path) DO UPDATE SET state = excluded.state, rel_path = excluded.rel_path
-		RETURNING id`, m.FolderID, m.RelPath, m.TrashPath, m.State, m.Size, m.MTime, m.ItemID, m.MovedAt, m.PurgeAfter).Scan(&id)
+	err := s.db.QueryRowContext(ctx, `INSERT INTO trash_moves (folder_id, rel_path, trash_path, state, size, mtime, item_id, moved_at, purge_after, kind)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (folder_id, trash_path) DO UPDATE SET state = excluded.state, rel_path = excluded.rel_path
+		RETURNING id`, m.FolderID, m.RelPath, m.TrashPath, m.State, m.Size, m.MTime, m.ItemID, m.MovedAt, m.PurgeAfter, m.Kind).Scan(&id)
 	return id, err
 }
 
@@ -398,7 +411,7 @@ func (s *Store) TrashMoveAt(ctx context.Context, folderID, trashPath string) (Tr
 
 // TrashMovesDue lists the trashed rows whose purge_after passed (the server's auto-empty).
 func (s *Store) TrashMovesDue(ctx context.Context, now int64) ([]TrashMove, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+trashMoveCols+" FROM trash_moves WHERE state = ? AND purge_after <= ? ORDER BY id", MoveTrashed, now)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+trashMoveCols+" FROM trash_moves WHERE state = ? AND kind = ? AND purge_after <= ? ORDER BY id", MoveTrashed, MoveKindMove, now)
 	if err != nil {
 		return nil, err
 	}

@@ -24,7 +24,12 @@ export interface TrashUnit {
   held?: boolean
   purgeAfter?: number
   byServer?: boolean
+  /** What Empty confirms apart: moved from the web gallery, trashed by Hoard on a device, originals of compressed videos. */
+  group?: TrashGroupKind
 }
+
+export type TrashGroupKind = "web" | "hoard" | "compressed"
+export const TRASH_GROUPS: TrashGroupKind[] = ["web", "hoard", "compressed"]
 
 export interface MoveAnswer {
   moved: string[]
@@ -146,10 +151,13 @@ async function unitAction(path: string, units: UnitRef[]): Promise<ActionAnswer>
 export const restoreUnits = (units: UnitRef[]) => unitAction("/web/trash/restore", units)
 export const deleteUnits = (units: UnitRef[]) => unitAction("/web/trash/delete", units)
 
-/** Empty trash: the page's count and size must still be the trash's; the server answers 409 with the current ones. */
-export async function emptyTrash(count: number, size: number): Promise<ActionAnswer | { count: number; size: number }> {
+/**
+ * Empty trash of the chosen groups: the page's count and size must still be the trash's; the server answers 409 with the
+ * current ones.
+ */
+export async function emptyTrash(count: number, size: number, groups: TrashGroupKind[] = TRASH_GROUPS): Promise<ActionAnswer | { count: number; size: number }> {
   try {
-    return await api<ActionAnswer>("/web/trash/empty", { method: "POST", json: { confirm: { count, size } } })
+    return await api<ActionAnswer>("/web/trash/empty", { method: "POST", json: { confirm: { count, size }, groups } })
   } catch (e) {
     if (e instanceof ApiError && e.status === 409) {
       const fresh = await fetchEmptyFigures()
@@ -214,12 +222,19 @@ export function groupTrash(entries: TrashEntry[]): TrashGroup[] {
   return [...byKey.values()].sort((a, b) => (a.day === b.day ? a.place.localeCompare(b.place) : a.day < b.day ? 1 : -1))
 }
 
-/** Everything Empty takes: every unit not held, the number of shots and their size (what the server confirms). */
-export function emptyFigures(entries: TrashEntry[]): { count: number; size: number } {
+/** A unit's group (older servers: by what the unit says). */
+export const groupOf = (e: TrashEntry, u: TrashUnit): TrashGroupKind =>
+  u.group ?? (e.compressedTo ? "compressed" : u.byServer || u.source === "server" ? "web" : "hoard")
+
+/**
+ * What Empty takes: every unit not held (of the given groups), the number of shots and their size (what the server
+ * confirms).
+ */
+export function emptyFigures(entries: TrashEntry[], groups: readonly TrashGroupKind[] = TRASH_GROUPS): { count: number; size: number } {
   let count = 0
   let size = 0
   for (const e of entries) {
-    const us = unitsOf(e).filter((u) => !u.held)
+    const us = unitsOf(e).filter((u) => !u.held && groups.includes(groupOf(e, u)))
     if (us.length) count++
     size += us.reduce((s, u) => s + u.size, 0)
   }

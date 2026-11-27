@@ -18,6 +18,7 @@ import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { listTrash, refreshCompress, type TrashEntry, trashSaves, useCompress } from "@/lib/compress"
@@ -30,7 +31,9 @@ import {
   emptyTrash,
   groupTrash,
   restoreUnits,
+  TRASH_GROUPS,
   type TrashGroup,
+  type TrashGroupKind,
   type UnitRef,
   unitsOf,
 } from "@/lib/trash"
@@ -241,28 +244,36 @@ export function TrashPage() {
       </div>
 
       <Confirm
-        open={!!pending}
-        title={pending?.kind === "empty" ? t("trash.emptyTitleConfirm") : t("trash.deleteTitle", { count: pending?.count ?? 0 })}
-        body={
-          pending?.kind === "empty"
-            ? t("trash.emptyBody", { count: pending.count, formatted: formatNumber(pending.count, lang), size: formatBytes(pending.size, lang) })
-            : t("trash.deleteBody", { count: pending?.count ?? 0, size: formatBytes(pending?.size ?? 0, lang) })
-        }
-        action={pending?.kind === "empty" ? t("trash.empty") : t("trash.deletePermanently")}
+        open={pending?.kind === "delete"}
+        title={t("trash.deleteTitle", { count: pending?.count ?? 0 })}
+        body={t("trash.deleteBody", { count: pending?.count ?? 0, size: formatBytes(pending?.size ?? 0, lang) })}
+        action={t("trash.deletePermanently")}
         onClose={() => setPending(null)}
         onConfirm={async () => {
           if (!pending) return
           setBusy(true)
           try {
-            if (pending.kind === "empty") {
-              const ans = await emptyTrash(pending.count, pending.size)
-              if ("done" in ans) report(ans, "delete")
-              else {
-                toast.message(t("trash.changed"))
-                load()
-              }
-            } else {
-              report(await deleteUnits(pending.units), "delete")
+            report(await deleteUnits(pending.units), "delete")
+          } catch {
+            toast.error(t("trash.actionFailed"))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      />
+      <EmptyDialog
+        open={pending?.kind === "empty"}
+        entries={list}
+        onClose={() => setPending(null)}
+        onEmpty={async (groups) => {
+          const f = emptyFigures(list, groups)
+          setBusy(true)
+          try {
+            const ans = await emptyTrash(f.count, f.size, groups)
+            if ("done" in ans) report(ans, "delete")
+            else {
+              toast.message(t("trash.changed"))
+              load()
             }
           } catch {
             toast.error(t("trash.actionFailed"))
@@ -408,5 +419,77 @@ function EntryRow({ entry: e, group: g, chosen, onChoose }: { entry: TrashEntry;
         ) : null}
       </div>
     </li>
+  )
+}
+
+/**
+ * Empty trash, group by group (review of #84): what the web gallery moved, what Hoard trashed on your devices (before
+ * 0.14.0 too), and the originals of compressed videos, each with its count and size and a checkbox (all on); only the
+ * checked groups are emptied.
+ */
+function EmptyDialog({ open, entries, onClose, onEmpty }: { open: boolean; entries: TrashEntry[]; onClose: () => void; onEmpty: (g: TrashGroupKind[]) => Promise<void> }) {
+  const { t, i18n } = useTranslation()
+  const lang = i18n.language
+  const [off, setOff] = useState<ReadonlySet<TrashGroupKind>>(new Set())
+  const [busy, setBusy] = useState(false)
+  const groups = TRASH_GROUPS.map((g) => ({ g, ...emptyFigures(entries, [g]) })).filter((x) => x.count > 0)
+  const chosen = groups.filter((x) => !off.has(x.g)).map((x) => x.g)
+  const total = emptyFigures(entries, chosen)
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent showCloseButton={false} data-testid="empty-dialog">
+        <DialogHeader>
+          <DialogTitle className="text-lg">{t("trash.emptyTitleConfirm")}</DialogTitle>
+          <DialogDescription className="text-[0.9375rem]">{t("trash.emptyChoose")}</DialogDescription>
+        </DialogHeader>
+        <ul className="flex flex-col gap-3">
+          {groups.map(({ g, count, size }) => (
+            <li key={g} className="flex items-start gap-3" data-testid="empty-group" data-group={g}>
+              <Checkbox
+                id={`empty-${g}`}
+                checked={!off.has(g)}
+                onCheckedChange={(v) => setOff((prev) => { const n = new Set(prev); if (v === true) n.delete(g); else n.add(g); return n })}
+                className="mt-0.5"
+              />
+              <label htmlFor={`empty-${g}`} className="flex flex-col">
+                <span className="font-medium">{t(`trash.group.${g}`)}</span>
+                <span className="text-sm text-muted-foreground tabular-nums">
+                  {t("trash.groupCount", { count, formatted: formatNumber(count, lang), size: formatBytes(size, lang) })}
+                  {" · "}
+                  {t(`trash.groupHint.${g}`)}
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[0.9375rem]" data-testid="empty-total">
+          {total.count > 0
+            ? t("trash.emptyBody", { count: total.count, formatted: formatNumber(total.count, lang), size: formatBytes(total.size, lang) })
+            : t("trash.emptyNone")}
+        </p>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            {t("compress.close")}
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={busy || total.count === 0}
+            data-testid="empty-action"
+            onClick={async () => {
+              setBusy(true)
+              try {
+                await onEmpty(chosen)
+              } finally {
+                setBusy(false)
+                onClose()
+              }
+            }}
+          >
+            {busy && <Spinner data-icon="inline-start" />}
+            {t("trash.empty")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

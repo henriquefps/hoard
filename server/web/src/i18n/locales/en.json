@@ -354,6 +354,18 @@
       "someFailed_other": "{{count}} were not moved: {{reason}}",
       "refused": "Nothing more was moved: {{reason}}",
       "failed": "Moving to the trash did not work. Try again."
+    },
+    "emptyChoose": "Choose what to empty. Each group is deleted for good; a group left unchecked stays in the trash.",
+    "emptyNone": "Nothing is checked.",
+    "group": {
+      "web": "Moved from the web gallery",
+      "hoard": "Trashed by Hoard on your devices",
+      "compressed": "Originals of compressed videos"
+    },
+    "groupHint": {
+      "web": "rejects and backups moved here",
+      "hoard": "what your phone or tablet put in the trash, also before this version",
+      "compressed": "the compressed videos stay; the originals go for good"
     }
   },
   "compress": {

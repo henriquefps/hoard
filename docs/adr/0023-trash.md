@@ -697,3 +697,25 @@ too, with its own clock guard: the shorter setting wins, as between two devices.
    or on a selection of shots; Empty trash on everything, after the confirmation with the count and the size.
 4. Restore refuses, never renames, when a file is at an original path (the message names it), as Hoard does; missing
    directories are recreated; the restore of a unit takes the shot's hidden sidecars in that day folder too.
+
+**Review of #84** (fixes before merge):
+
+5. **A failed or interrupted restore or delete never makes a file due.** `trash_moves` gains `kind`: `move` (the
+   server moved the file into the trash: its auto-empty may take it after `purge_after`) or `op` (written only while a
+   restore or a delete of a file the server did not move runs, a Hoard-trashed shot). The auto-empty takes only `move`
+   rows. When a restore or delete fails (a folder not writable, a link that fails half-way through a shot), the row is
+   put back exactly as it was: an `op` row is deleted, a `move` row goes back to `trashed` with its own `purge_after`
+   (the upsert never overwrites it). A restart's settle deletes `op` rows whatever happened to the file, and puts an
+   interrupted `move` row back to `trashed` (file still in the trash) or forgets it (file gone). Before this, a failed
+   restore of a Hoard-trashed shot left a `trashed` row with `purge_after` = now, and the next housekeeping (start, or
+   10 minutes later) deleted the file; a half-done restore lost the unrestored half the same way. Tests:
+   `TestWebTrashFailedRestoreOfHoardsShotPurgesNothing` (restore and delete refused `not_writable`),
+   `TestWebTrashRestoreFailingHalfwayPurgesNothing`, `TestWebTrashKilledMidRestoreSettles`,
+   `TestWebTrashRefusedDeleteKeepsServerRow`.
+6. **Empty confirms each group apart.** Every unit has a `group`: `web` (moved from the web gallery: its NAS moves and
+   the server trash), `hoard` (trashed by Hoard on a device, also before 0.14.0), `compressed` (originals of compressed
+   videos, or an output a restore put in the trash; a phone or backup compression's kept side is a unit `compressed`
+   too, so it is listed and emptied through compression's routes). `POST /web/trash/empty` takes `groups` (absent: all);
+   its `409 confirm` carries each group's `count` and `size`. The gallery's Empty dialog lists the groups with their
+   counts and sizes, each with a checkbox (all on); a group left out stays (`TestWebTrashEmptyByGroup`, e2e
+   `empty-groups-*` screenshots).

@@ -1,5 +1,5 @@
 import { expect, test, type Cookie, type Page } from "@playwright/test"
-import { existsSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { LIB, PASSWORD, readState, SERVER } from "./server"
 
@@ -63,6 +63,9 @@ test.describe.configure({ mode: "serial" })
 
 test("reject shots, Select all of the Rejected filter, Move to trash: the NAS layout Hoard uses", async ({ page }) => {
   await signIn(page)
+  // A shot Hoard trashed on the phone, before (the .hoard-trash layout over SMB): the web's walk lists it too.
+  mkdirSync(path.join(NAS, ".hoard-trash/2026-11-20/Home"), { recursive: true })
+  renameSync(path.join(NAS, "Home/IMG_0101.JPG"), path.join(NAS, ".hoard-trash/2026-11-20/Home/IMG_0101.JPG"))
   await go(page, "/?q=DSC070")
   await expect(cell(page, "DSC07001.JPG")).toBeVisible({ timeout: 20_000 })
   for (const name of ["DSC07000.ARW", "DSC07001.JPG", "DSC07002.JPG"]) await cell(page, name).click({ modifiers: ["ControlOrMeta"] })
@@ -110,12 +113,12 @@ test("the Trash view: by day and place, with counts and sizes", async ({ page })
   await signIn(page)
   const open = async () => {
     await go(page, "/trash")
-    await expect(page.getByTestId("trash-group")).toHaveCount(2, { timeout: 60_000 }) // after the walk
+    await expect(page.getByTestId("trash-group")).toHaveCount(3, { timeout: 60_000 }) // after the walk
   }
   await open()
   const day = page.locator(`[data-testid="trash-day"][data-day="${today}"]`)
   await expect(day).toContainText("4 shots")
-  const nasGroup = page.locator('[data-testid="trash-group"][data-source="nas"]')
+  const nasGroup = page.locator('[data-testid="trash-group"][data-source="nas"]').filter({ hasText: "Trips/2025-06" })
   await expect(nasGroup).toContainText("/ Trips/2025-06")
   await expect(nasGroup.getByTestId("trash-group-count")).toContainText("3 shots")
   const server = page.locator('[data-testid="trash-group"][data-source="server"]')
@@ -124,7 +127,7 @@ test("the Trash view: by day and place, with counts and sizes", async ({ page })
   await expect(nasGroup.getByTestId("trash-entry")).toHaveCount(3)
   await shots(page, "trash", async () => {
     await open()
-    await page.locator('[data-testid="trash-group"][data-source="nas"]').getByTestId("trash-group-toggle").click()
+    await page.locator('[data-testid="trash-group"][data-source="nas"]').filter({ hasText: "Trips/2025-06" }).getByTestId("trash-group-toggle").click()
   })
 })
 
@@ -132,7 +135,7 @@ test("restore refuses a taken path, then puts the shot back", async ({ page }) =
   await signIn(page)
   writeFileSync(path.join(NAS, "Trips/2025-06/DSC07001.JPG"), "a newer file someone put there")
   await go(page, "/trash")
-  const nasGroup = page.locator('[data-testid="trash-group"][data-source="nas"]')
+  const nasGroup = page.locator('[data-testid="trash-group"][data-source="nas"]').filter({ hasText: "Trips/2025-06" })
   await nasGroup.getByTestId("trash-group-toggle").click()
   await nasGroup.locator('[data-testid="trash-entry"][data-name="DSC07001.JPG"]').getByRole("checkbox").click()
   await page.getByTestId("trash-restore-selection").click()
@@ -155,15 +158,27 @@ test("delete permanently, then Empty trash with its count and size", async ({ pa
   await page.getByTestId("confirm-action").click()
   await expect(page.getByText(/1 shot deleted/)).toBeVisible()
 
+  // Empty, group by group: what the web moved, and what Hoard trashed on a device (left out here).
   await expect(page.getByTestId("trash-empty")).toBeVisible({ timeout: 60_000 })
   await page.getByTestId("trash-empty").click()
-  await expect(page.getByTestId("confirm-dialog")).toContainText(/2 shots \([\d.]+ (KB|kB|MB)\) will be deleted for good/)
-  await shot(page, "empty-confirm-desktop-light")
-  await page.getByTestId("confirm-action").click()
+  const dialog = page.getByTestId("empty-dialog")
+  await expect(dialog.locator('[data-group="web"]')).toContainText(/Moved from the web gallery\s*2 shots · [\d.]+ (KB|kB|MB)/)
+  await expect(dialog.locator('[data-group="hoard"]')).toContainText(/Trashed by Hoard on your devices\s*1 shot · [\d.]+ (KB|kB|MB)/)
+  await expect(dialog.getByTestId("empty-total")).toContainText(/3 shots \([\d.]+ (KB|kB|MB)\) will be deleted for good/)
+  await shots(page, "empty-groups", async () => {
+    await go(page, "/trash")
+    await page.getByTestId("trash-empty").click()
+    await expect(page.getByTestId("empty-dialog")).toBeVisible()
+  })
+  await page.getByTestId("empty-dialog").locator('[data-group="hoard"]').getByRole("checkbox").click()
+  await expect(page.getByTestId("empty-total")).toContainText(/2 shots \([\d.]+ (KB|kB|MB)\) will be deleted for good/)
+  await shot(page, "empty-groups-web-only-desktop-light")
+  await page.getByTestId("empty-action").click()
   await expect(page.getByText(/2 shots deleted/)).toBeVisible()
   expect(nas(`.hoard-trash/${today}/Trips/2025-06/DSC07000.ARW`)).toBe(false)
   expect(nas(`.hoard-trash/${today}/Trips/2025-06/.DSC07000.xmp`)).toBe(false)
-  await expect(page.getByText("The trash is empty")).toBeVisible({ timeout: 60_000 })
+  expect(nas(".hoard-trash/2026-11-20/Home/IMG_0101.JPG")).toBe(true) // Hoard's group was left out
+  await expect(page.getByTestId("trash-group")).toHaveCount(1, { timeout: 60_000 })
 })
 
 test("Portuguese: Move to trash and the Trash view", async ({ page }) => {
@@ -178,7 +193,7 @@ test("Portuguese: Move to trash and the Trash view", async ({ page }) => {
   await page.getByTestId("trash-move-confirm").click()
   await expect(page.getByText("1 movido para a lixeira")).toBeVisible()
   await go(page, "/trash")
-  await expect(page.getByTestId("trash-group")).toHaveCount(1, { timeout: 60_000 }) // after the walk
+  await expect(page.getByTestId("trash-group")).toHaveCount(2, { timeout: 60_000 }) // after the walk
   await expect(page.getByRole("heading", { name: "Lixeira" })).toBeVisible()
   await shot(page, "trash-pt-BR-desktop-light")
 })

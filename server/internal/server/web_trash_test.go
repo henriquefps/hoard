@@ -22,19 +22,28 @@ type trashHarness struct {
 	*harness
 	key, folder string
 	cookie      *http.Cookie
+	// linker, when set, replaces the write mount's hard link (tests make a move fail).
+	linker func(r *os.Root, o, n string) error
 }
 
 func newTrashHarness(t *testing.T, writeMount bool) *trashHarness {
 	t.Helper()
+	th := &trashHarness{}
 	hs := newHarnessWith(t, true, func(c *Config) {
 		nas := filepath.Join(c.Mounts[0], "nas")
 		c.NasReadRoot, c.NasWriteRoot = nas, nas
 		if !writeMount {
 			c.NasWriteRoot = filepath.Join(c.Mounts[0], "no-write-mount")
 		}
+		c.CompressLinker = func(r *os.Root, o, n string) error {
+			if th.linker != nil {
+				return th.linker(r, o, n)
+			}
+			return r.Link(o, n)
+		}
 	})
 	key, _ := hs.pair("Tablet")
-	th := &trashHarness{harness: hs, key: key}
+	th.harness, th.key = hs, key
 	shotAt := func(day, i int) mediatest.Shot {
 		return mediatest.Shot{Make: "SONY", Model: "ILCE-7M4", DateTime: fmt.Sprintf("2024:05:%02d 10:%02d:00", day, i), Offset: "+00:00",
 			Width: 600, Height: 400, Unique: uint64(day*100 + i)}

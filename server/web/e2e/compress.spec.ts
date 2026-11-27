@@ -251,7 +251,9 @@ test("the trash: compressed originals with Restore and Delete permanently, the h
 
   // Empty counts the compressed originals, never the held one.
   await page.getByTestId("trash-empty").click()
-  await expect(page.getByTestId("confirm-dialog")).toContainText(/2 shots \([\d.]+ MB\) will be deleted for good/)
+  await expect(page.getByTestId("empty-dialog").locator('[data-group="compressed"]')).toContainText(/Originals of compressed videos\s*2 shots/)
+  await expect(page.getByTestId("empty-total")).toContainText(/2 shots \([\d.]+ MB\) will be deleted for good/)
+  await shot(page, "trash-empty-groups-desktop-light")
   await page.keyboard.press("Escape")
 
   // Restore DJI_0001: the original is back at its path; the output goes to the trash ("Compress again").

@@ -20,6 +20,9 @@ ADR 0023 "Amendment (0.14.0)", ADR 0025 "Amendment (0.14.0)" (the whole-library 
 | `TestUploadStorageFull` | `507 storage_full` (free, needed) at the create with no upload row; before a chunk with nothing written (offset 0, part empty); with room again the chunk is stored |
 | `TestRetryFailedAfterToolsChange`, `TestCPUProxyCameraAVI`, `TestImageDecodesCameraClips` (`HOARD_IMAGE`) | failed previews retried once when the tools change; the proxy of an MJPEG + μ-law AVI; seven camera clips decoded in full and proxied by the image's ffmpeg (all fail on `0.13.2-nvidia` with "no decoder found", all pass on the 0.14.0 build) |
 
+| `TestWebTrashFailedRestoreOfHoardsShotPurgesNothing`, `TestWebTrashRestoreFailingHalfwayPurgesNothing`, `TestWebTrashKilledMidRestoreSettles`, `TestWebTrashRefusedDeleteKeepsServerRow` (review of #84) | a refused restore or delete of a Hoard-trashed shot leaves no row and a year of housekeeping purges nothing; a restore failing half-way leaves the unrestored half in the trash, untouched; a kill mid-restore: the settle forgets operation rows and puts the server's own row back with its purge_after; a refused delete of a server move keeps its row exactly |
+| `TestWebTrashEmptyByGroup` | units grouped `hoard` and `web`; the 409 lists each group's figures; Empty of the web group leaves Hoard's shot; an unknown group `422` |
+
 ## Web (`cd server/web && bun run lint && bun run typecheck && bun run test && bun run e2e`)
 
 `src/lib/trash.test.ts` (groups by day and place, held units counted not acted on, Empty's figures, the batches' dry
@@ -38,7 +41,7 @@ Light and dark, desktop (1440 × 900) and phone width (390 × 844):
 - `move-*`: Move to trash of the Rejected filter (the dialog's plan); `move-only-copy-desktop-light`: the only-copy
   warning; `move-pt-BR-desktop-light`;
 - `trash-*`: the Trash view (a day, the NAS folder's group open, the server backup's group);
-  `restore-taken-desktop-light`, `empty-confirm-desktop-light`, `trash-pt-BR-desktop-light`.
+  `restore-taken-desktop-light`, `empty-groups-*` (Empty, group by group: moved from the web gallery, trashed by Hoard on your devices) and `empty-groups-web-only-desktop-light`, `trash-pt-BR-desktop-light`.
 
 The compression screenshots (`../web-compression/`): `library-estimate-*`, `library-estimate-short-*`, `no-space-*`, and
 the compressed originals in the new Trash view (`trash-*`).

@@ -354,6 +354,18 @@
       "someFailed_other": "{{count}} não foram movidos: {{reason}}",
       "refused": "Nada mais foi movido: {{reason}}",
       "failed": "Não foi possível mover para a lixeira. Tente de novo."
+    },
+    "emptyChoose": "Escolha o que esvaziar. Cada grupo é apagado para sempre; um grupo desmarcado fica na lixeira.",
+    "emptyNone": "Nada marcado.",
+    "group": {
+      "web": "Movidos pela galeria web",
+      "hoard": "Postos na lixeira pelo Hoard nos seus aparelhos",
+      "compressed": "Originais de vídeos comprimidos"
+    },
+    "groupHint": {
+      "web": "rejeitadas e backups movidos para cá",
+      "hoard": "o que o celular ou o tablet pôs na lixeira, também antes desta versão",
+      "compressed": "os vídeos comprimidos ficam; os originais vão embora para sempre"
     }
   },
   "compress": {

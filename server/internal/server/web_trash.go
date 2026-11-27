@@ -543,14 +543,25 @@ type trashUnitView struct {
 	Held       bool   `json:"held,omitempty"`
 	PurgeAfter *int64 `json:"purgeAfter,omitempty"` // when the server's auto-empty takes it (what the server trashed)
 	ByServer   bool   `json:"byServer,omitempty"`   // the server moved it (the web gallery or a compression)
+	// Group is what Empty confirms separately (review of #84): "web" (moved from the web gallery: its NAS moves and
+	// the server trash), "hoard" (trashed by Hoard on a device, before or after 0.14.0), "compressed" (an original of
+	// a compressed video, or an output a restore put in the trash).
+	Group string `json:"group"`
 }
+
+// Groups of the trash for Empty.
+const (
+	trashGroupWeb        = "web"
+	trashGroupHoard      = "hoard"
+	trashGroupCompressed = "compressed"
+)
 
 // trashUnitsOf lists an item's trash units: its NAS trash locations by folder and day folder, and its server trash.
 func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemRow) []trashUnitView {
 	type key struct{ folder, day string }
 	byKey := map[key]*trashUnitView{}
 	var order []key
-	var srv *trashUnitView
+	var srv, kept *trashUnitView
 	for _, f := range d.Files {
 		for _, l := range f.Locations {
 			switch {
@@ -574,7 +585,7 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 				u.Files++
 				u.Size += f.Size
 				u.Held = u.Held || l.Held
-				if m, err := s.store.TrashMoveAt(ctx, l.FolderID, l.Trash); err == nil {
+				if m, err := s.store.TrashMoveAt(ctx, l.FolderID, l.Trash); err == nil && m.Kind == store.MoveKindMove {
 					u.ByServer = true
 					pa := m.PurgeAfter
 					u.PurgeAfter = &pa
@@ -591,12 +602,41 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 						srv.Dir = ""
 					}
 				}
+			case d.CompressedTo != "" && l.Source == items.SourceMirror && l.Gone == store.RemovedCompressed:
+				// A phone or backup compression's kept side (ADR 0025 S2): restored and emptied by compression's routes.
+				if kept == nil {
+					dir := path.Dir(l.Path)
+					if dir == "." {
+						dir = ""
+					}
+					day := ""
+					if row.TrashedAt != nil {
+						day = time.UnixMilli(*row.TrashedAt).Format("2006-01-02")
+					}
+					kept = &trashUnitView{Key: "compressed", Source: "server", Day: day, Dir: dir, Device: l.DeviceName, ByServer: true}
+				}
+				kept.Files++
+				kept.Size += f.Size
+				kept.Held = kept.Held || l.Held
 			}
 		}
 	}
-	out := make([]trashUnitView, 0, len(order)+1)
+	out := make([]trashUnitView, 0, len(order)+2)
 	for _, k := range order {
-		out = append(out, *byKey[k])
+		u := byKey[k]
+		switch {
+		case d.CompressedTo != "":
+			u.Group = trashGroupCompressed
+		case u.ByServer:
+			u.Group = trashGroupWeb
+		default:
+			u.Group = trashGroupHoard
+		}
+		out = append(out, *u)
+	}
+	if kept != nil {
+		kept.Group = trashGroupCompressed
+		out = append(out, *kept)
 	}
 	if srv != nil {
 		// Emptied already: the item leaves at the backup pass that drops its sources.
@@ -609,6 +649,7 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 			srv.Files++
 			srv.Size += f.Size
 		}
+		srv.Group = trashGroupWeb
 		out = append(out, *srv)
 	}
 	return out
@@ -673,7 +714,7 @@ func (s *Server) readUnits(w http.ResponseWriter, r *http.Request) ([]trashUnitR
 		return nil, false
 	}
 	for i, u := range req.Units {
-		if !itemIDPattern.MatchString(u.ItemID) || u.Key != "server" && !strings.HasPrefix(u.Key, "nas:") {
+		if !itemIDPattern.MatchString(u.ItemID) || u.Key != "server" && u.Key != "compressed" && !strings.HasPrefix(u.Key, "nas:") {
 			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "A unit is {itemId, key} from GET /web/trash.", map[string]any{"index": i})
 			return nil, false
 		}
@@ -711,21 +752,34 @@ func (s *Server) handleWebTrashEmpty(w http.ResponseWriter, r *http.Request) {
 			Count int   `json:"count"`
 			Size  int64 `json:"size"`
 		} `json:"confirm"`
+		// Groups to empty (review of #84): web, hoard, compressed; absent = every group.
+		Groups []string `json:"groups"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
+	want := map[string]bool{}
+	for _, g := range req.Groups {
+		if g != trashGroupWeb && g != trashGroupHoard && g != trashGroupCompressed {
+			fail(w, r, http.StatusUnprocessableEntity, "invalid_request", "groups are web, hoard and compressed.", nil)
+			return
+		}
+		want[g] = true
+	}
+	if req.Groups == nil {
+		want = map[string]bool{trashGroupWeb: true, trashGroupHoard: true, trashGroupCompressed: true}
+	}
 	ctx := r.Context()
 	s.trashMu.Lock()
 	defer s.trashMu.Unlock()
-	all, count, size, err := s.allTrashUnits(ctx)
+	all, count, size, groups, err := s.allTrashUnits(ctx, want)
 	if err != nil {
 		s.internal(w, r, err)
 		return
 	}
 	if req.Confirm == nil || req.Confirm.Count != count || req.Confirm.Size != size {
 		fail(w, r, http.StatusConflict, "conflict", "Confirm the number of shots and the size the trash holds now.",
-			map[string]any{"reason": "confirm", "count": count, "size": size})
+			map[string]any{"reason": "confirm", "count": count, "size": size, "groups": groups})
 		return
 	}
 	ans := trashActionAnswer{Done: []trashUnitRef{}, Refused: map[string]string{}, Names: map[string]string{}}
@@ -755,16 +809,24 @@ func contains(list []string, v string) bool {
 	return false
 }
 
-// allTrashUnits lists every unit Empty takes (not held), with the number of shots and their size.
-func (s *Server) allTrashUnits(ctx context.Context) ([]trashUnitRef, int, int64, error) {
+type groupFigures struct {
+	Count int   `json:"count"`
+	Size  int64 `json:"size"`
+}
+
+// allTrashUnits lists every unit Empty takes (not held) in the wanted groups, with the number of shots and their size,
+// and the figures of every group.
+func (s *Server) allTrashUnits(ctx context.Context, want map[string]bool) ([]trashUnitRef, int, int64, map[string]groupFigures, error) {
 	var out []trashUnitRef
 	var size int64
 	shots := map[string]bool{}
+	groups := map[string]groupFigures{trashGroupWeb: {}, trashGroupHoard: {}, trashGroupCompressed: {}}
+	groupShots := map[string]map[string]bool{}
 	iq := store.ItemQuery{Trashed: true, Limit: 500}
 	for {
 		rows, more, err := s.store.QueryItems(ctx, iq)
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, 0, 0, nil, err
 		}
 		for _, row := range rows {
 			var d items.Data
@@ -773,6 +835,19 @@ func (s *Server) allTrashUnits(ctx context.Context) ([]trashUnitRef, int, int64,
 			}
 			for _, u := range s.trashUnitsOf(ctx, d, row) {
 				if u.Held {
+					continue
+				}
+				g := groups[u.Group]
+				if groupShots[u.Group] == nil {
+					groupShots[u.Group] = map[string]bool{}
+				}
+				if !groupShots[u.Group][row.ID] {
+					groupShots[u.Group][row.ID] = true
+					g.Count++
+				}
+				g.Size += u.Size
+				groups[u.Group] = g
+				if !want[u.Group] {
 					continue
 				}
 				out = append(out, trashUnitRef{ItemID: row.ID, Key: u.Key})
@@ -786,7 +861,7 @@ func (s *Server) allTrashUnits(ctx context.Context) ([]trashUnitRef, int, int64,
 		last := rows[len(rows)-1]
 		iq.After = &store.ItemKey{SortTime: last.SortTime, ID: last.ID}
 	}
-	return out, len(shots), size, nil
+	return out, len(shots), size, groups, nil
 }
 
 // trashAction restores (or, with purge, deletes for good) trashed units. Called with s.trashMu held.
@@ -1013,8 +1088,13 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		if purge {
 			state = store.MovePurging
 		}
+		// The journal row: the server's own move keeps its row (kind move, its purge_after); a file the server did not
+		// move (Hoard's) gets a row only for this operation (kind op: never due for the auto-empty, forgotten when the
+		// operation ends or fails, never left behind as a trashed row).
+		prior, perr := s.store.TrashMoveAt(ctx, folderID, p.trash)
+		hadRow := perr == nil && prior.Kind == store.MoveKindMove && prior.State == store.MoveTrashed
 		id, err := s.store.PutTrashMove(ctx, store.TrashMove{FolderID: folderID, RelPath: p.origin, TrashPath: p.trash, State: state,
-			Size: fi.Size(), MTime: fi.ModTime().UnixNano(), MovedAt: now, PurgeAfter: now})
+			Size: fi.Size(), MTime: fi.ModTime().UnixNano(), MovedAt: now, PurgeAfter: now, Kind: store.MoveKindOp})
 		if err != nil {
 			return trashNotWritable, ""
 		}
@@ -1024,7 +1104,13 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 			err = f.Move(p.trash, p.origin)
 		}
 		if err != nil {
-			_ = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
+			// Put the row back exactly as it was: the server's move trashed again with its own purge_after (the upsert
+			// kept it), a row made for this operation forgotten.
+			if hadRow {
+				_ = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
+			} else {
+				_ = s.store.DeleteTrashMove(ctx, id)
+			}
 			if errors.Is(err, compress.ErrTaken) {
 				return trashPathTaken, p.origin
 			}
@@ -1231,6 +1317,10 @@ func (s *Server) settleTrashMoves(ctx context.Context) {
 			continue
 		}
 		switch {
+		case m.Kind == store.MoveKindOp:
+			// A restore or a delete of a file the server did not move, interrupted: whatever happened to the file, the
+			// row was only the operation's; the file left in the trash stays Hoard's (never due for the auto-empty).
+			_ = s.store.DeleteTrashMove(ctx, m.ID)
 		case m.State == store.MoveMoving && inTrash:
 			// A kill between the link and the unlink leaves both names of one file: the move is finished.
 			if err := f.FinishMove(m.RelPath, m.TrashPath); err != nil {

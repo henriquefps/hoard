@@ -35,7 +35,10 @@ CREATE TABLE trash_moves (
     mtime       INTEGER NOT NULL, -- ns
     item_id     TEXT    NOT NULL DEFAULT '',
     moved_at    INTEGER NOT NULL, -- ms
-    purge_after INTEGER NOT NULL  -- ms
+    purge_after INTEGER NOT NULL, -- ms (kind 'move' only: a row made for a restore or a delete is never due)
+    kind        TEXT    NOT NULL DEFAULT 'move' -- 'move': the server moved the file into the trash (auto-empty may take
+                                                -- it); 'op': written only for a restore or a delete of a file the server
+                                                -- did not move (Hoard's): forgotten when the operation ends or fails
 ) STRICT;
 CREATE UNIQUE INDEX trash_moves_trash ON trash_moves (folder_id, trash_path);
 CREATE INDEX trash_moves_state ON trash_moves (state, purge_after);
