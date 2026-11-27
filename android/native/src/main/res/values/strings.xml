@@ -570,6 +570,9 @@
     <string name="save_device_failed">Could not save: %1$s</string>
     <!-- Free up space (ADR 0024 A3, Hoard 2.6.0) -->
     <string name="backup_reveal_not_grouped">Reveal on this phone is not grouped with Hoard: both apps may back up the same folders.</string>
+    <string name="backup_restarted">The photo server\'s backup of this phone was deleted; Hoard is backing it up again</string>
+    <string name="backup_status_waiting_full">Waiting: the photo server\'s drive is full (%1$s free)</string>
+    <string name="backup_status_waiting_full_unknown">Waiting: the photo server\'s drive is full</string>
     <string name="freeup_title">Free up space</string>
     <string name="freeup_open">Free up space on this phone</string>
     <string name="freeup_open_hint">Delete from the phone what the server holds and has checked, oldest first. You see everything first.</string>
@@ -705,7 +708,9 @@
     <string name="compress_trash_section">Originals of compressed videos</string>
     <string name="compress_failed_reason_verify">failed the quality checks</string>
     <string name="compress_failed_reason_changed">the file changed meanwhile</string>
-    <string name="compress_failed_reason_space">not enough space</string>
+    <string name="compress_wait_space_nas">Waiting for free space on the NAS: empty the trash</string>
+    <string name="compress_wait_space_nas_free">Waiting for free space on the NAS: empty the trash (%1$s free)</string>
+    <string name="compress_wait_space_work">Waiting for free space on the backup disk</string>
     <string name="compress_failed_reason_encoder">the encoder failed</string>
     <string name="compress_failed_reason_trash">could not move the original to the trash</string>
     <string name="compress_failed_reason_writable">the server cannot write that folder</string>
@@ -836,6 +841,10 @@
     <plurals name="compress_left_out">
         <item quantity="one">%1$s video is only on this phone or an upload: left out</item>
         <item quantity="other">%1$s videos are only on this phone or uploads: left out</item>
+    </plurals>
+    <plurals name="compress_wait_count">
+        <item quantity="one">%1$s waiting for free space</item>
+        <item quantity="other">%1$s waiting for free space</item>
     </plurals>
     <plurals name="compress_failed_count">
         <item quantity="one">%1$s failed: %2$s</item>

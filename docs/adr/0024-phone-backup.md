@@ -1032,3 +1032,76 @@ needed. Free space on the server, then Back up now"), and try again after `Retry
 
 See "Emulator run (0.14.0)" in [`docs/testing/backup.md`](../testing/backup.md) for what Hoard 2.9.0 shows after the
 admin purges its phone's backup (with a freed file and a replaced phone compression) and the app fixes it needs.
+
+## Amendment (2.9.1)
+
+Hoard 2.9.1, for hoard-server 0.14.0 (its "Amendment (0.14.0)": the admin's purge of a phone's backup, `507
+storage_full`); before the owner purges his phone's test backup and backs up again to a drive with little free space.
+Emulator run: [`docs/testing/backup.md`](../testing/backup.md), "Emulator run (2.9.1)".
+
+### The backup starts over after a purge
+
+Hoard 2.9.0 never noticed a purge: a pass reports only rows that are due, rows already `stored` are not, so no request
+named the purged root, and `GET /v1/backup/roots` was read only for the stats at the end. Now (`BackupEngine.restartGone`,
+pure parts in `BackupRestart`):
+
+1. **At the start of each pass**, after `GET /v1/server`, `GET /v1/backup/roots`. A local root that is not paused and
+   whose id the server does not list (stopped roots are listed, so a stopped root is not gone) is **gone**: it is made
+   again with `POST /v1/backup/roots` (`recreate`, which already handled `409 covered`: a folder now covered by another
+   root of this phone is dropped here, the covering root lists its files). The server answering with the **same id**
+   means it had the root after all (a list read mid-change): nothing starts over. A list that cannot be read (an error
+   other than `401`) changes nothing; `401` ends the pass as before.
+2. **Its rows start over** (`BackupRestart.reset`): `stored`, `nas`, `verified`, `paused`, `failed`, `refused` →
+   `queued` (`waiting` without a valid fingerprint; `changed` stays, it is identified again), `reported`, `server_state`,
+   `item_id`, `verified_at`, `upload_id`/`upload_offset`, `attempts`, `next_attempt_at` and `error` dropped;
+   fingerprints and SHA-256 kept. The same pass reports them (`missing`) and uploads them again. The root's
+   `last_pass_at` and `server_stats` are dropped (the folder says "Not checked yet" until the pass ends).
+3. **Free up's history** of the root's files goes: `freed` rows under the root's folder on the phone
+   (`BackupSource.absoluteFolder`, else derived from a row's `absolute` and `path`) are deleted, so Settings › Phone
+   backup no longer counts them ("4.1 MB freed · 3 files") and they are never reported again. The Gallery already drops
+   their items at the sync (they are tombstones in the feed).
+4. **Said once**: `server_account.backup_restarted_at` is set; Settings › Phone backup shows "The photo server's
+   backup of this phone was deleted; Hoard is backing it up again" with **OK**, and clears it on OK or when the screen
+   is left. While it shows, the Free up section's "Freed photos stay in the Gallery from the server" note is hidden.
+   A wait for room (below) is cleared with the restart: the new backup tries at once.
+5. **Compressions of the purged items** (`compress_phone`): nothing new. Settled rows need nothing; an unsettled one
+   is settled by the existing rules: a row not listed any more before its write is dropped (no write), a download
+   answered `404` is abandoned (`not_found`, no write), a write already made whose `…/replaced` answers `404` is
+   `reported` (the phone keeps the output, which the restarted backup then uploads as a new file). Tests:
+   `CompressEngineTest` "after a purge …".
+
+Tests: `BackupPurgeTest` (a purge of one root of two, a whole purge, the list read each pass, stopped roots, the pure
+reset), `GalleryMigrationTest` 6 → 7.
+
+### `507 storage_full` is a wait
+
+hoard-server 0.14.0 refuses an upload that does not fit its backup volume (`POST /v1/uploads` or a `PATCH`) with `507
+storage_full`, `details.free` and `details.needed` (`offset` on a `PATCH`), `Retry-After: 3600`. Hoard 2.9.0 marked each
+refused file `failed` (`server_full`) and, on a `PATCH`, retried it five times within the run (`>= 500`). Now:
+
+- `BackupUploader` never retries a `507`: the offset the server kept is saved and the error goes up.
+- `BackupEngine.upload` takes it as a **pass-wide wait** (`BackupWait`, JSON in `server_account.backup_wait`): the file
+  stays `queued` with its upload id and offset, no attempt counted, no `error`; the pass stops there (no other file is
+  tried) and ends `BackupOutcome.ServerFull` with `retryAt`.
+- **Back-off**: 30 minutes doubling with each `507` in a row, at most 6 hours, and at least the server's `Retry-After`
+  (capped at 6 hours): with hoard-server 0.14.0, 1 h, 1 h, 2 h, 4 h, 6 h. Until it is due, passes list and report as
+  usual but upload nothing (no request); **Back up now** (`BackupWorker.now`, input `manual`) tries at once. The worker
+  enqueues one run (`phone-backup-later`, replaced each time) for when the wait is due, under the rules; `ServerFull`
+  is a success for WorkManager (no retry loop).
+- The first upload that goes clears the wait, and so does a pass with nothing left to upload.
+- Settings › Phone backup: a folder with files still to send says **"Waiting: the photo server's drive is full (2 GB
+  free)"** (without the figure when the server gave none) instead of "N to back up". Rows marked `failed server_full`
+  by 2.9.0 keep their back-off and are tried again by the usual rule.
+
+There is no compression output upload in the app: a phone replace's new file reaches the server through the backup
+(normally answered `stored` by the swap, uploaded only when the server lacks it), so the same wait covers it.
+
+Tests: `BackupPurgeTest` (a full volume at `POST`: one request, rows queued with no attempt, the wait's figures and
+back-off, no request before it is due, Back up now, resumed and cleared once there is room; a disk that fills during a
+`PATCH`: one refused chunk, the upload id kept, resumed with `HEAD`), goldens `backup_server_full_phone_{light,dark}`
+and `backup_restarted_phone_{light,dark}`.
+
+### `gallery.db` 7
+
+`server_account.backup_wait` (TEXT, JSON) and `backup_restarted_at` (INTEGER), migration 6 → 7 (`ALTER TABLE … ADD
+COLUMN`), schema exported to `core/server/schemas/…/7.json`.

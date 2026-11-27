@@ -68,6 +68,13 @@ class CompressReasonTextsTest {
     }
 
     @Test
+    fun noSpaceReadsAsTheWaitNotAFailure() {
+        // ADR 0025 Amendment (2.9.1): the web's words of hoard-server 0.14.0.
+        assertThat(CompressReasonTexts.failed(res("en"), "no_space").text).isEqualTo("Waiting for free space on the NAS: empty the trash")
+        assertThat(CompressReasonTexts.failed(res("pt"), "no_space").text).isEqualTo("Aguardando espaço livre no NAS: esvazie a lixeira")
+    }
+
+    @Test
     fun startErrorsAreSentences() = both { r ->
         for (code in CompressReasons.ROUTE.filter { it == "exists" || it == "busy" } + listOf("offline", "not_paired") + CompressReasons.TARGET) {
             val t = CompressReasonTexts.start(r, code)

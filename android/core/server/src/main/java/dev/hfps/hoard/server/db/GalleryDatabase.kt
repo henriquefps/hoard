@@ -17,7 +17,8 @@ import kotlinx.coroutines.flow.Flow
  * version 4 (Hoard 2.4.0, ADR 0024) adds the phone backup: `backup_roots`, `backup_files`, `freed` and
  * `device_media.sha256` / `sha_size` / `sha_modified`; version 5 (Hoard 2.5.0, ADR 0024 A2) adds other phones'
  * backups: `server_item_mirrors`, `server_account.backup_roots` and `mirrors_indexed`; version 6 (Hoard 2.8.0, ADR 0025
- * A2) adds the phone's video compression: `compress_jobs` and the replace journal `compress_phone`.
+ * A2) adds the phone's video compression: `compress_jobs` and the replace journal `compress_phone`; version 7 (Hoard
+ * 2.9.1, ADR 0024 Amendment (2.9.1)) adds `server_account.backup_wait` and `backup_restarted_at`.
  */
 @Database(
     entities = [
@@ -39,7 +40,7 @@ import kotlinx.coroutines.flow.Flow
         CompressJobEntity::class,
         CompressPhoneEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class GalleryDatabase : RoomDatabase() {
@@ -151,8 +152,16 @@ abstract class GalleryDatabase : RoomDatabase() {
             "CREATE INDEX IF NOT EXISTS `index_compress_phone_absolute` ON `compress_phone` (`absolute`)",
         )
 
+        /** 2.9.1 (ADR 0024 Amendment (2.9.1)): the backup's wait for room on the server, and its start over after a purge. */
+        val MIGRATION_6_7 = object : androidx.room.migration.Migration(6, 7) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `server_account` ADD COLUMN `backup_wait` TEXT")
+                db.execSQL("ALTER TABLE `server_account` ADD COLUMN `backup_restarted_at` INTEGER")
+            }
+        }
+
         /** Every migration, in order (the app's builder and the tests). */
-        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+        val MIGRATIONS = arrayOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
         fun open(context: Context, name: String? = FILE_NAME): GalleryDatabase {
             val builder = if (name == null) {
@@ -196,6 +205,14 @@ interface AccountDao {
 
     @Query("UPDATE server_account SET backup_roots = :json WHERE id = 1")
     suspend fun setBackupRoots(json: String?)
+
+    /** ADR 0024 Amendment (2.9.1): the backup's wait for room on the server (JSON), null when uploads may go. */
+    @Query("UPDATE server_account SET backup_wait = :json WHERE id = 1")
+    suspend fun setBackupWait(json: String?)
+
+    /** ADR 0024 Amendment (2.9.1): the backup started over after a purge (null: told, or never). */
+    @Query("UPDATE server_account SET backup_restarted_at = :at WHERE id = 1")
+    suspend fun setBackupRestartedAt(at: Long?)
 
     @Query("UPDATE server_account SET mirrors_indexed = :done WHERE id = 1")
     suspend fun setMirrorsIndexed(done: Boolean)
@@ -645,6 +662,10 @@ interface BackupDao {
 
     @Query("SELECT * FROM freed")
     suspend fun freed(): List<FreedEntity>
+
+    /** Free up's history of files whose backup the server no longer has (ADR 0024 Amendment (2.9.1)). */
+    @Query("DELETE FROM freed WHERE path IN (:paths)")
+    suspend fun deleteFreed(paths: List<String>)
 
     /** "18.4 GB freed" in Settings › Backup: bytes and files freed so far. */
     @Query("SELECT COUNT(*) AS files, COALESCE(SUM(bytes), 0) AS bytes FROM freed")

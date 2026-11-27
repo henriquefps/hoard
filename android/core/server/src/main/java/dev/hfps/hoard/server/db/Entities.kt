@@ -44,6 +44,16 @@ data class ServerAccountEntity(
      * JSON once after the upgrade; a new pairing starts filled).
      */
     @ColumnInfo(name = "mirrors_indexed", defaultValue = "0") val mirrorsIndexed: Boolean = true,
+    /**
+     * The backup waits for room on the server (`507 storage_full`, ADR 0024 Amendment (2.9.1)): JSON of
+     * [dev.hfps.hoard.server.backup.BackupWait]; null when uploads may go.
+     */
+    @ColumnInfo(name = "backup_wait") val backupWait: String? = null,
+    /**
+     * When a pass found this phone's backup gone from the server (the admin purged it) and started it over (ADR 0024
+     * Amendment (2.9.1)); Settings › Phone backup says so once, then clears it.
+     */
+    @ColumnInfo(name = "backup_restarted_at") val backupRestartedAt: Long? = null,
 ) {
     fun has(feature: String): Boolean = feature in features.split(',')
 }

@@ -3,6 +3,7 @@ package dev.hfps.hoard.server.compress
 import dev.hfps.hoard.server.api.Compress
 import dev.hfps.hoard.server.api.CompressEstimate
 import dev.hfps.hoard.server.api.CompressInfo
+import dev.hfps.hoard.server.api.CompressItem
 import dev.hfps.hoard.server.api.CompressJob
 import dev.hfps.hoard.server.api.Features
 
@@ -152,12 +153,58 @@ data class CompressSheetState(
     fun failed(reason: String): CompressSheetState = copy(loading = false, error = reason, starting = false)
 }
 
+/**
+ * Items of a job waiting for room (`no_space`, ADR 0025 Amendment (0.14.0)): a wait, not a failure. [where] `nas` (the
+ * NAS replace: empty the trash) or `work` (the encode's work folder on the backup disk); [free] the least free now.
+ */
+data class SpaceWait(val items: Int, val where: String = WHERE_NAS, val free: Long? = null) {
+    companion object {
+        const val WHERE_NAS = "nas"
+        const val WHERE_WORK = "work"
+        const val REASON = "no_space"
+
+        /** Where a waiting item is: `ready` (a NAS replace) or `queued` (an encode). */
+        val WAITING_STATES = setOf(Compress.STATE_READY, "queued")
+
+        /**
+         * Per job: items the server lists waiting (`ready`/`queued` with reason `no_space`, 0.14.0 `space`), plus the
+         * job's `failed.no_space` (an older server, or a blob encode past its attempts): every one reads as a wait.
+         */
+        fun of(jobs: List<CompressJob>, waiting: List<CompressItem>): Map<String, SpaceWait> {
+            val out = HashMap<String, SpaceWait>()
+            for ((jobId, items) in waiting.filter { it.reason == REASON && it.state in WAITING_STATES }.groupBy { it.jobId }) {
+                val where = if (items.any { (it.space?.where ?: WHERE_NAS) == WHERE_NAS }) WHERE_NAS else WHERE_WORK
+                val free = items.mapNotNull { it.space?.takeIf { s -> s.where == where }?.free }.minOrNull()
+                out[jobId] = SpaceWait(items.size, where, free)
+            }
+            for (job in jobs) {
+                val failed = job.failed[REASON] ?: 0
+                if (failed <= 0) continue
+                out[job.id] = out[job.id]?.let { it.copy(items = it.items + failed) } ?: SpaceWait(failed)
+            }
+            return out
+        }
+
+        /** A job's failures without `no_space` (shown as [SpaceWait] instead). */
+        fun failures(job: CompressJob): Map<String, Int> = job.failed.filterKeys { it != REASON }
+    }
+}
+
 /** Settings › Compress videos (ADR 0025 "UI"): jobs in progress, folders compressed automatically, history. */
 data class CompressOverview(
     val running: List<CompressJob>,
     val automatic: List<CompressJob>,
     val history: List<CompressJob>,
+    /** Job id → its items waiting for room (`no_space`, Amendment (2.9.1)). */
+    val spaceWaits: Map<String, SpaceWait> = emptyMap(),
 ) {
+    /** Every item waiting for room, the NAS first. */
+    val spaceWait: SpaceWait?
+        get() = spaceWaits.values.takeIf { it.isNotEmpty() }?.let { all ->
+            val where = if (all.any { it.where == SpaceWait.WHERE_NAS }) SpaceWait.WHERE_NAS else SpaceWait.WHERE_WORK
+            SpaceWait(all.sumOf { it.items }, where, all.filter { it.where == where }.mapNotNull { it.free }.minOrNull())
+        }
+
     /** Realised: originals emptied from the trash. */
     val saved: Long get() = (running + automatic + history).sumOf { it.bytes.saved }
     val inTrash: Long get() = (running + automatic + history).sumOf { it.bytes.inTrash }
@@ -168,12 +215,12 @@ data class CompressOverview(
          * Splits [jobs] (newest first): an automatic folder's standing job is listed under its folder (never in
          * history) unless cancelled; a job with work left (or paused) is running; the rest is history.
          */
-        fun of(jobs: List<CompressJob>): CompressOverview {
+        fun of(jobs: List<CompressJob>, waiting: List<CompressItem> = emptyList()): CompressOverview {
             val automatic = jobs.filter { it.auto && it.state != CompressJob.STATE_CANCELLED }
             val rest = jobs.filter { !it.auto }
             val running = rest.filter { !it.finished && (it.paused || it.progress.toDo > 0 || it.progress.current != null) }
             val history = rest - running.toSet()
-            return CompressOverview(running, automatic, history)
+            return CompressOverview(running, automatic, history, SpaceWait.of(jobs, waiting))
         }
     }
 }

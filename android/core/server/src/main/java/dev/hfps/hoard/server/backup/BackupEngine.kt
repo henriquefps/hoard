@@ -46,6 +46,9 @@ interface BackupSource {
     suspend fun rules(): BackupRules
 
     fun file(absolute: String): File = File(absolute)
+
+    /** Where [root] is on the phone (absolute, no trailing '/'), null when unknown (ADR 0024 Amendment (2.9.1)). */
+    fun absoluteFolder(root: BackupRootEntity): String? = null
 }
 
 /** Where a run stands (Settings › Backup's progress line and the foreground notification). */
@@ -61,7 +64,11 @@ data class BackupProgress(
     val bytesSent: Long = 0,
 )
 
-enum class BackupOutcome { NotPaired, Unsupported, Unauthorized, Offline, NotConfigured, Done, Stopped, Busy }
+/**
+ * [ServerFull]: the server's backup volume is full (`507 storage_full`, ADR 0024 Amendment (2.9.1)): a wait, not a
+ * failure; uploads are tried again at [BackupRunResult.retryAt].
+ */
+enum class BackupOutcome { NotPaired, Unsupported, Unauthorized, Offline, NotConfigured, Done, Stopped, Busy, ServerFull }
 
 data class BackupRunResult(
     val outcome: BackupOutcome,
@@ -71,6 +78,10 @@ data class BackupRunResult(
     val waitingForCharging: Boolean = false,
     /** Videos the server holds since this pass (stored or found on its NAS): a compressed folder's new videos (ADR 0025). */
     val videosStored: Int = 0,
+    /** The backup waits for room on the server until then (Unix ms): the worker asks for a run at that time. */
+    val retryAt: Long? = null,
+    /** This pass found the phone's backup gone from the server and started it over (roots made again). */
+    val restarted: Int = 0,
 )
 
 /** What turning a folder's switch on came to. */
@@ -189,11 +200,11 @@ class BackupEngine(
      * One backup pass. [stopped] is the worker's stop check (between files and chunks); [foreground] is called once
      * before the first upload (the worker becomes a foreground `dataSync` service).
      */
-    suspend fun run(stopped: () -> Boolean = { false }, foreground: suspend (BackupProgress) -> Unit = {}): BackupRunResult = withContext(Dispatchers.IO) {
+    suspend fun run(stopped: () -> Boolean = { false }, foreground: suspend (BackupProgress) -> Unit = {}, manual: Boolean = false): BackupRunResult = withContext(Dispatchers.IO) {
         if (!mutex.tryLock()) return@withContext BackupRunResult(BackupOutcome.Busy)
         try {
             _progress.value = BackupProgress(running = true, phase = PHASE_LISTING)
-            pass(stopped, foreground)
+            pass(stopped, foreground, manual)
         } catch (e: CancellationException) {
             throw e
         } catch (e: ServerException) {
@@ -216,7 +227,7 @@ class BackupEngine(
         }
     }
 
-    private suspend fun pass(stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit): BackupRunResult {
+    private suspend fun pass(stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit, manual: Boolean): BackupRunResult {
         val account = db.account().get() ?: return BackupRunResult(BackupOutcome.NotPaired)
         val api = apiOf() ?: return BackupRunResult(BackupOutcome.NotPaired)
         val info = api.server()
@@ -226,8 +237,10 @@ class BackupEngine(
         val batch = limits.maxReportEntries.coerceIn(1, 1000)
         dao.settleInterrupted()
         dao.deleteOrphans()
-        val videosBefore = storedVideos()
         val types = source.types()
+        // 0. Roots the server no longer has (the admin purged this phone's backup): made again, their files start over.
+        val restarted = restartGone(api, types)
+        val videosBefore = storedVideos()
         val listings = HashMap<String, Listing>()
         val freedPaths = dao.freed().associateBy { it.path }
         // Read once per pass (Amendment (2.8.1)): the paths a compression replace is writing in place.
@@ -252,9 +265,15 @@ class BackupEngine(
             val removals = BackupPlan.removals(listing, dao.files(live.id))
             reportRemovals(api, live, removals, batch)
         }
-        // 2. Uploads, newest first, under the rules.
-        val upload = upload(api, info.limits.chunkSize ?: BackupUploader.DEFAULT_CHUNK, stopped, foreground, writing)
-        if (upload.outcome == BackupOutcome.Stopped) return upload
+        // 2. Uploads, newest first, under the rules; not while the server's backup volume is full (until the wait is
+        // due, or Back up now).
+        val wait = BackupWait.decode(db.account().get()?.backupWait)
+        val upload = if (wait != null && !manual && !wait.due(now())) {
+            BackupRunResult(BackupOutcome.ServerFull, retryAt = wait.until)
+        } else {
+            upload(api, info.limits.chunkSize ?: BackupUploader.DEFAULT_CHUNK, stopped, foreground, writing, wait)
+        }
+        if (upload.outcome == BackupOutcome.Stopped) return upload.copy(restarted = restarted)
         // 3. What changed state (uploaded files) is reported again.
         for (root in dao.roots()) if (!root.paused) report(api, root, batch, writing)
         if (upload.outcome == BackupOutcome.Done) {
@@ -265,7 +284,52 @@ class BackupEngine(
                 dao.passed(root.id, at, stats?.get(root.id)?.stats?.let { ServerJson.encodeToString(BackupRootStats.serializer(), it) } ?: root.serverStats)
             }
         }
-        return upload.copy(videosStored = (storedVideos() - videosBefore).size)
+        return upload.copy(videosStored = (storedVideos() - videosBefore).size, restarted = restarted)
+    }
+
+    /**
+     * ADR 0024 Amendment (2.9.1): at the start of each pass, `GET /v1/backup/roots`; a local root (not paused) the
+     * server does not list is gone (the admin purged this phone's backup, hoard-server 0.14.0). It is made again
+     * (`POST`, [recreate]: a folder now covered by another root goes) and its rows start over ([BackupRestart.reset]),
+     * so this same pass reports them (`missing`) and uploads them again; free up's history of its files goes (the
+     * server has no copy of them any more). The phone's own state is untouched when the list cannot be read. Returns
+     * the roots made again.
+     */
+    private suspend fun restartGone(api: ServerApi, types: List<String>): Int {
+        val listed = try {
+            api.backupRoots().roots.mapTo(HashSet()) { it.id }
+        } catch (e: ServerException) {
+            if (e.unauthorized) throw e
+            Log.w(TAG, "backup: roots not read (${e.status} ${e.code})")
+            return 0
+        }
+        val gone = BackupRestart.gone(dao.roots(), listed)
+        if (gone.isEmpty()) return 0
+        var restarted = 0
+        val freed = dao.freed()
+        for (root in gone) {
+            val folder = source.absoluteFolder(root) ?: BackupRestart.folderFromRows(root.path, dao.files(root.id))
+            val made = recreate(api, root, types)
+            // The server answered with the same root: it had it after all (a list read mid-change); nothing starts over.
+            if (made != null && made.id == root.id) continue
+            folder?.let { f -> BackupRestart.freedUnder(freed, f).takeIf { it.isNotEmpty() }?.let { rows -> dao.deleteFreed(rows.map { it.path }) } }
+            // Covered by another root of this phone now: its rows went with it (the covering root lists them again).
+            if (made == null) {
+                restarted++
+                continue
+            }
+            val at = now()
+            for (chunk in dao.files(made.id).map { BackupRestart.reset(it, at) }.chunked(500)) dao.putFiles(chunk)
+            dao.putRoot(made.copy(lastPassAt = null, serverStats = null))
+            restarted++
+        }
+        if (restarted > 0) {
+            Log.i(TAG, "backup: $restarted folder(s) gone from the server (purged): backing them up again")
+            db.account().setBackupRestartedAt(now())
+            // A wait for room was about the backup that went: the new one tries at once.
+            db.account().setBackupWait(null)
+        }
+        return restarted
     }
 
     /**
@@ -430,10 +494,15 @@ class BackupEngine(
         }
     }
 
-    private suspend fun upload(api: ServerApi, chunkSize: Long, stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit, writing: Set<String>): BackupRunResult {
+    private suspend fun upload(api: ServerApi, chunkSize: Long, stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit, writing: Set<String>, wait: BackupWait?): BackupRunResult {
         val roots = dao.roots().filter { !it.paused }
         val candidates = roots.flatMap { BackupPlan.uploads(dao.files(it.id), now()) }.filter { it.absolute !in writing }.sortedByDescending { it.taken }
-        if (candidates.isEmpty()) return BackupRunResult(BackupOutcome.Done)
+        if (candidates.isEmpty()) {
+            // Nothing left to send: no wait to show.
+            if (wait != null) db.account().setBackupWait(null)
+            return BackupRunResult(BackupOutcome.Done)
+        }
+        var waiting = wait
         val rules = source.rules()
         val uploader = BackupUploader(api, chunkSize)
         var uploaded = 0
@@ -490,6 +559,11 @@ class BackupEngine(
                     progress = { sent -> _progress.value = _progress.value.copy(sent = sent, bytesSent = before + sent) },
                     stopped = stopped,
                 )
+                if (waiting != null) {
+                    // The server took bytes again: the wait is over.
+                    db.account().setBackupWait(null)
+                    waiting = null
+                }
                 when (outcome) {
                     UploadOutcome.Done -> {
                         dao.putFiles(listOf(BackupPlan.uploaded(row, now())))
@@ -507,9 +581,17 @@ class BackupEngine(
                 errors = 0
             } catch (e: ServerException) {
                 if (e.unauthorized || e.code == "storage_not_configured") throw e
+                if (BackupWait.isFull(e)) {
+                    // A wait for the whole pass, not this file's failure: queued as it was (its upload id and offset
+                    // kept), no attempt counted; no other file is tried until the wait is due (ADR 0024 Amendment (2.9.1)).
+                    val next = BackupWait.after(waiting, e, now())
+                    dao.putFiles(listOf(row.copy(state = BackupState.QUEUED, updatedAt = now())))
+                    db.account().setBackupWait(next.encode())
+                    Log.w(TAG, "backup: the server's backup volume is full (free ${next.free}, needed ${next.needed}): waiting until ${next.until}")
+                    return BackupRunResult(BackupOutcome.ServerFull, uploaded, bytes, waitingCharging, retryAt = next.until)
+                }
                 val reason = when {
                     e.status == 413 || e.code == "too_large" -> BackupState.REASON_TOO_LARGE
-                    e.status == 507 -> BackupState.REASON_SERVER_FULL
                     e.status == 429 -> null
                     else -> BackupState.REASON_SERVER_ERROR
                 }

@@ -172,4 +172,38 @@ class GalleryMigrationTest {
             room.close()
         }
     }
+
+    @Test
+    fun migratesSixToSevenAddingTheBackupWaitAndRestart() {
+        val name = "migration-6-7.db"
+        helper.createDatabase(name, 6).use { db ->
+            db.execSQL(
+                "INSERT INTO server_account (id, url, server_id, server_name, server_version, device_id, physical_device_id, app, features, cursor, " +
+                    "caught_up, paired_at, culling_declared, backup_roots, mirrors_indexed) VALUES (1, 'http://s', 'srv', 'S', '0.14.0', 'd1', 'p1', 'hoard', " +
+                    "'items,backup,compress', 'c:9', 1, 5, 1, NULL, 1)",
+            )
+            db.execSQL("INSERT INTO freed (path, item_id, fingerprint, bytes, freed_at) VALUES ('/storage/emulated/0/DCIM/Camera/a.jpg', 'i1', 'v1:x', 10, 1)")
+        }
+        helper.runMigrationsAndValidate(name, 7, true, GalleryDatabase.MIGRATION_6_7).close()
+        val room = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), GalleryDatabase::class.java, name)
+            .addMigrations(*GalleryDatabase.MIGRATIONS).build()
+        try {
+            runBlocking {
+                val account = room.account().get()!!
+                assertThat(account.cursor).isEqualTo("c:9")
+                // No wait and nothing to say after the upgrade.
+                assertThat(account.backupWait).isNull()
+                assertThat(account.backupRestartedAt).isNull()
+                room.account().setBackupWait("{}")
+                room.account().setBackupRestartedAt(7)
+                assertThat(room.account().get()!!.backupWait).isEqualTo("{}")
+                assertThat(room.account().get()!!.backupRestartedAt).isEqualTo(7)
+                assertThat(room.backup().freed()).hasSize(1)
+                room.backup().deleteFreed(listOf("/storage/emulated/0/DCIM/Camera/a.jpg"))
+                assertThat(room.backup().freed()).isEmpty()
+            }
+        } finally {
+            room.close()
+        }
+    }
 }

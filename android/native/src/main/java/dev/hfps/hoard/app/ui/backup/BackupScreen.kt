@@ -68,6 +68,7 @@ import dev.hfps.hoard.server.backup.BackupEngine
 import dev.hfps.hoard.server.backup.BackupProgress
 import dev.hfps.hoard.server.backup.BackupRules
 import dev.hfps.hoard.server.backup.BackupState
+import dev.hfps.hoard.server.backup.BackupWait
 import dev.hfps.hoard.server.backup.FolderStatus
 import dev.hfps.hoard.server.db.BackupFileEntity
 import dev.hfps.hoard.server.db.FreedTotal
@@ -97,6 +98,10 @@ data class BackupUi(
     val freed: FreedTotal = FreedTotal(0, 0),
     /** Reveal is installed here but not grouped with Hoard as this phone (ADR 0024 "When only one app is installed"). */
     val revealNotGrouped: Boolean = false,
+    /** Uploads wait for room on the server (`507 storage_full`, ADR 0024 Amendment (2.9.1)). */
+    val wait: BackupWait? = null,
+    /** The server's backup of this phone was deleted and Hoard backs it up again (said once, Amendment (2.9.1)). */
+    val restarted: Boolean = false,
 )
 
 /** Settings › Backup bound to the app. */
@@ -162,6 +167,8 @@ fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (Str
             freeUpRules = freeUpRules,
             freed = freed,
             revealNotGrouped = revealNotGrouped,
+            wait = BackupWait.decode(a?.backupWait),
+            restarted = a?.backupRestartedAt != null,
         ),
         onBack = onBack,
         onToggle = ::toggle,
@@ -176,7 +183,13 @@ fun BackupScreen(container: AppContainer, onBack: () -> Unit, onOpenFolder: (Str
         onFreeUp = onFreeUp,
         onFreeUpRules = { r -> scope.launch { container.freeUp.setRules(r) } },
         onThisPhone = onBack,
+        onRestartedSeen = { scope.launch { db.account().setBackupRestartedAt(null) } },
     )
+    // Said once (ADR 0024 Amendment (2.9.1)): leaving the screen after it was shown clears it too.
+    val shownRestart = a?.backupRestartedAt != null
+    androidx.compose.runtime.DisposableEffect(shownRestart) {
+        onDispose { if (shownRestart) container.scope.launch { runCatching { db.account().setBackupRestartedAt(null) } } }
+    }
     if (adding) {
         var path by remember { mutableStateOf("") }
         HoardDialog(
@@ -234,6 +247,7 @@ fun BackupContent(
     onFreeUp: () -> Unit = {},
     onFreeUpRules: (FreeUpRules) -> Unit = {},
     onThisPhone: () -> Unit = {},
+    onRestartedSeen: () -> Unit = {},
 ) {
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
@@ -252,6 +266,7 @@ fun BackupContent(
                     }
                     return@LazyColumn
                 }
+                if (ui.restarted) item("restarted") { Restarted(onRestartedSeen) }
                 item("summary") { Summary(ui, onNow) }
                 if (ui.revealNotGrouped) item("reveal") { RevealNotGrouped(onThisPhone) }
                 item("folders-head") {
@@ -263,7 +278,7 @@ fun BackupContent(
                 items(ui.folders, key = { it.key }) { row ->
                     Column(Modifier.background(HfpsTheme.colors.card)) {
                         if (row != ui.folders.first()) HfpsRowDivider(Modifier.padding(start = 54.dp))
-                        FolderItem(row, ui.now, busy = row.key in ui.busy, onToggle = onToggle, onOpen = onOpenFolder)
+                        FolderItem(row, ui.now, ui.wait, busy = row.key in ui.busy, onToggle = onToggle, onOpen = onOpenFolder)
                     }
                 }
                 item("add") {
@@ -343,9 +358,12 @@ fun folderTitle(row: FolderRow): String {
     return if (row.locationId == "device") name else stringResource(R.string.backup_folder_sd, name)
 }
 
-/** "11,050 of 12,034 backed up · 950 already on the server · 34 waiting for Wi-Fi", then bytes and the last pass. */
+/**
+ * "11,050 of 12,034 backed up · 950 already on the server · 34 waiting for Wi-Fi", then bytes and the last pass. While
+ * the server's backup volume is full ([wait]), files still to send read "Waiting: the photo server's drive is full".
+ */
 @Composable
-fun statusText(row: FolderRow, now: Long): String {
+fun statusText(row: FolderRow, now: Long, wait: BackupWait? = null): String {
     val l = locale()
     val s = row.status ?: return pluralStringResource(R.plurals.backup_folder_off, row.files, formatNumber(row.files, l), bytes(row.bytes))
     val parts = ArrayList<String>()
@@ -353,7 +371,11 @@ fun statusText(row: FolderRow, now: Long): String {
     if (s.onServer > 0) parts += pluralStringResource(R.plurals.backup_status_server, s.onServer, formatNumber(s.onServer, l))
     if (s.waitingWifi > 0) parts += pluralStringResource(R.plurals.backup_status_wifi, s.waitingWifi, formatNumber(s.waitingWifi, l))
     if (s.waitingCharging > 0) parts += pluralStringResource(R.plurals.backup_status_charging, s.waitingCharging, formatNumber(s.waitingCharging, l))
-    if (s.queued > 0) parts += pluralStringResource(R.plurals.backup_status_queued, s.queued, formatNumber(s.queued, l))
+    if (s.queued > 0 && wait != null) {
+        parts += wait.free?.let { stringResource(R.string.backup_status_waiting_full, bytes(it)) } ?: stringResource(R.string.backup_status_waiting_full_unknown)
+    } else if (s.queued > 0) {
+        parts += pluralStringResource(R.plurals.backup_status_queued, s.queued, formatNumber(s.queued, l))
+    }
     if (s.failed > 0) parts += pluralStringResource(R.plurals.backup_status_failed, s.failed, formatNumber(s.failed, l))
     if (s.refused > 0) parts += pluralStringResource(R.plurals.backup_status_refused, s.refused, formatNumber(s.refused, l))
     val second = listOf(
@@ -365,7 +387,7 @@ fun statusText(row: FolderRow, now: Long): String {
 }
 
 @Composable
-private fun FolderItem(row: FolderRow, now: Long, busy: Boolean, onToggle: (FolderRow, Boolean) -> Unit, onOpen: (String) -> Unit) {
+private fun FolderItem(row: FolderRow, now: Long, wait: BackupWait?, busy: Boolean, onToggle: (FolderRow, Boolean) -> Unit, onOpen: (String) -> Unit) {
     val icon: ImageVector = when (row.label) {
         FolderLabel.Camera -> PhosphorRegular.Camera
         FolderLabel.Screenshots -> PhosphorRegular.DeviceMobile
@@ -385,7 +407,7 @@ private fun FolderItem(row: FolderRow, now: Long, busy: Boolean, onToggle: (Fold
         Column(Modifier.weight(1f)) {
             Text(folderTitle(row), style = HfpsTheme.typography.body, color = HfpsTheme.colors.cardForeground)
             Text(row.folder.ifEmpty { "/" }, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
-            Text(statusText(row, now), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.testTag("backup-folder-status"))
+            Text(statusText(row, now, wait), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.testTag("backup-folder-status"))
         }
         Switch(
             row.on,
@@ -409,6 +431,20 @@ private fun Rules(rules: BackupRules, onRules: (BackupRules) -> Unit) {
             RuleRow(R.string.backup_rule_videos, PhosphorRegular.VideoCamera, rules.videosCharging, "backup-rule-videos") { onRules(rules.copy(videosCharging = it)) }
         }
         Text(stringResource(R.string.backup_rule_battery), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(16.dp))
+    }
+}
+
+/** "The photo server's backup of this phone was deleted; Hoard is backing it up again" (ADR 0024 Amendment (2.9.1)), once. */
+@Composable
+private fun Restarted(onSeen: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).background(HfpsTheme.colors.card).padding(12.dp).testTag("backup-restarted"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(PhosphorRegular.ArrowsClockwise, null, Modifier.size(20.dp), tint = HfpsTheme.colors.warning)
+        Text(stringResource(R.string.backup_restarted), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.cardForeground, modifier = Modifier.weight(1f))
+        GhostButton(stringResource(android.R.string.ok), onSeen, modifier = Modifier.testTag("backup-restarted-ok"))
     }
 }
 
@@ -449,7 +485,8 @@ private fun FreeUpSection(ui: BackupUi, onFreeUp: () -> Unit, onRules: (FreeUpRu
             HfpsRowDivider(Modifier.padding(start = 54.dp))
             RuleRow(R.string.freeup_rule_favourites, PhosphorRegular.Star, ui.freeUpRules.keepFavourites, "freeup-rule-favourites") { onRules(ui.freeUpRules.copy(keepFavourites = it)) }
         }
-        Text(stringResource(R.string.freeup_rules_hint), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(16.dp))
+        // Not right after a purge (Amendment (2.9.1)): the files freed before it are on neither the phone nor the server.
+        if (!ui.restarted) Text(stringResource(R.string.freeup_rules_hint), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(16.dp))
     }
 }
 

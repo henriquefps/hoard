@@ -673,4 +673,56 @@ class CompressEngineTest {
         backup().run()
         assertThat(writingReads).isEqualTo(1)
     }
+
+    // --- ADR 0024 Amendment (2.9.1): the admin purged this phone's backup (hoard-server 0.14.0) ----------------------
+
+    @Test
+    fun afterAPurgeAnUnsettledRowIsSettledByTheExistingRulesAndTheBackupStartsOver() = runBlocking<Unit> {
+        val rootId = backedUpAndCompressed()
+        // Written, then the process dies before the report: the journal says written.
+        source.killOnPartDelete = true
+        runCatching { engine().run() }
+        assertThat(row()!!.state).isEqualTo(PhoneState.WRITTEN)
+        // The admin purges the phone's backup: its compressions are settled there (`purged`), every route answers 404.
+        fake.items.clear()
+        backupFake.purge()
+        engine().run()
+        // The report's 404 settles the row (the phone keeps the file it wrote: the output), nothing reported.
+        assertThat(row()!!.state).isEqualTo(PhoneState.REPORTED)
+        assertThat(fake.reports).isEmpty()
+        assertThat(video.readBytes()).isEqualTo(output)
+        // The backup's next pass makes the root again and uploads the file the phone has now.
+        val result = backup().run()
+        assertThat(result.restarted).isEqualTo(1)
+        assertThat(result.uploaded).isEqualTo(1)
+        assertThat(backupFake.blobs[outSha]).isEqualTo(output)
+        val newRoot = db.backup().roots().single().id
+        assertThat(newRoot).isNotEqualTo(rootId)
+        assertThat(db.backup().file(newRoot, path)!!.state).isEqualTo(BackupState.STORED)
+    }
+
+    @Test
+    fun afterAPurgeARowWaitingForItsWriteIsDroppedWithoutAWrite() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        source.manageMedia = false
+        engine().run()
+        assertThat(row()!!.state).isEqualTo(PhoneState.VERIFIED)
+        fake.items.clear()
+        backupFake.purge()
+        engine().run()
+        assertThat(row()).isNull()
+        assertThat(source.writes).isEqualTo(0)
+        assertThat(video.readBytes()).isEqualTo(original)
+    }
+
+    @Test
+    fun afterAPurgeADownloadAnswered404IsAbandoned() = runBlocking<Unit> {
+        backedUpAndCompressed()
+        // Listed (the purge comes between the list and the download): the output route answers 404.
+        fake.outputs.clear()
+        backupFake.purge()
+        engine().run()
+        assertThat(row()!!.state).isEqualTo(PhoneState.ABANDONED)
+        assertThat(video.readBytes()).isEqualTo(original)
+    }
 }

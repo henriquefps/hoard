@@ -106,6 +106,12 @@ class BackupUploader(
                 return UploadOutcome.Changed
             } catch (e: ServerException) {
                 if (e.unauthorized) throw e
+                if (BackupWait.isFull(e)) {
+                    // The server's backup volume is full (`507 storage_full`, hoard-server 0.14.0): what it kept of
+                    // the part is saved, and the pass waits (never retried here: ADR 0024 Amendment (2.9.1)).
+                    e.detailLong("offset")?.let { save(id, it) }
+                    throw e
+                }
                 when {
                     e.code == "checksum_mismatch" -> {
                         runCatching { api.deleteUpload(id) }

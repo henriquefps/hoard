@@ -45,6 +45,32 @@ class FakeBackup(private val server: FakeServer) {
     var corruptNext = false
     var patches = 0
 
+    // --- hoard-server 0.14.0 (ADR 0024 Amendment (0.14.0)) ---
+    /** The backup volume's free bytes while it is full: new uploads and every `PATCH` answer `507 storage_full`. */
+    var full: Long? = null
+    /** Only `PATCH`es are refused (an upload already created when the disk filled up). */
+    var fullOnPatchOnly = false
+    /** `507`s answered. */
+    var fulls = 0
+    /** `GET /v1/backup/roots` calls. */
+    var rootReads = 0
+
+    /** The admin's purge of this phone's backup: its roots, entries, blobs and uploads go. */
+    fun purge() {
+        roots.clear()
+        entries.clear()
+        store.clear()
+        blobs.clear()
+        uploads.clear()
+    }
+
+    private fun storageFull(ex: FakeServer.HttpExchange, needed: Long, offset: Long? = null): Boolean {
+        fulls++
+        ex.responseHeaders.add("Retry-After", "3600")
+        val off = offset?.let { ""","offset":$it""" } ?: ""
+        return error(ex, 507, "storage_full", """{"reason":"storage_full","needed":${needed + (512L shl 20)},"free":$full$off}""")
+    }
+
     // --- Free up (ADR 0024 A3) ---
     /** `POST /v1/backup/verify` bodies received. */
     val verifies = ArrayList<List<String>>()
@@ -93,7 +119,7 @@ class FakeBackup(private val server: FakeServer) {
         val method = ex.requestMethod
         val text = raw.toString(Charsets.UTF_8)
         when {
-            path == "/v1/backup/roots" && method == "GET" -> return json(ex, 200, roots.values.joinToString(",", """{"roots":[""", "]}") { rootJson(it) })
+            path == "/v1/backup/roots" && method == "GET" -> return json(ex, 200.also { rootReads++ }, roots.values.joinToString(",", """{"roots":[""", "]}") { rootJson(it) })
             path == "/v1/backup/roots" && method == "POST" -> {
                 if (!storageConfigured) return error(ex, 503, "storage_not_configured")
                 val o = ServerJson.parseToJsonElement(text).jsonObject
@@ -206,6 +232,7 @@ class FakeBackup(private val server: FakeServer) {
                     ex.responseHeaders.add("Retry-After", "300")
                     return json(ex, 200, """{"status":"in_progress","retryAfter":300}""")
                 }
+                if (full != null && !fullOnPatchOnly) return storageFull(ex, c.size)
                 val u = Upload(UUID.randomUUID().toString(), c.sha256, c.size, c.fingerprint)
                 uploads[u.id] = u
                 return json(ex, 201, """{"status":"created","uploadId":"${u.id}","offset":0,"chunkSize":${server.chunkSize}}""")
@@ -225,6 +252,7 @@ class FakeBackup(private val server: FakeServer) {
                     }
                 }
                 patches++
+                if (full != null) return storageFull(ex, u.size - u.data.size(), u.data.size().toLong())
                 val offset = ex.requestHeaders.getFirst("Upload-Offset")!!.toLong()
                 if (offset != u.data.size().toLong()) return error(ex, 409, "offset_mismatch", """{"offset":${u.data.size()}}""")
                 if (ex.requestHeaders.getFirst("Content-Type") != "application/offset+octet-stream") return error(ex, 415, "unsupported_media_type")
