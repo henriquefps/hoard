@@ -278,7 +278,9 @@ paths:
             `mirror`: a phone backup entry (current, deleted or freed) names the file. Nothing is deleted; the calling
             device's claim on it is released, so the bytes go when the backup no longer needs them. Or (0.13.0, ADR 0025)
             `compressed`: a video compression keeps it (the original or output of a phone or backup compression, until
-            it is purged from the trash); the calling device's claim is released the same way.
+            it is purged from the trash); the calling device's claim is released the same way. Or (0.14.0, ADR 0023
+            Amendment (0.14.0)) `trashed`: the item is in the server trash (the web gallery's admin moved it there), kept
+            until the trash is emptied; the calling device's claim is released the same way.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -375,6 +377,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: >-
+            0.14.0 (ADR 0024 Amendment (0.14.0)): `storage_full`, the backup volume has no room for this upload (with
+            what the other live uploads still send and a 512 MiB reserve); nothing was written. `details`: `reason`,
+            `needed`, `free`, `offset` (the upload's, unchanged); `Retry-After`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /v1/uploads/{uploadId}:
     parameters:
       - name: uploadId
@@ -426,6 +436,14 @@ paths:
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "422":
           description: "`checksum_mismatch`: the bytes do not match sha256 or fingerprint; the upload restarts at 0"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "507":
+          description: >-
+            0.14.0 (ADR 0024 Amendment (0.14.0)): `storage_full`, the backup volume has no room for this upload (with
+            what the other live uploads still send and a 512 MiB reserve); nothing was written. `details`: `reason`,
+            `needed`, `free`, `offset` (the upload's, unchanged); `Retry-After`.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1894,6 +1912,21 @@ paths:
                     description: >-
                       0.13.2 (additive): how many folders below the selected folders (or roots) hold videos of the
                       selection; 0 for an itemIds selection or when every video is directly in a selected folder.
+                  space:
+                    type: object
+                    description: >-
+                      0.14.0 (additive, first page, targets nas and backup; ADR 0025 Amendment (0.14.0)): the room the
+                      outputs need while the originals stay in the trash. `needed` = the encodes' estSize + 64 MiB per
+                      disk, `free` its free bytes, `trash` what its .hoard-trash holds; `fits` is false when one disk
+                      lacks room or its free space cannot be read (`known` false).
+                    properties:
+                      target: { type: string, enum: [nas, backup] }
+                      needed: { type: integer, format: int64 }
+                      free: { type: integer, format: int64 }
+                      trash: { type: integer, format: int64 }
+                      fits: { type: boolean }
+                      known: { type: boolean }
+                      disks: { type: integer }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/Unprocessable" }
@@ -2380,6 +2413,10 @@ components:
       type: object
       required: [target, select]
       properties:
+        totalsOnly:
+          type: boolean
+          default: false
+          description: "Estimate only, 0.14.0 (additive): totals, subfolders and space without the items (one answer for a whole library)"
         target: { type: string, enum: [nas, phone, backup] }
         select:
           type: object
@@ -2517,6 +2554,15 @@ components:
         trashPath: { type: string }
         purgeAfter: { type: integer, format: int64 }
         stalledAt: { type: integer, format: int64, description: "Waiting since (Unix ms): a NAS journal, or a phone restore or a served output no phone reported for a day" }
+        space:
+          type: object
+          description: >-
+            0.14.0 (additive): an item waiting for room (`reason` `no_space`, `ready` for a NAS replace or `queued` for an
+            encode): where, what it needs (the output's size + 64 MiB) and what is free now. A wait, not a failure.
+          properties:
+            where: { type: string, enum: [nas, work] }
+            needed: { type: integer, format: int64 }
+            free: { type: integer, format: int64 }
         logAvailable: { type: boolean, description: "The log itself is on the admin page and the web gallery only" }
     CompressBatch:
       type: object
@@ -2885,6 +2931,14 @@ components:
           description: "With include=trash only (0.11.0, ADR 0023): the item is in a trash"
           properties:
             since: { type: integer, description: "When the server first saw it trashed, Unix ms" }
+        serverTrash:
+          type: object
+          description: >-
+            With include=trash only (0.14.0, ADR 0023 Amendment (0.14.0)): the web gallery's admin moved the item's
+            server copies (phone backups, uploads) into the server trash; they are kept until purgeAfter or a purge.
+          properties:
+            since: { type: integer, format: int64 }
+            purgeAfter: { type: integer, format: int64 }
         kind: { type: string, enum: [photo, pair, video, motion] }
         mainFingerprint: { $ref: "#/components/schemas/Fingerprint" }
         sortTime: { type: integer, description: "capture.utc, else the wall clock read as UTC, else 0" }

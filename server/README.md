@@ -283,6 +283,25 @@ default; "Pause while the GPU is busy" (setup page, off by default since 0.13.2)
 program holds an NVENC session or the GPU was over 50 % busy in the last minute; an optional night window holds back
 automatic work only.
 
+## Upgrading to 0.14.0 (the trash from the web gallery)
+
+0.14.0 adds schema 13 (`0013_web_trash.sql`, new tables only: the migration needs no temporary files) and `/v1`
+additions only; replace the image and restart. ADR 0023 "Amendment (0.14.0)", ADR 0024 and ADR 0025 "Amendment (0.14.0)".
+
+- **Move to trash from the web gallery** (Select all of a filter, e.g. Rejected): NAS shots go through the write mount
+  (`NAS_WRITE_ROOT`, the one compression uses) into the folder's `.hoard-trash/<day>/…`, the layout Hoard reads, so
+  Hoard's Trash lists and restores them; phone backups and uploads go to a server trash (kept until it is emptied;
+  devices still cannot delete backups). Without a usable write mount, NAS shots are refused with the reason and nothing
+  moves. The Trash view lists everything by day and place, with Restore, Delete permanently and Empty trash; what the
+  server trashed is emptied after the compression's `trashDays` (30 by default).
+- **Compression**: the Compression view estimates the whole library and says whether the NAS has room for the outputs
+  while the originals wait in the trash; a replace waiting for room shows as **Waiting**, not failed.
+- **The `-nvidia` image decodes more camera files** (AVI with μ-law/A-law/ADPCM audio, MS-MPEG4, H.263, …): previews
+  that failed are tried again once at the first start of 0.14.0 (and whenever the tools change).
+- **A full backup disk** refuses uploads with `507 storage_full` before writing anything (512 MiB stay free).
+- **Purging a phone's backup** (setup page) also ends that phone's compressions and releases the compressed originals
+  its backup kept; the confirmation shows how many.
+
 ## Upgrading to 0.13.2 (compression follow-ups)
 
 0.13.2 is a set of small compression fixes (ADR 0025 "Amendment (0.13.2)"); no schema change, `/v1` additions only:

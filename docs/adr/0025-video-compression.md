@@ -1684,3 +1684,52 @@ in the reviews of #81. Nothing in the protocol, the schema (`gallery.db` stays 6
   Hoard or clear its storage until it finishes" (`compress_phone_writing_warning`) while the run writes or a started
   write waits to be redone: the part that finishes it lives in Hoard's app-specific storage, which an uninstall or
   "Clear storage" removes.
+
+## Amendment (0.14.0)
+
+hoard-server 0.14.0: the owner's first library-wide job (the NAS has ~39 GB free) and fixes from the deployed server. No
+change to the recipe, the rules or the journals; `/v1` additions only (ADR 0013, `openapi.yaml`).
+
+- **The space a job needs.** Every replaced original stays in the trash (a hard link) until it is emptied, so a job's
+  outputs add to the disk until then: about the sum of their estimated sizes, plus the 64 MiB a replace keeps free.
+  `POST /v1/compress/estimate` answers, on its first page and for targets `nas` and `backup`, `"space": {"target",
+  "needed", "free", "trash", "fits", "known", "disks"}`: per filesystem that takes outputs (the NAS folders', or the
+  backup root's), the sum of the encodes' `estSize` + 64 MiB, its free bytes (`statfs`) and what its `.hoard-trash`
+  holds (indexed trash rows); `fits` is false when one disk lacks room or a free space cannot be read (`known: false`).
+  The web says "Needs about X free on the NAS while the originals stay in the trash; you have Y" and either "Empty the
+  trash first (Z in it now), or compress in parts" (when the trash holds the shortfall) or "Compress in parts (a folder at
+  a time), emptying the trash between them; videos that do not fit wait for room, nothing is lost". The job is not
+  refused: replaces that do not fit wait (below).
+- **`totalsOnly`** (estimate, additive): the totals, `subfolders` and `space` without items, so the web's **Whole
+  library** estimate (the Compression view: every NAS folder, recursive) is one answer instead of every page; the
+  estimate already computes every candidate per call. Probes still pending answer `pending` and the page asks again.
+  The per-folder dialog (Folders › ⋮, a selection) shows the same space note.
+- **`no_space` is a wait, not a failure.** A NAS replace without room goes back to `ready` with `reason: no_space` and is
+  tried again every 10 minutes (Amendment (S1), "Space"); an encode without room in the work folder goes back to
+  `queued` the same way. `GET /v1/compress/items` adds to such an item `"space": {"where": "nas" | "work", "needed"?,
+  "free"?}` (`needed` = the output's size + 64 MiB; `free` read now). The web shows it as **Waiting** ("Waiting for free
+  space on the NAS: empty the trash or wait", with the numbers and a link to the Trash view; "… on the backup disk" for
+  the work folder) instead of a failure. **Hoard's app string gets the same change in a later Hoard PR**
+  (`CompressReasonTexts` lists `no_space` among the failures, 2.7.1; it should read as the wait, with the numbers when
+  the item has `space`).
+- **Decoders of camera files.** The `-nvidia` image's slimmed ffmpeg had no decoder for `pcm_mulaw` (and others): 15
+  proxy jobs of the owner's AVI files failed with "Decoding requested, but no decoder found for: pcm_mulaw". Both images
+  now enable, for camera AVI/MOV/3GP: `pcm_mulaw`, `pcm_alaw`, `pcm_u8`, `pcm_s8`, `pcm_u16le`, `pcm_s32le`,
+  `adpcm_ima_wav`, `adpcm_ima_qt`, `adpcm_ms`, `adpcm_yamaha`, `mp3float`, `msmpeg4v1`/`v2`/`v3`, `h263`, `h263p`,
+  `mpeg1video`, `mjpegb`, `dvvideo`, `cinepak`, `qtrle` (and the `h263` parser); LGPL/GPL components only, no nonfree.
+  `TestImageDecodesCameraClips` (opt-in, `HOARD_IMAGE=<tag>`) makes seven synthetic clips with a full ffmpeg (MJPEG +
+  μ-law / u8 / A-law, MPEG-4 + IMA ADPCM, MS-MPEG4v3 + A-law, H.263 + AAC in 3GP, MPEG-4 + QuickTime IMA) and has the
+  image's ffmpeg decode each in full (`-xerror`) and encode its proxy: all fail on `0.13.2-nvidia` with the owner's
+  error, all pass on the 0.14.0 build. `TestCPUProxyCameraAVI` checks the proxy of an MJPEG + μ-law AVI.
+- **Failed previews are tried again after the tools change.** The CPU generator's `ToolsID` (a hash of `ffmpeg
+  -buildconf`, its version and vips' version) is kept in the setting `previews.toolsId`; at start, when it differs (the
+  first start of 0.14.0 included), every `failed` preview becomes `pending` with its attempts reset, once
+  (`TestRetryFailedAfterToolsChange`).
+- **Previews the server refuses are logged** (`preview not served`: route, item id, reason `unknown_item`, `tombstone`,
+  `tombstone_replaced`, `trashed`, `no_edit` or `<job>:<reason>`, the client device; at most once per item, route and
+  reason an hour). The "Não foi possível mostrar esta foto." the owner saw (2026-11-16, an upload) is **Hoard's** culling
+  viewer string (`t_cull_viewer_image_failed`), not the web gallery's: Hoard shows it when a server shot's screen preview
+  ends `Missing` (a 404, or 202 for more than six tries). On the server every image preview was done, so the 404s left
+  are an item id the server no longer has live (a stale cache entry, a tombstone with `replacedBy`) or an edit that is
+  not there (`edit=primary` of an item whose edit went): the log now names which; the app fix is noted in ADR 0024
+  Amendment (0.14.0) ("Hoard after a purge").

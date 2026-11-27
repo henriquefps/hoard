@@ -300,6 +300,7 @@ test("the whole library's estimate: videos, sizes, skips and the NAS's room", as
     await go(page, "/compression")
     await page.getByTestId("library-estimate").click()
     await expect(page.getByTestId("library-summary")).toContainText(/of \d+ videos/, { timeout: 30_000 })
+    await page.getByTestId("compress-library").scrollIntoViewIfNeeded()
   }
   await open()
   await expect(page.getByTestId("compress-library").getByTestId("space-note")).toHaveAttribute("data-state", "fits")
@@ -335,6 +336,7 @@ test("no_space is a wait, not a failure: the item says what it needs and links t
     await go(page, "/compression")
     await page.getByTestId("job").first().getByTestId("job-open").click()
     await expect(page.getByTestId("item-no-space")).toBeVisible()
+    await page.getByTestId("item-no-space").scrollIntoViewIfNeeded()
   }
   await open()
   const row = page.getByTestId("item-no-space")
