@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.9.1 (unreleased)
+
+The phone backup after the photo server's admin deletes it, and a photo server whose disk is full ([ADR 0024](docs/adr/0024-phone-backup.md) and [ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.9.1)"). Made for hoard-server 0.14.0; works with older servers too.
+
+- **The backup starts over after a purge.** When the photo server's admin deletes this phone's backup, Hoard notices at its next backup pass, sets each folder up again on the server and backs up every photo and video again, in the same pass. Settings › Phone backup says it once: "The photo server's backup of this phone was deleted; Hoard is backing it up again". Before, Hoard went on showing everything as backed up and sent nothing.
+- **No stale "freed" totals.** Files Free up space had deleted from the phone were in the backup that went: Settings › Phone backup no longer counts them as freed, and the note that freed photos stay in the Gallery is not shown right after a purge.
+- **A full photo server is a wait, not a failure.** When the server's backup disk has no room (hoard-server 0.14.0 says so), the backup stops, marks nothing as failed and tries again later (after an hour, then longer each time, at most every 6 hours). The folder says "Waiting: the photo server's drive is full (2 GB free)"; **Back up now** tries at once, and the backup goes on by itself once there is room.
+- **Compression waiting for room.** A video the server cannot put back on the NAS for lack of space now reads "Waiting for free space on the NAS: empty the trash" in Settings › Compress videos (with what is free, and the Trash one tap away), as on the web gallery, instead of being listed among the failures.
+
 ## 2.9.0 (unreleased)
 
 Settings reorganized, after the owner's wireframes ([`docs/design/settings-2026-11/`](docs/design/settings-2026-11/)).

@@ -62,6 +62,7 @@ class BackupEngineTest {
         }
         override fun conditions() = conditions
         override suspend fun rules() = rules
+        override fun absoluteFolder(root: BackupRootEntity): String? = File(base, root.path).absolutePath
     }
 
     @Before

@@ -272,7 +272,13 @@ class CompressService(
             cursor = page.cursor
             pages++
         } while (page.hasMore && !cursor.isNullOrEmpty() && pages < MAX_PAGES)
-        CompressOverview.of(jobs)
+        // Items waiting for room (`no_space`, hoard-server 0.14.0): shown as a wait, never as failures (Amendment (2.9.1)).
+        val waiting = if (jobs.any { !it.finished }) {
+            runCatching { api.compressItems(states = "ready,queued", limit = 500).items.filter { it.reason == dev.hfps.hoard.server.compress.SpaceWait.REASON } }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        CompressOverview.of(jobs, waiting)
     }
 
     /** The folder's standing job ("Compress automatically"), or null when it is off. */

@@ -131,6 +131,21 @@ class CompressScreenshotTest {
     private val info = CompressInfo(available = true, gpu = "NVIDIA GeForce RTX 4080", trashDays = 30, attention = CompressAttention(stalled = 1))
     private val settings = CompressSettingsUi(overview, info, CompressOffer.Ready, loading = false)
 
+    /** ADR 0025 Amendment (2.9.1): videos waiting for room on the NAS (`no_space`) read as a wait, not failures. */
+    private val waitingForSpace = settings.copy(
+        overview = CompressOverview.of(
+            listOf(job("1", "videos/Drone/2023", done = 41, toDo = 88, inTrash = 8_200_000_000, replaced = 41).copy(failed = mapOf("no_space" to 1, "encoder" to 1))),
+            listOf(
+                dev.hfps.hoard.server.api.CompressItem(id = "a", jobId = "1", state = "ready", reason = "no_space", space = dev.hfps.hoard.server.api.CompressItemSpace("nas", 1_300_000_000, 740_000_000)),
+                dev.hfps.hoard.server.api.CompressItem(id = "b", jobId = "1", state = "ready", reason = "no_space", space = dev.hfps.hoard.server.api.CompressItemSpace("nas", 900_000_000, 740_000_000)),
+            ),
+        ),
+        info = info.copy(attention = null),
+    )
+
+    @Test fun settingsSpaceWaitPhoneLight() = shoot("compress_settings_space_wait_phone_light") { CompressSettingsContent(waitingForSpace, onBack = {}) }
+    @Test fun settingsSpaceWaitPhoneDark() = shoot("compress_settings_space_wait_phone_dark", dark = true) { CompressSettingsContent(waitingForSpace, onBack = {}) }
+
     @Test fun settingsPhoneLight() = shoot("compress_settings_phone_light") { CompressSettingsContent(settings, onBack = {}) }
     @Test fun settingsPhoneDark() = shoot("compress_settings_phone_dark", dark = true) { CompressSettingsContent(settings, onBack = {}) }
     @Test fun settingsTabletLight() = shoot("compress_settings_tablet_light", TABLET) { CompressSettingsContent(settings, onBack = {}) }

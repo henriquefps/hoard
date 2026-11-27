@@ -609,6 +609,9 @@
     <string name="save_device_failed">Não foi possível salvar: %1$s</string>
     <!-- Free up space (ADR 0024 A3, Hoard 2.6.0) -->
     <string name="backup_reveal_not_grouped">O Reveal deste celular não está agrupado com o Hoard: os dois apps podem fazer backup das mesmas pastas.</string>
+    <string name="backup_restarted">O backup deste celular no servidor de fotos foi apagado; o Hoard está fazendo o backup de novo</string>
+    <string name="backup_status_waiting_full">Aguardando: o disco do servidor de fotos está cheio (%1$s livres)</string>
+    <string name="backup_status_waiting_full_unknown">Aguardando: o disco do servidor de fotos está cheio</string>
     <string name="freeup_title">Liberar espaço</string>
     <string name="freeup_open">Liberar espaço neste celular</string>
     <string name="freeup_open_hint">Apaga do celular o que o servidor tem e conferiu, dos mais antigos aos mais novos. Você vê tudo antes.</string>
@@ -754,7 +757,9 @@
     <string name="compress_trash_section">Originais de vídeos comprimidos</string>
     <string name="compress_failed_reason_verify">não passou nas verificações de qualidade</string>
     <string name="compress_failed_reason_changed">o arquivo mudou nesse meio-tempo</string>
-    <string name="compress_failed_reason_space">sem espaço suficiente</string>
+    <string name="compress_wait_space_nas">Aguardando espaço livre no NAS: esvazie a lixeira</string>
+    <string name="compress_wait_space_nas_free">Aguardando espaço livre no NAS: esvazie a lixeira (%1$s livres)</string>
+    <string name="compress_wait_space_work">Aguardando espaço livre no disco do backup</string>
     <string name="compress_failed_reason_encoder">o codificador falhou</string>
     <string name="compress_failed_reason_trash">não foi possível mover o original para a lixeira</string>
     <string name="compress_failed_reason_writable">o servidor não consegue gravar nessa pasta</string>
@@ -907,6 +912,11 @@
         <item quantity="one">%1$s vídeo está só neste celular ou é um envio: fica de fora</item>
         <item quantity="many">%1$s vídeos estão só neste celular ou são envios: ficam de fora</item>
         <item quantity="other">%1$s vídeos estão só neste celular ou são envios: ficam de fora</item>
+    </plurals>
+    <plurals name="compress_wait_count">
+        <item quantity="one">%1$s aguardando espaço livre</item>
+        <item quantity="many">%1$s aguardando espaço livre</item>
+        <item quantity="other">%1$s aguardando espaço livre</item>
     </plurals>
     <plurals name="compress_failed_count">
         <item quantity="one">%1$s falhou: %2$s</item>

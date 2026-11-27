@@ -231,7 +231,13 @@ data class CompressItem(
     val outSha256: String? = null,
     /** While a phone writes (state `replacing`): `restore` (the original back) or `compress` (a restore again). */
     val direction: String? = null,
+    /** hoard-server 0.14.0: an item waiting for room (`reason` `no_space`): where, what it needs, what is free now. */
+    val space: CompressItemSpace? = null,
 )
+
+/** Where a `no_space` item waits (`nas`: the NAS replace; `work`: the encode's work folder on the backup disk). */
+@Serializable
+data class CompressItemSpace(val where: String = "nas", val needed: Long? = null, val free: Long? = null)
 
 /** `POST /v1/compress/items/{id}/replaced` and `…/restored`: the file the phone wrote at the path. */
 @Serializable

@@ -61,7 +61,8 @@ object CompressReasonTexts {
         "verify_metadata" -> R.string.compress_failed_reason_metadata
         "verify_duration", "verify_streams", "verify_picture", "verify_frames", "verify_decode", "verify_phone" -> R.string.compress_failed_reason_mismatch
         "source_changed" -> R.string.compress_failed_reason_changed
-        "no_space" -> R.string.compress_failed_reason_space
+        // A wait, not a failure (hoard-server 0.14.0; ADR 0025 Amendment (2.9.1)): the web's words.
+        "no_space" -> R.string.compress_wait_space_nas
         "encoder" -> R.string.compress_failed_reason_encoder
         "trash_failed" -> R.string.compress_failed_reason_trash
         "not_writable" -> R.string.compress_failed_reason_writable

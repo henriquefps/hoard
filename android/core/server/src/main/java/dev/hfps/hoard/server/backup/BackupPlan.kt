@@ -41,7 +41,7 @@ object BackupState {
     const val VERIFIED = "verified"
     /** Waits for a rule: `error` = [REASON_WIFI] or [REASON_CHARGING]. */
     const val PAUSED = "paused"
-    /** `error` = [REASON_UNREADABLE], [REASON_SERVER_ERROR], [REASON_SERVER_FULL], [REASON_TOO_LARGE]; tried again later. */
+    /** `error` = [REASON_UNREADABLE], [REASON_SERVER_ERROR], [REASON_TOO_LARGE] (or [REASON_SERVER_FULL] from Hoard 2.9.0 and older); tried again later. */
     const val FAILED = "failed"
     /** The bytes sent did not match the hash (`checksum_mismatch`): identified and hashed again on the next run. */
     const val CHANGED = "changed"

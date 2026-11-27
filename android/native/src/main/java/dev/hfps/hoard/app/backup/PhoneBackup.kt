@@ -120,11 +120,11 @@ class PhoneBackup(
     fun now() = BackupWorker.now(context)
 
     /** A run (the worker's): the index is read first, so the listings are current. */
-    suspend fun run(stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit): BackupRunResult {
+    suspend fun run(stopped: () -> Boolean, foreground: suspend (BackupProgress) -> Unit, manual: Boolean = false): BackupRunResult {
         hook()
         indexed = gallery.deviceIndex.scan()
-        val result = engine.run(stopped, foreground)
-        Log.i(TAG, "backup run: ${result.outcome}, ${result.uploaded} uploaded, ${result.bytes} bytes")
+        val result = engine.run(stopped, foreground, manual)
+        Log.i(TAG, "backup run: ${result.outcome}, ${result.uploaded} uploaded, ${result.bytes} bytes" + (if (result.restarted > 0) ", ${result.restarted} folder(s) started over" else "") + (result.retryAt?.let { ", waiting for room until $it" } ?: ""))
         return result
     }
 
@@ -206,6 +206,8 @@ class PhoneBackup(
     }
 
     override fun conditions(): Conditions = conditionsOf(context)
+
+    override fun absoluteFolder(root: BackupRootEntity): String? = absoluteFolder(root.locationId, root.folder)
 
     companion object {
         const val TAG = "HoardBackup"

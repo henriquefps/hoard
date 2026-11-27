@@ -85,7 +85,7 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   only (ADR 0010 "Server items"). E2E against your own hoard-server container: `docs/testing/gallery/README.md`
   (`-Phoard.native.debugSuffix=.gallery` for another debug id, `-Phoard.native.benchRelease=true` for a debug-signed
   R8 build to measure frames).
-- **Phone backup** (ADR 0024, A1): `:core:server` `backup/` (`BackupPlan` pure, `BackupUploader`, `BackupEngine` over a
+- **Phone backup** (ADR 0024, A1): `:core:server` `backup/` (`BackupPlan` and `BackupWait`/`BackupRestart` pure, `BackupUploader`, `BackupEngine` over a
   `BackupSource`, `BackupWorker` with `BackupHost` = the application), `gallery.db` 4 (`backup_roots`, `backup_files`,
   `freed`); `:native` `backup/PhoneBackup.kt` and `ui/backup/`. Hashing and uploads only inside the worker. E2E:
   `docs/testing/backup.md`. A2 (other devices see backups): `gallery.db` 5 (`server_item_mirrors`, the items' `mirror`
@@ -95,7 +95,10 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   space, Android 11+): `FreeUpPlan` (pure) and `FreeUpEngine` in `:core:server` `backup/`, `PhoneFreeUp` and
   `ui/backup/FreeUpScreen.kt`; deletion only through `MediaStore.createDeleteRequest` (never a direct delete), only
   `yes` verify answers younger than 10 minutes, `freed` written before the report. E2E: `docs/testing/backup.md` "A3"
-  (a debug build reads the delete request size from `files/freeup-request-size`).
+  (a debug build reads the delete request size from `files/freeup-request-size`). 2.9.1 (Amendment (2.9.1)): each pass reads
+  `GET /v1/backup/roots` first and starts over a root the server no longer lists (an admin purge: made again, rows
+  reset, its `freed` history dropped, said once); `507 storage_full` is a pass-wide wait (`server_account.backup_wait`,
+  `gallery.db` 7), never a failed file.
 - **Video compression** (ADR 0025, A1, Hoard 2.7.0): the server compresses; Hoard starts library (`nas`) and
   `backup` jobs, only with the feature `compress` and that target's `compress.targets.<t>.ok` (`CompressGate`,
   `:core:server` `compress/`). `:native` `compress/` (`CompressService`, `CompressTargets`), `ui/compress/` (the sheet,

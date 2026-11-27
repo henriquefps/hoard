@@ -131,6 +131,35 @@ class CompressModelTest {
         CompressJob(id, auto = auto, state = state, paused = paused, progress = CompressProgress(done = 1, toDo = toDo))
 
     @Test
+    fun noSpaceIsAWaitNotAFailure() {
+        // ADR 0025 Amendment (2.9.1): items waiting for room (0.14.0 `space`) and an older server's failed no_space.
+        val jobs = listOf(
+            job("run", toDo = 3).copy(failed = mapOf("no_space" to 2, "encoder" to 1)),
+            job("other", toDo = 1),
+            job("work", toDo = 1),
+        )
+        val waiting = listOf(
+            dev.hfps.hoard.server.api.CompressItem(id = "1", jobId = "run", state = "ready", reason = "no_space", space = dev.hfps.hoard.server.api.CompressItemSpace("nas", 900, 5_000)),
+            dev.hfps.hoard.server.api.CompressItem(id = "2", jobId = "run", state = "ready", reason = "no_space", space = dev.hfps.hoard.server.api.CompressItemSpace("nas", 900, 4_000)),
+            dev.hfps.hoard.server.api.CompressItem(id = "3", jobId = "work", state = "queued", reason = "no_space", space = dev.hfps.hoard.server.api.CompressItemSpace("work")),
+            // Not waiting: another reason, or settled.
+            dev.hfps.hoard.server.api.CompressItem(id = "4", jobId = "other", state = "ready", reason = ""),
+            dev.hfps.hoard.server.api.CompressItem(id = "5", jobId = "other", state = "failed", reason = "no_space"),
+        )
+        val o = CompressOverview.of(jobs, waiting)
+        assertThat(o.spaceWaits["run"]).isEqualTo(SpaceWait(4, SpaceWait.WHERE_NAS, 4_000))
+        assertThat(o.spaceWaits["work"]).isEqualTo(SpaceWait(1, SpaceWait.WHERE_WORK, null))
+        assertThat(o.spaceWaits).doesNotContainKey("other")
+        assertThat(o.spaceWait).isEqualTo(SpaceWait(5, SpaceWait.WHERE_NAS, 4_000))
+        // no_space is no longer among the failures.
+        assertThat(SpaceWait.failures(jobs[0])).containsExactly("encoder", 1)
+        assertThat(CompressOverview.of(listOf(job("x", toDo = 1))).spaceWait).isNull()
+        // 0.14.0's item answer parses its `space`.
+        val item = ServerJson.decodeFromString(dev.hfps.hoard.server.api.CompressItem.serializer(), """{"id":"9","state":"ready","reason":"no_space","space":{"where":"nas","needed":10,"free":3}}""")
+        assertThat(item.space).isEqualTo(dev.hfps.hoard.server.api.CompressItemSpace("nas", 10, 3))
+    }
+
+    @Test
     fun settingsSplitsJobsIntoRunningAutomaticAndHistory() {
         val o = CompressOverview.of(
             listOf(

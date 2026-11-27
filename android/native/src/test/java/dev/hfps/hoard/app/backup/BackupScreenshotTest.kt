@@ -83,6 +83,30 @@ class BackupScreenshotTest {
     }
     @Test fun backupOldServerPhoneLight() = shoot("backup_old_server_phone_light") { BackupContent(BackupUi(availability = BackupAvailability.OldServer, now = now), onBack = {}) }
 
+    // --- ADR 0024 Amendment (2.9.1) ------------------------------------------------------------------------------
+
+    /** The camera folder started over after the admin purged the phone's backup: said once, no stale freed totals. */
+    private val restarted = BackupUi(
+        folders = BackupFolders.rows(
+            listOf(DeviceDirRow("device", "DCIM/Camera", 3, 12_300_000)),
+            listOf(BackupRootEntity("r9", "primary", "DCIM/Camera", "device", "DCIM/Camera", "image,video", 1, lastPassAt = null)),
+            listOf(BackupCountRow("r9", BackupState.STORED, null, 1, 4_100_000), BackupCountRow("r9", BackupState.QUEUED, null, 2, 8_200_000)),
+        ),
+        rules = BackupRules(),
+        now = now,
+        freeUpSupported = true,
+        restarted = true,
+    )
+
+    @Test fun backupRestartedPhoneLight() = shoot("backup_restarted_phone_light", qualifiers = "w411dp-h1400dp-port") { BackupContent(restarted, onBack = {}) }
+    @Test fun backupRestartedPhoneDark() = shoot("backup_restarted_phone_dark", qualifiers = "w411dp-h1400dp-port", dark = true) { BackupContent(restarted, onBack = {}) }
+
+    /** The server's backup volume is full (`507 storage_full`): files still to send wait, none failed. */
+    private val full = ui.copy(wait = dev.hfps.hoard.server.backup.BackupWait(since = now - 600_000, until = now + 3_000_000, free = 2_140_000_000, needed = 2_700_000_000))
+
+    @Test fun backupServerFullPhoneLight() = shoot("backup_server_full_phone_light") { BackupContent(full, onBack = {}) }
+    @Test fun backupServerFullPhoneDark() = shoot("backup_server_full_phone_dark", dark = true) { BackupContent(full.copy(wait = full.wait!!.copy(free = null)), onBack = {}) }
+
     private fun file(name: String, state: String, error: String? = null, size: Long = 4_100_000, offset: Long = 0) =
         BackupFileEntity("r1", "DCIM/Camera/$name", "/storage/emulated/0/DCIM/Camera/$name", 1, if (name.endsWith(".mp4")) "video" else "image", size, 1, 1, state = state, error = error, uploadOffset = offset)
 

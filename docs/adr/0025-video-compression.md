@@ -1733,3 +1733,19 @@ change to the recipe, the rules or the journals; `/v1` additions only (ADR 0013,
   are an item id the server no longer has live (a stale cache entry, a tombstone with `replacedBy`) or an edit that is
   not there (`edit=primary` of an item whose edit went): the log now names which; the app fix is noted in ADR 0024
   Amendment (0.14.0) ("Hoard after a purge").
+
+## Amendment (2.9.1)
+
+Hoard 2.9.1, after hoard-server 0.14.0's "`no_space` is a wait, not a failure" (Amendment (0.14.0)).
+
+- `CompressItem` reads 0.14.0's optional `space` (`where` `nas` | `work`, `needed`, `free`).
+- Settings › Compress videos reads, while a job is unfinished, `GET /v1/compress/items?state=ready,queued` and counts
+  per job the items with reason `no_space` (`SpaceWait.of`, pure, JVM-tested), plus the job's `failed.no_space` (an older
+  server, or a blob encode past its attempts): the screen shows a banner **"Waiting for free space on the NAS: empty
+  the trash (706 MB free)"** (the least `free` of the waiting NAS items; "Waiting for free space on the backup disk"
+  when only encodes wait for the work folder) with the Trash one tap away, and each job's line says "3 waiting for free
+  space". `no_space` is no longer listed under the job's failures (`SpaceWait.failures`), and `CompressReasonTexts`
+  maps `no_space` to the same wait sentence (it was "not enough space" among the failures, 2.7.1). The words are the
+  web's (en + pt-BR: "Aguardando espaço livre no NAS: esvazie a lixeira").
+- Goldens `compress_settings_space_wait_phone_{light,dark}`; `CompressReasonTextsTest`, `CompressModelTest`.
+- Phone compressions of a purged backup: ADR 0024 Amendment (2.9.1), "Compressions of the purged items".

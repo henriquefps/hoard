@@ -55,6 +55,7 @@ import dev.hfps.hoard.server.api.CompressInfo
 import dev.hfps.hoard.server.api.CompressJob
 import dev.hfps.hoard.server.compress.CompressOffer
 import dev.hfps.hoard.server.compress.CompressOverview
+import dev.hfps.hoard.server.compress.SpaceWait
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -196,6 +197,7 @@ fun CompressSettingsContent(
                     item("ready") { ReplaceReadyBanner(ui.phone.ready, onAllow, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), enabled = !ui.phone.asking) }
                 }
                 item("status") { StatusBlock(ui) }
+                ui.overview?.spaceWait?.let { w -> item("space-wait") { SpaceWaitBanner(w, onOpenTrash) } }
                 if (ui.phone.visible) item("phone") { PhoneCompressSection(ui.phone, onAllow, onKeep, onReplaceNow) }
                 val o = ui.overview
                 if (o != null) {
@@ -204,7 +206,7 @@ fun CompressSettingsContent(
                         items(o.running, key = { "run-" + it.id }) { job ->
                             Column(Modifier.background(HfpsTheme.colors.card)) {
                                 if (job != o.running.first()) HfpsRowDivider(Modifier.padding(start = 16.dp))
-                                RunningJob(job, onPause, onCancel)
+                                RunningJob(job, o.spaceWaits[job.id], onPause, onCancel)
                             }
                         }
                     }
@@ -217,7 +219,7 @@ fun CompressSettingsContent(
                                 if (job != o.automatic.first()) HfpsRowDivider(Modifier.padding(start = 54.dp))
                                 HfpsListRow(
                                     title = job.name?.ifEmpty { null } ?: CompressTargets.folderLabel(job) ?: job.id,
-                                    subtitle = jobLine(job),
+                                    subtitle = jobLine(job, o.spaceWaits[job.id]),
                                     icon = PhosphorRegular.FolderSimple,
                                     modifier = Modifier.testTag("compress-auto-row"),
                                     trailing = { Switch(true, { onAutoOff(job) }, colors = SwitchDefaults.colors(checkedTrackColor = HfpsTheme.colors.primary)) },
@@ -234,7 +236,7 @@ fun CompressSettingsContent(
                             if (job != o.history.first()) HfpsRowDivider(Modifier.padding(start = 54.dp))
                             HfpsListRow(
                                 title = jobTitle(job),
-                                subtitle = jobLine(job),
+                                subtitle = jobLine(job, o.spaceWaits[job.id]),
                                 icon = if (job.state == CompressJob.STATE_CANCELLED) PhosphorRegular.XCircle else PhosphorRegular.CheckCircle,
                                 modifier = Modifier.testTag("compress-history-row"),
                             )
@@ -295,9 +297,37 @@ private fun jobTitle(job: CompressJob): String {
     return job.name?.ifEmpty { null }?.let { "$it · $date" } ?: date
 }
 
-/** Counts of a job: done of all, saved and in the trash, skipped and failed by reason. */
+/**
+ * Videos waiting for room (`no_space`, ADR 0025 Amendment (2.9.1)): a wait, not a failure: "Waiting for free space on
+ * the NAS: empty the trash (12.3 GB free)", with the Trash one tap away.
+ */
 @Composable
-private fun jobLine(job: CompressJob): String {
+private fun SpaceWaitBanner(wait: SpaceWait, onOpenTrash: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).background(HfpsTheme.colors.card).padding(12.dp).testTag("compress-space-wait"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(PhosphorRegular.ClockCounterClockwise, null, Modifier.size(20.dp), tint = HfpsTheme.colors.warning)
+        Column(Modifier.weight(1f)) {
+            Text(spaceWaitText(wait), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.cardForeground)
+            Text(pluralStringResource(R.plurals.compress_wait_count, wait.items, formatNumber(wait.items, locale())), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        }
+        if (wait.where == SpaceWait.WHERE_NAS) GhostButton(stringResource(R.string.trash_title), onOpenTrash, modifier = Modifier.testTag("compress-space-wait-trash"))
+    }
+}
+
+/** "Waiting for free space on the NAS: empty the trash" (the web's words, hoard-server 0.14.0), with what is free when known. */
+@Composable
+fun spaceWaitText(wait: SpaceWait): String = when {
+    wait.where == SpaceWait.WHERE_WORK -> stringResource(R.string.compress_wait_space_work)
+    wait.free != null -> stringResource(R.string.compress_wait_space_nas_free, bytes(wait.free!!))
+    else -> stringResource(R.string.compress_wait_space_nas)
+}
+
+/** Counts of a job: done of all, saved and in the trash, skipped, waiting for room, and failed by reason. */
+@Composable
+private fun jobLine(job: CompressJob, wait: SpaceWait? = null): String {
     val res = LocalResources.current
     val total = job.progress.done + job.progress.toDo
     val parts = ArrayList<String>()
@@ -307,7 +337,8 @@ private fun jobLine(job: CompressJob): String {
     if (inTrash > 0) parts += pluralStringResource(R.plurals.compress_in_trash, inTrash, formatNumber(inTrash, locale())) + " (" + bytes(job.bytes.inTrash) + ")"
     val skipped = job.skipped.values.sum()
     if (skipped > 0) parts += pluralStringResource(R.plurals.compress_skipped_count, skipped, formatNumber(skipped, locale()))
-    for ((reason, n) in job.failed.entries.sortedByDescending { it.value }) {
+    if (wait != null && wait.items > 0) parts += pluralStringResource(R.plurals.compress_wait_count, wait.items, formatNumber(wait.items, locale()))
+    for ((reason, n) in SpaceWait.failures(job).entries.sortedByDescending { it.value }) {
         if (n > 0) parts += pluralStringResource(R.plurals.compress_failed_count, n, formatNumber(n, locale()), CompressReasonTexts.inline(res, CompressReasonTexts.failed(res, reason)))
     }
     when {
@@ -322,14 +353,14 @@ private fun jobLine(job: CompressJob): String {
 }
 
 @Composable
-private fun RunningJob(job: CompressJob, onPause: (CompressJob) -> Unit, onCancel: (CompressJob) -> Unit) {
+private fun RunningJob(job: CompressJob, wait: SpaceWait?, onPause: (CompressJob) -> Unit, onCancel: (CompressJob) -> Unit) {
     val total = (job.progress.done + job.progress.toDo).coerceAtLeast(1)
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp).testTag("compress-running-row")) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Icon(PhosphorRegular.ArrowsIn, null, Modifier.size(20.dp), tint = HfpsTheme.colors.primary)
             Column(Modifier.weight(1f)) {
                 Text(jobTitle(job), style = HfpsTheme.typography.body, color = HfpsTheme.colors.cardForeground, maxLines = 1)
-                Text(jobLine(job), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 3)
+                Text(jobLine(job, wait), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, maxLines = 3)
                 val eta = job.progress.etaMs?.takeIf { it > 0 }?.let { stringResource(R.string.compress_eta, minutesText(it)) }
                 val current = job.progress.current?.percent?.let { stringResource(R.string.compress_job_current, it.toString()) }
                 listOfNotNull(current, eta).takeIf { it.isNotEmpty() }?.let { Text(it.joinToString(" · "), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground) }
