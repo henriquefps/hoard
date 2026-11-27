@@ -182,7 +182,12 @@ func (s *Server) webWriter(r *http.Request) (string, error) {
 	if token == "" {
 		return "", nil
 	}
-	id, err := s.store.TouchWebSession(r.Context(), auth.HashToken(token), s.store.Now().Add(webSessionTTL).UnixMilli())
+	// A write on every request: retried while a NAS walk holds the write lock (ADR 0023 Amendment (0.15.0)).
+	var id string
+	err := store.RetryBusy(r.Context(), func() (err error) {
+		id, err = s.store.TouchWebSession(r.Context(), auth.HashToken(token), s.store.Now().Add(webSessionTTL).UnixMilli())
+		return err
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		return "", nil
 	}

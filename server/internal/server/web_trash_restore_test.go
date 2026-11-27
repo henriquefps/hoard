@@ -116,9 +116,15 @@ func TestWebTrashRestoreFailingHalfwayPurgesNothing(t *testing.T) {
 		if res["refused"].(map[string]any)[pair+"|"+key] != "not_writable" {
 			t.Fatalf("%v", res)
 		}
+		// 0.15.0: a shot that fails half-way is put back into the trash whole; nothing is left at the original paths.
 		left := th.inTrash(files)
-		if len(left) == 0 || len(left) == len(files) {
-			t.Fatalf("not half-done: %v", left)
+		if len(left) != len(files) {
+			t.Fatalf("not rolled back: %v in the trash", left)
+		}
+		for _, f := range files {
+			if th.exists("2024-05-01/" + f) {
+				t.Fatalf("%s left at its path", f)
+			}
 		}
 		if rows := th.allMoves(); len(rows) != 0 {
 			t.Fatalf("rows left: %+v", rows)

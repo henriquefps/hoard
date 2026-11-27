@@ -339,8 +339,8 @@ func (s *Server) trashMove(ctx context.Context, ids []string, dryRun bool, by st
 			ans.Skipped[id] = trashNotFound
 			continue
 		}
-		p, err := s.planTrashMove(ctx, id)
-		if err != nil {
+		var p trashPlan
+		if err := store.RetryBusy(ctx, func() (err error) { p, err = s.planTrashMove(ctx, id); return err }); err != nil {
 			return ans, "", err
 		}
 		if p.skip != "" {
@@ -484,12 +484,11 @@ func (s *Server) countTrashAnswer(a *trashMoveAnswer) {
 
 // movedFile is one file a request moved (into the trash, or out of it on a restore), with its journal row.
 type movedFile struct {
-	folderID   string
-	from, to   string
-	row        int64
-	restore    bool // a restore: rolled back into the trash, the row put back as it was
-	hadRow     bool // restore: the row was the server's move (back to trashed), else the operation's (forgotten)
-	settledKey string
+	folderID string
+	from, to string
+	row      int64
+	restore  bool // a restore: rolled back into the trash, the row put back as it was
+	hadRow   bool // restore: the row was the server's move (back to trashed); else there is none to put back
 }
 
 // unmoveFiles rolls moved files back, newest first; it returns how many could not go back (they stay where they are,
@@ -514,8 +513,6 @@ func (s *Server) unmoveFiles(ctx context.Context, open map[string]*compress.Fold
 			err = s.store.DeleteTrashMove(ctx, m.row) // back at its path: the server's move never happened
 		case m.hadRow:
 			err = s.store.SetTrashMoveState(ctx, m.row, store.MoveTrashed)
-		default:
-			err = s.store.DeleteTrashMove(ctx, m.row)
 		}
 		if err != nil {
 			s.log.Error("trash: journal after a roll back", "err", err)
@@ -1013,8 +1010,9 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 			continue
 		}
 		// A compressed original (or a restored output in the trash) goes through compression's journal: only the
-		// server's compression empties it, and its restore swaps the output back (ADR 0025).
-		if id, ok := s.compressedTrashItem(ctx, row, d); ok {
+		// server's compression empties it, and its restore swaps the output back (ADR 0025). The server trash unit of
+		// the same item is the server trash's, never compression's (0.15.0: an item in both).
+		if id, ok := s.compressedTrashItem(ctx, row, d); ok && u.Key != "server" {
 			compressIDs = append(compressIDs, id)
 			compressRefs[id] = append(compressRefs[id], u)
 			continue
@@ -1078,12 +1076,15 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 	}
 	if len(compressIDs) > 0 {
 		var answers []compress.RestoreAnswer
+		var kept map[int64][]string
 		if purge {
-			answers, _ = s.compress.PurgeItems(ctx, compressIDs)
+			answers, kept = s.compress.PurgeItems(ctx, compressIDs)
 		} else {
 			answers = s.compress.RestoreItems(ctx, compressIDs)
 		}
+		answered := map[int64]bool{}
 		for _, a := range answers {
+			answered[a.ID] = true
 			for _, u := range compressRefs[a.ID] {
 				if a.Error != "" {
 					ans.Refused[refKey(u)] = a.Error
@@ -1091,8 +1092,21 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 					ans.Done = append(ans.Done, u)
 				}
 			}
+			for _, k := range kept[a.ID] {
+				if !contains(ans.KeptBy, k) {
+					ans.KeptBy = append(ans.KeptBy, k)
+				}
+			}
+		}
+		for id, refs := range compressRefs { // never silently dropped: an id compression did not answer
+			if !answered[id] {
+				for _, u := range refs {
+					ans.Refused[refKey(u)] = "error"
+				}
+			}
 		}
 	}
+	s.settleTrashMoves(ctx) // a row this batch could not settle (the index busy) is settled now
 	s.walkFolders(folders)
 	if len(ans.Names) == 0 {
 		ans.Names = nil
@@ -1184,12 +1198,20 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		}
 	}
 	trashRoot := dayDir[:strings.LastIndex(dayDir, "/")]
+	var restored []movedFile // a restore that fails half-way puts these back into the trash (0.15.0)
+	open := map[string]*compress.Folder{folderID: f}
+	undo := func() {
+		if left := s.unmoveFiles(ctx, open, restored); left > 0 {
+			s.log.Warn("trash: a restore stopped half-way and some files could not go back", "files", left)
+		}
+	}
 	for _, p := range files {
 		fi, err := f.Lstat(p.trash)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue // gone already (emptied elsewhere): the walk follows
 		}
 		if err != nil {
+			undo()
 			return trashNotWritable, ""
 		}
 		state := store.MoveRestoring
@@ -1204,6 +1226,8 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		id, err := s.store.PutTrashMove(ctx, store.TrashMove{FolderID: folderID, RelPath: p.origin, TrashPath: p.trash, State: state,
 			Size: fi.Size(), MTime: fi.ModTime().UnixNano(), MovedAt: now, PurgeAfter: now, Kind: store.MoveKindOp})
 		if err != nil {
+			s.log.Error("trash: journal", "err", err)
+			undo()
 			return trashNotWritable, ""
 		}
 		if purge {
@@ -1214,19 +1238,48 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		if err != nil {
 			// Put the row back exactly as it was: the server's move trashed again with its own purge_after (the upsert
 			// kept it), a row made for this operation forgotten.
+			var jerr error
 			if hadRow {
-				_ = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
+				jerr = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
 			} else {
-				_ = s.store.DeleteTrashMove(ctx, id)
+				jerr = s.store.DeleteTrashMove(ctx, id)
 			}
+			if jerr != nil {
+				s.log.Error("trash: journal", "err", jerr) // settled after the batch
+			}
+			undo()
 			if errors.Is(err, compress.ErrTaken) {
 				return trashPathTaken, p.origin
 			}
 			s.log.Warn("trash: a file was not restored or deleted", "err", errorClassOf(err))
 			return trashNotWritable, ""
 		}
-		_ = s.store.DeleteTrashMove(ctx, id)
+		// The server's own row is kept until the whole shot is restored (a later failure puts the file back with it);
+		// an operation's row goes at once (Hoard's file has no row, in the trash or not).
+		if purge || !hadRow {
+			if err := s.store.DeleteTrashMove(ctx, id); err != nil {
+				s.log.Error("trash: journal", "err", err) // settled after the batch (the file left the trash)
+			}
+		}
+		if !purge {
+			m := movedFile{folderID: folderID, from: p.trash, to: p.origin, restore: true, hadRow: hadRow}
+			if hadRow {
+				m.row = id
+			}
+			restored = append(restored, m)
+		}
 		s.noteTrashSettled(folderID, p.trash)
+	}
+	if !purge {
+		for _, m := range restored {
+			if m.row != 0 {
+				if err := s.store.DeleteTrashMove(ctx, m.row); err != nil {
+					s.log.Error("trash: journal", "err", err)
+				}
+			}
+		}
+	}
+	for _, p := range files {
 		f.RemoveEmptyDirs(path.Dir(p.trash), trashRoot)
 	}
 	return "", ""

@@ -167,8 +167,10 @@ func Busy(err error) bool {
 	return code == 5 || code == 6 // SQLITE_BUSY, SQLITE_LOCKED
 }
 
-// retryBusy runs fn again with back-off while it fails with Busy (a NAS walk's long write, ADR 0023 Amendment (0.15.0)):
-// 25 ms doubling to 1 s, for at most a minute or until ctx ends.
+// RetryBusy runs fn again with back-off while it fails with Busy (a NAS walk's long write, ADR 0023 Amendment (0.15.0)):
+// 25 ms doubling to 1 s, for at most a minute or until ctx ends. fn must be safe to run again (it did nothing).
+func RetryBusy(ctx context.Context, fn func() error) error { return retryBusy(ctx, fn) }
+
 func retryBusy(ctx context.Context, fn func() error) error {
 	wait, deadline := 25*time.Millisecond, time.Now().Add(time.Minute)
 	for {
