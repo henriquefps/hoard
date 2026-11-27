@@ -138,6 +138,22 @@ func (ix *Indexer) RequestWalk(ids []string) map[string]time.Time {
 	return deferred
 }
 
+// WalkNow queues a walk of each folder outside the server-wide request budget (the server's own moves in a trash,
+// ADR 0023 Amendment (0.14.0): the gallery shows them at once); WalkGap after the folder's last walk still holds.
+func (ix *Indexer) WalkNow(ids []string) {
+	ix.init()
+	ix.mu.Lock()
+	if ix.queued == nil {
+		ix.queued = map[string]bool{}
+	}
+	for _, id := range ids {
+		ix.queued[id] = true
+		delete(ix.lastAsked, id)
+	}
+	ix.mu.Unlock()
+	ix.signalFolders()
+}
+
 func (ix *Indexer) signalFolders() {
 	select {
 	case ix.folders <- struct{}{}:

@@ -19,7 +19,7 @@ import (
 //
 // 0.12.0: the database goes back to schema 8 from 10, so 0010_mirror.sql (new tables and indexes, the original_claims
 // backfill from a join of originals and blobs, two nas_files columns) runs under the same conditions. 0.13.0: and
-// 0012_compress.sql (new tables and their indexes only).
+// 0012_compress.sql (new tables and their indexes only). 0.14.0: and 0013_web_trash.sql (new tables and indexes only).
 func TestMigrationsNeedNoTempDir(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db.sqlite")
@@ -46,6 +46,9 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 	}
 	// Put the database back to schema 8 (the indexes of 0003, none of 0009's or 0010's tables and columns).
 	for _, q := range []string{
+		"DROP TABLE server_trash_files",
+		"DROP TABLE server_trash",
+		"DROP TABLE trash_moves",
 		"DROP TABLE compress_items",
 		"DROP TABLE compress_jobs",
 		"DROP TABLE video_probe",
@@ -90,7 +93,7 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 		t.Fatalf("migrating with no temp directory: %v", err)
 	}
 	defer s.Close()
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 12 {
+	if v, err := s.SchemaVersion(ctx); err != nil || v != 13 {
 		t.Fatalf("schema %d %v", v, err)
 	}
 	var claims, unowned int

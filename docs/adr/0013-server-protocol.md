@@ -578,6 +578,26 @@ that is not purged answers `409 conflict` reason `compressed` (the caller's clai
 fingerprint lookup find a trashed original until it is purged. The server writes the NAS only through the write mount,
 for these replaces, restores and purges (ADR 0025 "Containment"); every other write rule of ADR 0023 holds.
 
+## Trash from the web gallery, space (hoard-server 0.14.0)
+
+Added by ADR 0023 Amendment (0.14.0), ADR 0024 Amendment (0.14.0) and ADR 0025 Amendment (0.14.0). No new `/v1` route;
+additions only. Schema 13 (`0013_web_trash.sql`: `server_trash`, `server_trash_files`, `trash_moves`; new tables only).
+
+- The web gallery's admin moves selections to the trash (`POST /web/trash/move`, `…/restore`, `…/delete`,
+  `…/empty`; routes of the gallery's session only): NAS shots through the write mount into the `.hoard-trash` layout
+  Hoard writes (clients see an ordinary trashed file and trashed item), the other items into a **server trash**: such
+  an item is trashed (`include=trash`: whole, with `"serverTrash": {"since", "purgeAfter"}`; without: the tombstone
+  shape), its contents kept until it is emptied.
+- `DELETE /v1/originals/{fingerprint}` of a content in the server trash: `409 conflict` reason `trashed` (the caller's
+  claim is released, as for `mirror`).
+- `POST /v1/compress/estimate` takes `"totalsOnly": true` (totals, `subfolders`, `space`, no items) and answers
+  `"space": {"target", "needed", "free", "trash", "fits", "known", "disks"}` on its first page for targets `nas` and
+  `backup`: the room the outputs need while the originals stay in the trash.
+- `GET /v1/compress/items`: an item waiting for room (`reason` `no_space`, `ready` or `queued`) carries `"space":
+  {"where": "nas" | "work", "needed"?, "free"?}`; it is a wait, not a failure.
+- `POST /v1/uploads` and `PATCH /v1/uploads/{uploadId}`: `507 storage_full` (`details`: `reason`, `needed`, `free`,
+  `offset`?; `Retry-After`) when the backup volume has no room, before anything is written.
+
 ## Other endpoints
 
 | Method and path | Auth | Answer |
@@ -627,13 +647,14 @@ Every error is JSON:
 | 404 | `not_found`, `preview_unavailable` (0.6.0, `details.reason`) |
 | 422 (0.9.0) | `invalid_image` (an edited preview, ADR 0020, `details.reason`) |
 | 405 | `method_not_allowed` |
-| 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced; 0.12.0: `details.reason` `mirror` on `DELETE /v1/originals`, `covered` and `stopped` on backup roots) |
+| 409 | `offset_mismatch`, `upload_busy` (another request is writing the same upload), `conflict` (admin: e.g. changing a backup root that holds blobs; `DELETE /v1/blobs`, `DELETE /v1/originals`: still referenced; 0.12.0: `details.reason` `mirror` on `DELETE /v1/originals`, `covered` and `stopped` on backup roots; 0.13.0 `compressed`, 0.14.0 `trashed` on `DELETE /v1/originals`) |
 | 413 | `too_large` |
 | 415 | `unsupported_media_type` |
 | 422 | `invalid_change`, `checksum_mismatch` |
 | 429 | `rate_limited` |
 | 500 | `internal` |
 | 503 | `storage_not_configured`, `unavailable` |
+| 507 (0.14.0) | `storage_full` (uploads: the backup volume has no room; `details.needed`, `details.free`) |
 
 ## Server implementation
 

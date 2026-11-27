@@ -106,6 +106,7 @@ func (s *Server) routesWeb(mux *http.ServeMux) {
 	authed("GET /web/downloads/{token}", s.handleWebDownload)
 	authed("GET /web/downloads/{token}/{name}", s.handleWebDownload)
 	s.routesWebCompress(authed)
+	s.routesWebTrash(authed)
 }
 
 // serveWebApp serves the gallery's built files; paths without an extension (the app's own routes) get index.html.

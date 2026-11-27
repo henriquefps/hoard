@@ -5,6 +5,7 @@ import {
   CaretRightIcon,
   DownloadSimpleIcon,
   FileTextIcon,
+  HourglassIcon,
   PauseIcon,
   PlayIcon,
   TrashIcon,
@@ -23,6 +24,10 @@ import {
   type BatchAnswer,
   cancelJob,
   type CItem,
+  type CompressInfo,
+  defaultProfile,
+  type Estimate,
+  estimateTotals,
   failKey,
   IN_TRASH_STATES,
   type Job,
@@ -32,11 +37,13 @@ import {
   listJobs,
   logUrl,
   metaUrl,
+  type Part,
   patchJob,
   purgeItems,
   refreshCompress,
   restoreItems,
   skipKey,
+  skipList,
   splitJobs,
   type Target,
   targetGate,
@@ -44,10 +51,12 @@ import {
   useCompress,
 } from "@/lib/compress"
 import { formatBytes, formatDateTime, formatNumber } from "@/lib/format"
+import { navigate } from "@/lib/router"
 import { useLibraryState } from "@/lib/store"
 import { cn } from "@/lib/utils"
 import { formatEta, isPhoneJob, percent, selectionLabel } from "./format"
-import { Confirm, Progress } from "./parts"
+import { CompressDialog, type CompressRequest } from "./CompressDialog"
+import { Confirm, Progress, SpaceNote } from "./parts"
 
 const TARGETS: Target[] = ["nas", "backup", "phone"]
 
@@ -156,6 +165,8 @@ export function CompressionPage() {
           )}
         </div>
       )}
+
+      {targetGate(info, "nas").ok && Object.keys(library.folders).length > 0 && <LibraryEstimate info={info} folders={library.folders} />}
 
       {!jobs ? (
         <div className="grid place-items-center py-10" role="status">
@@ -400,7 +411,9 @@ function JobItems({ job }: { job: Job }) {
 function ItemRow({ item, readOnly, onLog, onRestore, onPurge }: { item: CItem; readOnly: boolean; onLog: () => void; onRestore: () => void; onPurge: () => void }) {
   const { t, i18n } = useTranslation()
   const lang = i18n.language
-  const reason = item.reason ? (item.state === "skipped" ? t(skipKey(item.reason), { count: 1 }) : t(failKey(item.reason))) : ""
+  // no_space is a wait, not a failure (0.14.0): the replace (ready) or the encode (queued) runs once there is room.
+  const waiting = item.reason === "no_space" && (item.state === "ready" || item.state === "queued")
+  const reason = waiting ? "" : item.reason ? (item.state === "skipped" ? t(skipKey(item.reason), { count: 1 }) : t(failKey(item.reason))) : ""
   const inTrash = IN_TRASH_STATES.includes(item.state)
   const saving = item.outSize !== undefined && item.size ? 1 - item.outSize / item.size : null
   return (
@@ -408,7 +421,7 @@ function ItemRow({ item, readOnly, onLog, onRestore, onPurge }: { item: CItem; r
       <div className="flex flex-wrap items-center gap-2">
         <span className="min-w-0 truncate font-mono text-[0.8125rem]">{item.name || item.itemId}</span>
         <Badge variant={item.state === "failed" ? "destructive" : item.state === "replaced" || item.state === "purged" ? "default" : "secondary"}>
-          {t(`compress.item.state.${item.state}`, { defaultValue: item.state })}
+          {waiting ? t("compress.item.state.waiting") : t(`compress.item.state.${item.state}`, { defaultValue: item.state })}
         </Badge>
         {reason && <span className="text-sm text-muted-foreground">{reason}</span>}
         {item.state === "encoding" && item.progress !== undefined && <span className="text-sm text-muted-foreground tabular-nums">{percent(item.progress, lang)}</span>}
@@ -422,6 +435,7 @@ function ItemRow({ item, readOnly, onLog, onRestore, onPurge }: { item: CItem; r
         {item.encodeMs !== undefined && ` · ${t("compress.item.timings", { encode: Math.round(item.encodeMs / 100) / 10, verify: Math.round((item.verifyMs ?? 0) / 100) / 10 })}`}
         {item.purgeAfter && inTrash ? ` · ${t("compress.trash.until", { date: formatDateTime(item.purgeAfter, lang) })}` : ""}
       </p>
+      {waiting && <NoSpace item={item} />}
       {item.metaSidecar && <p className="text-sm text-muted-foreground">{t("compress.item.metaSaved")}</p>}
       <div className="flex flex-wrap gap-1.5">
         {item.logAvailable && (
@@ -452,6 +466,120 @@ function ItemRow({ item, readOnly, onLog, onRestore, onPurge }: { item: CItem; r
         )}
       </div>
     </li>
+  )
+}
+
+/**
+ * The owner's weekend plan (0.14.0): before a big job, the whole library's estimate in one answer (the server's totals,
+ * no pages): how many videos, the size now and after, what is skipped and why, and whether the NAS has room for the
+ * outputs while the originals wait in the trash. Start opens the usual dialog for every NAS folder.
+ */
+function LibraryEstimate({ info, folders }: { info: CompressInfo; folders: Record<string, string> }) {
+  const { t, i18n } = useTranslation()
+  const lang = i18n.language
+  const [est, setEst] = useState<Estimate | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [open, setOpen] = useState<CompressRequest | null>(null)
+  const part: Part = useMemo(
+    () => ({ target: "nas", select: { folders: Object.keys(folders).sort().map((folderId) => ({ folderId, path: "", recursive: true })) } }),
+    [folders]
+  )
+  const run = async () => {
+    setBusy(true)
+    setFailed(false)
+    try {
+      let e = await estimateTotals(part, defaultProfile(info))
+      for (let i = 0; e.pending > 0 && i < 15; i++) {
+        setEst(e)
+        await new Promise((r) => setTimeout(r, 2000))
+        e = await estimateTotals(part, defaultProfile(info))
+      }
+      setEst(e)
+    } catch {
+      setFailed(true)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const tot = est?.totals
+  return (
+    <Section title={t("compress.library.title")} testId="compress-library">
+      <div className="flex flex-col gap-2 px-4 py-3 md:px-6">
+        <p className="text-sm text-muted-foreground">{t("compress.library.hint")}</p>
+        {tot && (
+          <div className="flex flex-col gap-1.5" aria-live="polite">
+            <p className="text-[0.9375rem] font-medium tabular-nums" data-testid="library-summary">
+              {tot.encode > 0
+                ? t("compress.library.summary", {
+                    count: tot.encode,
+                    total: formatNumber(tot.items, lang),
+                    encode: formatNumber(tot.encode, lang),
+                    from: formatBytes(tot.size, lang),
+                    to: formatBytes(tot.estSize, lang),
+                    saved: formatBytes(Math.max(0, tot.size - tot.estSize), lang),
+                  })
+                : t("compress.estimate.nothing")}
+            </p>
+            {est.pending > 0 && <p className="text-sm text-muted-foreground">{t("compress.estimate.pending", { count: est.pending })}</p>}
+            {skipList(tot.skip).length > 0 && (
+              <ul className="list-disc pl-5 text-sm text-muted-foreground" data-testid="library-skips">
+                {skipList(tot.skip).map((sk) => (
+                  <li key={sk.reason}>{t("compress.estimate.skipped", { count: sk.count, reason: t(skipKey(sk.reason), { count: sk.count }) })}</li>
+                ))}
+              </ul>
+            )}
+            {tot.encode > 0 && <SpaceNote space={est.space} lang={lang} />}
+          </div>
+        )}
+        {failed && <p className="text-sm text-destructive">{t("compress.estimate.failed")}</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => void run()} disabled={busy} data-testid="library-estimate">
+            {busy ? <Spinner data-icon="inline-start" /> : <ArrowsInIcon data-icon="inline-start" />}
+            {tot ? t("compress.library.again") : t("compress.library.estimate")}
+          </Button>
+          {tot && tot.encode > 0 && (
+            <Button size="sm" onClick={() => setOpen({ parts: [part], label: t("compress.library.label"), mode: "once" })} data-testid="library-start">
+              {t("compress.library.start")}
+            </Button>
+          )}
+        </div>
+      </div>
+      <CompressDialog request={open} info={info} onClose={() => setOpen(null)} />
+    </Section>
+  )
+}
+
+/** A replace waiting for room on the NAS (or an encode for room in the work folder), with what it needs and what is free. */
+function NoSpace({ item }: { item: CItem }) {
+  const { t, i18n } = useTranslation()
+  const lang = i18n.language
+  const sp = item.space
+  const work = sp?.where === "work" || item.state === "queued"
+  const numbers =
+    sp?.needed !== undefined && sp.free !== undefined
+      ? t("compress.item.space.numbers", { needed: formatBytes(sp.needed, lang), free: formatBytes(sp.free, lang) })
+      : sp?.free !== undefined
+        ? t("compress.item.space.free", { free: formatBytes(sp.free, lang) })
+        : ""
+  return (
+    <p className="flex flex-wrap items-center gap-x-2 text-sm" data-testid="item-no-space">
+      <HourglassIcon className="size-4 shrink-0 text-warning" />
+      <span>{work ? t("compress.item.space.work") : t("compress.item.space.nas")}</span>
+      {numbers && <span className="text-muted-foreground tabular-nums">{numbers}</span>}
+      {!work && (
+        <a
+          href="/trash"
+          className="underline underline-offset-2"
+          onClick={(e) => {
+            e.preventDefault()
+            navigate("/trash")
+          }}
+        >
+          {t("compress.item.space.openTrash")}
+        </a>
+      )}
+    </p>
   )
 }
 

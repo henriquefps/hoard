@@ -102,36 +102,25 @@ func TestCompressServedOutputStalledAndForced(t *testing.T) {
 	expect(t, p.do("POST", path, nil, adminHeaders()), 409, "conflict")
 }
 
-// The admin purges the phone's backup while a served output waits: the item is not purged with it (DELETE
-// /v1/originals answers 409 compressed), a cancel then settles it (phone_gone): the output nobody names is dropped,
-// the original stays (a server item now, the only copy) and DELETE /v1/originals removes it.
+// The admin purges the phone's backup while a served output waits (0.14.0, ADR 0024 Amendment (0.14.0)): the phone may
+// have written the output, so the original the server holds is confirmed with the compressed originals; the purge ends
+// the item (cancelled, backup_purged) and releases both blobs, which nothing else names.
 func TestCompressServedOutputCancelledOnceTheBackupIsGone(t *testing.T) {
 	p := newPhoneH(t)
 	it := p.servedItem("DCIM/P.mp4", 141)
-	expect(t, p.do("POST", "/admin/api/backup/"+p.ph.physical+"/purge", map[string]any{"confirmPinned": 0}, adminHeaders()), 200, "")
-	if !exists(p.blobFile(it.SHA256)) || !exists(p.blobFile(it.OutSHA256)) {
-		t.Fatal("the backup purge removed a compression's blob")
-	}
-	w := p.do("DELETE", "/v1/originals/"+it.Fingerprint, nil, bearer(p.ph.key))
+	w := p.do("POST", "/admin/api/backup/"+p.ph.physical+"/purge", map[string]any{"confirmPinned": 0}, adminHeaders())
 	expect(t, w, 409, "conflict")
-	if r := decode(t, w)["error"].(map[string]any)["details"].(map[string]any)["reason"]; r != "compressed" {
-		t.Fatalf("reason %v", r)
+	if d := decode(t, w)["error"].(map[string]any)["details"].(map[string]any); d["compressedKept"] != float64(1) {
+		t.Fatalf("%v", d)
 	}
-	if a := p.cancelItem(it.ID); a["state"] != "cancelled" {
-		t.Fatalf("cancel %v", a)
-	}
+	expect(t, p.do("POST", "/admin/api/backup/"+p.ph.physical+"/purge", map[string]any{"confirmPinned": 0, "confirmCompressed": 1}, adminHeaders()), 200, "")
 	got := p.item(it.ID)
-	if got.Reason != store.ReasonPhoneGone || exists(p.blobFile(it.OutSHA256)) || !exists(p.blobFile(it.SHA256)) {
+	if got.State != store.CompressCancelled || got.Reason != store.ReasonBackupPurged || exists(p.blobFile(it.OutSHA256)) || exists(p.blobFile(it.SHA256)) {
 		t.Fatalf("settle: %+v", got)
 	}
-	p.index()
-	getItem(t, p.harness, p.ph.key, it.ItemID, "") // the original is a server item, not lost
 	w = p.do("DELETE", "/v1/originals/"+it.Fingerprint, nil, bearer(p.ph.key))
-	if w.Code != 200 && w.Code != 204 {
-		t.Fatalf("delete after the settle: %d %s", w.Code, w.Body.String())
-	}
-	if exists(p.blobFile(it.SHA256)) {
-		t.Fatal("the deleted original's file stays")
+	if w.Code == 409 {
+		t.Fatalf("still held: %s", w.Body.String())
 	}
 }
 

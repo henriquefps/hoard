@@ -156,7 +156,10 @@
     "clear": "Limpar seleção",
     "toolbar": "Seleção",
     "count_one": "{{formatted}} selecionado",
-    "count_other": "{{formatted}} selecionados"
+    "count_other": "{{formatted}} selecionados",
+    "all_one": "Selecionar todos os {{formatted}}",
+    "all_other": "Selecionar todos os {{formatted}}",
+    "allShort": "Selecionar tudo"
   },
   "download": {
     "zip": "Baixar zip",
@@ -256,8 +259,114 @@
     "loadFailed": "Não foi possível carregar a lixeira.",
     "emptyTitle": "A lixeira está vazia",
     "emptyHint": "Arquivos movidos para uma pasta .hoard-trash, e os originais de vídeos comprimidos, aparecem aqui até a lixeira ser esvaziada.",
-    "otherSection": "Outros arquivos na lixeira",
-    "otherHint": "O Hoard restaura e esvazia estes pelo compartilhamento; o servidor só os lista."
+    "open": "Abrir a lixeira",
+    "restore": "Restaurar",
+    "deletePermanently": "Apagar para sempre",
+    "empty": "Esvaziar a lixeira",
+    "totals_one": "{{formatted}} foto · {{size}}",
+    "totals_other": "{{formatted}} fotos · {{size}}",
+    "autoEmpty_one": "o que o servidor pôs na lixeira é esvaziado depois de {{count}} dia",
+    "autoEmpty_other": "o que o servidor pôs na lixeira é esvaziado depois de {{count}} dias",
+    "groupCount_one": "{{formatted}} foto · {{size}}",
+    "groupCount_other": "{{formatted}} fotos · {{size}}",
+    "heldCount_one": "{{count}} retida por uma compressão",
+    "heldCount_other": "{{count}} retidas por uma compressão",
+    "serverPlace": "Backup no servidor · {{device}}",
+    "nasFolder": "Pasta do NAS",
+    "selectGroup": "Selecionar todas as fotos de {{place}}",
+    "edited": "Editada no Reveal",
+    "until": "Esvaziada automaticamente em {{date}}",
+    "restored_one": "{{count}} foto restaurada",
+    "restored_other": "{{count}} fotos restauradas",
+    "deleted_one": "{{count}} foto apagada · {{size}} liberados",
+    "deleted_other": "{{count}} fotos apagadas · {{size}} liberados",
+    "refused_one": "{{count}} foto não foi alterada: {{reason}}",
+    "refused_other": "{{count}} fotos não foram alteradas: {{reason}}",
+    "refusedTaken_one": "{{count}} foto não foi restaurada: há outro arquivo em {{name}}. Tire-o de lá e restaure de novo.",
+    "refusedTaken_other": "{{count}} fotos não foram restauradas: há outro arquivo em {{name}} (e em outros lugares). Tire-os de lá e restaure de novo.",
+    "keptBy": "Alguns bytes continuam no servidor: {{by}}.",
+    "kept": {
+      "mirror": "um celular ainda tem o arquivo",
+      "record": "a biblioteca do Reveal tem a foto",
+      "compress": "uma compressão o guarda",
+      "claim": "um dispositivo pediu para guardar",
+      "trash": "outro item na lixeira tem o mesmo arquivo"
+    },
+    "actionFailed": "Não deu certo. Tente de novo.",
+    "changed": "A lixeira mudou enquanto isso: confira os números e tente de novo.",
+    "emptyTitleConfirm": "Esvaziar a lixeira?",
+    "emptyBody_one": "{{formatted}} foto ({{size}}) será apagada para sempre. Não dá para desfazer. Fotos retidas por uma compressão ficam.",
+    "emptyBody_other": "{{formatted}} fotos ({{size}}) serão apagadas para sempre. Não dá para desfazer. Fotos retidas por uma compressão ficam.",
+    "deleteTitle_one": "Apagar {{count}} foto para sempre?",
+    "deleteTitle_other": "Apagar {{count}} fotos para sempre?",
+    "deleteBody_one": "{{count}} foto ({{size}}) será apagada para sempre, com as edições do Reveal. Não dá para desfazer.",
+    "deleteBody_other": "{{count}} fotos ({{size}}) serão apagadas para sempre, com as edições do Reveal. Não dá para desfazer.",
+    "reason": {
+      "not_found": "não encontrada (já saiu)",
+      "trashed": "já está na lixeira",
+      "held": "retida por uma compressão em andamento",
+      "busy": "o vídeo está sendo comprimido",
+      "on_phone": "ainda está num celular: apague lá com o Hoard; o backup fica",
+      "nothing": "nada que o servidor possa pôr na lixeira",
+      "changed": "o arquivo mudou desde a leitura da biblioteca",
+      "path_taken": "outro arquivo tomou o lugar",
+      "not_writable": "o servidor não consegue gravar nessa pasta",
+      "not_same_device": "a lixeira ficaria em outro disco",
+      "partial": "só parte dos arquivos foi movida (o resto fica)",
+      "unreadable": "não foi possível ler uma pasta",
+      "state": "a compressão não pode ser alterada agora",
+      "error": "um erro no servidor",
+      "output_missing": "o vídeo comprimido sumiu",
+      "no_write_mount": "o servidor não tem acesso de escrita ao NAS",
+      "write_mount_mismatch": "o acesso de escrita do servidor não é a pasta da biblioteca",
+      "write_mount_read_only": "o acesso de escrita do servidor ao NAS é só leitura",
+      "unstable_inode": "a montagem do NAS não mantém a identidade dos arquivos (CIFS sem serverino, FUSE)"
+    },
+    "move": {
+      "button": "Mover para a lixeira",
+      "title_one": "Mover {{formatted}} item para a lixeira?",
+      "title_other": "Mover {{formatted}} itens para a lixeira?",
+      "description": "Fotos do NAS vão para a .hoard-trash da pasta, como faz o Hoard; backups de celular e envios vão para a lixeira do servidor. Tudo pode ser restaurado até a lixeira ser esvaziada.",
+      "checking": "Conferindo a seleção…",
+      "planFailed": "Não foi possível conferir a seleção. Tente de novo.",
+      "summary_one": "{{formatted}} foto · {{size}}",
+      "summary_other": "{{formatted}} fotos · {{size}}",
+      "nothing": "Nada desta seleção pode ir para a lixeira.",
+      "nas_one": "{{count}} no NAS ({{files}} arquivos com os sidecars)",
+      "nas_other": "{{count}} no NAS ({{files}} arquivos com os sidecars)",
+      "server_one": "{{count}} só no servidor (backups de celular, envios)",
+      "server_other": "{{count}} só no servidor (backups de celular, envios)",
+      "skipped_one": "{{count}} ficou de fora: {{reason}}",
+      "skipped_other": "{{count}} ficaram de fora: {{reason}}",
+      "blocked": "As fotos do NAS não podem ser movidas agora: {{reason}}. Nada será movido.",
+      "onlyCopy_one": "{{count}} é a única cópia que existe (não está no NAS nem num celular): esvaziar a lixeira a apaga para sempre.",
+      "onlyCopy_other": "{{count}} são as únicas cópias que existem (não estão no NAS nem num celular): esvaziar a lixeira as apaga para sempre.",
+      "edits_one": "{{count}} tem edições do Reveal: elas ficam na lixeira e voltam ao restaurar.",
+      "edits_other": "{{count}} têm edições do Reveal: elas ficam na lixeira e voltam ao restaurar.",
+      "restoreNote": "Restaurar devolve cada foto exatamente para onde estava.",
+      "moving": "Movendo para a lixeira…",
+      "action": "Mover para a lixeira",
+      "done_one": "{{formatted}} movido para a lixeira",
+      "done_other": "{{formatted}} movidos para a lixeira",
+      "skippedNote_one": "{{count}} ficou de fora",
+      "skippedNote_other": "{{count}} ficaram de fora",
+      "someFailed_one": "{{count}} não foi movido: {{reason}}",
+      "someFailed_other": "{{count}} não foram movidos: {{reason}}",
+      "refused": "Nada mais foi movido: {{reason}}",
+      "failed": "Não foi possível mover para a lixeira. Tente de novo."
+    },
+    "emptyChoose": "Escolha o que esvaziar. Cada grupo é apagado para sempre; um grupo desmarcado fica na lixeira.",
+    "emptyNone": "Nada marcado.",
+    "group": {
+      "web": "Movidos pela galeria web",
+      "hoard": "Postos na lixeira pelo Hoard nos seus aparelhos",
+      "compressed": "Originais de vídeos comprimidos"
+    },
+    "groupHint": {
+      "web": "rejeitadas e backups movidos para cá",
+      "hoard": "o que o celular ou o tablet pôs na lixeira, também antes desta versão",
+      "compressed": "os vídeos comprimidos ficam; os originais vão embora para sempre"
+    }
   },
   "compress": {
     "title": "Comprimir vídeos",
@@ -439,7 +548,8 @@
         "replaced": "Comprimido",
         "restored": "Restaurado",
         "purged": "Original esvaziado",
-        "cancelled": "Cancelado"
+        "cancelled": "Cancelado",
+        "waiting": "Esperando"
       },
       "skip": {
         "already_compressed_one": "já comprimido",
@@ -480,6 +590,13 @@
         "trash_failed": "o original não pôde ir para a lixeira",
         "not_writable": "o servidor não grava na pasta",
         "other": "outro motivo"
+      },
+      "space": {
+        "nas": "Esperando espaço livre no NAS: esvazie a lixeira ou espere.",
+        "work": "Esperando espaço livre no disco do backup (a pasta de trabalho da compressão).",
+        "numbers": "precisa de {{needed}}, {{free}} livres",
+        "free": "{{free}} livres",
+        "openTrash": "Abrir a lixeira"
       }
     },
     "unavailable": {
@@ -524,6 +641,27 @@
     "busy_other": "{{count}} vídeos já estão em tarefas não concluídas",
     "startFailed": "Não foi possível começar a tarefa.",
     "actionFailed": "Não deu certo. Tente de novo.",
-    "loadFailed": "Não foi possível carregar as tarefas."
+    "loadFailed": "Não foi possível carregar as tarefas.",
+    "space": {
+      "where": {
+        "nas": "no NAS",
+        "backup": "no disco do backup"
+      },
+      "unknown": "Não foi possível ler o espaço livre {{where}}: a substituição espera até conseguir.",
+      "fits": "Precisa de cerca de {{needed}} livres {{where}} enquanto os originais ficam na lixeira; há {{free}} livres.",
+      "short": "Precisa de cerca de {{needed}} livres {{where}} enquanto os originais ficam na lixeira; você tem {{free}}.",
+      "adviceTrash": "Esvazie a lixeira primeiro (há {{trash}} nela agora), ou comprima em partes.",
+      "adviceParts": "Comprima em partes (uma pasta por vez), esvaziando a lixeira entre elas. Vídeos que não couberem esperam espaço; nada se perde."
+    },
+    "library": {
+      "title": "Biblioteca inteira",
+      "hint": "Antes de uma tarefa grande: quantos vídeos, o tamanho agora e depois, o que fica de fora e por quê, e se o NAS tem espaço.",
+      "summary_one": "{{encode}} de {{total}} vídeos · {{from}} → cerca de {{to}} (economiza cerca de {{saved}})",
+      "summary_other": "{{encode}} de {{total}} vídeos · {{from}} → cerca de {{to}} (economiza cerca de {{saved}})",
+      "estimate": "Estimar a biblioteca inteira",
+      "again": "Estimar de novo",
+      "start": "Comprimir a biblioteca inteira…",
+      "label": "a biblioteca inteira"
+    }
   }
 }

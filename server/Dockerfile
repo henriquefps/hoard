@@ -83,8 +83,8 @@ RUN curl -fsSL -o ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VER
       --enable-protocol=file,subfile,pipe \
       --enable-demuxer=mov,matroska,mpegts,avi \
       --enable-muxer=mp4,image2pipe \
-      --enable-parser=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,mjpeg,aac,ac3,mpegaudio,opus,amr \
-      --enable-decoder=h264,hevc,libdav1d,vp8,vp9,prores,mpeg4,mpeg2video,mjpeg,aac,mp3,mp2,ac3,eac3,opus,alac,amrnb,amrwb,pcm_s16le,pcm_s16be,pcm_s24le,pcm_f32le \
+      --enable-parser=h264,hevc,av1,vp8,vp9,mpeg4video,mpegvideo,mjpeg,aac,ac3,mpegaudio,opus,amr,h263 \
+      --enable-decoder=h264,hevc,libdav1d,vp8,vp9,prores,mpeg4,mpeg2video,mjpeg,aac,mp3,mp2,ac3,eac3,opus,alac,amrnb,amrwb,pcm_s16le,pcm_s16be,pcm_s24le,pcm_f32le,pcm_mulaw,pcm_alaw,pcm_u8,pcm_s8,pcm_u16le,pcm_s32le,adpcm_ima_wav,adpcm_ima_qt,adpcm_ms,adpcm_yamaha,mp3float,msmpeg4v1,msmpeg4v2,msmpeg4v3,h263,h263p,mpeg1video,mjpegb,dvvideo,cinepak,rawvideo,qtrle \
       --enable-encoder=libx264,aac,ppm \
       --enable-filter=scale,zscale,tonemap,format,fps,transpose,hflip,vflip,rotate,setsar,null,anull,aresample,aformat \
       --enable-swscale --enable-swresample --enable-avfilter --enable-shared --disable-static \

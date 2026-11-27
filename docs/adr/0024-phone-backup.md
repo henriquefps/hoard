@@ -978,3 +978,57 @@ From the PR review (same PR, an independent second read; each with tests):
    exists), every backup run (before it lists anything) and the next free up settle a request left there: what the system
    deleted is written to `freed` and reported `freed` (the shot's other files only when unchanged), so it is never
    reported `deleted`.
+
+## Amendment (0.14.0)
+
+hoard-server 0.14.0, before the backup root moves to the NAS drive (~39 GB free). Tests: `backup_purge_test.go`,
+`upload_space_test.go`.
+
+### The admin's purge of a phone settles its compressions
+
+`POST /admin/api/backup/{physicalId}/purge` deleted the phone's entries, roots and the blobs nothing else named, but
+not its blob compressions (ADR 0025 S2): their `compress_items` rows kept naming deleted entries (`mirror_entry_id`,
+`kept_entry_id`), their `replaced`/`restored` rows still held both blobs (`compressHolds`, `DELETE /v1/originals` `409
+compressed`) and the kept trashed items stayed. Now, in the purge's transaction (`store.PurgeMirror`):
+
+- a compression journal the phone is in the middle of (`replacing`: a phone restore or restore again) **refuses** the
+  purge, `409 conflict` reason `compress_journal` with the count: the admin waits, or uses the Compression tab's Force
+  cancel first; never a journal left half-done;
+- a `ready` phone item whose output the phone downloaded (`phone:served`: the phone may have written it, so the
+  original the server holds may be the only one) is confirmed with the kept originals and ended with the backup;
+- the phone's unfinished compressions (`queued` … `ready`) become `cancelled`, reason `backup_purged` (running encodes
+  are stopped first, `Manager.Stop`, and their work folders removed); finished ones (`replaced`, `restored`) become
+  `purged`, reason `backup_purged`; every row of the phone loses its entry ids; its standing jobs (automatic folders)
+  are cancelled;
+- the contents the purge checks are the entries' **and the compressions' originals and outputs**, so kept originals,
+  outputs not on the phone yet and freed-only files go when nothing else names them (another phone's entry, a device
+  claim, a live Reveal record, another compression); Reveal's uploads (claims), edited previews, NAS items and NAS
+  compressions are untouched;
+- the backup pass that follows drops the phone's `mirror` and `kept` sources: items that existed only through that
+  backup become tombstones (ADR 0020 drops their edits), so every client's Gallery and the feed show them gone.
+
+The confirmation shows the pinned count and now **"Compressed originals kept: N"** (`GET /admin/api/backup` per phone:
+`compressedKept`, `compressJournals`, `compressUnfinished`); the request names both (`confirmPinned`,
+`confirmCompressed`), else `409` reason `confirm_pinned` with both figures.
+
+### A full backup volume refuses uploads cleanly
+
+`POST /v1/uploads` (a new upload, and the answer for one to resume) and each `PATCH` check the backup volume's free
+space **before anything is written**: what the upload still has to send, plus what the other live uploads still have to
+send, plus a reserve of 512 MiB (the database, compression's work files, the mirror tree's directories). Short: `507
+storage_full`, `details: {"reason": "storage_full", "needed", "free", "offset"?}`, `Retry-After: 3600`; no upload row,
+no part bytes. A write that still meets `ENOSPC`/`EDQUOT` (another program filled the disk meanwhile) answers the same,
+the part kept as far as it was written (`offset`). Completion links or renames the part (no new bytes), and the mirror
+tree's links take no space. An unreadable free space lets the upload go on (`ENOSPC` is the backstop): blocking every
+backup because `statfs` failed was judged worse than an upload that stops at the disk's end.
+
+**Hoard 2.9.0 with a 507** (`BackupEngine`): each refused file is marked failed `server_full` ("Failed: the server is
+full" on its folder row) with a back-off, and after three the pass ends as `Offline`. The app fix (a later Hoard PR):
+treat `507 storage_full` as a pass-wide wait, not per-file failures: stop the pass at the first one with the rows left
+queued (no attempt counted), show one state on Settings › Backup ("The photo server's backup disk is full: X free, Y
+needed. Free space on the server, then Back up now"), and try again after `Retry-After`.
+
+### Hoard after a purge
+
+See "Emulator run (0.14.0)" in [`docs/testing/backup.md`](../testing/backup.md) for what Hoard 2.9.0 shows after the
+admin purges its phone's backup (with a freed file and a replaced phone compression) and the app fixes it needs.

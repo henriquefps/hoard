@@ -105,6 +105,9 @@ type compressRequest struct {
 	Auto      bool            `json:"auto"`
 	Name      string          `json:"name"`
 	RequestID string          `json:"requestId"`
+	// TotalsOnly (0.14.0, additive): the totals, subfolders and space without the items (the web gallery's whole-library
+	// estimate reads one answer instead of every page).
+	TotalsOnly bool `json:"totalsOnly"`
 }
 
 // parseCompressRequest validates target, selection, profile and options; it writes the error and returns false.
@@ -263,11 +266,14 @@ func (s *Server) handleCompressEstimate(w http.ResponseWriter, r *http.Request) 
 	totals["items"], totals["encode"], totals["skip"], totals["size"], totals["estSize"], totals["estMs"] = len(est), encode, skip, size, estSize, estMs
 	page := []map[string]any{}
 	end := min(start+compressMaxEstimate, len(est))
+	if req.TotalsOnly {
+		end = start
+	}
 	for i := start; i < end; i++ {
 		page = append(page, estimateItemJSON(est[i]))
 	}
 	var next any
-	if end < len(est) {
+	if end < len(est) && !req.TotalsOnly {
 		next = strconv.Itoa(end)
 	}
 	if pending > 0 {
@@ -286,7 +292,11 @@ func (s *Server) handleCompressEstimate(w http.ResponseWriter, r *http.Request) 
 		}
 		return roots[id]
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"items": page, "totals": totals, "pending": pending, "next": next, "subfolders": subfolders})
+	ans := map[string]any{"items": page, "totals": totals, "pending": pending, "next": next, "subfolders": subfolders}
+	if start == 0 && req.Target != compress.TargetPhone { // the disk that takes the outputs (0.14.0, additive)
+		ans["space"] = s.compressSpace(r.Context(), req.Target, est)
+	}
+	writeJSON(w, http.StatusOK, ans)
 }
 
 func (s *Server) handleCompressJobCreate(w http.ResponseWriter, r *http.Request) {
@@ -943,6 +953,10 @@ func (s *Server) compressItemsJSON(ctx context.Context, list []store.CompressIte
 		m := s.compressItemJSON(it)
 		if t := targets[it.JobID]; t != "" {
 			m["target"] = t
+		}
+		// A replace waiting for room on the NAS (no_space is a wait, not a failure; 0.14.0): what it needs and what is free.
+		if it.Reason == compress.ReasonNoSpace && it.Source != "blob" && (it.State == store.CompressReady || it.State == store.CompressQueued) {
+			m["space"] = s.noSpaceInfo(ctx, it)
 		}
 		if it.Source == "blob" {
 			if it.SHA256 != "" {

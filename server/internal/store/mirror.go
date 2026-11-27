@@ -1155,6 +1155,9 @@ func contentKept(ctx context.Context, tx *sql.Tx, fp, sha string) (bool, error) 
 	if held, err := compressHolds(ctx, tx, fp, sha); err != nil || held {
 		return held, err
 	}
+	if held, err := serverTrashHolds(ctx, tx, fp); err != nil || held {
+		return held, err
+	}
 	var one int
 	err := tx.QueryRowContext(ctx, "SELECT 1 FROM original_claims WHERE fingerprint = ? LIMIT 1", fp).Scan(&one)
 	if err == nil {
@@ -1176,6 +1179,50 @@ type PurgeResult struct {
 	// roots whose manifests go.
 	Links []MirrorEntry
 	Roots []string
+	// The phone's blob compressions the purge ended (ADR 0025, hoard-server 0.14.0): the unfinished ones cancelled
+	// (the caller stops their work), the finished ones purged.
+	Cancelled, CompressPurged []CompressItem
+}
+
+// ErrCompressJournal: a phone is in the middle of a compression journal (a restore or a restore again): the backup
+// purge waits for it, or for the admin's Force cancel.
+var ErrCompressJournal = errors.New("a compression journal is in progress")
+
+// ReasonBackupPurged is the reason of the compressions a backup purge ended.
+const ReasonBackupPurged = "backup_purged"
+
+func compressItemsOfPhysical(ctx context.Context, q rowsQueryer, physicalID string) ([]CompressItem, error) {
+	rows, err := q.QueryContext(ctx, "SELECT "+compressItemCols+` FROM compress_items WHERE source = 'blob' AND (
+		mirror_entry_id IN (SELECT id FROM mirror_entries WHERE physical_id = ?1) OR kept_entry_id IN (SELECT id FROM mirror_entries WHERE physical_id = ?1))
+		ORDER BY id`, physicalID)
+	if err != nil {
+		return nil, err
+	}
+	return scanCompressItems(rows)
+}
+
+// CompressOfPhysical counts a phone's blob compressions for the purge's confirmation: kept is the originals (or
+// outputs) its backup keeps in the trash (replaced, restored), journals the ones a phone is swapping now (they refuse
+// the purge), unfinished the queued … ready ones the purge cancels.
+func (s *Store) CompressOfPhysical(ctx context.Context, physicalID string) (kept, journals, unfinished int, list []CompressItem, err error) {
+	list, err = compressItemsOfPhysical(ctx, s.db, physicalID)
+	for _, it := range list {
+		switch {
+		case it.State == CompressReplaced || it.State == CompressRestored:
+			kept++
+		case it.State == CompressReady && it.ReplaceStep == StepServed:
+			// The phone downloaded the output and may have written it: the original the server holds may be the only
+			// one, so it is confirmed like the kept ones (and cancelled with the backup).
+			kept++
+		}
+		switch it.State {
+		case CompressReplacing:
+			journals++
+		case CompressQueued, CompressEstimating, CompressEncoding, CompressVerifying, CompressReady:
+			unfinished++
+		}
+	}
+	return
 }
 
 // MirrorPurgeInfo counts a phone's entries and its pinned (freed) ones, for the purge warning.
@@ -1214,6 +1261,47 @@ func (s *Store) PurgeMirror(ctx context.Context, physicalID string) (PurgeResult
 			cs = append(cs, c)
 		}
 		rows.Close()
+		// The phone's blob compressions (ADR 0025 S2) are settled with its backup (hoard-server 0.14.0): a journal a
+		// phone is in the middle of refuses the purge; the others end (finished ones purged, unfinished ones cancelled),
+		// so they hold nothing, name no deleted entry, and their kept originals and outputs are released with the rest.
+		comps, err := compressItemsOfPhysical(ctx, tx, physicalID)
+		if err != nil {
+			return err
+		}
+		for _, it := range comps {
+			if it.State == CompressReplacing {
+				return ErrCompressJournal
+			}
+		}
+		now := s.nowMs()
+		for _, it := range comps {
+			cs = append(cs, content{it.Fingerprint, it.SHA256})
+			if it.OutFingerprint != "" {
+				cs = append(cs, content{it.OutFingerprint, it.OutSHA256})
+			}
+			switch it.State {
+			case CompressQueued, CompressEstimating, CompressEncoding, CompressVerifying, CompressReady:
+				_, err = tx.ExecContext(ctx, `UPDATE compress_items SET state = 'cancelled', reason = ?, replace_step = '', stalled_at = NULL,
+					updated_at = ? WHERE id = ?`, ReasonBackupPurged, now, it.ID)
+				out.Cancelled = append(out.Cancelled, it)
+			case CompressReplaced, CompressRestored:
+				_, err = tx.ExecContext(ctx, `UPDATE compress_items SET state = 'purged', reason = ?, purged_at = ?, stalled_at = NULL,
+					updated_at = ? WHERE id = ?`, ReasonBackupPurged, now, now, it.ID)
+				out.CompressPurged = append(out.CompressPurged, it)
+			}
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE compress_items SET mirror_entry_id = NULL, kept_entry_id = NULL WHERE id = ?", it.ID); err != nil {
+				return err
+			}
+		}
+		// Its automatic folders (a standing job naming one of its roots) stop.
+		if _, err := tx.ExecContext(ctx, `UPDATE compress_jobs SET state = 'cancelled', finished_at = ? WHERE state IN ('active', 'paused')
+			AND (physical_id = ? OR EXISTS (SELECT 1 FROM mirror_roots r WHERE r.physical_id = ? AND instr(compress_jobs.selection, '"' || r.id || '"') > 0))`,
+			now, physicalID, physicalID); err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, "SELECT count(*), coalesce(sum(pinned), 0) FROM mirror_entries WHERE physical_id = ?",
 			physicalID).Scan(&out.Entries, &out.Pinned); err != nil {
 			return err

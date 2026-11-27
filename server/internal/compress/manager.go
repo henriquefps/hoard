@@ -635,3 +635,17 @@ func (m *Manager) checkFree(where string, read func() (int64, error)) (free int6
 
 // SampleGPU reads the GPU's load now (tests; the server samples every 30 s).
 func (m *Manager) SampleGPU(ctx context.Context) { m.sampleBusy(ctx) }
+
+// Stop cancels the running work of items (a backup purge ends them; their rows are settled by the caller).
+func (m *Manager) Stop(ids []int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		if c := m.running[id]; c != nil {
+			c()
+		}
+	}
+}
+
+// Forget removes an ended item's work directory.
+func (m *Manager) Forget(id int64) { m.removeWork(id) }

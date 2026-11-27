@@ -148,6 +148,13 @@ type Server struct {
 	web webState // the web gallery (ADR 0018)
 
 	compress *compress.Manager // video compression (ADR 0025)
+
+	trashMu sync.Mutex // the web gallery's trash moves, restores and deletes, and the auto-empty (one at a time)
+
+	freeBytesFn func(dir string) (int64, error) // tests: a filesystem's free bytes
+
+	previewMisses map[string]time.Time // logPreviewMiss's last log per item, route and reason (under touchMu)
+	trashSettled  map[string]time.Time // trash files the web gallery restored or deleted, until the walk follows (under touchMu)
 }
 
 // ErrorEvent is one recent server-side failure, for the status page (no paths, names or keys).
@@ -292,6 +299,7 @@ func (s *Server) Run(ctx context.Context) {
 			s.settleMoves(ctx)
 			s.sweepWeb(ctx)
 			s.sweepEdits(ctx)
+			s.trashHousekeeping(ctx)
 			select {
 			case <-ctx.Done():
 				return

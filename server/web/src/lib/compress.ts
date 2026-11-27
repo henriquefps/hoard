@@ -101,12 +101,29 @@ export interface EstimateAnswer {
   totals: EstimateTotals
   pending: number
   next: string | null
+  space?: Space
+}
+
+/**
+ * The disk that takes the outputs (0.14.0): every replaced original stays in the trash until it is emptied, so a job
+ * needs about the sum of its outputs free while they wait there.
+ */
+export interface Space {
+  target: Target
+  needed: number
+  free: number
+  /** What the trash holds on those disks now (emptying it frees that). */
+  trash: number
+  fits: boolean
+  known: boolean
+  disks: number
 }
 
 export interface Estimate {
   totals: EstimateTotals
   pending: number
   warnings: string[]
+  space?: Space
 }
 
 export interface Job {
@@ -131,6 +148,8 @@ export interface Job {
 }
 
 export interface CItem {
+  /** A replace or encode waiting for room (reason no_space, 0.14.0): where, what it needs and what is free. */
+  space?: { where: "nas" | "work"; needed?: number; free?: number }
   id: string
   jobId: string
   itemId: string
@@ -183,6 +202,12 @@ export interface TrashEntry {
   live?: boolean
   compressedTo?: string
   durationMs?: number
+  /** 0.14.0: what Restore and Delete permanently act on (ADR 0023 Amendment (0.14.0)). */
+  units?: import("./trash").TrashUnit[]
+  /** In the server trash (an item not on the NAS). */
+  serverTrash?: { since: number; purgeAfter: number }
+  /** Reveal edited it: its edits come back on a restore and go when it is emptied. */
+  edits?: boolean
   compression?: {
     id: string
     jobId: string
@@ -301,7 +326,9 @@ export function mergeEstimates(list: Estimate[]): Estimate {
     for (const w of e.warnings) warnings.add(w)
     pending += e.pending
   }
-  return { totals, pending, warnings: [...warnings].sort() }
+  // The space of the library's part (the NAS) when there is one: the parts' disks are not the same.
+  const space = list.find((e) => e.space?.target === "nas")?.space ?? list.find((e) => e.space)?.space
+  return { totals, pending, warnings: [...warnings].sort(), space }
 }
 
 /** Warnings of the encoded videos of an estimate page. */
@@ -393,7 +420,22 @@ export async function estimatePart(part: Part, profile: string, options?: unknow
     pageWarnings(ans.items).forEach((w) => warnings.add(w))
     cursor = ans.next
   } while (cursor)
-  return { totals: first.totals, pending: first.pending, warnings: [...warnings] }
+  return { totals: first.totals, pending: first.pending, warnings: [...warnings], space: first.space }
+}
+
+/** The whole library (or any selection) in one answer: totals, skips and the space, no items (0.14.0 totalsOnly). */
+export async function estimateTotals(part: Part, profile: string): Promise<Estimate> {
+  const ans = await api<EstimateAnswer>("/web/compress/estimate", { method: "POST", json: { ...part, profile, totalsOnly: true } })
+  return { totals: ans.totals, pending: ans.pending, warnings: [], space: ans.space }
+}
+
+/** What a space shortfall says: "fits", or how much more is needed than is free (and whether emptying the trash helps). */
+export function spaceVerdict(s: Space | undefined): { state: "fits" | "short" | "unknown"; short: number; trashHelps: boolean } {
+  if (!s || s.disks === 0) return { state: "fits", short: 0, trashHelps: false }
+  if (!s.known) return { state: "unknown", short: 0, trashHelps: false }
+  if (s.fits) return { state: "fits", short: 0, trashHelps: false }
+  const short = Math.max(0, s.needed - s.free)
+  return { state: "short", short, trashHelps: s.trash >= short }
 }
 
 export interface JobAnswer extends Job {

@@ -558,3 +558,164 @@ Phase A4 (the Gallery) follows the decision with these deviations:
   path.
 - **Phone trash in `.hoard-trash` on API ≥ 30 too**: no consent dialog, but invisible to the system's trash and to
   other apps, and `PathFs` writes would bypass MediaStore's row bookkeeping.
+
+## Amendment (0.14.0): trash from the web gallery
+
+hoard-server 0.14.0 lets the owner move rejects (any selection) to the trash **from the web gallery**, list the trash by
+day and place, restore, delete permanently and empty it there. ADR 0025 gave the server a write mount of the library
+(`NAS_WRITE_ROOT`, only through `os.Root`); this amendment uses it for the trash, so "The server never writes the NAS"
+(Server, above) and the alternative "The server moves the files" are superseded **for the web gallery's admin**: Hoard's
+moves over SMB are unchanged. Schema 13 (`0013_web_trash.sql`, new tables only). Tests: `web_trash_test.go`,
+`server/web/e2e/trash.spec.ts`; screenshots in [`docs/testing/web-trash/`](../testing/web-trash/README.md).
+
+### Routes (`/web/`, the admin session; no device key)
+
+| Route | What it does |
+| --- | --- |
+| `POST /web/trash/move` `{"itemIds", "dryRun"?}` (≤ 500) | Plans (dry run) or moves each item's shot. Answer: `moved`, `skipped` and `failed` (item id → reason), `counts`, `warnings` (`onlyCopy`, `edits`: item ids), `nasShots`, `nasFiles`, `serverItems`, `size`, and on a dry run `nasBlocked` (the write mount's problem). |
+| `POST /web/trash/restore` `{"units": [{"itemId", "key"}]}` (≤ 500) | Puts each unit back. Answer `{"done", "refused": {"<itemId>\|<key>": reason}, "names" (path_taken: the file in the way), "size"}`. |
+| `POST /web/trash/delete` `{"units"}` (≤ 500) | Deletes each unit for good (same answer, plus `keptBy`). |
+| `POST /web/trash/empty` `{"confirm": {"count", "size"}}` | Deletes every unit not held, only when `count` (shots) and `size` are still the trash's: else `409 conflict` reason `confirm` with the current figures. |
+| `GET /web/trash` | As in ADR 0025 Amendment (S3), every entry gains `units` (below), `serverTrash` and `edits`. |
+
+A **unit** is what Restore and Delete act on: an item's files in **one day folder of one NAS folder** (`key`
+`nas:<folderId>:<P>/.hoard-trash/<day>`), or its server copies in the server trash (`key` `server`). Each unit has
+`day` (the day folder's date, or the server trash's date), the folder and the original directory (or the phone and its
+directory), `files`, `size`, `held`, `purgeAfter` and `byServer` (what the server's auto-empty takes). The gallery sends
+Select all in batches of 500 (Select all of the Rejected filter, a folder, a date range: the list the filters show).
+
+### What moves: the shot rule
+
+An item is a shot. For each of its live NAS locations, grouped by folder, directory and stem, the unit moves the item's
+media files there, then the shot's sidecars **only when no other media file of that stem stays in the directory** (the
+rule of Amendment (A2) item 8: a sidecar stays with the member that stays). Sidecars are found by listing the directory
+through the write mount: `X.xmp`, `<file name>.xmp` and their hidden forms (`.X.xmp`), case-insensitively, as Hoard's
+`SidecarNames.candidates` (the walk never indexes hidden names, so the listing is needed). Before moving, each media
+file must still be the indexed one (size and mtime), else the unit is `changed` and nothing of it moves.
+
+### Where it goes: the trash root, reconciled
+
+The server takes ADR 0025's rule: **the nearest existing `.hoard-trash` among the file's ancestor directories inside the
+NAS folder, else the folder's root**; the trashed path is `<root>/.hoard-trash/<yyyy-MM-dd>/<path from the root>`, the
+server's local date, `-2`, `-3`… when any path of the unit is taken (every file of a shot in one day folder, A1 item
+6). Hoard's rule is the mapping's `smbPrefix` (cases 1–5 above). They agree:
+
+- case 1 (share root = folder root) and case 3 (share above the folder: `smbPrefix` = the folder's root): both
+  `.hoard-trash` at the folder's root, which Hoard's Trash lists and restores (a server move is an ordinary trashed file
+  there: "No manifest: the path is the manifest");
+- case 2 (the share exports a sub-folder `2024`) once Hoard has trashed anything under it: `2024/.hoard-trash` exists,
+  the server uses it;
+- case 2 before Hoard's first trash there: the server uses the folder root, above the share. Hoard then sees those
+  items only in its Trash screen's server section (A4 item 5, no actions); the web gallery restores and empties them.
+  Accepted: the server does not know Hoard's mappings (ADR 0022 keeps them on the phone), and creating a `.hoard-trash`
+  below the folder root on a guess could put a trash in a folder no share is rooted at. The owner's shares are case 1.
+
+A move is a **hard link then the unlink of the original** (the link fails with `EEXIST` atomically: a move never
+replaces a file); where hard links are refused, a check that the target is free then a rename. Same filesystem only
+(`EXDEV` is `not_same_device`, nothing moved); never a copy. Missing directories are made with the mode of their
+nearest existing ancestor (as compression's trash folders). Everything goes through `compress.Folder` (`os.Root` on the
+folder's write path, opened by `Manager.WriteFolder` after the same `st_dev`/`st_ino` proof and probe as a replace):
+`TestOnlyReplacerWrites` still holds.
+
+**Refused cleanly**: with the write mount unusable (`compress.WriteProblem`: `no_write_mount`, `write_mount_mismatch`,
+`write_mount_read_only`, `unstable_inode`) a request with NAS shots is `503 unavailable` with that reason and **nothing**
+of it moves; the dry run says it first (`nasBlocked`) and the gallery disables Move.
+
+### The journal: `trash_moves`
+
+A row per file is written **before** each move, restore or delete (`moving`, `restoring`, `purging`) and settled after;
+a move's row stays `trashed` while the file is in the trash. At start and every 10 minutes, rows a kill left are
+settled by looking at both paths (a move whose file is at both names after a kill between link and unlink is finished:
+the original name goes when both are the same inode). The path stays the manifest: the rows only say what the server
+did, for recovery and for its auto-empty. Restoring or deleting a file Hoard trashed writes a row for the time it runs.
+
+### Items not on the NAS: the server trash
+
+Phone backups (ADR 0024) and uploads have no NAS file to move. Their item goes to a **server trash**: a `server_trash`
+row (and `server_trash_files`, its member fingerprints) makes the item's `backup`, `mirror` and `kept` sources count as
+trashed while it exists (`items.Syncer.rebuild`): the item is trashed with the usual shapes (`include=trash` whole, else
+a tombstone), plus `"serverTrash": {"since", "purgeAfter"}` in its data. A live NAS copy keeps it live. Nothing is
+deleted while it is there: its contents count as kept (`contentKept`) and `DELETE /v1/originals` answers `409
+conflict` reason `trashed` (the caller's claim is released, as for `mirror`). **Devices still cannot delete backups**:
+only this admin action and the setup page's backup purge can.
+
+- **Restore** removes the row: the item is live again, same id, edits and culling as they were.
+- **Purge** (Delete permanently, Empty, or the auto-empty after `trashDays`): the backup's entries of its files **that no
+  phone has any more** go with their tree links, every device claim goes, then each content nothing else names (a phone
+  that still has the file, a live Reveal photo record, a compression keep it: answered as `keptBy`). The row stays
+  marked purged until the backup pass drops the sources (the item then becomes a tombstone and ADR 0020 drops its
+  edits), and is forgotten then or a day later.
+- **Still on a phone** (a `mirror` location with `onDevice`): the server cannot delete a phone's file, and a backup of a
+  file the phone still has would only be reported again. Such an item is skipped `on_phone` (its NAS files, if any, move
+  as usual and its phone copy keeps it live): Hoard trashes it on the phone, the backup then shows it "deleted from the
+  phone", and the web can trash it.
+- **Warnings** before the move (the dry run): `onlyCopy`, an item with no live NAS file and no phone copy that no Reveal
+  record names (emptying the trash deletes it for good); `edits`, an item with Reveal's edits (ADR 0020: they stay in the
+  trash and come back on a restore; they go at the purge).
+
+### Never touched
+
+An item with a `held` trash location, or with a compression in `queued` … `replacing`, is skipped (`held`, `busy`). A
+held unit is listed (locked, not counted) and Restore, Delete, Empty and the auto-empty leave it. A compressed original
+(an item with `compressedTo` and a `replaced`/`restored` record) is **in the same view** (S3's second list is gone): its
+Restore and Delete permanently go through compression's own `RestoreItems` and `PurgeItems` (only the server deletes it,
+ADR 0025 Amendment (A1)); the auto-empty of `trash_moves` never takes one.
+
+### After a move: at once
+
+The gallery takes the moved items out of the grid at once (`hideItems`). The server queues a walk of each touched folder
+outside the request budget (`Indexer.WalkNow`: `WalkGap`, 10 s after the folder's last walk, still applies), so the
+walk shows the items trashed within seconds instead of at the next 30-minute walk, and the feed carries the change to
+Hoard and Reveal with the existing `include=trash` semantics. A server-trashed item is rebuilt in the request. Files the
+web restored or deleted are left out of `GET /web/trash` for up to 10 minutes, until that walk updates their items.
+
+### Auto-empty
+
+The server empties, after `compress.trashDays` (30 by default, the setup page), **what it moved**: `trash_moves` rows
+whose file is still at its trash path with the size and mtime it moved (a file someone put there since stays), never a
+held entry or a compressed original; and the server trash. Directories left empty go up to the `.hoard-trash`. Hoard's
+own auto-empty (Settings › Trash, 7 / 30 / 90 days or off) keeps covering every day folder on its shares, the server's
+too, with its own clock guard: the shorter setting wins, as between two devices.
+
+### What clients see
+
+- **Hoard** (no change needed): NAS moves are trashed files on its shares and items trashed in the feed, the same as a
+  move another device made (A4 item 5); server-trashed items are trashed items without a share row, listed in the
+  Trash screen's server section with the server's thumbnail and no actions. A restore from the web is a file back at
+  its path (or a live item again), as a restore from another device.
+- **Reveal**: a trashed NAS file is `removed: true, trashed: true` in the NAS feed (unchanged); a server-trashed item is
+  a tombstone without `include=trash`, and its lookups answer `missing`; restored, it is live with the same id. Reveal's
+  "Delete from server" of a trashed upload answers `409 trashed` (its claim released), which Reveal already treats as
+  "referenced".
+
+### Smaller decisions
+
+1. The web's size of a shot counts each member file once (its NAS copy or its server copy).
+2. `nasFiles` counts the indexed files; the hidden sidecars found by listing move too but are not counted.
+3. The Trash view groups by **day** (newest first), then **place** (NAS folder and original directory, or "Server backup
+   · <phone>" and the phone directory), with each group's shots and size; Restore and Delete permanently act on a group
+   or on a selection of shots; Empty trash on everything, after the confirmation with the count and the size.
+4. Restore refuses, never renames, when a file is at an original path (the message names it), as Hoard does; missing
+   directories are recreated; the restore of a unit takes the shot's hidden sidecars in that day folder too.
+
+**Review of #84** (fixes before merge):
+
+5. **A failed or interrupted restore or delete never makes a file due.** `trash_moves` gains `kind`: `move` (the
+   server moved the file into the trash: its auto-empty may take it after `purge_after`) or `op` (written only while a
+   restore or a delete of a file the server did not move runs, a Hoard-trashed shot). The auto-empty takes only `move`
+   rows. When a restore or delete fails (a folder not writable, a link that fails half-way through a shot), the row is
+   put back exactly as it was: an `op` row is deleted, a `move` row goes back to `trashed` with its own `purge_after`
+   (the upsert never overwrites it). A restart's settle deletes `op` rows whatever happened to the file, and puts an
+   interrupted `move` row back to `trashed` (file still in the trash) or forgets it (file gone). Before this, a failed
+   restore of a Hoard-trashed shot left a `trashed` row with `purge_after` = now, and the next housekeeping (start, or
+   10 minutes later) deleted the file; a half-done restore lost the unrestored half the same way. Tests:
+   `TestWebTrashFailedRestoreOfHoardsShotPurgesNothing` (restore and delete refused `not_writable`),
+   `TestWebTrashRestoreFailingHalfwayPurgesNothing`, `TestWebTrashKilledMidRestoreSettles`,
+   `TestWebTrashRefusedDeleteKeepsServerRow`.
+6. **Empty confirms each group apart.** Every unit has a `group`: `web` (moved from the web gallery: its NAS moves and
+   the server trash), `hoard` (trashed by Hoard on a device, also before 0.14.0), `compressed` (originals of compressed
+   videos, or an output a restore put in the trash; a phone or backup compression's kept side is a unit `compressed`
+   too, so it is listed and emptied through compression's routes). `POST /web/trash/empty` takes `groups` (absent: all);
+   its `409 confirm` carries each group's `count` and `size`. The gallery's Empty dialog lists the groups with their
+   counts and sizes, each with a checkbox (all on); a group left out stays (`TestWebTrashEmptyByGroup`, e2e
+   `empty-groups-*` screenshots).

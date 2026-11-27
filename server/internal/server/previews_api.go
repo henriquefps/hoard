@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -51,6 +52,17 @@ func (s *Server) previewItem(w http.ResponseWriter, r *http.Request) (store.Item
 	}
 	row, err := s.store.Item(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) || err == nil && (row.Deleted || webTrashed(r, row)) {
+		why := "unknown_item"
+		switch {
+		case err == nil && row.Deleted:
+			why = "tombstone"
+			if bytes.Contains(row.Data, []byte(`"replacedBy"`)) {
+				why = "tombstone_replaced"
+			}
+		case err == nil:
+			why = "trashed"
+		}
+		s.logPreviewMiss(r, id, why)
 		fail(w, r, http.StatusNotFound, "not_found", "No such item.", nil)
 		return store.ItemRow{}, false
 	}
@@ -100,6 +112,7 @@ func (s *Server) servePreview(w http.ResponseWriter, r *http.Request, poster boo
 	if which != "" { // Reveal's edited preview (ADR 0020)
 		e, ok := itemEdit(row, which)
 		if !ok {
+			s.logPreviewMiss(r, row.ID, "no_edit")
 			fail(w, r, http.StatusNotFound, "preview_unavailable", "The item has no such edit.", map[string]any{"reason": "no_edit"})
 			return
 		}
@@ -135,6 +148,7 @@ func (s *Server) serveJob(w http.ResponseWriter, r *http.Request, row store.Item
 		if msg == "" {
 			msg = "Making this preview failed."
 		}
+		s.logPreviewMiss(r, row.ID, job+":"+st.Reason)
 		fail(w, r, http.StatusNotFound, "preview_unavailable", msg, map[string]any{"reason": st.Reason})
 		return
 	case previews.StatusPending:
@@ -309,4 +323,32 @@ func (s *Server) handleWarmPreviews(w http.ResponseWriter, r *http.Request) {
 		out = append(out, e)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out, "missing": missing})
+}
+
+// logPreviewMiss logs a preview the server did not serve (404), once per item, route and reason an hour (hoard-server
+// 0.14.0: a client's "This shot could not be shown" can be traced to its cause on the server: an unknown or replaced
+// item id, a trashed item, an edit the item no longer has, a job that failed). Item ids only: no names or paths.
+func (s *Server) logPreviewMiss(r *http.Request, itemID, why string) {
+	key := r.Pattern + "|" + itemID + "|" + why
+	now := time.Now()
+	s.touchMu.Lock()
+	if s.previewMisses == nil {
+		s.previewMisses = map[string]time.Time{}
+	}
+	last, seen := s.previewMisses[key]
+	if !seen || now.Sub(last) > time.Hour {
+		s.previewMisses[key] = now
+	}
+	if len(s.previewMisses) > 10000 {
+		s.previewMisses = map[string]time.Time{}
+	}
+	s.touchMu.Unlock()
+	if seen && now.Sub(last) <= time.Hour {
+		return
+	}
+	who := "web"
+	if in := info(r); in != nil && in.device.ID != "" {
+		who = in.device.ID
+	}
+	s.log.Info("preview not served", "route", r.Pattern, "item", itemID, "reason", why, "edit", r.URL.Query().Get("edit") != "", "client", who)
 }

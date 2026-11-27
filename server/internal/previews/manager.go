@@ -108,6 +108,7 @@ func (m *Manager) Run(ctx context.Context) {
 	} else if n > 0 {
 		m.cfg.Log.Info("previews: resumed interrupted jobs", "count", n)
 	}
+	m.retryAfterToolsChange(ctx)
 	for range m.cfg.ImageWorkers {
 		go m.worker(ctx, JobImage)
 	}
@@ -624,4 +625,35 @@ func (m *Manager) String() string {
 	}
 	return fmt.Sprintf("generator=%s image=%d proxy=%d full=%d fullCache=%dMiB backlog=%v", m.cfg.Generator.Name(), m.cfg.ImageWorkers,
 		m.cfg.ProxyWorkers, m.cfg.FullWorkers, m.cfg.FullCacheBytes>>20, b)
+}
+
+// SettingToolsID is the settings row that keeps the generator's ToolsID of the last start.
+const SettingToolsID = "previews.toolsId"
+
+// retryAfterToolsChange tries failed previews again once when the generator's tools changed since the last start (an
+// image with more decoders: AVI files with pcm_mulaw audio failed in the -nvidia image of 0.13.x).
+func (m *Manager) retryAfterToolsChange(ctx context.Context) {
+	g, ok := m.cfg.Generator.(interface{ ToolsID(context.Context) string })
+	if !ok {
+		return
+	}
+	id := g.ToolsID(ctx)
+	if id == "" {
+		return
+	}
+	prev, _, err := m.cfg.Store.Setting(ctx, SettingToolsID)
+	if err != nil || prev == id {
+		return
+	}
+	n, err := m.cfg.Store.RetryFailedPreviews(ctx)
+	if err != nil {
+		m.cfg.Log.Error("previews: retry failed jobs", "err", err)
+		return
+	}
+	if n > 0 {
+		m.cfg.Log.Info("previews: the preview tools changed: failed jobs are tried again", "count", n)
+	}
+	if err := m.cfg.Store.SetSetting(ctx, SettingToolsID, id); err != nil {
+		m.cfg.Log.Error("previews: remember the tools", "err", err)
+	}
 }

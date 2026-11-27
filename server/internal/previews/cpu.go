@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +51,26 @@ func (c *CPU) Accepts(Job) bool { return true }
 
 // Available implements Generator.
 func (c *CPU) Available() bool { return c.vips != "" && c.ffmpeg != "" }
+
+// ToolsID identifies the programs' builds (the ffmpeg version line and its configuration, the vips version): when it
+// changes, previews that failed are tried again (a decoder added to the image, hoard-server 0.14.0).
+func (c *CPU) ToolsID(ctx context.Context) string {
+	h := sha256.New()
+	for _, cmd := range [][]string{{c.ffmpeg, "-hide_banner", "-buildconf"}, {c.ffmpeg, "-hide_banner", "-version"}, {c.vips, "--version"}} {
+		if cmd[0] == "" {
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		//nolint:gosec // the configured vips/ffmpeg with fixed arguments
+		out, err := exec.CommandContext(cctx, cmd[0], cmd[1:]...).Output()
+		cancel()
+		if err != nil {
+			return ""
+		}
+		h.Write(out)
+	}
+	return hex.EncodeToString(h.Sum(nil))[:32]
+}
 
 // HasVips and HasFFmpeg report each program.
 func (c *CPU) HasVips() bool   { return c.vips != "" }
