@@ -93,7 +93,7 @@ SELECT lower(hex(randomblob(32))), i, 'original', i, CASE WHEN i % 3 = 0 THEN NU
 		t.Fatalf("migrating with no temp directory: %v", err)
 	}
 	defer s.Close()
-	if v, err := s.SchemaVersion(ctx); err != nil || v != 13 {
+	if v, err := s.SchemaVersion(ctx); err != nil || v != 14 {
 		t.Fatalf("schema %d %v", v, err)
 	}
 	var claims, unowned int

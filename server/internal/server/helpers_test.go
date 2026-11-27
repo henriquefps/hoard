@@ -49,6 +49,10 @@ type harness struct {
 	cookie *http.Cookie
 }
 
+// harnessBusyTimeout, when set, is the next harness's SQLite busy timeout (TestTrashBatchesUnderConcurrentWalk shortens
+// it to reproduce a NAS walk holding the write lock longer than a statement waits).
+var harnessBusyTimeout time.Duration
+
 func newHarness(t *testing.T, withBackup bool) *harness {
 	t.Helper()
 	return newHarnessWith(t, withBackup, nil)
@@ -66,7 +70,7 @@ func newHarnessWith(t *testing.T, withBackup bool, configure func(*Config)) *har
 			t.Fatal(err)
 		}
 	}
-	st, err := store.Open(filepath.Join(base, "db.sqlite"))
+	st, err := store.OpenWith(filepath.Join(base, "db.sqlite"), store.Options{BusyTimeout: harnessBusyTimeout})
 	if err != nil {
 		t.Fatal(err)
 	}

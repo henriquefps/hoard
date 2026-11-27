@@ -353,7 +353,11 @@
       "someFailed_one": "{{count}} was not moved: {{reason}}",
       "someFailed_other": "{{count}} were not moved: {{reason}}",
       "refused": "Nothing more was moved: {{reason}}",
-      "failed": "Moving to the trash did not work. Try again."
+      "failed": "Moving to the trash did not work. Try again.",
+      "failedTitle_one": "{{formatted}} was not moved ({{moved}} moved):",
+      "failedTitle_other": "{{formatted}} were not moved ({{moved}} moved):",
+      "retry_one": "Retry the failed one",
+      "retry_other": "Retry the {{count}} failed ones"
     },
     "emptyChoose": "Choose what to empty. Each group is deleted for good; a group left unchecked stays in the trash.",
     "emptyNone": "Nothing is checked.",
@@ -366,7 +370,8 @@
       "web": "rejects and backups moved here",
       "hoard": "what your phone or tablet put in the trash, also before this version",
       "compressed": "the compressed videos stay; the originals go for good"
-    }
+    },
+    "refresh": "Refresh"
   },
   "compress": {
     "title": "Compress videos",

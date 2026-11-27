@@ -108,6 +108,10 @@ type Config struct {
 	CompressNVML              compress.NVML
 	CompressLinker            compress.Linker
 	CompressPoll              time.Duration
+	// TrashWalkQuiet is how long the folders a trash request touched wait for another request before their walk is
+	// queued (ADR 0023 Amendment (0.15.0): the batches of one selection share one walk); 0 = trashWalkQuiet, < 0 = at
+	// once (tests).
+	TrashWalkQuiet time.Duration
 }
 
 // Server holds the state behind the handlers.
@@ -149,7 +153,8 @@ type Server struct {
 
 	compress *compress.Manager // video compression (ADR 0025)
 
-	trashMu sync.Mutex // the web gallery's trash moves, restores and deletes, and the auto-empty (one at a time)
+	trashMu   sync.Mutex // the trash's moves, restores and deletes (web gallery and /v1), and the auto-empty (one at a time)
+	trashWalk trashWalkState
 
 	freeBytesFn func(dir string) (int64, error) // tests: a filesystem's free bytes
 

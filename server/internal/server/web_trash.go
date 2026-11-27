@@ -36,10 +36,10 @@ import (
 const maxTrashBatch = 500
 
 func (s *Server) routesWebTrash(authed func(string, http.HandlerFunc)) {
-	authed("POST /web/trash/move", s.handleWebTrashMove)
-	authed("POST /web/trash/restore", s.handleWebTrashRestore)
-	authed("POST /web/trash/delete", s.handleWebTrashDelete)
-	authed("POST /web/trash/empty", s.handleWebTrashEmpty)
+	authed("POST /web/trash/move", s.handleTrashMove)
+	authed("POST /web/trash/restore", s.handleTrashRestore)
+	authed("POST /web/trash/delete", s.handleTrashDelete)
+	authed("POST /web/trash/empty", s.handleTrashEmpty)
 }
 
 // Skip and failure reasons of the trash routes.
@@ -64,6 +64,7 @@ var unfinishedCompress = map[string]bool{store.CompressQueued: true, store.Compr
 	store.CompressVerifying: true, store.CompressReady: true, store.CompressReplacing: true}
 
 type nasFileRef struct {
+	fp      string
 	rel     string
 	size    int64
 	mtimeMs int64
@@ -143,7 +144,7 @@ func (s *Server) planTrashMove(ctx context.Context, id string) (trashPlan, error
 					units[k] = u
 					order = append(order, k)
 				}
-				u.files = append(u.files, nasFileRef{rel: l.Path, size: f.Size, mtimeMs: l.ModifiedAt, sidecar: sidecar})
+				u.files = append(u.files, nasFileRef{fp: f.Fingerprint, rel: l.Path, size: f.Size, mtimeMs: l.ModifiedAt, sidecar: sidecar})
 				if !counted {
 					p.size += f.Size
 					counted = true
@@ -297,7 +298,8 @@ type trashMoveAnswer struct {
 	NasBlocked  string `json:"nasBlocked,omitempty"` // the write mount's problem: NAS shots cannot move now
 }
 
-func (s *Server) handleWebTrashMove(w http.ResponseWriter, r *http.Request) {
+// handleTrashMove serves POST /web/trash/move and POST /v1/trash/move.
+func (s *Server) handleTrashMove(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ItemIDs []string `json:"itemIds"`
 		DryRun  bool     `json:"dryRun"`
@@ -309,12 +311,26 @@ func (s *Server) handleWebTrashMove(w http.ResponseWriter, r *http.Request) {
 		fail(w, r, http.StatusUnprocessableEntity, "invalid_request", fmt.Sprintf("itemIds lists 1 to %d items.", maxTrashBatch), nil)
 		return
 	}
-	ctx := r.Context()
+	ans, problem, err := s.trashMove(r.Context(), req.ItemIDs, req.DryRun, trashActor(r))
+	switch {
+	case err != nil:
+		s.internal(w, r, err)
+	case problem != "":
+		// Nothing moves (the NAS shots cannot, and a half-done selection is harder to reason about than a refusal).
+		unavailable(w, r, problem, "The server cannot write the NAS folders now: nothing was moved.")
+	default:
+		writeJSON(w, http.StatusOK, ans)
+	}
+}
+
+// trashMove plans (dryRun) or moves items' shots to the trash for by ("admin" or a device id). problem is the write
+// mount's problem when the request has NAS shots that cannot move (nothing moved).
+func (s *Server) trashMove(ctx context.Context, ids []string, dryRun bool, by string) (trashMoveAnswer, string, error) {
 	ans := trashMoveAnswer{Moved: []string{}, Skipped: map[string]string{}, Failed: map[string]string{}, Counts: map[string]int{}}
 	var plans []trashPlan
 	seen := map[string]bool{}
 	var onlyCopy, edits []string
-	for _, id := range req.ItemIDs {
+	for _, id := range ids {
 		if seen[id] {
 			continue
 		}
@@ -323,10 +339,9 @@ func (s *Server) handleWebTrashMove(w http.ResponseWriter, r *http.Request) {
 			ans.Skipped[id] = trashNotFound
 			continue
 		}
-		p, err := s.planTrashMove(ctx, id)
-		if err != nil {
-			s.internal(w, r, err)
-			return
+		var p trashPlan
+		if err := store.RetryBusy(ctx, func() (err error) { p, err = s.planTrashMove(ctx, id); return err }); err != nil {
+			return ans, "", err
 		}
 		if p.skip != "" {
 			ans.Skipped[id] = p.skip
@@ -350,22 +365,18 @@ func (s *Server) handleWebTrashMove(w http.ResponseWriter, r *http.Request) {
 		}
 		ans.Size += p.size
 	}
-	needNAS := ans.NasShots > 0
 	problem := ""
-	if needNAS {
+	if ans.NasShots > 0 {
 		problem = s.compress.WriteProblem()
 	}
 	ans.Warnings = map[string]any{"onlyCopy": nonNil(onlyCopy), "edits": nonNil(edits)}
-	if req.DryRun {
+	if dryRun {
 		ans.NasBlocked = problem
 		s.countTrashAnswer(&ans)
-		writeJSON(w, http.StatusOK, ans)
-		return
+		return ans, "", nil
 	}
 	if problem != "" {
-		// Nothing moves (the NAS shots cannot, and a half-done selection is harder to reason about than a refusal).
-		unavailable(w, r, problem, "The server cannot write the NAS folders now: nothing was moved.")
-		return
+		return ans, problem, nil
 	}
 	s.trashMu.Lock()
 	defer s.trashMu.Unlock()
@@ -378,11 +389,11 @@ func (s *Server) handleWebTrashMove(w http.ResponseWriter, r *http.Request) {
 			_ = f.Close()
 		}
 	}()
-	var serverRows []store.ServerTrash
 	var rebuild []string
+	servers := 0
 	for _, p := range plans {
+		var moved []movedFile // this item's moved files, to roll the shot back
 		failed := ""
-		movedAny := false
 		for _, u := range p.units {
 			f := open[u.folderID]
 			if f == nil {
@@ -393,44 +404,65 @@ func (s *Server) handleWebTrashMove(w http.ResponseWriter, r *http.Request) {
 				}
 				open[u.folderID] = f
 			}
-			moved, reason := s.moveUnit(ctx, f, u, p.id, now, purgeAfter)
-			if moved > 0 {
-				movedAny = true
-				folders[u.folderID] = true
-			}
+			got, reason := s.moveUnit(ctx, f, u, p.id, now, purgeAfter, by)
+			moved = append(moved, got...)
 			if reason != "" {
 				failed = reason
-				if movedAny {
-					failed = trashPartial
-				}
 				break
 			}
 		}
+		// The server trash in the same step as the NAS moves: a shot is trashed whole or not at all.
+		if failed == "" && p.server {
+			row := store.ServerTrash{ItemID: p.id, MainFP: p.d.MainFingerprint, Fingerprints: p.fps, TrashedAt: now.UnixMilli(),
+				PurgeAfter: purgeAfter, TrashedBy: by, Size: p.size}
+			if err := s.store.AddServerTrash(ctx, []store.ServerTrash{row}); err != nil {
+				s.log.Error("trash: server trash", "err", err)
+				failed = "error"
+			}
+		}
 		if failed != "" {
+			// Roll the shot back: a shot is never left half in the trash. Only what cannot go back stays (partial).
+			if left := s.unmoveFiles(ctx, open, moved); left > 0 {
+				failed = trashPartial
+				for _, m := range moved {
+					folders[m.folderID] = true
+				}
+			}
 			ans.Failed[p.id] = failed
 			continue
 		}
+		for _, m := range moved {
+			folders[m.folderID] = true
+		}
 		if p.server {
-			serverRows = append(serverRows, store.ServerTrash{ItemID: p.id, MainFP: p.d.MainFingerprint, Fingerprints: p.fps,
-				TrashedAt: now.UnixMilli(), PurgeAfter: purgeAfter, TrashedBy: "admin", Size: p.size})
+			servers++
 			rebuild = append(rebuild, p.id)
 		}
 		ans.Moved = append(ans.Moved, p.id)
 	}
-	if len(serverRows) > 0 {
-		if err := s.store.AddServerTrash(ctx, serverRows); err != nil {
-			s.internal(w, r, err)
-			return
-		}
+	if len(rebuild) > 0 {
 		if _, err := s.indexer.Rebuild(ctx, rebuild); err != nil {
 			s.log.Error("trash: rebuild items", "err", err)
 		}
 	}
+	s.settleTrashMoves(ctx) // a row this batch could not settle (the index busy) is settled now, not at the housekeeping
 	s.walkFolders(folders)
-	s.log.Info("trash: moved from the web gallery", "moved", len(ans.Moved), "skipped", len(ans.Skipped), "failed", len(ans.Failed),
-		"server", len(serverRows))
 	s.countTrashAnswer(&ans)
-	writeJSON(w, http.StatusOK, ans)
+	s.log.Info("trash: moved", "by", by, "moved", len(ans.Moved), "skipped", len(ans.Skipped), "failed", len(ans.Failed),
+		"server", servers, "reasons", reasonCounts(ans.Counts))
+	return ans, "", nil
+}
+
+// reasonCounts is the skip and failure counts of an answer as one log value ("failed.not_writable=3 skipped.held=1").
+func reasonCounts(counts map[string]int) string {
+	var parts []string
+	for k, n := range counts {
+		if k != "moved" && n > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", k, n))
+		}
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
 }
 
 func nonNil(v []string) []string {
@@ -450,24 +482,54 @@ func (s *Server) countTrashAnswer(a *trashMoveAnswer) {
 	a.Counts["moved"] = len(a.Moved)
 }
 
-func (s *Server) walkFolders(folders map[string]bool) {
-	if len(folders) == 0 {
-		return
-	}
-	ids := make([]string, 0, len(folders))
-	for id := range folders {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	s.indexer.WalkNow(ids)
+// movedFile is one file a request moved (into the trash, or out of it on a restore), with its journal row.
+type movedFile struct {
+	folderID string
+	from, to string
+	row      int64
+	restore  bool // a restore: rolled back into the trash, the row put back as it was
+	hadRow   bool // restore: the row was the server's move (back to trashed); else there is none to put back
 }
 
-// moveUnit moves one shot's files of one directory into the trash (the journal row of each file first). It reports how
-// many files moved and why it stopped ("" when every file moved); a shot whose first file fails is left as it was.
-func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, itemID string, now time.Time, purgeAfter int64) (int, string) {
+// unmoveFiles rolls moved files back, newest first; it returns how many could not go back (they stay where they are,
+// their journal rows saying so).
+func (s *Server) unmoveFiles(ctx context.Context, open map[string]*compress.Folder, moved []movedFile) int {
+	left := 0
+	for i := len(moved) - 1; i >= 0; i-- {
+		m := moved[i]
+		f := open[m.folderID]
+		if f == nil {
+			left++
+			continue
+		}
+		if err := f.Move(m.to, m.from); err != nil {
+			s.log.Warn("trash: a file could not be put back", "err", errorClassOf(err))
+			left++
+			continue
+		}
+		var err error
+		switch {
+		case !m.restore:
+			err = s.store.DeleteTrashMove(ctx, m.row) // back at its path: the server's move never happened
+		case m.hadRow:
+			err = s.store.SetTrashMoveState(ctx, m.row, store.MoveTrashed)
+		}
+		if err != nil {
+			s.log.Error("trash: journal after a roll back", "err", err)
+		}
+		if m.restore {
+			s.forgetTrashSettled(m.folderID, m.from)
+		}
+	}
+	return left
+}
+
+// moveUnit moves one shot's files of one directory into the trash (the journal row of each file first). It returns the
+// files it moved and why it stopped ("" when every file moved); the caller rolls a failed shot back.
+func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, itemID string, now time.Time, purgeAfter int64, by string) ([]movedFile, string) {
 	listing, err := f.List(u.dir)
 	if err != nil {
-		return 0, trashUnreadable
+		return nil, trashUnreadable
 	}
 	mediaRels, sidecars := unitFiles(u, listing)
 	byRel := map[string]nasFileRef{}
@@ -477,9 +539,8 @@ func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, it
 	// The files must still be the indexed ones (size and mtime).
 	for _, rel := range mediaRels {
 		fi, err := f.Lstat(rel)
-		fr := byRel[rel]
-		if err != nil || !fi.Mode().IsRegular() || fi.Size() != fr.size || fr.mtimeMs != 0 && fi.ModTime().UnixMilli() != fr.mtimeMs {
-			return 0, trashChanged
+		if err != nil || !fi.Mode().IsRegular() || !s.stillIndexed(ctx, u.folderID, byRel[rel], fi.Size(), fi.ModTime()) {
+			return nil, trashChanged
 		}
 	}
 	all := append(append([]string{}, mediaRels...), sidecars...)
@@ -487,13 +548,13 @@ func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, it
 		if errors.Is(err, compress.ErrUnstableInode) {
 			s.compress.NoteMountProblem("unstable_inode")
 		}
-		return 0, trashNotWritable
+		return nil, trashNotWritable
 	}
 	targets, err := f.TrashUnitPaths(all, now)
 	if err != nil {
-		return 0, trashNotWritable
+		return nil, trashNotWritable
 	}
-	moved := 0
+	var moved []movedFile
 	for i, rel := range all {
 		fi, err := f.Lstat(rel)
 		if err != nil {
@@ -503,12 +564,15 @@ func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, it
 			continue // a sidecar gone meanwhile
 		}
 		id, err := s.store.PutTrashMove(ctx, store.TrashMove{FolderID: u.folderID, RelPath: rel, TrashPath: targets[i], State: store.MoveMoving,
-			Size: fi.Size(), MTime: fi.ModTime().UnixNano(), ItemID: itemID, MovedAt: now.UnixMilli(), PurgeAfter: purgeAfter})
+			Size: fi.Size(), MTime: fi.ModTime().UnixNano(), ItemID: itemID, MovedAt: now.UnixMilli(), PurgeAfter: purgeAfter, MovedBy: by})
 		if err != nil {
-			return moved, trashNotWritable
+			s.log.Error("trash: journal", "err", err)
+			return moved, "error"
 		}
 		if err := f.Move(rel, targets[i]); err != nil {
-			_ = s.store.DeleteTrashMove(ctx, id)
+			if derr := s.store.DeleteTrashMove(ctx, id); derr != nil {
+				s.log.Error("trash: journal", "err", derr) // settled after the batch (the file is still at its path)
+			}
 			s.log.Warn("trash: a file did not move", "err", errorClassOf(err))
 			switch {
 			case errors.Is(err, compress.ErrCrossDevice):
@@ -520,13 +584,31 @@ func (s *Server) moveUnit(ctx context.Context, f *compress.Folder, u nasUnit, it
 			}
 			return moved, trashNotWritable
 		}
-		_ = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
-		s.touchMu.Lock()
-		delete(s.trashSettled, u.folderID+"|"+targets[i]) // trashed again at a path restored a moment ago
-		s.touchMu.Unlock()
-		moved++
+		moved = append(moved, movedFile{folderID: u.folderID, from: rel, to: targets[i], row: id})
+		if err := s.store.SetTrashMoveState(ctx, id, store.MoveTrashed); err != nil {
+			// The file is in the trash; the row stays moving and the settle after the batch makes it trashed.
+			s.log.Error("trash: journal", "err", err)
+		}
+		s.forgetTrashSettled(u.folderID, targets[i]) // trashed again at a path restored a moment ago
 	}
 	return moved, ""
+}
+
+// stillIndexed reports whether a file on disk is the one the item names (size and mtime). The item may lag behind the
+// index while a walk rebuilds it (a walk the previous batch queued): then the folder's index row decides, when it is
+// the same content (the member's fingerprint) at the size and mtime on disk.
+func (s *Server) stillIndexed(ctx context.Context, folderID string, fr nasFileRef, size int64, mtime time.Time) bool {
+	if size == fr.size && (fr.mtimeMs == 0 || mtime.UnixMilli() == fr.mtimeMs) {
+		return true
+	}
+	row, err := s.store.NasFileAt(ctx, folderID, fr.rel)
+	return err == nil && !row.Removed && row.Fingerprint != "" && row.Fingerprint == fr.fp && row.Size == size && row.MTime == mtime.UnixNano()
+}
+
+func (s *Server) forgetTrashSettled(folderID, trash string) {
+	s.touchMu.Lock()
+	delete(s.trashSettled, folderID+"|"+trash)
+	s.touchMu.Unlock()
 }
 
 // trashUnitView is one unit of a trashed item in GET /web/trash: what Restore and Delete permanently act on.
@@ -542,10 +624,13 @@ type trashUnitView struct {
 	Size       int64  `json:"size"`
 	Held       bool   `json:"held,omitempty"`
 	PurgeAfter *int64 `json:"purgeAfter,omitempty"` // when the server's auto-empty takes it (what the server trashed)
-	ByServer   bool   `json:"byServer,omitempty"`   // the server moved it (the web gallery or a compression)
+	ByServer   bool   `json:"byServer,omitempty"`   // the server moved it (the web gallery, a device or a compression)
+	// By is who asked the server to move it (0.15.0): "admin" (the web gallery) or a device id; "" when the server did
+	// not (Hoard over SMB).
+	By string `json:"by,omitempty"`
 	// Group is what Empty confirms separately (review of #84): "web" (moved from the web gallery: its NAS moves and
-	// the server trash), "hoard" (trashed by Hoard on a device, before or after 0.14.0), "compressed" (an original of
-	// a compressed video, or an output a restore put in the trash).
+	// the server trash), "hoard" (trashed by Hoard on a device: through /v1 since 0.15.0, or over SMB), "compressed"
+	// (an original of a compressed video, or an output a restore put in the trash).
 	Group string `json:"group"`
 }
 
@@ -587,6 +672,7 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 				u.Held = u.Held || l.Held
 				if m, err := s.store.TrashMoveAt(ctx, l.FolderID, l.Trash); err == nil && m.Kind == store.MoveKindMove {
 					u.ByServer = true
+					u.By = m.MovedBy
 					pa := m.PurgeAfter
 					u.PurgeAfter = &pa
 				}
@@ -627,7 +713,7 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 		switch {
 		case d.CompressedTo != "":
 			u.Group = trashGroupCompressed
-		case u.ByServer:
+		case u.ByServer && u.By == "admin":
 			u.Group = trashGroupWeb
 		default:
 			u.Group = trashGroupHoard
@@ -642,6 +728,8 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 		// Emptied already: the item leaves at the backup pass that drops its sources.
 		if st, err := s.store.ServerTrashOf(ctx, row.ID); err != nil || st.PurgedAt != nil {
 			srv = nil
+		} else {
+			srv.By = st.TrashedBy
 		}
 	}
 	if srv != nil {
@@ -650,6 +738,9 @@ func (s *Server) trashUnitsOf(ctx context.Context, d items.Data, row store.ItemR
 			srv.Size += f.Size
 		}
 		srv.Group = trashGroupWeb
+		if srv.By != "admin" {
+			srv.Group = trashGroupHoard
+		}
 		out = append(out, *srv)
 	}
 	return out
@@ -722,31 +813,44 @@ func (s *Server) readUnits(w http.ResponseWriter, r *http.Request) ([]trashUnitR
 	return req.Units, true
 }
 
-func (s *Server) handleWebTrashRestore(w http.ResponseWriter, r *http.Request) {
+// handleTrashRestore serves POST /web/trash/restore and POST /v1/trash/restore.
+func (s *Server) handleTrashRestore(w http.ResponseWriter, r *http.Request) {
+	s.serveTrashAction(w, r, false)
+}
+
+// handleTrashDelete serves POST /web/trash/delete and POST /v1/trash/delete.
+func (s *Server) handleTrashDelete(w http.ResponseWriter, r *http.Request) {
+	s.serveTrashAction(w, r, true)
+}
+
+func (s *Server) serveTrashAction(w http.ResponseWriter, r *http.Request, purge bool) {
 	units, ok := s.readUnits(w, r)
 	if !ok {
 		return
 	}
 	s.trashMu.Lock()
 	defer s.trashMu.Unlock()
-	ans := s.trashAction(r.Context(), units, false)
-	writeJSON(w, http.StatusOK, ans)
-}
-
-func (s *Server) handleWebTrashDelete(w http.ResponseWriter, r *http.Request) {
-	units, ok := s.readUnits(w, r)
-	if !ok {
-		return
+	ans := s.trashAction(r.Context(), units, purge)
+	what := "restored"
+	if purge {
+		what = "deleted"
 	}
-	s.trashMu.Lock()
-	defer s.trashMu.Unlock()
-	ans := s.trashAction(r.Context(), units, true)
+	s.log.Info("trash: "+what, "by", trashActor(r), "units", len(ans.Done), "refused", len(ans.Refused), "reasons", refusalCounts(ans.Refused))
 	writeJSON(w, http.StatusOK, ans)
 }
 
-// handleWebTrashEmpty deletes everything in the trash that is not held, after the page's confirmation: the count and
+// refusalCounts is the refusal reasons of an answer as one log value ("not_writable=2 path_taken=1").
+func refusalCounts(refused map[string]string) string {
+	counts := map[string]int{}
+	for _, why := range refused {
+		counts[why]++
+	}
+	return reasonCounts(counts)
+}
+
+// handleTrashEmpty (POST /web/trash/empty, POST /v1/trash/empty) deletes everything in the trash that is not held, after the page's confirmation: the count and
 // size it showed must still be the trash's (else 409 confirm, with the current figures).
-func (s *Server) handleWebTrashEmpty(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Confirm *struct {
 			Count int   `json:"count"`
@@ -796,7 +900,8 @@ func (s *Server) handleWebTrashEmpty(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.log.Info("trash: emptied from the web gallery", "units", len(ans.Done), "refused", len(ans.Refused))
+	s.log.Info("trash: emptied", "by", trashActor(r), "groups", strings.Join(sortedKeys(want), ","), "units", len(ans.Done),
+		"refused", len(ans.Refused), "reasons", refusalCounts(ans.Refused))
 	writeJSON(w, http.StatusOK, ans)
 }
 
@@ -905,8 +1010,9 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 			continue
 		}
 		// A compressed original (or a restored output in the trash) goes through compression's journal: only the
-		// server's compression empties it, and its restore swaps the output back (ADR 0025).
-		if id, ok := s.compressedTrashItem(ctx, row, d); ok {
+		// server's compression empties it, and its restore swaps the output back (ADR 0025). The server trash unit of
+		// the same item is the server trash's, never compression's (0.15.0: an item in both).
+		if id, ok := s.compressedTrashItem(ctx, row, d); ok && u.Key != "server" {
 			compressIDs = append(compressIDs, id)
 			compressRefs[id] = append(compressRefs[id], u)
 			continue
@@ -970,12 +1076,15 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 	}
 	if len(compressIDs) > 0 {
 		var answers []compress.RestoreAnswer
+		var kept map[int64][]string
 		if purge {
-			answers, _ = s.compress.PurgeItems(ctx, compressIDs)
+			answers, kept = s.compress.PurgeItems(ctx, compressIDs)
 		} else {
 			answers = s.compress.RestoreItems(ctx, compressIDs)
 		}
+		answered := map[int64]bool{}
 		for _, a := range answers {
+			answered[a.ID] = true
 			for _, u := range compressRefs[a.ID] {
 				if a.Error != "" {
 					ans.Refused[refKey(u)] = a.Error
@@ -983,8 +1092,21 @@ func (s *Server) trashAction(ctx context.Context, units []trashUnitRef, purge bo
 					ans.Done = append(ans.Done, u)
 				}
 			}
+			for _, k := range kept[a.ID] {
+				if !contains(ans.KeptBy, k) {
+					ans.KeptBy = append(ans.KeptBy, k)
+				}
+			}
+		}
+		for id, refs := range compressRefs { // never silently dropped: an id compression did not answer
+			if !answered[id] {
+				for _, u := range refs {
+					ans.Refused[refKey(u)] = "error"
+				}
+			}
 		}
 	}
+	s.settleTrashMoves(ctx) // a row this batch could not settle (the index busy) is settled now
 	s.walkFolders(folders)
 	if len(ans.Names) == 0 {
 		ans.Names = nil
@@ -1076,12 +1198,20 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		}
 	}
 	trashRoot := dayDir[:strings.LastIndex(dayDir, "/")]
+	var restored []movedFile // a restore that fails half-way puts these back into the trash (0.15.0)
+	open := map[string]*compress.Folder{folderID: f}
+	undo := func() {
+		if left := s.unmoveFiles(ctx, open, restored); left > 0 {
+			s.log.Warn("trash: a restore stopped half-way and some files could not go back", "files", left)
+		}
+	}
 	for _, p := range files {
 		fi, err := f.Lstat(p.trash)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue // gone already (emptied elsewhere): the walk follows
 		}
 		if err != nil {
+			undo()
 			return trashNotWritable, ""
 		}
 		state := store.MoveRestoring
@@ -1096,6 +1226,8 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		id, err := s.store.PutTrashMove(ctx, store.TrashMove{FolderID: folderID, RelPath: p.origin, TrashPath: p.trash, State: state,
 			Size: fi.Size(), MTime: fi.ModTime().UnixNano(), MovedAt: now, PurgeAfter: now, Kind: store.MoveKindOp})
 		if err != nil {
+			s.log.Error("trash: journal", "err", err)
+			undo()
 			return trashNotWritable, ""
 		}
 		if purge {
@@ -1106,19 +1238,48 @@ func (s *Server) nasTrashUnit(ctx context.Context, f *compress.Folder, d items.D
 		if err != nil {
 			// Put the row back exactly as it was: the server's move trashed again with its own purge_after (the upsert
 			// kept it), a row made for this operation forgotten.
+			var jerr error
 			if hadRow {
-				_ = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
+				jerr = s.store.SetTrashMoveState(ctx, id, store.MoveTrashed)
 			} else {
-				_ = s.store.DeleteTrashMove(ctx, id)
+				jerr = s.store.DeleteTrashMove(ctx, id)
 			}
+			if jerr != nil {
+				s.log.Error("trash: journal", "err", jerr) // settled after the batch
+			}
+			undo()
 			if errors.Is(err, compress.ErrTaken) {
 				return trashPathTaken, p.origin
 			}
 			s.log.Warn("trash: a file was not restored or deleted", "err", errorClassOf(err))
 			return trashNotWritable, ""
 		}
-		_ = s.store.DeleteTrashMove(ctx, id)
+		// The server's own row is kept until the whole shot is restored (a later failure puts the file back with it);
+		// an operation's row goes at once (Hoard's file has no row, in the trash or not).
+		if purge || !hadRow {
+			if err := s.store.DeleteTrashMove(ctx, id); err != nil {
+				s.log.Error("trash: journal", "err", err) // settled after the batch (the file left the trash)
+			}
+		}
+		if !purge {
+			m := movedFile{folderID: folderID, from: p.trash, to: p.origin, restore: true, hadRow: hadRow}
+			if hadRow {
+				m.row = id
+			}
+			restored = append(restored, m)
+		}
 		s.noteTrashSettled(folderID, p.trash)
+	}
+	if !purge {
+		for _, m := range restored {
+			if m.row != 0 {
+				if err := s.store.DeleteTrashMove(ctx, m.row); err != nil {
+					s.log.Error("trash: journal", "err", err)
+				}
+			}
+		}
+	}
+	for _, p := range files {
 		f.RemoveEmptyDirs(path.Dir(p.trash), trashRoot)
 	}
 	return "", ""

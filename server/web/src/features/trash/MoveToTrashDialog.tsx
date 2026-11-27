@@ -1,4 +1,4 @@
-import { TrashIcon, WarningIcon } from "@phosphor-icons/react"
+import { ArrowClockwiseIcon, TrashIcon, WarningIcon } from "@phosphor-icons/react"
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
@@ -9,14 +9,15 @@ import { unavailableKey } from "@/lib/compress"
 import { formatBytes, formatNumber } from "@/lib/format"
 import { navigate } from "@/lib/router"
 import { hideItems } from "@/lib/store"
-import { type MovePlan, moveToTrash, planMove } from "@/lib/trash"
+import { type MovePlan, type MoveResult, moveToTrash, planMove, reasonsByCount } from "@/lib/trash"
 import { Progress } from "../compress/parts"
 
 /**
  * Move to trash on a selection (ADR 0023 Amendment (0.14.0)): a dry run first, in batches of 500 (Select all of
  * thousands), that says what goes where (NAS shots into the .hoard-trash Hoard uses, the others into the server
  * trash), what is skipped and why, and warns before an only copy or a photo with Reveal's edits goes; then the move,
- * batch after batch, with progress. Moved items leave the grid at once.
+ * batch after batch, with progress. Moved items leave the grid at once. When some fail (0.15.0), the dialog stays open
+ * with how many failed for each reason and Retry the failed ones, which sends exactly those again.
  */
 export function MoveToTrashDialog({ ids, onClose, onMoved }: { ids: string[] | null; onClose: () => void; onMoved: (ids: string[]) => void }) {
   return (
@@ -33,6 +34,8 @@ function Body({ ids, onClose, onMoved }: { ids: string[]; onClose: () => void; o
   const [failed, setFailed] = useState(false)
   const [progress, setProgress] = useState(0)
   const [moving, setMoving] = useState<number | null>(null)
+  // After a move with failures: what failed (per reason and per item), and how many moved so far.
+  const [result, setResult] = useState<{ failed: MoveResult["failed"]; ids: string[]; moved: number } | null>(null)
 
   useEffect(() => {
     let stop = false
@@ -44,26 +47,29 @@ function Body({ ids, onClose, onMoved }: { ids: string[]; onClose: () => void; o
     }
   }, [ids])
 
-  const move = async () => {
+  const move = async (which: string[] = ids) => {
     setMoving(0)
     try {
-      const res = await moveToTrash(ids, (f) => setMoving(f))
+      const res = await moveToTrash(which, (f) => setMoving(f))
       if (res.moved.length) {
         hideItems(res.moved)
         onMoved(res.moved)
       }
       const skipped = Object.values(res.skipped).reduce((s, n) => s + n, 0)
-      const failedN = Object.values(res.failed).reduce((s, n) => s + n, 0)
+      const failedIds = Object.keys(res.failedIds)
+      const moved = (result?.moved ?? 0) + res.moved.length
       if (res.refused) toast.error(t("trash.move.refused", { reason: t("trash.reason.no_write_mount") }))
-      else if (failedN) {
-        const [why] = Object.keys(res.failed)
-        toast.error(t("trash.move.someFailed", { count: failedN, reason: t(`trash.reason.${why}`, { defaultValue: why }) }))
-      }
       if (res.moved.length) {
         toast.success(t("trash.move.done", { count: res.moved.length, formatted: formatNumber(res.moved.length, lang) }), {
           description: skipped ? t("trash.move.skippedNote", { count: skipped }) : undefined,
           action: { label: t("trash.open"), onClick: () => navigate("/trash") },
         })
+      }
+      if (failedIds.length && !res.refused) {
+        // Stay open: say why, per reason, and offer to send the failed ones again.
+        setResult({ failed: res.failed, ids: failedIds, moved })
+        setMoving(null)
+        return
       }
       onClose()
     } catch {
@@ -117,20 +123,41 @@ function Body({ ids, onClose, onMoved }: { ids: string[]; onClose: () => void; o
           <p className="text-sm text-muted-foreground">{t("trash.move.restoreNote")}</p>
         </div>
       )}
+      {result && moving === null && (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5" role="alert" data-testid="trash-move-failed">
+          <p className="text-sm font-medium">
+            {t("trash.move.failedTitle", { count: result.ids.length, formatted: formatNumber(result.ids.length, lang), moved: formatNumber(result.moved, lang) })}
+          </p>
+          <ul className="list-disc pl-5 text-sm text-muted-foreground">
+            {reasonsByCount(result.failed).map(([why, n]) => (
+              <li key={why} data-reason={why}>
+                {t("trash.move.someFailed", { count: n, reason: t(`trash.reason.${why}`, { defaultValue: why }) })}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {moving !== null && <Progress value={moving} label={t("trash.move.moving")} />}
 
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>
           {t("compress.close")}
         </Button>
-        <Button
-          disabled={!plan || plan.shots === 0 || moving !== null || (!!plan.nasBlocked && plan.nasShots > 0)}
-          onClick={() => void move()}
-          data-testid="trash-move-confirm"
-        >
-          {moving !== null ? <Spinner data-icon="inline-start" /> : <TrashIcon data-icon="inline-start" />}
-          {t("trash.move.action")}
-        </Button>
+        {result ? (
+          <Button disabled={moving !== null} onClick={() => void move(result.ids)} data-testid="trash-move-retry">
+            {moving !== null ? <Spinner data-icon="inline-start" /> : <ArrowClockwiseIcon data-icon="inline-start" />}
+            {t("trash.move.retry", { count: result.ids.length })}
+          </Button>
+        ) : (
+          <Button
+            disabled={!plan || plan.shots === 0 || moving !== null || (!!plan.nasBlocked && plan.nasShots > 0)}
+            onClick={() => void move()}
+            data-testid="trash-move-confirm"
+          >
+            {moving !== null ? <Spinner data-icon="inline-start" /> : <TrashIcon data-icon="inline-start" />}
+            {t("trash.move.action")}
+          </Button>
+        )}
       </DialogFooter>
     </DialogContent>
   )

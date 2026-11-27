@@ -1,7 +1,8 @@
 # ADR 0023: Trash for rejects
 
 - **Date**: 2026-11-15
-- **Status**: Accepted 2026-11-15 (Hoard 2.3.0; needs hoard-server 0.11.0, feature `trash`)
+- **Status**: Accepted 2026-11-15 (Hoard 2.3.0; needs hoard-server 0.11.0, feature `trash`); amended for hoard-server
+  0.14.0 (the web gallery's trash) and 0.15.0 (the trash for paired devices, feature `trash-actions`)
 - **Builds on**: ADR 0005 (locations, `HoardFs`), 0007 (transfers), 0008 (culling, "Delete rejects"), 0011 (sidecars),
   0014 (items, the NAS walk), 0016 (culling sync), 0020 (edited previews, "Lifecycle"), 0021 (Gallery), 0022 (SMB ↔
   NAS mappings).
@@ -719,3 +720,92 @@ too, with its own clock guard: the shorter setting wins, as between two devices.
    its `409 confirm` carries each group's `count` and `size`. The gallery's Empty dialog lists the groups with their
    counts and sizes, each with a checkbox (all on); a group left out stays (`TestWebTrashEmptyByGroup`, e2e
    `empty-groups-*` screenshots).
+
+## Amendment (0.15.0): the trash for paired devices
+
+The owner's decision (2026-11-27): **Hoard does not use SMB to trash, restore or empty photos the server indexes**; the
+server does it, for the web gallery and for devices alike. hoard-server 0.15.0 opens the web gallery's trash
+(Amendment (0.14.0)) to paired devices under `/v1`, with the device key: **one implementation** (the same planning, shot
+rule, trash root, `trash_moves` journal, server trash, held/busy/on_phone rules and answers; the `/web/trash/*` handlers
+and the `/v1/trash/*` ones call the same functions). Schema 14 (`0014_trash_by.sql`: `trash_moves.moved_by`). Tests:
+`trash_v1_test.go` (every web case run through both APIs), `trash_fixes_test.go`.
+
+### Routes (`/v1`, device key; additions only)
+
+| Route | What it does |
+| --- | --- |
+| `GET /v1/trash?cursor=` | The trash, newest first, 200 items a page: the entries of `GET /web/trash` (`id`, `kind`, `name`, `size`, `trashedAt`, `places`, `held`, `compressedTo`, `compression`, `units`, `serverTrash`, `edits`, `live`), `cursor`, `hasMore`; the first page (no cursor) also carries `groups`: `{"web" \| "hoard" \| "compressed": {"count", "size"}}`, the figures `POST /v1/trash/empty` confirms (units not held). Includes what Hoard trashed over SMB before (any `.hoard-trash` the walk indexed). |
+| `POST /v1/trash/move` `{"itemIds", "dryRun"?}` (1–500) | As `POST /web/trash/move`: the dry run first (`nasShots`, `nasFiles`, `serverItems`, `size`, `warnings.onlyCopy`, `warnings.edits`, `nasBlocked`), then the move; per item `moved`, `skipped` (`not_found`, `trashed`, `held`, `busy`, `on_phone`, `nothing`) or `failed` (`changed`, `path_taken`, `not_writable`, `not_same_device`, `unreadable`, `partial`, `error`); `counts` (`moved`, `skipped.<reason>`, `failed.<reason>`). With NAS shots and the write mount unusable: `503 unavailable`, `details.reason` (`no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`), nothing moved. |
+| `POST /v1/trash/restore` `{"units": [{"itemId", "key"}]}` (1–500) | As the web: `{"done", "refused": {"<itemId>\|<key>": reason}, "names", "size"}`. |
+| `POST /v1/trash/delete` `{"units"}` (1–500) | As the web, plus `keptBy`. |
+| `POST /v1/trash/empty` `{"confirm": {"count", "size"}, "groups"?}` | As the web: every unit not held of the groups (absent: all), only when `count` and `size` are still theirs; else `409 conflict`, `details`: `reason` `confirm`, `count`, `size`, `groups`. |
+
+`GET /v1/server` `features` gains **`trash-actions`** (the existing `trash`, 0.11.0, stays the `include=trash` reads).
+Any paired device that is not revoked may read and write (the owner's devices, as for compression); every write is
+logged with the device id. The per-device request budget applies as to any `/v1` route.
+
+### Units: who moved them, and the groups
+
+A unit (Amendment (0.14.0)) gains **`by`**: `"admin"` (moved from the web gallery), a **device id** (moved through
+`/v1/trash/move` by that device), or absent (the server did not move it: Hoard's own moves over SMB). `trash_moves.moved_by`
+records it for NAS moves (rows before 0.15.0: `admin`, the only mover then); `server_trash.trashed_by` for the server
+trash (already there). The **group** follows `by`: `web` = by `admin`; `hoard` = by a device (through `/v1`, now) or
+not moved by the server (over SMB, before); `compressed` unchanged. `byServer` and `purgeAfter` are unchanged: what the
+server moved, whoever asked, is what its auto-empty takes.
+
+### Who purges by time
+
+The server's auto-empty (after `compress.trashDays`) stays the **only time-based purge** of what the server moved,
+whoever asked (`byServer` units, the server trash). No `/v1` route purges by age: a device deletes only the units it
+names (`delete`, or `empty` with the confirmed figures). The server still never auto-empties a file it did not move
+(Hoard's SMB moves before 0.15.0, `by` absent); a device that wants those gone deletes them explicitly.
+
+### Unchanged for Reveal and older Hoards
+
+Nothing a client already uses changes: a device-moved shot is a trashed file and a trashed item in the feed, as one
+moved by the web gallery; older Hoards keep their SMB trash (their files are `by`-less `hoard` units).
+
+### Fixes from the owner's first run and the #84 reviews (0.15.0)
+
+1. **Batches under a concurrent walk.** Each batch queued a walk of the folders it touched; on a large folder the walk's
+   index transaction held SQLite's write lock past the 10 s busy timeout while the next batch wrote its journal: a
+   failed `PutTrashMove` was answered `not_writable` (a shot that never moved), and `SetTrashMoveState`'s error was
+   ignored, leaving rows in `moving` until the 10-minute housekeeping. Now:
+   - every journal write (`PutTrashMove`, `SetTrashMoveState`, `DeleteTrashMove`), `AddServerTrash`, a move's planning
+     reads and the gallery session's touch (a write on every web request) are **retried on `SQLITE_BUSY`/`LOCKED`**
+     with back-off (25 ms doubling to 1 s, at most a minute: `store.RetryBusy`); a journal write that still fails is
+     `failed` **`error`** (retry-worthy), never `not_writable`;
+   - **no error is ignored**: a row a batch could not settle is settled **right after the batch** (the same settle as at
+     start: it looks at both paths), still under the trash lock;
+   - the **walk is debounced**: the folders a request touched are walked once the trash has been quiet for 5 s (each
+     request pushes it back, at most a minute after the first), so the 500-item batches of one selection share one walk
+     after the last;
+   - the **`changed` check** compares the file with the item and, when the item lags behind the index (a walk
+     re-indexed the file but has not rebuilt the item yet), with the folder's current index row: the same content (the
+     member's fingerprint) at the size and mtime on disk is not a change.
+   Reproduced by `TestTrashBatchesUnderConcurrentWalk` (a 100 ms busy timeout, a writer holding the lock 250 ms at a
+   time and walks running between batches, through both APIs): without the retries it fails (`failed: error`, `500`).
+2. **Failure reasons visible.** The batch log line carries `by` and `reasons` (`failed.not_writable=3 skipped.held=1`);
+   the answer's `counts` already had them. The gallery's Move to trash keeps its dialog open when some fail, lists how
+   many failed for each reason, and offers **Retry the failed ones** (exactly those item ids, in batches).
+3. **The Trash page's polling.** It reloaded the whole trash (every page of `GET /web/trash`) on every compression poll
+   (5 s) and on a 5 s timer of its own, with no guard against overlapping loads: about 15 requests a second on the
+   owner's trash. It now loads on open, after its own actions and on **Refresh**, one load at a time (a load asked
+   during one is folded into a single load after it). e2e: "the Trash page loads once, then only on Refresh".
+4. **#84 follow-ups.**
+   - A **shot that fails half-way is rolled back**: a move puts the moved files back at their paths (their rows go);
+     a restore puts the restored files back into the trash (a server move's row back to `trashed` with its own
+     `purge_after`). `partial` is answered only when a file cannot go back (it stays where it is, its row saying so).
+     Deleting cannot be undone: a delete that fails half-way leaves the rest in the trash, as before.
+   - **`PutTrashMove` over a stale row** (its file left the trash without the server: Hoard emptied it, then a new
+     move takes the same path) replaces it whole: size, mtime, item, mover, times, kind and `purge_after` are the new
+     move's. A restore or delete over a row still changes only its state and path (#84's rule).
+   - **`AddServerTrash` in the same step as the NAS moves**: per item, right after its NAS files moved; if it fails, the
+     NAS files go back and the item is `failed` `error` (an item is trashed whole or not at all).
+   - **Compression's purge answers shown**: what kept some bytes (`alsoKeptBy`) joins the answer's `keptBy`, and an
+     item compression did not answer is refused `error` (never dropped).
+   - **The server trash and compression**: a unit is dispatched by its key: `server` always to the server trash,
+     `compressed` and a compressed original's NAS units to compression's journals (an item in the server trash whose
+     data also names a compression went to compression's restore or purge, which refused or acted on the wrong side).
+     A server-trash purge whose content a compression still holds reports `keptBy` `compress`: the bytes stay until
+     that compression is emptied.

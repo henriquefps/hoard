@@ -44,7 +44,20 @@ func (s *Store) Now() time.Time {
 func (s *Store) SetNow(f func() time.Time) { s.clock.Store(&f) }
 
 // Open opens (creating it with mode 0600 when missing) and migrates the database at path.
-func Open(path string) (*Store, error) {
+func Open(path string) (*Store, error) { return OpenWith(path, Options{}) }
+
+// Options change how the database is opened.
+type Options struct {
+	// BusyTimeout is how long a statement waits for another connection's write lock before SQLITE_BUSY (default 10 s;
+	// tests shorten it to reproduce a long writer).
+	BusyTimeout time.Duration
+}
+
+// OpenWith is Open with options.
+func OpenWith(path string, o Options) (*Store, error) {
+	if o.BusyTimeout <= 0 {
+		o.BusyTimeout = 10 * time.Second
+	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, err
@@ -55,7 +68,7 @@ func Open(path string) (*Store, error) {
 	// read_only: true and no writable /tmp, where SQLite fails with SQLITE_IOERR_GETTEMPPATH (6410) as soon as a
 	// migration rebuilds an index (hoard-server 0.11.0). With a library of tens of thousands of photos the database
 	// is tens of MB, so the sort fits in memory well within the container's limit.
-	for _, p := range []string{"busy_timeout(10000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(FULL)", "temp_store(MEMORY)"} {
+	for _, p := range []string{fmt.Sprintf("busy_timeout(%d)", o.BusyTimeout.Milliseconds()), "journal_mode(WAL)", "foreign_keys(1)", "synchronous(FULL)", "temp_store(MEMORY)"} {
 		q.Add("_pragma", p)
 	}
 	q.Set("_txlock", "immediate")
@@ -141,6 +154,39 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx) error) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// Busy reports whether err is SQLite's SQLITE_BUSY or SQLITE_LOCKED (another connection held the write lock past the
+// busy timeout): the statement did nothing and may be tried again.
+func Busy(err error) bool {
+	var c interface{ Code() int }
+	if !errors.As(err, &c) {
+		return false
+	}
+	code := c.Code() & 0xff
+	return code == 5 || code == 6 // SQLITE_BUSY, SQLITE_LOCKED
+}
+
+// RetryBusy runs fn again with back-off while it fails with Busy (a NAS walk's long write, ADR 0023 Amendment (0.15.0)):
+// 25 ms doubling to 1 s, for at most a minute or until ctx ends. fn must be safe to run again (it did nothing).
+func RetryBusy(ctx context.Context, fn func() error) error { return retryBusy(ctx, fn) }
+
+func retryBusy(ctx context.Context, fn func() error) error {
+	wait, deadline := 25*time.Millisecond, time.Now().Add(time.Minute)
+	for {
+		err := fn()
+		if !Busy(err) || time.Now().After(deadline) {
+			return err
+		}
+		t := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return err
+		case <-t.C:
+		}
+		wait = min(2*wait, time.Second)
+	}
 }
 
 func next(ctx context.Context, tx *sql.Tx, counter string) (int64, error) {

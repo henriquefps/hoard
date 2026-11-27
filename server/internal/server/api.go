@@ -86,6 +86,12 @@ func (s *Server) routesAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/replaced", s.device(s.handleCompressPhoneReport(true)))
 	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/restored", s.device(s.handleCompressPhoneReport(false)))
 	mux.HandleFunc("POST /v1/compress/items/{compressItemId}/abandon", s.device(s.handleCompressAbandon))
+	// The trash for paired devices (ADR 0023 Amendment (0.15.0), hoard-server 0.15.0): the web gallery's operations.
+	mux.HandleFunc("GET /v1/trash", s.device(s.handleTrashList))
+	mux.HandleFunc("POST /v1/trash/move", s.device(s.handleTrashMove))
+	mux.HandleFunc("POST /v1/trash/restore", s.device(s.handleTrashRestore))
+	mux.HandleFunc("POST /v1/trash/delete", s.device(s.handleTrashDelete))
+	mux.HandleFunc("POST /v1/trash/empty", s.device(s.handleTrashEmpty))
 }
 
 // device authenticates a device key and applies the per-device rate limit.
@@ -200,7 +206,7 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 // features lists the additions a client may use: "items" (ADR 0014, hoard-server 0.5.0), "previews" (ADR 0015, 0.6.0,
 // when enabled), "culling" and "device-identity" (ADRs 0016, 0017, 0.7.0), "edits" (ADR 0020, 0.9.0, with previews), "items-by-path" (ADR 0014, 0.10.0),
 // "trash" (ADR 0023, 0.11.0), "backup" (ADR 0024, 0.12.0), "compress" (ADR 0025, 0.13.0, when a hevc_nvenc test encode
-// passed).
+// passed), "trash-actions" (ADR 0023 Amendment (0.15.0), 0.15.0: /v1/trash).
 func (s *Server) features() []string {
 	f := []string{"items", "items-by-path"}
 	if s.prev != nil {
@@ -210,7 +216,7 @@ func (s *Server) features() []string {
 	if s.prev != nil {
 		f = append(f, "edits")
 	}
-	f = append(f, "trash", "backup")
+	f = append(f, "trash", "backup", "trash-actions")
 	if feature, _ := s.compressFeature(); s.compress != nil && feature { // a GPU and a usable target (ADR 0025 Amendment (S2))
 		f = append(f, "compress")
 	}

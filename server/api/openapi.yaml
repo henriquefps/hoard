@@ -36,6 +36,8 @@ tags:
     description: >-
       Video compression (ADR 0025, hoard-server 0.13.0): targets nas (the library), phone (the caller's phone files)
       and backup (phone backups no longer on their phone).
+  - name: trash
+    description: The trash for paired devices (ADR 0023 Amendment (0.15.0), hoard-server 0.15.0).
   - name: web
     description: The web gallery's API (ADR 0018), outside /v1.
 paths:
@@ -2240,6 +2242,148 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { description: "`conflict` reason `state`: the item is not waiting for the phone" }
         "422": { $ref: "#/components/responses/Unprocessable" }
+  /v1/trash:
+    get:
+      tags: [trash]
+      summary: "The trash, with what Restore and Delete act on (hoard-server 0.15.0, ADR 0023 Amendment (0.15.0))"
+      description: |
+        Every trashed item, newest first (200 a page), as the web gallery's Trash lists it: NAS shots in any
+        `.hoard-trash` (moved by the server for the web gallery or a device, or by Hoard over SMB before 0.15.0), items
+        in the server trash (phone backups, uploads) and compressed originals. Each item lists its `units`, what
+        `POST /v1/trash/restore` and `…/delete` take. The first page (no cursor) also carries `groups`: the number of
+        shots and the size of each group's units that are not held, the figures `POST /v1/trash/empty` confirms.
+        A live item is listed (`live: true`) only for a held trash entry (a compression replace in progress).
+      parameters:
+        - { name: cursor, in: query, schema: { type: string }, description: "`cursor` of the previous page" }
+      responses:
+        "200":
+          description: A page of the trash
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, cursor, hasMore]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/TrashEntry" } }
+                  cursor: { type: [string, "null"] }
+                  hasMore: { type: boolean }
+                  groups: { $ref: "#/components/schemas/TrashGroups" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/trash/move:
+    post:
+      tags: [trash]
+      summary: "Move items to the trash (0.15.0)"
+      description: |
+        The web gallery's Move to trash for a device (ADR 0023 Amendment (0.14.0), "What moves" and "Where it goes"):
+        each item's shot. NAS files move through the server's write mount into `<trash root>/.hoard-trash/<yyyy-MM-dd(-n)>/…`
+        (the layout Hoard reads); an item with no NAS file goes to the server trash. Send `dryRun: true` first: the
+        counts, the size, the warnings (`onlyCopy`: emptying the trash deletes it for good; `edits`: Reveal's edits go
+        at the purge) and `nasBlocked` (the write mount's problem: NAS shots cannot move now). Items whose file a
+        compression holds (`held`) or is compressing (`busy`), and items still on a phone (`on_phone`: delete them on
+        the phone) are skipped. A shot that fails half-way is moved back (`failed`, its reason); only when that is
+        impossible is it `partial` (the moved files stay in the trash). The touched folders are walked a few seconds
+        after the last batch, so the feed shows the items trashed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemIds]
+              properties:
+                itemIds: { type: array, minItems: 1, maxItems: 500, items: { type: string } }
+                dryRun: { type: boolean }
+      responses:
+        "200":
+          description: What happened to each item (or would, on a dry run)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashMoveAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503":
+          description: >-
+            `unavailable`: the request has NAS shots and the write mount cannot be used (`details.reason`:
+            `no_write_mount`, `write_mount_mismatch`, `write_mount_read_only`, `unstable_inode`); nothing moved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /v1/trash/restore:
+    post:
+      tags: [trash]
+      summary: "Put trashed units back where they were (0.15.0)"
+      description: >-
+        Each unit's files go back to their original paths (missing directories are made); a unit is refused, never
+        renamed, when a file is at an original path (`path_taken`, `names` gives it). A server trash unit makes the
+        item live again (same id, edits and culling). A shot that fails half-way is put back into the trash as it was.
+      requestBody: { $ref: "#/components/requestBodies/TrashUnits" }
+      responses:
+        "200":
+          description: What was restored, and why the others were not
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashActionAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/trash/delete:
+    post:
+      tags: [trash]
+      summary: "Delete trashed units for good (0.15.0)"
+      description: >-
+        NAS files are deleted; a server trash unit drops the backup entries no phone has and every content nothing else
+        names (`keptBy`: what kept some bytes); a compressed original goes through compression's purge. Held units are
+        refused (`held`).
+      requestBody: { $ref: "#/components/requestBodies/TrashUnits" }
+      responses:
+        "200":
+          description: What was deleted, and why the others were not
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashActionAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /v1/trash/empty:
+    post:
+      tags: [trash]
+      summary: "Empty the trash, by group, after confirming its figures (0.15.0)"
+      description: >-
+        Deletes every unit that is not held in the given groups (absent: all), only when `confirm` is still the number
+        of shots and the size of those units (as `GET /v1/trash`'s `groups` gave them); else `409 conflict` with the
+        current figures. The server's auto-empty (after `compress.trashDays`) is the only purge by age.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              properties:
+                confirm:
+                  type: object
+                  required: [count, size]
+                  properties:
+                    count: { type: integer }
+                    size: { type: integer, format: int64 }
+                groups: { type: array, items: { type: string, enum: [web, hoard, compressed] } }
+      responses:
+        "200":
+          description: What was deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TrashActionAnswer" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
+          description: "`conflict` reason `confirm`: `details` carries `count`, `size` and `groups` (each group's `count` and `size`) as they are now"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 components:
   securitySchemes:
     deviceKey:
@@ -2394,7 +2538,125 @@ components:
                     state: { type: string }
                     error: { type: string }
                     alsoKeptBy: { type: array, items: { type: string, enum: [claim, mirror, record, compress] }, description: "purge of a phone or backup item: why the bytes stay" }
+  requestBodies:
+    TrashUnits:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [units]
+            properties:
+              units: { type: array, minItems: 1, maxItems: 500, items: { $ref: "#/components/schemas/TrashUnitRef" } }
   schemas:
+    TrashGroups:
+      type: object
+      description: "Per group (`web`: moved from the web gallery; `hoard`: by Hoard, through /v1 or over SMB; `compressed`: originals of compressed videos), the shots and size of its units that are not held"
+      additionalProperties:
+        type: object
+        required: [count, size]
+        properties:
+          count: { type: integer }
+          size: { type: integer, format: int64 }
+    TrashUnit:
+      type: object
+      description: "What Restore and Delete act on: an item's files in one day folder of one NAS folder (`key` `nas:<folderId>:<P>/.hoard-trash/<day>`), its server trash (`server`), or a phone or backup compression's kept side (`compressed`)"
+      required: [key, source, day, dir, files, size, group]
+      properties:
+        key: { type: string }
+        source: { type: string, enum: [nas, server] }
+        day: { type: string, description: "yyyy-MM-dd: the day folder's date, or when the server trashed it" }
+        folderId: { type: string }
+        folderName: { type: string }
+        dir: { type: string, description: "The original directory (\"\" = the folder's root); server: the phone path's directory" }
+        device: { type: string, description: "server units: the phone's name" }
+        files: { type: integer }
+        size: { type: integer, format: int64 }
+        held: { type: boolean, description: "A compression journal holds it: nothing restores, deletes or empties it" }
+        purgeAfter: { type: integer, format: int64, description: "When the server's auto-empty takes it (Unix ms): only what the server moved" }
+        byServer: { type: boolean, description: "The server moved it (for the web gallery, a device, or a compression)" }
+        by: { type: string, description: "0.15.0: who asked the server to move it, `admin` (the web gallery) or a device id; absent when the server did not move it (Hoard over SMB)" }
+        group: { type: string, enum: [web, hoard, compressed] }
+    TrashEntry:
+      type: object
+      required: [id, kind, name, size, places, units]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        name: { type: string }
+        size: { type: integer, format: int64 }
+        trashedAt: { type: integer, format: int64 }
+        places:
+          type: array
+          items:
+            type: object
+            properties:
+              source: { type: string }
+              folder: { type: string }
+              path: { type: string }
+              trash: { type: string }
+              device: { type: string }
+              held: { type: boolean }
+        held: { type: boolean }
+        compressedTo: { type: string }
+        compression: { type: object, description: "A compressed original's compression (ADR 0025): id, jobId, state, role, size, outSize, purgeAfter, reason" }
+        durationMs: { type: integer, format: int64 }
+        live: { type: boolean }
+        units: { type: array, items: { $ref: "#/components/schemas/TrashUnit" } }
+        serverTrash:
+          type: object
+          properties:
+            since: { type: integer, format: int64 }
+            purgeAfter: { type: integer, format: int64 }
+        edits: { type: boolean, description: "Reveal edited it: the edits come back on a restore and go at the purge" }
+    TrashMoveAnswer:
+      type: object
+      required: [moved, skipped, failed, counts, nasShots, nasFiles, serverItems, size]
+      properties:
+        moved: { type: array, items: { type: string } }
+        skipped:
+          type: object
+          description: "item id → `not_found`, `trashed`, `held`, `busy`, `on_phone`, `nothing`"
+          additionalProperties: { type: string }
+        failed:
+          type: object
+          description: "item id → `changed`, `path_taken`, `not_writable`, `not_same_device`, `unreadable`, `partial`, `error`; worth retrying: `not_writable`, `error`"
+          additionalProperties: { type: string }
+        counts:
+          type: object
+          description: "`moved`, `skipped.<reason>`, `failed.<reason>`"
+          additionalProperties: { type: integer }
+        warnings:
+          type: object
+          properties:
+            onlyCopy: { type: array, items: { type: string } }
+            edits: { type: array, items: { type: string } }
+        nasShots: { type: integer }
+        nasFiles: { type: integer }
+        serverItems: { type: integer }
+        size: { type: integer, format: int64 }
+        nasBlocked: { type: string, description: "Dry run: the write mount's problem (NAS shots cannot move now)" }
+    TrashUnitRef:
+      type: object
+      required: [itemId, key]
+      properties:
+        itemId: { type: string }
+        key: { type: string }
+    TrashActionAnswer:
+      type: object
+      required: [done, refused, size]
+      properties:
+        done: { type: array, items: { $ref: "#/components/schemas/TrashUnitRef" } }
+        refused:
+          type: object
+          description: "`<itemId>|<key>` → `not_found`, `held`, `path_taken`, `not_writable`, `unreadable`, `state`, `error`, a write mount problem, or a compression's error"
+          additionalProperties: { type: string }
+        names:
+          type: object
+          description: "path_taken: the file in the way (folder-relative)"
+          additionalProperties: { type: string }
+        keptBy: { type: array, items: { type: string } }
+        size: { type: integer, format: int64 }
     CompressTarget:
       type: object
       required: [ok]
@@ -2726,9 +2988,9 @@ components:
             Optional parts of the API this server has (hoard-server 0.5.0; absent before). `items` = ADR 0014,
             `previews` = ADR 0015 (0.6.0), `culling` = ADR 0016 and `device-identity` = ADR 0017 (0.7.0), `edits` =
             ADR 0020 (0.9.0, with previews), `items-by-path` = ADR 0014 (0.10.0), `trash` = ADR 0023 (0.11.0), `backup`
-            = ADR 0024 (0.12.0), `compress` = ADR 0025 (0.13.0, when the start-up hevc_nvenc test encode passed).
-            Clients ignore names they do not know.
-          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash, backup, compress] }
+            = ADR 0024 (0.12.0), `compress` = ADR 0025 (0.13.0, when the start-up hevc_nvenc test encode passed), `trash-actions` = ADR 0023
+            Amendment (0.15.0) (`/v1/trash`). Clients ignore names they do not know.
+          items: { type: string, enum: [items, items-by-path, previews, culling, device-identity, edits, trash, backup, compress, trash-actions] }
         compress:
           type: object
           description: >-

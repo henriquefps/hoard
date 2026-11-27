@@ -20,7 +20,7 @@ ADR 0023 "Amendment (0.14.0)", ADR 0025 "Amendment (0.14.0)" (the whole-library 
 | `TestUploadStorageFull` | `507 storage_full` (free, needed) at the create with no upload row; before a chunk with nothing written (offset 0, part empty); with room again the chunk is stored |
 | `TestRetryFailedAfterToolsChange`, `TestCPUProxyCameraAVI`, `TestImageDecodesCameraClips` (`HOARD_IMAGE`) | failed previews retried once when the tools change; the proxy of an MJPEG + μ-law AVI; seven camera clips decoded in full and proxied by the image's ffmpeg (all fail on `0.13.2-nvidia` with "no decoder found", all pass on the 0.14.0 build) |
 
-| `TestWebTrashFailedRestoreOfHoardsShotPurgesNothing`, `TestWebTrashRestoreFailingHalfwayPurgesNothing`, `TestWebTrashKilledMidRestoreSettles`, `TestWebTrashRefusedDeleteKeepsServerRow` (review of #84) | a refused restore or delete of a Hoard-trashed shot leaves no row and a year of housekeeping purges nothing; a restore failing half-way leaves the unrestored half in the trash, untouched; a kill mid-restore: the settle forgets operation rows and puts the server's own row back with its purge_after; a refused delete of a server move keeps its row exactly |
+| `TestWebTrashFailedRestoreOfHoardsShotPurgesNothing`, `TestWebTrashRestoreFailingHalfwayPurgesNothing`, `TestWebTrashKilledMidRestoreSettles`, `TestWebTrashRefusedDeleteKeepsServerRow` (review of #84) | a refused restore or delete of a Hoard-trashed shot leaves no row and a year of housekeeping purges nothing; a restore failing half-way puts the restored half back into the trash (0.15.0: the whole shot stays in the trash, nothing at the original paths); a kill mid-restore: the settle forgets operation rows and puts the server's own row back with its purge_after; a refused delete of a server move keeps its row exactly |
 | `TestWebTrashEmptyByGroup` | units grouped `hoard` and `web`; the 409 lists each group's figures; Empty of the web group leaves Hoard's shot; an unknown group `422` |
 
 ## Web (`cd server/web && bun run lint && bun run typecheck && bun run test && bun run e2e`)
@@ -45,3 +45,25 @@ Light and dark, desktop (1440 × 900) and phone width (390 × 844):
 
 The compression screenshots (`../web-compression/`): `library-estimate-*`, `library-estimate-short-*`, `no-space-*`, and
 the compressed originals in the new Trash view (`trash-*`).
+
+## 0.15.0: the trash for paired devices and the 0.14.x fixes
+
+ADR 0023 "Amendment (0.15.0)". Every `TestWebTrash*` case above (but `TestWebTrashShotRule`, `TestWebTrashJournalRecovery`
+and `TestWebTrashEmptyByGroup`) runs twice, as subtests `web` (the gallery's session) and `v1` (the same operation under
+`/v1/trash` with the device key). New in `server/internal/server/trash_fixes_test.go`:
+
+| Test | What it checks |
+| --- | --- |
+| `TestTrashBatchesUnderConcurrentWalk` | the owner's first run, reproduced: a 100 ms busy timeout, a writer holding SQLite's write lock 250 ms at a time and walks of the folder running while 30 shots move in batches of 10: every shot moves, no row left in `moving`, one `trashed` row per shot (both APIs). Without the retries it fails: `failed: error` and `500` |
+| `TestTrashSettledAfterBatch` | a row left in `moving` (its file already in the trash) is settled right after the next batch |
+| `TestTrashMoveRollsBackHalfwayShot` | a link failing on the third file of a pair with its sidecars: every file back at its path, nothing in the trash, no row, `failed.not_writable=1` in the answer and in the log line |
+| `TestTrashStaleRowReplaced` | a stale journal row at the trash path a move takes is replaced whole (size, mtime, item, mover, dates, kind); a restore over the server's row changes only its state |
+| `TestTrashChangedCheckFollowsTheIndex` | a file re-indexed with a new mtime (same content) before its item is rebuilt still moves; a file whose index row does not follow is `changed` |
+| `TestTrashWalkDebounced` | the folders wait for a quiet moment after the last batch: a second batch pushes the walk back, then one walk is queued |
+| `TestTrashV1Devices` | `trash-actions` in `features`; every `/v1/trash` route `401` without a key and with the gallery's cookie; a device's move is `by` its id, group `hoard`, the web's `by` `admin`, group `web`; the first page's `groups`; Empty of the `hoard` group through `/v1` leaves the web's move; the device id in the log |
+
+Web: `src/lib/trash.test.ts` adds the coalesced loader (one load at a time) and the failure reasons' order;
+`e2e/trash.spec.ts` adds "the Trash page loads once, then only on Refresh" (one load on open, none in 12 s, one on
+Refresh) and "Move to trash: the failures per reason, then Retry the failed ones" (a file touched after the dry run
+fails `changed`; Retry sends exactly that id until the walk has read it again). The Trash view's e2e cases press
+Refresh until the walk shows (the page no longer polls).

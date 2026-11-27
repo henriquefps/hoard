@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { spaceVerdict, type TrashEntry } from "./compress"
-import { batches, emptyFigures, groupTrash, mergePlans, type MoveAnswer, unitsOfEntries } from "./trash"
+import { batches, coalesced, emptyFigures, groupTrash, mergePlans, type MoveAnswer, reasonsByCount, unitsOfEntries } from "./trash"
 
 const entry = (id: string, units: TrashEntry["units"], extra: Partial<TrashEntry> = {}): TrashEntry => ({
   id,
@@ -69,5 +69,40 @@ describe("trash", () => {
     expect(spaceVerdict({ ...s, fits: true, free: 60 }).state).toBe("fits")
     expect(spaceVerdict({ ...s, known: false }).state).toBe("unknown")
     expect(spaceVerdict(undefined).state).toBe("fits")
+  })
+
+  it("loads the trash one load at a time: asks during a load fold into one more load after it", async () => {
+    let calls = 0
+    const releases: (() => void)[] = []
+    const results: number[] = []
+    const load = coalesced(
+      () =>
+        new Promise<number>((resolve) => {
+          const n = ++calls
+          releases.push(() => resolve(n))
+        }),
+      (v) => results.push(v),
+      () => results.push(-1)
+    )
+    load()
+    load()
+    load()
+    load()
+    expect(calls).toBe(1)
+    releases[0]()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(calls).toBe(2) // the three asks during the first load: one more load
+    releases[1]()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(calls).toBe(2)
+    expect(results).toEqual([1, 2])
+  })
+
+  it("lists failure reasons most frequent first", () => {
+    expect(reasonsByCount({ not_writable: 1, changed: 3, error: 0, path_taken: 1 })).toEqual([
+      ["changed", 3],
+      ["not_writable", 1],
+      ["path_taken", 1],
+    ])
   })
 })
