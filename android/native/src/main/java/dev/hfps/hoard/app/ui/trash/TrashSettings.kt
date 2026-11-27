@@ -46,6 +46,9 @@ fun TrashSettingsSection(container: AppContainer, onOpenTrash: () -> Unit) {
         onPauseOrDispose {}
     }
     var confirm by remember { mutableStateOf<Pair<Int, TrashService.AutoEmptyPreview>?>(null) }
+    // ADR 0023 Amendment (2.10.0): with `trash-actions` the photo server empties what it moved after its own days.
+    val serverMode by androidx.compose.runtime.produceState(false) { value = container.trash.server.enabled() }
+    val info by container.compress.info.collectAsState()
     fun apply(value: Int) = scope.launch {
         container.appSettings.setTrashAutoEmptyDays(value)
         dev.hfps.hoard.app.trash.TrashCleanupWorker.now(container.appContext)
@@ -63,7 +66,7 @@ fun TrashSettingsSection(container: AppContainer, onOpenTrash: () -> Unit) {
             checking = false
             if (preview == null || preview.empty) apply(value) else confirm = value to preview
         }
-    }, onOpenTrash = onOpenTrash, checking = checking, media = media, onMedia = { openMediaManagement(context) })
+    }, onOpenTrash = onOpenTrash, checking = checking, media = media, onMedia = { openMediaManagement(context) }, serverDays = if (serverMode) info?.trashDays ?: SERVER_TRASH_DAYS else null)
     confirm?.let { (value, preview) ->
         ConfirmDialog(
             title = stringResource(R.string.trash_shorten_title),
@@ -150,6 +153,8 @@ fun TrashSettingsContent(
     checking: Boolean = false,
     media: MediaManagement = MediaManagement.Unsupported,
     onMedia: () -> Unit = {},
+    /** The photo server's auto-empty days when it lists `trash-actions` (null: no such server). */
+    serverDays: Int? = null,
 ) {
     Eyebrow(stringResource(R.string.trash_title), Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
     HfpsListRow(
@@ -170,11 +175,19 @@ fun TrashSettingsContent(
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).testTag("settings-trash-days"),
     )
     Text(
-        stringResource(R.string.trash_settings_auto_hint),
+        stringResource(if (serverDays != null) R.string.trash_settings_auto_hint_server else R.string.trash_settings_auto_hint),
         style = HfpsTheme.typography.ui,
         color = HfpsTheme.colors.mutedForeground,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
     )
+    if (serverDays != null) {
+        Text(
+            stringResource(R.string.trash_settings_server, serverDays),
+            style = HfpsTheme.typography.ui,
+            color = HfpsTheme.colors.mutedForeground,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp).testTag("settings-trash-server"),
+        )
+    }
     if (checking) Text(stringResource(R.string.trash_checking), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(horizontal = 16.dp))
     MediaManagementRow(media, onMedia)
     HfpsRowDivider(Modifier.padding(top = 8.dp))

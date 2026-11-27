@@ -96,3 +96,28 @@ class GalleryTrashTest {
         assertThat(s.toggle(rejected.first()).keys).doesNotContain(rejected.first())
     }
 }
+
+/** ADR 0023 Amendment (2.10.0): with `trash-actions` every server item goes to the server; the phone's files as before. */
+class GalleryTrashServerTest {
+    @Test
+    fun `server items go to the server, the phone's files to the phone's trash, nothing left out`() {
+        val shot = DeviceShots.group(listOf(GallerySamples.media("DCIM/Camera/DSC1.JPG", "2024-05-03T10:20:06", fingerprint = GallerySamples.fp(1)))).single()
+            .let { s -> s.copy(files = s.files.map { f -> f.copy(media = f.media.copy(fpSize = f.media.size, fpModified = f.media.modified)) }) }
+        fun entry(itemId: String?, device: DeviceShot? = null) = GalleryModel.entries(
+            GalleryInput(
+                server = if (itemId != null) listOf(GallerySamples.server(itemId, "x.jpg", "2024-05-03T10:20:06")) else emptyList(),
+                device = listOfNotNull(device),
+                serverFiles = if (itemId != null && device != null) device.fingerprints.associateWith { itemId } else emptyMap(),
+                serverDecisions = emptyMap(),
+                deviceDecisions = emptyMap(),
+            ),
+        ).single()
+        val phoneOnly = DeviceShots.group(listOf(GallerySamples.media("DCIM/Camera/IMG_9.JPG", "2024-05-03T10:20:06"))).single()
+        val plan = GalleryTrash.planWithServer(listOf(entry("both", shot), entry("nas"), entry("unmapped"), entry(null, phoneOnly)))
+        assertThat(plan.serverItems).containsExactly("both", "nas", "unmapped").inOrder()
+        assertThat(plan.phoneSelected).containsExactly("both")
+        assertThat(plan.groups.map { it.locationId to it.paths }).containsExactly("device" to listOf("DCIM/Camera/DSC1.JPG", "DCIM/Camera/IMG_9.JPG"))
+        assertThat(plan.noMapping).isEqualTo(0)
+        assertThat(plan.uploadOnly).isEqualTo(0)
+    }
+}

@@ -110,6 +110,9 @@ class TrashService(private val container: AppContainer) {
         TrashKind.MEDIA_STORE -> media
     }
 
+    /** Server photos through the server (hoard-server 0.15.0, `trash-actions`; ADR 0023 Amendment (2.10.0)). */
+    val server = ServerTrashService(container) { changed() }
+
     private val running = Mutex()
     private val cancelRequested = AtomicBoolean(false)
     private val _progress = MutableStateFlow<TrashProgress?>(null)
@@ -200,7 +203,15 @@ class TrashService(private val container: AppContainer) {
             }
             choiceFor = { choice }
         }
-        return TrashPlanner.plan(place, units, choiceFor, serverHasTrash, items, protectedPaths) { dir -> dir in walk.holdsTrash || dir in walk.incomplete }
+        val plan = TrashPlanner.plan(place, units, choiceFor, serverHasTrash, items, protectedPaths) { dir -> dir in walk.holdsTrash || dir in walk.incomplete }
+        if (location.kind != LocationKind.Smb || plan.units.none { it.serverFolderId != null } || !server.enabled()) return plan
+        // ADR 0023 Amendment (2.10.0): photos of a mapped server folder go to the trash through the server, never SMB.
+        val serverPath = { pu: PlannedUnit, path: String -> ServerRouting.serverPathOf(pu.root, pu.serverPrefix, path) }
+        val lookup = server.lookup(ServerRouting.paths(plan, files, wholeShots, serverPath))
+        val holdsMedia = { dir: String -> dir in walk.incomplete || walk.media.any { SharePaths.rest(it.path, dir) != null } }
+        val routed = ServerRouting.route(plan, files, wholeShots, serverPath, lookup, holdsMedia)
+        server.requestWalk(routed.unknownFolders)
+        return routed.plan
     }
 
     /**
@@ -393,7 +404,7 @@ class TrashService(private val container: AppContainer) {
 
     /** Restores the rows [ids] (ADR 0023 "Restore"): exact original paths, a conflict refuses the unit. */
     suspend fun restore(ids: List<String>): List<RestoreOutcome> = running.withLock {
-        val all = wholeUnits(dao.byIds(ids))
+        val all = ownRows(wholeUnits(dao.byIds(ids)))
         // ADR 0025: a compressed original comes back through the server (it undoes the replace; a rename would find
         // the path taken by the output). Held ones wait for their journal.
         // The held state is synced first (a restore must not act on a stale cache: a replace may have started since).
@@ -437,8 +448,15 @@ class TrashService(private val container: AppContainer) {
      */
     suspend fun empty(ids: List<String>): EmptyOutcome = running.withLock {
         cancelRequested.set(false)
-        purge(wholeUnits(dao.byIds(ids)), compression(refresh = true), serverOnly = emptyList())
+        purge(ownRows(wholeUnits(dao.byIds(ids))), compression(refresh = true), serverOnly = emptyList())
     }
+
+    /**
+     * ADR 0023 Amendment (2.10.0): with `trash-actions`, rows of server-folder photos are never restored or deleted over
+     * SMB, whatever a caller passes (the server does it); without the feature every row is Hoard's own.
+     */
+    private suspend fun ownRows(rows: List<TrashEntryEntity>): List<TrashEntryEntity> =
+        if (rows.isEmpty() || !server.enabled()) rows else split(rows, listing = null, enabled = true).local
 
     /** What an Empty did: rows deleted, compressed originals purged by the server, entries left because they are held. */
     data class EmptyOutcome(val rows: List<TrashEntryEntity>, val serverPurged: Int, val held: Int, val refused: Map<String, Int> = emptyMap()) {
@@ -461,13 +479,49 @@ class TrashService(private val container: AppContainer) {
         return out.values.toList()
     }
 
-    /** Empty trash: every root is listed first (what other devices trashed is emptied too), then everything goes. */
-    suspend fun emptyAll(): EmptyOutcome = running.withLock {
+    /**
+     * Empty trash: every root is listed first (what other devices trashed is emptied too), then everything goes. With a
+     * server listing `trash-actions` ([localOnly]) only Hoard's own trash goes this way (the phone, drives, shares
+     * outside the server): server photos are emptied by the server, by group ([ServerTrashService.empty]).
+     */
+    suspend fun emptyAll(localOnly: Boolean = false): EmptyOutcome = running.withLock {
         cancelRequested.set(false)
         refreshRoots()
         val state = compression(refresh = true)
+        if (localOnly) {
+            val rows = split(dao.all(), server.listing()).local
+            return@withLock purge(rows, state, serverOnly = emptyList())
+        }
         val rows = dao.all()
         purge(rows, state, serverOnly = state.serverOnly(rows))
+    }
+
+    /**
+     * Hoard's rows against the server's trash (ADR 0023 Amendment (2.10.0)): with `trash-actions`, rows of server folders
+     * are the server's ([ServerTrashSplit]); without it every row is Hoard's own. [listing] null with the feature: the
+     * server could not be read (server-folder photos wait, never acted on over SMB).
+     */
+    suspend fun split(rows: List<TrashEntryEntity>, listing: dev.hfps.hoard.server.trash.ServerTrashListing?, enabled: Boolean? = null): ServerTrashSplit {
+        if (!(enabled ?: server.enabled())) return ServerTrashSplit.allLocal(rows)
+        val mappings = runCatching { container.serverLinks.paths.mappings() }.getOrDefault(emptyList())
+        val recorded = dao.roots().filter { it.serverFolderId != null }
+            .associate { Triple(it.locationId, it.share.lowercase(), SharePaths.normalize(it.rootPath).lowercase()) to it.serverFolderId!! }
+        val index = listing?.let { dev.hfps.hoard.server.trash.ServerTrashIndex(it) }
+        return ServerTrashSplit.of(rows, index) { row ->
+            ServerTrashSplit.serverRootOf(row, mappings) { place, root -> recorded[Triple(place.locationId, place.share.lowercase(), SharePaths.normalize(root).lowercase())] }
+        }
+    }
+
+    /**
+     * Rows of shots the server restored or deleted (ADR 0023 Amendment (2.10.0)): forgotten at once (the files are not
+     * in the SMB trash any more); a delete also forgets the shots' folder culling rows, as Empty does.
+     */
+    suspend fun forgetServerRows(rows: List<TrashEntryEntity>, purged: Boolean) {
+        if (rows.isEmpty()) return
+        dao.delete(rows.map { it.id })
+        if (purged) afterPurge(rows)
+        rows.groupBy { TrashPlace(it.locationId, it.share) }.forEach { (place, r) -> invalidate(place, r) }
+        changed()
     }
 
     private suspend fun purge(rows: List<TrashEntryEntity>, state: TrashCompressionState, serverOnly: List<CompressedOriginal>): EmptyOutcome {
@@ -604,8 +658,15 @@ class TrashService(private val container: AppContainer) {
         ensureRecovered()
         return running.withLock {
             val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
-            val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, dryRun = true, held = compression(refresh = true).protect)
-            AutoEmptyPreview(expired.sumOf { it.files }, expired.sumOf { it.bytes }, expired.map { it.root.place }.distinct().size, expired.any { it.othersIncluded })
+            val serverMode = server.enabled()
+            val expired = runner.autoEmpty(folderRoots(serverMode), days, notBefore, ::networkTime, dryRun = true, held = compression(refresh = true).protect)
+            val lines = if (serverMode) serverListingForAutoEmpty(notBefore)?.let { serverAutoEmptyLines(it, days) }.orEmpty() else emptyList()
+            AutoEmptyPreview(
+                expired.sumOf { it.files } + lines.sumOf { it.unit.files },
+                expired.sumOf { it.bytes } + lines.sumOf { it.unit.size },
+                expired.map { it.root.place }.distinct().size + if (lines.isNotEmpty()) 1 else 0,
+                expired.any { it.othersIncluded } || lines.isNotEmpty(),
+            )
         }
     }
 
@@ -616,7 +677,21 @@ class TrashService(private val container: AppContainer) {
         val notBefore = maxOf(dao.newestOwnTrashedAt() ?: 0L, container.settingsStore.getJson(NEWEST_TRASHED)?.toLongOrNull() ?: 0L)
         // ADR 0025: entries a compression journal holds stay (and a mapped root waits when that cannot be known).
         val held = compression(refresh = true).protect
-        val expired = runner.autoEmpty(roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }, days, notBefore, ::networkTime, held = held)
+        val serverMode = server.enabled()
+        val expired = runner.autoEmpty(folderRoots(serverMode), days, notBefore, ::networkTime, held = held)
+        // ADR 0023 Amendment (2.10.0): server folders are not emptied over SMB; the server deletes Hoard's older SMB
+        // moves (`by` absent) older than this setting, and its own auto-empty takes what it moved.
+        if (serverMode) {
+            val listing = serverListingForAutoEmpty(notBefore)
+            val lines = listing?.let { serverAutoEmptyLines(it, days) }.orEmpty()
+            if (lines.isNotEmpty()) {
+                val r = server.delete(lines)
+                Log.i(TAG, "auto-empty (server): ${r.done.size} deleted, refused ${r.refusedBy}")
+                val doneIds = r.done.map { it.itemId }.toSet()
+                val covered = split(dao.all(), listing, enabled = true).covered.filterKeys { it in doneIds }.values.flatten()
+                forgetServerRows(covered, purged = true)
+            }
+        }
         // The phone's trash: only Hoard's own rows (no consent can be shown here); Android expires the rest itself.
         val phonePurged = media?.let { m ->
             val nowMs = listOfNotNull(System.currentTimeMillis(), networkTime()).min()
@@ -630,6 +705,37 @@ class TrashService(private val container: AppContainer) {
         requestWalk(expired.mapNotNull { it.root.serverFolderId })
         if (expired.isNotEmpty()) changed()
         return expired.sumOf { it.dayFolders.size }
+    }
+
+    /** Folder trash roots auto-empty walks: with `trash-actions`, never a root in a server folder (the server empties those). */
+    private suspend fun folderRoots(serverMode: Boolean): List<TrashRunner.Root> {
+        val all = roots().filter { TrashKind.of(it.place.locationId) == TrashKind.FOLDER }
+        if (!serverMode) return all
+        val mappings = runCatching { container.serverLinks.paths.mappings() }.getOrDefault(emptyList())
+        return all.filter { root ->
+            val inServer = root.serverFolderId != null || mappings.any {
+                it.sameShare(root.place.locationId, root.place.share) && SharePaths.normalize(it.smbPrefix).equals(SharePaths.normalize(root.path), ignoreCase = true)
+            }
+            !inServer
+        }
+    }
+
+    /**
+     * The server units auto-empty deletes: Hoard's older SMB moves older than [days] (by the earliest of the phone's
+     * clock and a network time), never while the clock is before [notBefore] (a clock that went back).
+     */
+    private fun serverAutoEmptyLines(listing: dev.hfps.hoard.server.trash.ServerTrashListing, days: Int): List<dev.hfps.hoard.server.trash.ServerTrashLine> {
+        if (days <= 0) return emptyList()
+        val nowMs = listOfNotNull(System.currentTimeMillis(), networkTime()).min()
+        val today = java.time.Instant.ofEpochMilli(nowMs).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        return dev.hfps.hoard.server.trash.ServerTrash.autoEmptyLines(listing, today.minusDays(days.toLong()).toString())
+    }
+
+    /** The server's trash for auto-empty; null while the clock is before [notBefore] (it went back) or unreadable. */
+    private suspend fun serverListingForAutoEmpty(notBefore: Long): dev.hfps.hoard.server.trash.ServerTrashListing? {
+        val nowMs = listOfNotNull(System.currentTimeMillis(), networkTime()).min()
+        if (nowMs < notBefore) return null
+        return server.listing()
     }
 
     /** The network's time when Android has one (API 33+), a clock the phone's own setting cannot move. */

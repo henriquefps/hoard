@@ -20,11 +20,44 @@ data class GalleryTrashSelection(
     val uploadOnly: Int,
     /** Item id → the share paths of its NAS files that are planned: hidden at once when they all went (the local hide). */
     val itemPaths: Map<String, List<String>> = emptyMap(),
+    /** Server items the server moves itself (feature `trash-actions`, ADR 0023 Amendment (2.10.0)). */
+    val serverItems: List<String> = emptyList(),
+    /** Of [serverItems], those whose phone copy is selected too (it goes to the phone's trash). */
+    val phoneSelected: Set<String> = emptySet(),
 ) {
     val files: Int get() = groups.sumOf { it.paths.size }
 }
 
 object GalleryTrash {
+    /**
+     * With a server listing `trash-actions` (ADR 0023 Amendment (2.10.0)): the phone's files go to the phone's trash as
+     * before; every server item goes to the server, which moves its NAS files and puts backups and uploads in its own
+     * trash (no share, no mapping): nothing is left out here, the server's dry run says what it skips and why.
+     */
+    fun planWithServer(entries: List<GalleryEntry>): GalleryTrashSelection {
+        val groups = LinkedHashMap<Triple<String, String?, String>, LinkedHashSet<String>>()
+        val server = LinkedHashSet<String>()
+        val phone = HashSet<String>()
+        for (entry in entries) {
+            entry.device?.let { shot ->
+                for (f in shot.files) {
+                    val path = SharePaths.join(f.media.dir, f.media.name)
+                    groups.getOrPut(Triple(f.media.locationId, null, SharePaths.parent(path))) { LinkedHashSet() } += path
+                }
+            }
+            val id = entry.itemId ?: continue
+            server += id
+            if (entry.device != null) phone += id
+        }
+        return GalleryTrashSelection(
+            groups.map { (k, paths) -> GalleryTrashGroup(k.first, k.second, k.third, paths.toList()) },
+            noMapping = 0,
+            uploadOnly = 0,
+            serverItems = server.toList(),
+            phoneSelected = phone,
+        )
+    }
+
     /**
      * Every copy of [entries] Hoard can reach (ADR 0023 "Screens › Gallery"): a shot on the phone moves its phone files,
      * a shot on the server moves its NAS files through the share that a mapping ([mappings]) says holds them; a shot on
