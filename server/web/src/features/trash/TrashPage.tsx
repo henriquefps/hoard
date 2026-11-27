@@ -1,4 +1,5 @@
 import {
+  ArrowClockwiseIcon,
   ArrowCounterClockwiseIcon,
   ArrowsInIcon,
   CaretDownIcon,
@@ -12,20 +13,21 @@ import {
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
 import { listTrash, refreshCompress, type TrashEntry, trashSaves, useCompress } from "@/lib/compress"
 import { formatBytes, formatDateTime, formatDuration, formatNumber } from "@/lib/format"
 import { refreshLibrary } from "@/lib/store"
 import {
   type ActionAnswer,
+  coalesced,
   deleteUnits,
   emptyFigures,
   emptyTrash,
@@ -53,7 +55,7 @@ const refKey = (u: UnitRef) => `${u.itemId}|${u.key}`
 export function TrashPage() {
   const { t, i18n } = useTranslation()
   const lang = i18n.language
-  const { tick, info } = useCompress()
+  const { info } = useCompress()
   const [list, setList] = useState<TrashEntry[] | null>(null)
   const [failed, setFailed] = useState(false)
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set())
@@ -61,22 +63,21 @@ export function TrashPage() {
   const [pending, setPending] = useState<Pending>(null)
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(() => {
-    listTrash()
-      .then((l) => {
-        setList(l)
-        setFailed(false)
-      })
-      .catch(() => setFailed(true))
-  }, [])
-  useEffect(load, [load, tick])
-  // The walk that follows a move (seconds later, ADR 0023) shows up without a reload.
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      if (document.visibilityState === "visible") load()
-    }, 5000)
-    return () => window.clearInterval(id)
-  }, [load])
+  // Loaded on open, after this page's own actions and on Refresh only, one load at a time (0.15.0: no polling; the
+  // whole trash, page after page, used to be fetched on every compression poll and on a timer).
+  const load = useMemo(
+    () =>
+      coalesced(
+        listTrash,
+        (l) => {
+          setList(l)
+          setFailed(false)
+        },
+        () => setFailed(true)
+      ),
+    []
+  )
+  useEffect(() => load(), [load])
 
   const groups = useMemo(() => groupTrash(list ?? []), [list])
   const days = useMemo(() => {
@@ -158,6 +159,12 @@ export function TrashPage() {
           <EmptyTitle>{t("trash.emptyTitle")}</EmptyTitle>
           <EmptyDescription>{t("trash.emptyHint")}</EmptyDescription>
         </EmptyHeader>
+        <EmptyContent>
+          <Button variant="outline" onClick={load} data-testid="trash-refresh">
+            <ArrowClockwiseIcon data-icon="inline-start" />
+            {t("trash.refresh")}
+          </Button>
+        </EmptyContent>
       </Empty>
     )
   }
@@ -202,10 +209,14 @@ export function TrashPage() {
               {t("trash.autoEmpty", { count: trashDays })}
             </p>
           </div>
+          <Button variant="ghost" className="ml-auto" disabled={busy} onClick={load} data-testid="trash-refresh">
+            <ArrowClockwiseIcon data-icon="inline-start" />
+            {t("trash.refresh")}
+          </Button>
           {figures.count > 0 && (
             <Button
               variant="outline"
-              className="ml-auto text-destructive"
+              className="text-destructive"
               disabled={busy}
               onClick={() => setPending({ kind: "empty", units: [], ...figures })}
               data-testid="trash-empty"

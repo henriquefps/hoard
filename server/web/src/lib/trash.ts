@@ -24,6 +24,8 @@ export interface TrashUnit {
   held?: boolean
   purgeAfter?: number
   byServer?: boolean
+  /** Who asked the server to move it (0.15.0): "admin" (this gallery) or a device id; absent: Hoard moved it over SMB. */
+  by?: string
   /** What Empty confirms apart: moved from the web gallery, trashed by Hoard on a device, originals of compressed videos. */
   group?: TrashGroupKind
 }
@@ -95,21 +97,27 @@ export async function planMove(ids: string[], onProgress?: (f: number) => void):
 export interface MoveResult {
   moved: string[]
   skipped: Record<string, number>
+  /** Per reason, how many were not moved (shown with Retry the failed ones). */
   failed: Record<string, number>
+  /** The items that were not moved, with their reason (what Retry sends again). */
+  failedIds: Record<string, string>
   /** The write mount's problem when the server refused (nothing moved from then on). */
   refused?: string
 }
 
 /** Moves a selection to the trash, batch after batch; a refusal (no usable write mount) stops before the next batch. */
 export async function moveToTrash(ids: string[], onProgress?: (f: number) => void): Promise<MoveResult> {
-  const out: MoveResult = { moved: [], skipped: {}, failed: {} }
+  const out: MoveResult = { moved: [], skipped: {}, failed: {}, failedIds: {} }
   const parts = batches(ids)
   for (const [i, b] of parts.entries()) {
     try {
       const a = await api<MoveAnswer>("/web/trash/move", { method: "POST", json: { itemIds: b } })
       out.moved.push(...a.moved)
       for (const why of Object.values(a.skipped)) out.skipped[why] = (out.skipped[why] ?? 0) + 1
-      for (const why of Object.values(a.failed)) out.failed[why] = (out.failed[why] ?? 0) + 1
+      for (const [id, why] of Object.entries(a.failed)) {
+        out.failed[why] = (out.failed[why] ?? 0) + 1
+        out.failedIds[id] = why
+      }
     } catch (e) {
       if (e instanceof ApiError && e.status === 503) {
         out.refused = e.code === "unavailable" ? e.message : e.code
@@ -244,3 +252,36 @@ export function emptyFigures(entries: TrashEntry[], groups: readonly TrashGroupK
 /** The units of a set of entries (a selection), held ones left out. */
 export const unitsOfEntries = (entries: TrashEntry[]): UnitRef[] =>
   entries.flatMap((e) => unitsOf(e).filter((u) => !u.held).map((u) => ({ itemId: e.id, key: u.key })))
+
+/** Failure reasons, most frequent first. */
+export const reasonsByCount = (counts: Record<string, number>): [string, number][] =>
+  Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+
+/**
+ * One load at a time (the Trash page's list, every page of it): a load asked while one runs is folded into a single
+ * load after it, so actions and Refresh never pile requests up. The page loads on open, after its own actions and on
+ * Refresh only (0.15.0: it used to reload the whole trash on every compression poll and on a timer).
+ */
+export function coalesced<T>(run: () => Promise<T>, onResult: (v: T) => void, onError: () => void): () => void {
+  let running = false
+  let again = false
+  const go = () => {
+    if (running) {
+      again = true
+      return
+    }
+    running = true
+    run()
+      .then(onResult, onError)
+      .finally(() => {
+        running = false
+        if (again) {
+          again = false
+          go()
+        }
+      })
+  }
+  return go
+}

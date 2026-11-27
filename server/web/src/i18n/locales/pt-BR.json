@@ -353,7 +353,11 @@
       "someFailed_one": "{{count}} não foi movido: {{reason}}",
       "someFailed_other": "{{count}} não foram movidos: {{reason}}",
       "refused": "Nada mais foi movido: {{reason}}",
-      "failed": "Não foi possível mover para a lixeira. Tente de novo."
+      "failed": "Não foi possível mover para a lixeira. Tente de novo.",
+      "failedTitle_one": "{{formatted}} não foi movido ({{moved}} movidos):",
+      "failedTitle_other": "{{formatted}} não foram movidos ({{moved}} movidos):",
+      "retry_one": "Tentar de novo o que falhou",
+      "retry_other": "Tentar de novo os {{count}} que falharam"
     },
     "emptyChoose": "Escolha o que esvaziar. Cada grupo é apagado para sempre; um grupo desmarcado fica na lixeira.",
     "emptyNone": "Nada marcado.",
@@ -366,7 +370,8 @@
       "web": "rejeitadas e backups movidos para cá",
       "hoard": "o que o celular ou o tablet pôs na lixeira, também antes desta versão",
       "compressed": "os vídeos comprimidos ficam; os originais vão embora para sempre"
-    }
+    },
+    "refresh": "Atualizar"
   },
   "compress": {
     "title": "Comprimir vídeos",

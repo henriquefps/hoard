@@ -1,5 +1,5 @@
 import { expect, test, type Cookie, type Page } from "@playwright/test"
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { LIB, PASSWORD, readState, SERVER } from "./server"
 
@@ -59,6 +59,15 @@ const go = (page: Page, p: string) => page.goto(state.base + p)
 const cell = (page: Page, name: string) => page.locator(`[data-cell][aria-label^="${name}"]`)
 const nas = (rel: string) => existsSync(path.join(NAS, rel))
 
+// The Trash page loads on open, after its own actions and on Refresh only (0.15.0: no polling): what a walk changes
+// later shows after Refresh.
+async function untilWalked(page: Page, check: () => Promise<void>, timeout = 60_000) {
+  await expect(async () => {
+    await page.getByTestId("trash-refresh").click()
+    await check()
+  }).toPass({ timeout, intervals: [1_000, 2_000, 3_000] })
+}
+
 test.describe.configure({ mode: "serial" })
 
 test("reject shots, Select all of the Rejected filter, Move to trash: the NAS layout Hoard uses", async ({ page }) => {
@@ -113,7 +122,7 @@ test("the Trash view: by day and place, with counts and sizes", async ({ page })
   await signIn(page)
   const open = async () => {
     await go(page, "/trash")
-    await expect(page.getByTestId("trash-group")).toHaveCount(3, { timeout: 60_000 }) // after the walk
+    await untilWalked(page, () => expect(page.getByTestId("trash-group")).toHaveCount(3, { timeout: 1_000 })) // after the walk
   }
   await open()
   const day = page.locator(`[data-testid="trash-day"][data-day="${today}"]`)
@@ -178,7 +187,7 @@ test("delete permanently, then Empty trash with its count and size", async ({ pa
   expect(nas(`.hoard-trash/${today}/Trips/2025-06/DSC07000.ARW`)).toBe(false)
   expect(nas(`.hoard-trash/${today}/Trips/2025-06/.DSC07000.xmp`)).toBe(false)
   expect(nas(".hoard-trash/2026-11-20/Home/IMG_0101.JPG")).toBe(true) // Hoard's group was left out
-  await expect(page.getByTestId("trash-group")).toHaveCount(1, { timeout: 60_000 })
+  await untilWalked(page, () => expect(page.getByTestId("trash-group")).toHaveCount(1, { timeout: 1_000 }))
 })
 
 test("Portuguese: Move to trash and the Trash view", async ({ page }) => {
@@ -193,7 +202,62 @@ test("Portuguese: Move to trash and the Trash view", async ({ page }) => {
   await page.getByTestId("trash-move-confirm").click()
   await expect(page.getByText("1 movido para a lixeira")).toBeVisible()
   await go(page, "/trash")
-  await expect(page.getByTestId("trash-group")).toHaveCount(2, { timeout: 60_000 }) // after the walk
+  await untilWalked(page, () => expect(page.getByTestId("trash-group")).toHaveCount(2, { timeout: 1_000 })) // after the walk
   await expect(page.getByRole("heading", { name: "Lixeira" })).toBeVisible()
   await shot(page, "trash-pt-BR-desktop-light")
+})
+
+// The Trash page fetched GET /web/trash about 15 times a second while open (the deployed 0.14.0's log): it now loads
+// once on open, then only on its own actions and on Refresh.
+test("the Trash page loads once, then only on Refresh", async ({ page }) => {
+  test.setTimeout(60_000)
+  await signIn(page)
+  const gets: string[] = []
+  page.on("request", (r) => {
+    if (r.method() === "GET" && new URL(r.url()).pathname === "/web/trash") gets.push(r.url())
+  })
+  await go(page, "/trash")
+  await expect(page.getByTestId("trash-refresh")).toBeVisible({ timeout: 20_000 })
+  const pages = gets.length // one load: every page of the trash once
+  expect(pages).toBeGreaterThanOrEqual(1)
+  await page.waitForTimeout(12_000) // longer than the compression poll and the old 5 s timer
+  expect(gets.length).toBe(pages)
+  await page.getByTestId("trash-refresh").click()
+  await expect.poll(() => gets.length).toBe(2 * pages)
+  await page.waitForTimeout(1_000)
+  expect(gets.length).toBe(2 * pages)
+})
+
+// A move that fails for some shots says why, per reason, and Retry the failed ones sends exactly those again.
+test("Move to trash: the failures per reason, then Retry the failed ones", async ({ page }) => {
+  test.setTimeout(90_000)
+  await signIn(page)
+  await go(page, "/?q=DSC0700")
+  await expect(cell(page, "DSC07004.JPG")).toBeVisible({ timeout: 20_000 })
+  for (const name of ["DSC07003.JPG", "DSC07004.JPG"]) await cell(page, name).click({ modifiers: ["ControlOrMeta"] })
+  await page.getByTestId("trash-selection").click()
+  const dialog = page.getByTestId("trash-move-dialog")
+  await expect(dialog.getByTestId("trash-move-summary")).toContainText("2 shots", { timeout: 20_000 })
+  // DSC07004 changes on disk after the check: it fails "changed" until the walk reads it again.
+  const later = new Date(Date.now() + 3_600_000)
+  utimesSync(path.join(NAS, "Trips/2025-06/DSC07004.JPG"), later, later)
+  await dialog.getByTestId("trash-move-confirm").click()
+  await expect(page.getByText("1 moved to the trash")).toBeVisible()
+  const failed = dialog.getByTestId("trash-move-failed")
+  await expect(failed).toContainText("1 was not moved (1 moved):")
+  await expect(failed.locator('[data-reason="changed"]')).toContainText("1 was not moved: the file changed since the library was read")
+  await shot(page, "move-failed-desktop-light")
+  const moves: string[] = []
+  page.on("request", (r) => {
+    if (r.method() === "POST" && new URL(r.url()).pathname === "/web/trash/move") moves.push(r.postData() ?? "")
+  })
+  // The walk of the folder (queued a few seconds after the move) reads DSC07004 again: until then a retry fails again.
+  await expect(async () => {
+    await dialog.getByTestId("trash-move-retry").click()
+    await expect(page.getByTestId("trash-move-dialog")).toHaveCount(0, { timeout: 2_000 })
+  }).toPass({ timeout: 60_000, intervals: [2_000, 3_000, 5_000] })
+  expect(moves.length).toBeGreaterThanOrEqual(1)
+  expect(JSON.parse(moves[moves.length - 1]).itemIds).toHaveLength(1)
+  expect(nas("Trips/2025-06/DSC07004.JPG")).toBe(false)
+  expect(nas(`.hoard-trash/${today}/Trips/2025-06/DSC07003.JPG`)).toBe(true)
 })
