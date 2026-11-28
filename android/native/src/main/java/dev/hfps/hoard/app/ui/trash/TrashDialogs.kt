@@ -57,14 +57,7 @@ data class TrashDone(val trashed: List<TrashUnit>, val deleted: List<TrashUnit>,
 }
 
 /** Refusals for which the dialog offers today's permanent delete instead (ADR 0023 "When the trash is not possible"). */
-val PERMANENT_OFFER: Set<TrashRefusal> = setOf(
-    TrashRefusal.ROOT_NOT_WRITABLE,
-    TrashRefusal.NOT_SAME_DEVICE,
-    TrashRefusal.MOVE_UNSUPPORTED,
-    TrashRefusal.ALREADY_IN_TRASH,
-    TrashRefusal.PHONE_TRASH_UNAVAILABLE,
-    TrashRefusal.FOLDER_NOT_TRASHABLE,
-)
+val PERMANENT_OFFER: Set<TrashRefusal> = dev.hfps.hoard.app.trash.ServerRouting.OFFERS_PERMANENT
 
 fun reasonText(reason: TrashRefusal): Int = when (reason) {
     TrashRefusal.ALREADY_IN_TRASH -> R.string.trash_reason_already_in_trash
@@ -84,6 +77,7 @@ fun reasonText(reason: TrashRefusal): Int = when (reason) {
     TrashRefusal.NOT_ON_SERVER_YET -> R.string.trash_reason_not_on_server_yet
     TrashRefusal.PART_OF_SHOT -> R.string.trash_reason_part_of_shot
     TrashRefusal.FOLDER_ON_SERVER -> R.string.trash_reason_folder_on_server
+    TrashRefusal.SERVER_TRASH_ONLY -> R.string.trash_reason_server_trash_only
 }
 
 /** Where a plan's trash is, for the dialog: `machine › share › root` (or the drive's name). */

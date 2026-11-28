@@ -56,7 +56,7 @@ object ServerRouting {
     ): Routed {
         val smb = ArrayList<PlannedUnit>()
         val server = ArrayList<ServerUnit>()
-        val refused = ArrayList(plan.refused)
+        val refused = ArrayList(plan.refused.map { serverOnly(it) })
         val unknown = LinkedHashSet<String>()
         for (pu in plan.units) {
             val folder = pu.serverFolderId
@@ -101,6 +101,28 @@ object ServerRouting {
         }
         return Routed(plan.copy(units = smb, refused = refused, server = plan.server + server, oldServerWarning = plan.oldServerWarning && smb.any { it.serverFolderId != null }), unknown)
     }
+
+    /**
+     * Refusals that would offer a permanent delete over SMB ([OFFERS_PERMANENT]), for a unit of a mapped server folder:
+     * anything already in its `.hoard-trash`, and photo units (a file, or a folder that may hold photos), become
+     * [TrashRefusal.SERVER_TRASH_ONLY] (no offer: the Trash screen acts through the server). A plain file elsewhere keeps
+     * its refusal.
+     */
+    fun serverOnly(r: RefusedUnit): RefusedUnit {
+        if (r.serverFolderId == null || r.reason !in OFFERS_PERMANENT) return r
+        val photo = r.reason == TrashRefusal.ALREADY_IN_TRASH || mediaOf(r.unit).isNotEmpty() || r.unit.files.any { it.isDirectory }
+        return if (photo) r.copy(reason = TrashRefusal.SERVER_TRASH_ONLY) else r
+    }
+
+    /** The refusals for which the dialog offers the permanent delete (ui/trash `PERMANENT_OFFER`). */
+    val OFFERS_PERMANENT: Set<TrashRefusal> = setOf(
+        TrashRefusal.ROOT_NOT_WRITABLE,
+        TrashRefusal.NOT_SAME_DEVICE,
+        TrashRefusal.MOVE_UNSUPPORTED,
+        TrashRefusal.ALREADY_IN_TRASH,
+        TrashRefusal.PHONE_TRASH_UNAVAILABLE,
+        TrashRefusal.FOLDER_NOT_TRASHABLE,
+    )
 
     private fun mediaOf(unit: TrashUnit): List<TrashFile> = unit.files.filter { !it.isDirectory && TrashPlanner.isMedia(it.name) }
 

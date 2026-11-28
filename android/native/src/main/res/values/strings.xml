@@ -1060,4 +1060,5 @@
         <item quantity="one">%1$s backed-up item (%2$s) can only be deleted from the web gallery.</item>
         <item quantity="other">%1$s backed-up items (%2$s) can only be deleted from the web gallery.</item>
     </plurals>
+    <string name="trash_reason_server_trash_only">it is a photo on the photo server: restore it or delete it from the Trash screen (it goes through the photo server)</string>
 </resources>

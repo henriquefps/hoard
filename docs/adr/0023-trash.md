@@ -936,3 +936,22 @@ The phone's photos use Android's trash. The Files tab's trash in places that are
 so are servers without `trash-actions`. Hoard's index (`trash_entries`) still records what it moves over SMB; its
 refresh still lists `.hoard-trash` folders it can reach (a read, so rows of files restored or deleted elsewhere go
 away).
+
+**Review of #88** (fixes before merge):
+
+1. **Empty never reaches a server-folder row over SMB, whatever the screen's state.** The Trash screen switched to
+   server mode only after the server's listing came back. Until then, Empty ran 2.9's Empty over every row, including
+   photos Hoard moved into server folders before 2.10.0. Now:
+   - `TrashService.emptyAll` gives the SMB purge only Hoard's own rows whenever the server lists `trash-actions`
+     (`rowsForEmptyAll`). Without a listing (still loading, or unreachable) server-folder rows wait and are left.
+   - The screen enters server mode before asking for the listing.
+   - Test: `EmptyAllServerRowsTest`.
+2. **No SMB permanent delete for a server folder's photos.** Files' delete inside a server folder's `.hoard-trash` was
+   refused `ALREADY_IN_TRASH`, which offered the permanent delete over SMB. That delete skipped the server, the held
+   rule and the compressed-original protection. With `trash-actions`, `ServerRouting.serverOnly` makes such refusals
+   `SERVER_TRASH_ONLY` (no offer; "restore it or delete it from the Trash screen"):
+   - anything already in a mapped folder's `.hoard-trash`;
+   - any other offered refusal of a photo or folder unit in a mapped folder.
+
+   A plain file keeps the offer. `RefusedUnit` carries the unit's `serverFolderId` for this. Tests: `ServerRoutingTest`.
+

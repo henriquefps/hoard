@@ -1158,4 +1158,5 @@
         <item quantity="many">%1$s itens de backup (%2$s) só podem ser apagados pela galeria web.</item>
         <item quantity="other">%1$s itens de backup (%2$s) só podem ser apagados pela galeria web.</item>
     </plurals>
+    <string name="trash_reason_server_trash_only">é uma foto do servidor de fotos: restaure ou apague pela tela Lixeira (passa pelo servidor de fotos)</string>
 </resources>

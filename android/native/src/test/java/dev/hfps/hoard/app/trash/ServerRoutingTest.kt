@@ -100,4 +100,46 @@ class ServerRoutingTest {
         assertThat(ServerRouting.serverPathOf("", "2024", "Trip/a.jpg")).isEqualTo("2024/Trip/a.jpg")
         assertThat(ServerRouting.serverPathOf("Imagens", "", "Other/a.jpg")).isNull()
     }
+
+    // --- Review of #88, B2: no SMB permanent delete for a server folder's photos -------------------------------------
+
+    @Test
+    fun `a server folder's trash is never offered the SMB permanent delete`() {
+        val inTrash = listOf(
+            f("Imagens/.hoard-trash/2026-11-20/2024/Trip/DSC9.ARW"), f("Imagens/.hoard-trash/2026-11-20/2024/Trip/notes.txt"),
+        )
+        val units = TrashPlanner.units("Imagens/.hoard-trash/2026-11-20/2024/Trip", inTrash, inTrash.map { it.path }, wholeShots = false)
+        val p = TrashPlanner.plan(place, units, { u -> TrashPlanner.smbRoot(u.files.first().path, MappingState.Mapped(mapping)) }, serverHasTrash = true)
+        assertThat(p.refused.map { it.reason to it.serverFolderId }).containsExactly(
+            TrashRefusal.ALREADY_IN_TRASH to "f1", TrashRefusal.ALREADY_IN_TRASH to "f1",
+        )
+        val r = ServerRouting.route(p, inTrash, false, serverPath, ServerRouting.Lookup.Found(emptyMap())) { false }
+        // The photo and the plain file in the server folder's .hoard-trash: the Trash screen, through the server.
+        assertThat(r.plan.refused.map { it.reason }.toSet()).containsExactly(TrashRefusal.SERVER_TRASH_ONLY)
+        assertThat(r.plan.refused.map { it.reason }.none { it in ServerRouting.OFFERS_PERMANENT }).isTrue()
+        assertThat(r.plan.units).isEmpty()
+    }
+
+    @Test
+    fun `a share outside the server keeps the permanent offer for its own trash`() {
+        val inTrash = listOf(f(".hoard-trash/2026-11-20/Docs/DSC9.ARW"))
+        val units = TrashPlanner.units(".hoard-trash/2026-11-20/Docs", inTrash, inTrash.map { it.path }, wholeShots = false)
+        val p = TrashPlanner.plan(place, units, { u -> TrashPlanner.smbRoot(u.files.first().path, MappingState.NotOnServer) }, serverHasTrash = true)
+        val r = ServerRouting.route(p, inTrash, false, serverPath, ServerRouting.Lookup.Found(emptyMap())) { false }
+        assertThat(r.plan.refused.map { it.reason }).containsExactly(TrashRefusal.ALREADY_IN_TRASH)
+    }
+
+    @Test
+    fun `other offered refusals - a server folder's photo loses the offer, a plain file keeps it`() {
+        val photo = TrashUnit("imagens/2024/trip/dsc1", "Imagens/2024/Trip", listOf(f("Imagens/2024/Trip/DSC1.ARW")), isShot = true)
+        val plain = TrashUnit("imagens/2024/trip/notes.txt", "Imagens/2024/Trip", listOf(f("Imagens/2024/Trip/notes.txt")), isShot = false)
+        val dir = TrashUnit("imagens/2024/trip/sub", "Imagens/2024/Trip", listOf(f("Imagens/2024/Trip/Sub", dir = true)), isShot = false)
+        for (reason in ServerRouting.OFFERS_PERMANENT - TrashRefusal.ALREADY_IN_TRASH) {
+            assertThat(ServerRouting.serverOnly(RefusedUnit(photo, reason, serverFolderId = "f1")).reason).isEqualTo(TrashRefusal.SERVER_TRASH_ONLY)
+            assertThat(ServerRouting.serverOnly(RefusedUnit(dir, reason, serverFolderId = "f1")).reason).isEqualTo(TrashRefusal.SERVER_TRASH_ONLY)
+            assertThat(ServerRouting.serverOnly(RefusedUnit(plain, reason, serverFolderId = "f1")).reason).isEqualTo(reason)
+            assertThat(ServerRouting.serverOnly(RefusedUnit(photo, reason)).reason).isEqualTo(reason) // not a server folder
+        }
+        assertThat(dev.hfps.hoard.app.ui.trash.PERMANENT_OFFER).doesNotContain(TrashRefusal.SERVER_TRASH_ONLY)
+    }
 }

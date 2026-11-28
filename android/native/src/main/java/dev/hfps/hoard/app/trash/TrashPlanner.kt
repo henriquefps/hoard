@@ -96,6 +96,13 @@ enum class TrashRefusal {
 
     /** A folder of a server folder holding photos: server photos go to the trash photo by photo, through the server. */
     FOLDER_ON_SERVER,
+
+    /**
+     * A server folder's file the trash cannot take over SMB (already in its `.hoard-trash`, or a photo the share cannot
+     * move): with `trash-actions` it is never deleted over SMB either (no permanent-delete offer); the Trash screen
+     * restores and deletes it through the server.
+     */
+    SERVER_TRASH_ONLY,
 }
 
 /** The trash root chosen for a path: a folder of the location ("" = its root), or a refusal. */
@@ -117,7 +124,8 @@ data class PlannedUnit(
     val serverPrefix: String? = null,
 )
 
-data class RefusedUnit(val unit: TrashUnit, val reason: TrashRefusal, val message: String? = null)
+/** [serverFolderId]: the NAS folder the unit is in, when its place is a mapped server folder (ADR 0023 Amendment (2.10.0)). */
+data class RefusedUnit(val unit: TrashUnit, val reason: TrashRefusal, val message: String? = null, val serverFolderId: String? = null)
 
 /** Where a plan runs: a location (machine id, `device`, `vol-<uuid>`) and, for SMB, its share. */
 data class TrashPlace(val locationId: String, val share: String = "") {
@@ -347,7 +355,7 @@ object TrashPlanner {
             val root = (choice as? RootChoice.Root)?.path
             val early = refusalOf(unit, root, protectedPaths, holdsTrash)
             when {
-                early != null -> refused += RefusedUnit(unit, early)
+                early != null -> refused += RefusedUnit(unit, early, serverFolderId = (choice as? RootChoice.Root)?.serverFolderId)
                 choice is RootChoice.Refused -> refused += RefusedUnit(unit, choice.reason)
                 choice is RootChoice.Root -> planned += PlannedUnit(
                     unit = unit,

@@ -204,7 +204,7 @@ class TrashService(private val container: AppContainer) {
             choiceFor = { choice }
         }
         val plan = TrashPlanner.plan(place, units, choiceFor, serverHasTrash, items, protectedPaths) { dir -> dir in walk.holdsTrash || dir in walk.incomplete }
-        if (location.kind != LocationKind.Smb || plan.units.none { it.serverFolderId != null } || !server.enabled()) return plan
+        if (location.kind != LocationKind.Smb || (plan.units.none { it.serverFolderId != null } && plan.refused.none { it.serverFolderId != null }) || !server.enabled()) return plan
         // ADR 0023 Amendment (2.10.0): photos of a mapped server folder go to the trash through the server, never SMB.
         val serverPath = { pu: PlannedUnit, path: String -> ServerRouting.serverPathOf(pu.root, pu.serverPrefix, path) }
         val lookup = server.lookup(ServerRouting.paths(plan, files, wholeShots, serverPath))
@@ -488,12 +488,21 @@ class TrashService(private val container: AppContainer) {
         cancelRequested.set(false)
         refreshRoots()
         val state = compression(refresh = true)
-        if (localOnly) {
-            val rows = split(dao.all(), server.listing()).local
-            return@withLock purge(rows, state, serverOnly = emptyList())
-        }
-        val rows = dao.all()
-        purge(rows, state, serverOnly = state.serverOnly(rows))
+        val enabled = server.enabled()
+        val rows = rowsForEmptyAll(localOnly, enabled)
+        // With `trash-actions` compressed originals are the server's too (its Empty by group), never this path's.
+        purge(rows, state, serverOnly = if (enabled || localOnly) emptyList() else state.serverOnly(rows))
+    }
+
+    /**
+     * What Empty trash may delete over SMB (review of #88, B1): with `trash-actions` only Hoard's own rows, whatever the
+     * caller or the screen's state (an Empty tapped before the server's listing came back, or with the server
+     * unreachable, never deletes a server-folder row over SMB: without a listing those rows wait).
+     */
+    internal suspend fun rowsForEmptyAll(localOnly: Boolean, enabled: Boolean? = null): List<TrashEntryEntity> {
+        val on = enabled ?: server.enabled()
+        if (!on) return dao.all()
+        return split(dao.all(), if (localOnly) server.listing() else null, enabled = true).local
     }
 
     /**

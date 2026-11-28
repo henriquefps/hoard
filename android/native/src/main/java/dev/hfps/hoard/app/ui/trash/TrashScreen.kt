@@ -151,7 +151,8 @@ fun serverTrashRows(items: List<dev.hfps.hoard.server.db.ServerItemEntity>): Lis
 
 class TrashViewModel(private val container: AppContainer, private val phoneName: String, private val driveName: String) : ViewModel() {
     /** The server's trash (ADR 0023 Amendment (2.10.0)): null until read, [ServerState.mode] false without the feature. */
-    data class ServerState(val mode: Boolean = false, val listing: ServerTrashListing? = null, val trashDays: Int = SERVER_TRASH_DAYS)
+    /** [loaded]: the listing was asked for (null after it means unreachable; before it, still loading). */
+    data class ServerState(val mode: Boolean = false, val listing: ServerTrashListing? = null, val trashDays: Int = SERVER_TRASH_DAYS, val loaded: Boolean = true)
 
     private val serverState = MutableStateFlow(ServerState())
 
@@ -194,7 +195,7 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
                 serverDays = listing?.let { ServerTrash.days(it) }.orEmpty(),
                 serverGroups = listing?.groups.orEmpty(),
                 serverWebOnly = listing?.webOnly,
-                serverReachable = listing != null,
+                serverReachable = listing != null || !srv.loaded,
                 waiting = sp.waiting.count { it.state == dev.hfps.hoard.data.TrashStates.TRASHED },
                 serverTrashDays = srv.trashDays,
             )
@@ -215,7 +216,11 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
             try {
                 val mode = container.trash.server.enabled()
                 if (mode) {
-                    serverState.value = ServerState(true, container.trash.server.listing(), container.compress.info.value?.trashDays ?: SERVER_TRASH_DAYS)
+                    // Server mode first (review of #88, B1): Empty is the per-group one from now on, not 2.9's, even
+                    // while the listing is on its way (or never comes).
+                    val days = container.compress.info.value?.trashDays ?: SERVER_TRASH_DAYS
+                    if (!serverState.value.mode) serverState.value = ServerState(true, null, days, loaded = false)
+                    serverState.value = ServerState(true, container.trash.server.listing(), days)
                 } else if (serverState.value.mode) {
                     serverState.value = ServerState()
                 }
