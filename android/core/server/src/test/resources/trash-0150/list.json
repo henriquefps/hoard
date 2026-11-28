@@ -1,0 +1,92 @@
+{
+ "cursor": null,
+ "groups": {
+  "compressed": {
+   "count": 0,
+   "size": 0
+  },
+  "hoard": {
+   "count": 1,
+   "size": 327
+  },
+  "web": {
+   "count": 0,
+   "size": 0
+  }
+ },
+ "hasMore": false,
+ "items": [
+  {
+   "id": "89e7439b-baa4-8eba-bddf-96e4d188187b",
+   "kind": "photo",
+   "name": "freed.jpg",
+   "size": 287,
+   "trashedAt": 1795827884748,
+   "places": [
+    {
+     "source": "mirror",
+     "path": "DCIM/Camera/freed.jpg",
+     "device": "Pixel 8"
+    },
+    {
+     "source": "backup"
+    }
+   ],
+   "units": [
+    {
+     "key": "server",
+     "source": "server",
+     "day": "2026-11-27",
+     "dir": "DCIM/Camera",
+     "device": "Pixel 8",
+     "files": 1,
+     "size": 287,
+     "purgeAfter": 1798419884747,
+     "byServer": true,
+     "by": "a14c4cb5-4701-4511-b35d-13d3a04db4cc",
+     "group": "hoard",
+     "webOnly": true
+    }
+   ],
+   "serverTrash": {
+    "since": 1795827884747,
+    "purgeAfter": 1798419884747
+   }
+  },
+  {
+   "id": "ae593ca4-d72b-8f80-896f-0f8cea1c5936",
+   "kind": "photo",
+   "name": "DSC00200.JPG",
+   "size": 327,
+   "trashedAt": 1795827884750,
+   "places": [
+    {
+     "source": "nas",
+     "folder": "nas",
+     "path": "2024-05-02/DSC00200.JPG",
+     "trash": ".hoard-trash/2026-11-27/2024-05-02/DSC00200.JPG"
+    }
+   ],
+   "units": [
+    {
+     "key": "nas:817a50d7-3803-492d-ae8b-e07196a5fc39:.hoard-trash/2026-11-27",
+     "source": "nas",
+     "day": "2026-11-27",
+     "folderId": "817a50d7-3803-492d-ae8b-e07196a5fc39",
+     "folderName": "nas",
+     "dir": "2024-05-02",
+     "files": 1,
+     "size": 327,
+     "purgeAfter": 1798419884747,
+     "byServer": true,
+     "by": "a14c4cb5-4701-4511-b35d-13d3a04db4cc",
+     "group": "hoard"
+    }
+   ]
+  }
+ ],
+ "webOnly": {
+  "count": 1,
+  "size": 287
+ }
+}

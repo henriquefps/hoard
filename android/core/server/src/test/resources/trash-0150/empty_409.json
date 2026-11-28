@@ -1,0 +1,29 @@
+{
+ "error": {
+  "code": "conflict",
+  "message": "Confirm the number of shots and the size the trash holds now.",
+  "details": {
+   "count": 1,
+   "groups": {
+    "compressed": {
+     "count": 0,
+     "size": 0
+    },
+    "hoard": {
+     "count": 1,
+     "size": 327
+    },
+    "web": {
+     "count": 0,
+     "size": 0
+    }
+   },
+   "reason": "confirm",
+   "size": 327,
+   "webOnly": {
+    "count": 1,
+    "size": 287
+   }
+  }
+ }
+}
