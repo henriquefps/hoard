@@ -89,6 +89,7 @@ func newHarnessWith(t *testing.T, withBackup bool, configure func(*Config)) *har
 	realMnt, _ := filepath.EvalSymlinks(mnt)
 	hs := &harness{t: t, srv: srv, h: srv.Handler(), st: st, mnt: realMnt, backup: filepath.Join(realMnt, "backup"), nas: filepath.Join(realMnt, "nas"), logs: logs}
 	t.Cleanup(func() {
+		srv.sweeps.Wait() // a revoke's background sweep writes to the directory the cleanup removes
 		if bs := srv.blobStore(); bs != nil {
 			bs.Close()
 		}

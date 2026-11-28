@@ -2251,7 +2251,10 @@ paths:
         `.hoard-trash` (moved by the server for the web gallery or a device, or by Hoard over SMB before 0.15.0), items
         in the server trash (phone backups, uploads) and compressed originals. Each item lists its `units`, what
         `POST /v1/trash/restore` and `…/delete` take. The first page (no cursor) also carries `groups`: the number of
-        shots and the size of each group's units that are not held, the figures `POST /v1/trash/empty` confirms.
+        shots and the size of each group's units that are not held, the figures `POST /v1/trash/empty` confirms, and
+        `webOnly`: the backup-only units (`units[].webOnly`) a device cannot delete for good, left out of `groups`. Only
+        Hoard's devices (app `hoard`, `hoard-debug`) use `/v1/trash`: any other gets `403 forbidden`, `details.reason`
+        `not_hoard`.
         A live item is listed (`live: true`) only for a held trash entry (a compression replace in progress).
       parameters:
         - { name: cursor, in: query, schema: { type: string }, description: "`cursor` of the previous page" }
@@ -2268,8 +2271,10 @@ paths:
                   cursor: { type: [string, "null"] }
                   hasMore: { type: boolean }
                   groups: { $ref: "#/components/schemas/TrashGroups" }
+                  webOnly: { $ref: "#/components/schemas/TrashFigures" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotHoard" }
         "429": { $ref: "#/components/responses/RateLimited" }
   /v1/trash/move:
     post:
@@ -2302,6 +2307,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TrashMoveAnswer" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotHoard" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503":
@@ -2327,6 +2333,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TrashActionAnswer" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotHoard" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/RateLimited" }
   /v1/trash/delete:
@@ -2336,7 +2343,8 @@ paths:
       description: >-
         NAS files are deleted; a server trash unit drops the backup entries no phone has and every content nothing else
         names (`keptBy`: what kept some bytes); a compressed original goes through compression's purge. Held units are
-        refused (`held`).
+        refused (`held`). A backup-only unit (`webOnly`) is refused `web_only`: a device cannot delete backups for good
+        (ADR 0024), only the web gallery can.
       requestBody: { $ref: "#/components/requestBodies/TrashUnits" }
       responses:
         "200":
@@ -2345,6 +2353,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TrashActionAnswer" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotHoard" }
         "422": { $ref: "#/components/responses/Unprocessable" }
         "429": { $ref: "#/components/responses/RateLimited" }
   /v1/trash/empty:
@@ -2354,7 +2363,7 @@ paths:
       description: >-
         Deletes every unit that is not held in the given groups (absent: all), only when `confirm` is still the number
         of shots and the size of those units (as `GET /v1/trash`'s `groups` gave them); else `409 conflict` with the
-        current figures. The server's auto-empty (after `compress.trashDays`) is the only purge by age.
+        current figures. Backup-only units (`webOnly`) are left out of the figures and of what is emptied. The server's auto-empty (after `compress.trashDays`) is the only purge by age.
       requestBody:
         required: true
         content:
@@ -2377,8 +2386,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TrashActionAnswer" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/NotHoard" }
         "409":
-          description: "`conflict` reason `confirm`: `details` carries `count`, `size` and `groups` (each group's `count` and `size`) as they are now"
+          description: "`conflict` reason `confirm`: `details` carries `count`, `size`, `groups` (each group's `count` and `size`) and `webOnly` (`count`, `size`: what a device cannot empty) as they are now"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2437,6 +2447,11 @@ components:
       description: The preview's key (X-Hoard-Preview-Version, or `v` from POST /v1/items/previews); makes the answer immutable when it is the current one.
       schema: { type: string, pattern: "^[0-9a-f]{32}$" }
   responses:
+    NotHoard:
+      description: "`forbidden`, `details.reason` `not_hoard`: the device's app (ADR 0017) is not `hoard` or `hoard-debug`; only Hoard uses `/v1/trash`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     Bytes:
       description: The bytes (application/octet-stream; ETag, Accept-Ranges)
       content:
@@ -2558,6 +2573,13 @@ components:
         properties:
           count: { type: integer }
           size: { type: integer, format: int64 }
+    TrashFigures:
+      type: object
+      description: "Shots and size of the backup-only units a device cannot delete for good or empty (ADR 0023 Amendment (0.15.0), review of #86)"
+      required: [count, size]
+      properties:
+        count: { type: integer }
+        size: { type: integer, format: int64 }
     TrashUnit:
       type: object
       description: "What Restore and Delete act on: an item's files in one day folder of one NAS folder (`key` `nas:<folderId>:<P>/.hoard-trash/<day>`), its server trash (`server`), or a phone or backup compression's kept side (`compressed`)"
@@ -2574,6 +2596,7 @@ components:
         size: { type: integer, format: int64 }
         held: { type: boolean, description: "A compression journal holds it: nothing restores, deletes or empties it" }
         purgeAfter: { type: integer, format: int64, description: "When the server's auto-empty takes it (Unix ms): only what the server moved" }
+        webOnly: { type: boolean, description: "A backup-only unit (the server trash): a device restores it but cannot delete it for good or empty it (`web_only`); only the web gallery can" }
         byServer: { type: boolean, description: "The server moved it (for the web gallery, a device, or a compression)" }
         by: { type: string, description: "0.15.0: who asked the server to move it, `admin` (the web gallery) or a device id; absent when the server did not move it (Hoard over SMB)" }
         group: { type: string, enum: [web, hoard, compressed] }

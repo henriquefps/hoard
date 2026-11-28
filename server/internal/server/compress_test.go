@@ -191,7 +191,7 @@ func compressHarness(t *testing.T, gpu bool, paths ...string) *cHarness {
 	})
 	ch.harness = hs
 	hs.srv.compress.Detect(t.Context())
-	ch.key, _ = hs.pair("Phone")
+	ch.key, _, _ = hs.pairApp("Phone", "hoard", "Phone")
 	for i, p := range paths {
 		ch.writeVideo(p, uint64(i+1))
 	}

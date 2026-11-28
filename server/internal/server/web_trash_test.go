@@ -75,7 +75,7 @@ func newTrashHarnessAPI(t *testing.T, writeMount bool, api string) *trashHarness
 			return r.Link(o, n)
 		}
 	})
-	key, _ := hs.pair("Tablet")
+	key, _, _ := hs.pairApp("Tablet", "hoard", "Tablet")
 	th.harness, th.key = hs, key
 	shotAt := func(day, i int) mediatest.Shot {
 		return mediatest.Shot{Make: "SONY", Model: "ILCE-7M4", DateTime: fmt.Sprintf("2024:05:%02d 10:%02d:00", day, i), Offset: "+00:00",
