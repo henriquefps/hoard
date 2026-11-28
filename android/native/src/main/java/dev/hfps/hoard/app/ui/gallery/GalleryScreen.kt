@@ -252,6 +252,8 @@ fun GalleryScreen(
             },
             shots = true,
             leftOut = leftOut,
+            serverItems = job.selection.serverItems,
+            phoneSelected = job.selection.phoneSelected,
         )
     }
 

@@ -1039,4 +1039,124 @@
     <string name="settings_browsing_summary">Ordem, arquivos ocultos, arquivos existentes</string>
     <string name="settings_culling_summary">Assistência na seleção e XMP</string>
     <string name="settings_about_summary">Versão e licenças</string>
+    <!-- Server photos through the server (ADR 0023 Amendment (2.10.0)) -->
+    <string name="trash_reason_photo_server_unreachable">O servidor de fotos não está acessível; tente de novo</string>
+    <string name="trash_reason_not_on_server_yet">o servidor de fotos ainda não a viu; ele está olhando a pasta agora, tente de novo em um minuto</string>
+    <string name="trash_reason_part_of_shot">ela faz parte de uma foto com outros arquivos (RAW + JPEG): selecione todos, ou mande a foto para a lixeira pela Galeria</string>
+    <string name="trash_reason_folder_on_server">pastas do servidor de fotos vão para a lixeira foto por foto: abra a pasta e selecione as fotos</string>
+    <string name="trash_server_done_title">Enviadas para a lixeira</string>
+    <string name="trash_server_failed_title">Algumas fotos não foram movidas</string>
+    <string name="trash_server_retry">Tentar de novo as que falharam</string>
+    <string name="trash_server_auto_note">O servidor de fotos esvazia a lixeira dele depois de %1$d dias.</string>
+    <string name="trash_server_blocked">O servidor de fotos não consegue gravar nas pastas dele agora (%1$s): as fotos do NAS não podem ser movidas.</string>
+    <string name="trash_server_progress">%1$d de %2$d fotos</string>
+    <string name="trash_srv_not_found">não está mais no servidor de fotos</string>
+    <string name="trash_srv_trashed">já está na lixeira</string>
+    <string name="trash_srv_held">uma compressão de vídeo a está segurando</string>
+    <string name="trash_srv_busy">ela está sendo comprimida agora</string>
+    <string name="trash_srv_on_phone">ela ainda está em um celular: apague-a nesse celular</string>
+    <string name="trash_srv_nothing">o servidor de fotos não tem uma cópia que possa mover</string>
+    <string name="trash_srv_changed">o arquivo mudou desde que o servidor de fotos o leu; tente de novo depois da próxima leitura</string>
+    <string name="trash_srv_path_taken">outro arquivo já está no lugar dela</string>
+    <string name="trash_srv_not_writable">o servidor de fotos não consegue gravar nessa pasta</string>
+    <string name="trash_srv_not_same_device">a pasta ocupa dois discos</string>
+    <string name="trash_srv_unreadable">uma pasta não pôde ser lida</string>
+    <string name="trash_srv_partial">só uma parte foi movida (o que foi movido está na lixeira)</string>
+    <string name="trash_srv_state">uma compressão de vídeo não consegue desfazê-la agora</string>
+    <string name="trash_srv_unreachable">o servidor de fotos não está acessível</string>
+    <string name="trash_srv_cancelled">parou antes dela</string>
+    <string name="trash_srv_rate_limited">o servidor de fotos pediu para o Hoard ir mais devagar; tente de novo em um minuto</string>
+    <string name="trash_srv_write_mount">o servidor de fotos não consegue gravar nas pastas dele agora</string>
+    <string name="trash_srv_error">o servidor de fotos teve um problema</string>
+    <string name="trash_srv_other">o servidor de fotos respondeu %1$s</string>
+    <string name="trash_group_web">Movidas pela galeria web</string>
+    <string name="trash_group_hoard">Enviadas para a lixeira pelo Hoard nos seus dispositivos</string>
+    <string name="trash_group_compressed">Originais de vídeos comprimidos</string>
+    <string name="trash_group_local">Neste celular, nos seus drives e compartilhamentos</string>
+    <string name="trash_empty_changed">A lixeira mudou desde que você a abriu: estes são os números dela agora.</string>
+    <string name="trash_empty_groups_body">Escolha o que apagar de vez:</string>
+    <string name="trash_server_unreachable">O servidor de fotos não está acessível: a lixeira dele não aparece. Tente de novo quando estiver.</string>
+    <string name="trash_local_section">Neste celular e nos seus drives</string>
+    <string name="trash_server_backup_of">Backup de %1$s</string>
+    <string name="trash_settings_auto_hint_server">Vale para este celular, seus drives e compartilhamentos fora do servidor de fotos, e para fotos que o Hoard pôs na lixeira das pastas do servidor antes da 2.10.0.</string>
+    <string name="trash_settings_server">As fotos do servidor são esvaziadas pelo servidor de fotos depois de %1$d dias.</string>
+    <plurals name="trash_server_confirm_body">
+        <item quantity="one">%1$s foto (%2$s) vai para a lixeira do servidor de fotos.</item>
+        <item quantity="many">%1$s fotos (%2$s) vão para a lixeira do servidor de fotos.</item>
+        <item quantity="other">%1$s fotos (%2$s) vão para a lixeira do servidor de fotos.</item>
+    </plurals>
+    <plurals name="trash_server_files_size">
+        <item quantity="one">%1$s arquivo, %2$s</item>
+        <item quantity="many">%1$s arquivos, %2$s</item>
+        <item quantity="other">%1$s arquivos, %2$s</item>
+    </plurals>
+    <plurals name="trash_server_only_copy">
+        <item quantity="one">%1$s delas não tem outra cópia: esvaziar a lixeira a apaga de vez.</item>
+        <item quantity="many">%1$s delas não têm outra cópia: esvaziar a lixeira as apaga de vez.</item>
+        <item quantity="other">%1$s delas não têm outra cópia: esvaziar a lixeira as apaga de vez.</item>
+    </plurals>
+    <plurals name="trash_server_edits">
+        <item quantity="one">%1$s tem edições do Reveal: elas voltam com a restauração e vão embora quando a lixeira for esvaziada.</item>
+        <item quantity="many">%1$s têm edições do Reveal: elas voltam com a restauração e vão embora quando a lixeira for esvaziada.</item>
+        <item quantity="other">%1$s têm edições do Reveal: elas voltam com a restauração e vão embora quando a lixeira for esvaziada.</item>
+    </plurals>
+    <plurals name="trash_server_skipped">
+        <item quantity="one">%1$s deixada de fora: %2$s</item>
+        <item quantity="many">%1$s deixadas de fora: %2$s</item>
+        <item quantity="other">%1$s deixadas de fora: %2$s</item>
+    </plurals>
+    <plurals name="trash_server_failed">
+        <item quantity="one">%1$s não movida: %2$s</item>
+        <item quantity="many">%1$s não movidas: %2$s</item>
+        <item quantity="other">%1$s não movidas: %2$s</item>
+    </plurals>
+    <plurals name="trash_group_shots">
+        <item quantity="one">%1$s foto · %2$s</item>
+        <item quantity="many">%1$s fotos · %2$s</item>
+        <item quantity="other">%1$s fotos · %2$s</item>
+    </plurals>
+    <plurals name="trash_server_waiting">
+        <item quantity="one">%1$s foto que o Hoard pôs na lixeira de uma pasta do servidor ainda não aparece no servidor de fotos.</item>
+        <item quantity="many">%1$s fotos que o Hoard pôs na lixeira de pastas do servidor ainda não aparecem no servidor de fotos.</item>
+        <item quantity="other">%1$s fotos que o Hoard pôs na lixeira de pastas do servidor ainda não aparecem no servidor de fotos.</item>
+    </plurals>
+    <plurals name="trash_server_held">
+        <item quantity="one">%1$s segurada por uma compressão (mantida)</item>
+        <item quantity="many">%1$s seguradas por uma compressão (mantidas)</item>
+        <item quantity="other">%1$s seguradas por uma compressão (mantidas)</item>
+    </plurals>
+    <plurals name="trash_restored_shots">
+        <item quantity="one">%1$s foto restaurada</item>
+        <item quantity="many">%1$s fotos restauradas</item>
+        <item quantity="other">%1$s fotos restauradas</item>
+    </plurals>
+    <plurals name="trash_purged_shots">
+        <item quantity="one">%1$s foto apagada de vez</item>
+        <item quantity="many">%1$s fotos apagadas de vez</item>
+        <item quantity="other">%1$s fotos apagadas de vez</item>
+    </plurals>
+    <plurals name="trash_server_refused">
+        <item quantity="one">%1$s não feita: %2$s</item>
+        <item quantity="many">%1$s não feitas: %2$s</item>
+        <item quantity="other">%1$s não feitas: %2$s</item>
+    </plurals>
+    <plurals name="trash_server_delete_title">
+        <item quantity="one">Apagar %1$s foto de vez?</item>
+        <item quantity="many">Apagar %1$s fotos de vez?</item>
+        <item quantity="other">Apagar %1$s fotos de vez?</item>
+    </plurals>
+    <plurals name="trash_server_delete_body">
+        <item quantity="one">%1$s foto (%2$s) será apagada de vez do servidor de fotos. Isso não pode ser desfeito.</item>
+        <item quantity="many">%1$s fotos (%2$s) serão apagadas de vez do servidor de fotos. Isso não pode ser desfeito.</item>
+        <item quantity="other">%1$s fotos (%2$s) serão apagadas de vez do servidor de fotos. Isso não pode ser desfeito.</item>
+    </plurals>
+    <string name="trash_srv_web_only">só a galeria web pode apagá-la de vez</string>
+    <string name="trash_srv_not_hoard">este servidor de fotos só deixa o Hoard fazer isso</string>
+    <string name="trash_web_only_label">só a galeria web pode apagá-la</string>
+    <plurals name="trash_empty_web_only">
+        <item quantity="one">%1$s item de backup (%2$s) só pode ser apagado pela galeria web.</item>
+        <item quantity="many">%1$s itens de backup (%2$s) só podem ser apagados pela galeria web.</item>
+        <item quantity="other">%1$s itens de backup (%2$s) só podem ser apagados pela galeria web.</item>
+    </plurals>
+    <string name="trash_reason_server_trash_only">é uma foto do servidor de fotos: restaure ou apague pela tela Lixeira (passa pelo servidor de fotos)</string>
 </resources>

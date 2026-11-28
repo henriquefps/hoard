@@ -81,6 +81,28 @@ enum class TrashRefusal {
 
     /** Anything else (its error code goes with it). */
     FAILED,
+
+    /**
+     * A server photo (a mapped NAS folder, server with `trash-actions`) while the photo server cannot be reached: it
+     * goes to the trash only through the server (ADR 0023 Amendment (2.10.0)), never over SMB.
+     */
+    PHOTO_SERVER_UNREACHABLE,
+
+    /** A photo of a server folder the server has not indexed yet (its walk has not seen it): try again after it. */
+    NOT_ON_SERVER_YET,
+
+    /** Files' delete of some files of a server photo (RAW + JPEG): the server trashes whole photos. */
+    PART_OF_SHOT,
+
+    /** A folder of a server folder holding photos: server photos go to the trash photo by photo, through the server. */
+    FOLDER_ON_SERVER,
+
+    /**
+     * A server folder's file the trash cannot take over SMB (already in its `.hoard-trash`, or a photo the share cannot
+     * move): with `trash-actions` it is never deleted over SMB either (no permanent-delete offer); the Trash screen
+     * restores and deletes it through the server.
+     */
+    SERVER_TRASH_ONLY,
 }
 
 /** The trash root chosen for a path: a folder of the location ("" = its root), or a refusal. */
@@ -98,9 +120,12 @@ data class PlannedUnit(
     val serverFolderId: String? = null,
     /** Server item ids of the unit's files by path, when the folder is mapped (best effort, for the index). */
     val serverItems: Map<String, String> = emptyMap(),
+    /** The mapping's `serverPrefix` of [root] (the root on the server, inside NAS folder [serverFolderId]). */
+    val serverPrefix: String? = null,
 )
 
-data class RefusedUnit(val unit: TrashUnit, val reason: TrashRefusal, val message: String? = null)
+/** [serverFolderId]: the NAS folder the unit is in, when its place is a mapped server folder (ADR 0023 Amendment (2.10.0)). */
+data class RefusedUnit(val unit: TrashUnit, val reason: TrashRefusal, val message: String? = null, val serverFolderId: String? = null)
 
 /** Where a plan runs: a location (machine id, `device`, `vol-<uuid>`) and, for SMB, its share. */
 data class TrashPlace(val locationId: String, val share: String = "") {
@@ -116,12 +141,18 @@ data class TrashPlan(
     val units: List<PlannedUnit>,
     val refused: List<RefusedUnit> = emptyList(),
     val oldServerWarning: Boolean = false,
+    /** Server photos of mapped folders: moved by the server (`POST /v1/trash/move`), not by [TrashRunner]. */
+    val server: List<ServerUnit> = emptyList(),
 ) {
     val shots: Int get() = units.count { it.unit.isShot }
     val files: Int get() = units.sumOf { it.unit.all.size }
     val bytes: Long get() = units.sumOf { it.unit.bytes }
     val roots: List<String> get() = units.map { it.root }.distinct()
+    val serverItems: List<String> get() = server.flatMap { it.itemIds }.distinct()
 }
+
+/** A unit of a mapped server folder that the server moves: the items its media files are (ADR 0023 Amendment (2.10.0)). */
+data class ServerUnit(val unit: TrashUnit, val itemIds: List<String>, val folderId: String)
 
 /** Names and paths of the `.hoard-trash` folders. */
 object TrashPaths {
@@ -324,12 +355,13 @@ object TrashPlanner {
             val root = (choice as? RootChoice.Root)?.path
             val early = refusalOf(unit, root, protectedPaths, holdsTrash)
             when {
-                early != null -> refused += RefusedUnit(unit, early)
+                early != null -> refused += RefusedUnit(unit, early, serverFolderId = (choice as? RootChoice.Root)?.serverFolderId)
                 choice is RootChoice.Refused -> refused += RefusedUnit(unit, choice.reason)
                 choice is RootChoice.Root -> planned += PlannedUnit(
                     unit = unit,
                     root = choice.path,
                     serverFolderId = choice.serverFolderId,
+                    serverPrefix = choice.serverPrefix,
                     serverItems = unit.all.mapNotNull { f -> serverItems(f.path)?.let { f.path to it } }.toMap(),
                 )
             }
@@ -347,7 +379,7 @@ object TrashPlanner {
         require(plans.isNotEmpty())
         val place = plans.first().place
         require(plans.all { it.place == place }) { "one place per plan" }
-        return TrashPlan(place, plans.flatMap { it.units }, plans.flatMap { it.refused }, plans.any { it.oldServerWarning })
+        return TrashPlan(place, plans.flatMap { it.units }, plans.flatMap { it.refused }, plans.any { it.oldServerWarning }, plans.flatMap { it.server })
     }
 
     /**

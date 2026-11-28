@@ -562,6 +562,12 @@ object Features {
      * library jobs only when `compress.targets.nas.ok` (backup jobs when `targets.backup.ok`).
      */
     const val COMPRESS = "compress"
+    /**
+     * hoard-server 0.15.0 (ADR 0023 Amendment (0.15.0)): the trash for paired devices (`/v1/trash`: move with a dry run,
+     * list, restore, delete, empty by group). With it Hoard trashes, restores and empties server photos only through the
+     * server, never over SMB (Amendment (2.10.0)).
+     */
+    const val TRASH_ACTIONS = "trash-actions"
 }
 
 /** The `include` of the items feed Hoard asks for: one cursor for items and culling (ADR 0016 rule 3). */

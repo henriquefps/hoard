@@ -64,6 +64,13 @@ import dev.hfps.hoard.designsystem.components.HfpsTopBar
 import dev.hfps.hoard.designsystem.components.rememberCollapsingHeaderState
 import dev.hfps.hoard.designsystem.icons.PhosphorRegular
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
+import dev.hfps.hoard.server.api.TrashFigures
+import dev.hfps.hoard.server.trash.EmptyResult
+import dev.hfps.hoard.server.trash.ServerTrash
+import dev.hfps.hoard.server.trash.ServerTrashDay
+import dev.hfps.hoard.server.trash.ServerTrashLine
+import dev.hfps.hoard.server.trash.ServerTrashListing
+import dev.hfps.hoard.server.trash.UnitsResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -84,6 +91,22 @@ data class TrashUi(
     val server: List<ServerTrashRow> = emptyList(),
     /** Originals of compressed videos with no row on a share Hoard knows (ADR 0025: NAS without a mapping, backups). */
     val compressed: List<CompressedTrashRow> = emptyList(),
+    /**
+     * The paired server lists `trash-actions` (ADR 0023 Amendment (2.10.0)): its trash is listed from the server
+     * ([serverDays]) and restored, deleted and emptied through it; [days] are only Hoard's own trash.
+     */
+    val serverMode: Boolean = false,
+    val serverDays: List<ServerTrashDay> = emptyList(),
+    /** Each group's figures (what Empty confirms). */
+    val serverGroups: Map<String, TrashFigures> = emptyMap(),
+    /** Backup-only photos Empty leaves (only the web gallery deletes them). */
+    val serverWebOnly: TrashFigures? = null,
+    /** False when the server's trash could not be read (nothing of it is shown, nothing acts on it over SMB). */
+    val serverReachable: Boolean = true,
+    /** Hoard's rows of server-folder photos the server does not list yet (shown as a count, no actions). */
+    val waiting: Int = 0,
+    /** The server's auto-empty, in days (`compress.trashDays`). */
+    val serverTrashDays: Int = SERVER_TRASH_DAYS,
 ) {
     private val freeCompressed: List<CompressedTrashRow> get() = compressed.filter { !it.original.held }
 
@@ -95,7 +118,16 @@ data class TrashUi(
     val reachableBytes: Long get() = days.sumOf { d -> d.folders.filter { it.reachable }.sumOf { it.bytes } } + freeCompressed.sumOf { it.original.size }
 
     /** Entries a compression journal holds (ADR 0025): listed, left by Empty, not counted. */
-    val held: Int get() = days.sumOf { d -> d.folders.sumOf { it.heldRows.size } } + compressed.count { it.original.held }
+    val held: Int get() = days.sumOf { d -> d.folders.sumOf { it.heldRows.size } } + compressed.count { it.original.held } +
+        serverDays.sumOf { d -> d.places.sumOf { it.heldLines.size } }
+
+    /** Shots the server's Empty can take (not held). */
+    val serverShots: Int get() = serverGroups.values.sumOf { it.count }
+
+    /** Empty's lines: each server group, then Hoard's own reachable trash. */
+    val emptyLines: List<EmptyLine> get() = emptyLines(serverGroups, reachableFiles, reachableBytes)
+
+    val canEmpty: Boolean get() = reachableFiles > 0 || serverShots > 0
 }
 
 /** A compressed original the Trash screen lists in its server section (with the server's thumbnail when cached). */
@@ -118,6 +150,14 @@ fun serverTrashRows(items: List<dev.hfps.hoard.server.db.ServerItemEntity>): Lis
 }
 
 class TrashViewModel(private val container: AppContainer, private val phoneName: String, private val driveName: String) : ViewModel() {
+    /** The server's trash (ADR 0023 Amendment (2.10.0)): null until read, [ServerState.mode] false without the feature. */
+    /** [loaded]: the listing was asked for (null after it means unreachable; before it, still loading). */
+    data class ServerState(val mode: Boolean = false, val listing: ServerTrashListing? = null, val trashDays: Int = SERVER_TRASH_DAYS, val loaded: Boolean = true)
+
+    private val serverState = MutableStateFlow(ServerState())
+
+    /** The last split of Hoard's rows against the server's trash (rows to forget after a server restore or delete). */
+    @Volatile private var split: dev.hfps.hoard.app.trash.ServerTrashSplit = dev.hfps.hoard.app.trash.ServerTrashSplit.NONE
     private val unreachable = MutableStateFlow<Set<TrashPlace>>(emptySet())
     private val refreshing = MutableStateFlow(false)
     private val server = MutableStateFlow<List<ServerTrashRow>>(emptyList())
@@ -127,12 +167,15 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
     private val entries = MutableStateFlow<Map<String, dev.hfps.hoard.app.gallery.GalleryEntry>>(emptyMap())
 
     val ui: StateFlow<TrashUi> = combine(
-        combine(container.trash.observe(), compression) { rows, c -> rows to c },
+        combine(container.trash.observe(), compression, serverState) { rows, c, srv -> Triple(rows, c, srv) },
         unreachable,
         refreshing,
         container.database.machines().observeAll(),
         container.appSettings.trashAutoEmptyDays,
-    ) { (rows, comp), away, busy, machines, days ->
+    ) { (allRows, comp, srv), away, busy, machines, days ->
+        val sp = if (srv.mode) container.trash.split(allRows, srv.listing, enabled = true) else dev.hfps.hoard.app.trash.ServerTrashSplit.allLocal(allRows)
+        split = sp
+        val rows = sp.local
         val volumes = runCatching { container.volumeRegistry.list() }.getOrDefault(emptyList())
         val label = { place: TrashPlace ->
             val loc = FileService.resolve(place.locationId, place.share.ifEmpty { null }, machines, volumes, phoneName, driveName)
@@ -143,9 +186,24 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
             }
         }
         val groups = TrashGroups.of(rows, away, label, compression = comp)
-        val compressedRows = comp.serverOnly(rows).map { o -> CompressedTrashRow(o, entries.value[o.itemId]) }
-        TrashUi(groups, busy, days, loaded = true, compressed = compressedRows)
-    }.combine(server) { ui, srv -> ui.copy(server = srv) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrashUi())
+        if (srv.mode) {
+            // The server lists every server photo itself, compressed originals and backups included.
+            val listing = srv.listing
+            TrashUi(
+                groups, busy, days, loaded = true,
+                serverMode = true,
+                serverDays = listing?.let { ServerTrash.days(it) }.orEmpty(),
+                serverGroups = listing?.groups.orEmpty(),
+                serverWebOnly = listing?.webOnly,
+                serverReachable = listing != null || !srv.loaded,
+                waiting = sp.waiting.count { it.state == dev.hfps.hoard.data.TrashStates.TRASHED },
+                serverTrashDays = srv.trashDays,
+            )
+        } else {
+            val compressedRows = comp.serverOnly(rows).map { o -> CompressedTrashRow(o, entries.value[o.itemId]) }
+            TrashUi(groups, busy, days, loaded = true, compressed = compressedRows)
+        }
+    }.combine(server) { ui, srv -> if (ui.serverMode) ui else ui.copy(server = srv) }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TrashUi())
 
     init {
         refresh()
@@ -156,6 +214,16 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
         refreshing.value = true
         viewModelScope.launch {
             try {
+                val mode = container.trash.server.enabled()
+                if (mode) {
+                    // Server mode first (review of #88, B1): Empty is the per-group one from now on, not 2.9's, even
+                    // while the listing is on its way (or never comes).
+                    val days = container.compress.info.value?.trashDays ?: SERVER_TRASH_DAYS
+                    if (!serverState.value.mode) serverState.value = ServerState(true, null, days, loaded = false)
+                    serverState.value = ServerState(true, container.trash.server.listing(), days)
+                } else if (serverState.value.mode) {
+                    serverState.value = ServerState()
+                }
                 unreachable.value = container.trash.refresh()
                 val unplaced = runCatching { container.trash.registerServerTrash() }.getOrDefault(emptyList()).toSet()
                 // ADR 0025: what a compression journal holds changes on the server; read it fresh for the screen.
@@ -176,6 +244,35 @@ class TrashViewModel(private val container: AppContainer, private val phoneName:
     suspend fun delete(rows: List<TrashEntryEntity>): dev.hfps.hoard.app.trash.TrashService.EmptyOutcome = container.trash.empty(rows.map { it.id }).also { recompute() }
 
     suspend fun emptyAll(): dev.hfps.hoard.app.trash.TrashService.EmptyOutcome = container.trash.emptyAll().also { recompute() }
+
+    /** Hoard's own trash only (the server's is emptied by group). */
+    suspend fun emptyLocal(): dev.hfps.hoard.app.trash.TrashService.EmptyOutcome = container.trash.emptyAll(localOnly = true).also { recompute() }
+
+    /** Server photos back where they were, through the server; Hoard's rows of the restored shots are forgotten. */
+    suspend fun serverRestore(lines: List<ServerTrashLine>): UnitsResult =
+        container.trash.server.restore(lines.map { it.ref }.distinct()).also { afterServer(it, purged = false) }
+
+    suspend fun serverDelete(lines: List<ServerTrashLine>): UnitsResult =
+        container.trash.server.delete(lines).also { afterServer(it, purged = true) }
+
+    /** Empty of server groups, after the per-group confirmation; a 409 answers the figures to show again. */
+    suspend fun serverEmpty(shown: Map<String, TrashFigures>, chosen: Set<String>): EmptyResult {
+        val before = serverState.value.listing
+        return container.trash.server.empty(shown, chosen).also { r ->
+            when (r) {
+                is EmptyResult.Done -> afterServer(r.result, purged = true, listing = before)
+                is EmptyResult.Conflict -> serverState.value = serverState.value.copy(listing = serverState.value.listing?.copy(groups = r.groups, webOnly = r.webOnly ?: serverState.value.listing?.webOnly))
+                is EmptyResult.Failed -> Unit
+            }
+        }
+    }
+
+    private suspend fun afterServer(r: UnitsResult, purged: Boolean, listing: ServerTrashListing? = null) {
+        val done = r.done.map { it.itemId }.toSet()
+        val rows = split.covered.filterKeys { it in done }.values.flatten()
+        container.trash.forgetServerRows(rows, purged)
+        refresh()
+    }
 
     /** Restore of compressed originals in the server section: undoes their compression (ADR 0025). */
     suspend fun restoreCompressed(rows: List<CompressedTrashRow>): Int =
@@ -203,6 +300,15 @@ private sealed interface TrashDialog {
     data class DeleteCompressed(val rows: List<CompressedTrashRow>) : TrashDialog
     data object Empty : TrashDialog
     data class Conflict(val path: String) : TrashDialog
+
+    /** Delete permanently of server units. */
+    data class ServerDelete(val lines: List<ServerTrashLine>) : TrashDialog
+
+    /**
+     * Empty with the per-group confirmation (server mode); [changed]: the server's 409 re-showed its figures, with the
+     * groups the owner had [unchecked] still unchecked.
+     */
+    data class EmptyGroups(val changed: Boolean = false, val unchecked: Set<String> = emptySet()) : TrashDialog
 }
 
 /** The Trash screen (ADR 0023): by day, then folder, with Restore, Delete permanently and Empty trash. */
@@ -221,7 +327,20 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
         thumbs = container.gallery.thumbs,
         onBack = onBack,
         onRefresh = vm::refresh,
-        onEmpty = { dialog = TrashDialog.Empty },
+        onEmpty = { dialog = if (ui.serverMode) TrashDialog.EmptyGroups() else TrashDialog.Empty },
+        onServerRestore = { lines ->
+            scope.launch {
+                val r = vm.serverRestore(lines)
+                val n = r.done.size
+                if (n > 0) toaster.show(res.getQuantityString(R.plurals.trash_restored_shots, n, n.toString()))
+                val taken = r.refused.entries.firstOrNull { it.value == "path_taken" }
+                if (taken != null) {
+                    dialog = TrashDialog.Conflict(r.names[taken.key] ?: lines.firstOrNull { it.ref.refKey == taken.key }?.entry?.name.orEmpty())
+                }
+                for ((why, k) in r.refusedBy.filterKeys { it != "path_taken" }) toaster.show(res.getQuantityString(R.plurals.trash_server_refused, k, k.toString(), serverReasonText(res, why)))
+            }
+        },
+        onServerDelete = { dialog = TrashDialog.ServerDelete(it) },
         onDelete = { dialog = TrashDialog.Delete(it) },
         onRestoreCompressed = { rows ->
             scope.launch {
@@ -282,6 +401,66 @@ fun TrashScreen(container: AppContainer, onBack: () -> Unit) {
             },
             extra = { EmptyUnreachableNote(ui) },
         )
+        is TrashDialog.ServerDelete -> {
+            val shots = d.lines.map { it.entry.id }.distinct().size
+            ConfirmDialog(
+                title = pluralStringResource(R.plurals.trash_server_delete_title, shots, formatNumber(shots, locale())),
+                body = pluralStringResource(R.plurals.trash_server_delete_body, shots, formatNumber(shots, locale()), bytes(d.lines.sumOf { it.unit.size })),
+                confirmLabel = stringResource(R.string.trash_delete_permanently),
+                destructive = true,
+                onDismiss = { dialog = null },
+                onConfirm = {
+                    val r = vm.serverDelete(d.lines)
+                    toaster.show(res.getQuantityString(R.plurals.trash_purged_shots, r.done.size, r.done.size.toString()))
+                    for ((why, k) in r.refusedBy) toaster.show(res.getQuantityString(R.plurals.trash_server_refused, k, k.toString(), serverReasonText(res, why)))
+                },
+            )
+        }
+        is TrashDialog.EmptyGroups -> {
+            val lines = ui.emptyLines
+            var checked by remember(d) { mutableStateOf(lines.map { it.key }.toSet() - d.unchecked) }
+            var busy by remember(d) { mutableStateOf(false) }
+            EmptyGroupsDialog(
+                lines = lines,
+                checked = checked,
+                onChecked = { checked = it },
+                changed = d.changed,
+                held = ui.held,
+                busy = busy,
+                webOnly = ui.serverWebOnly,
+                onDismiss = { dialog = null },
+                onConfirm = {
+                    busy = true
+                    scope.launch {
+                        val groups = checked - EmptyLine.LOCAL
+                        var purged = 0
+                        var conflict = false
+                        if (groups.isNotEmpty()) {
+                            when (val r = vm.serverEmpty(ui.serverGroups, groups)) {
+                                is EmptyResult.Done -> {
+                                    purged += r.result.done.map { it.itemId }.distinct().size
+                                    for ((why, k) in r.result.refusedBy) toaster.show(res.getQuantityString(R.plurals.trash_server_refused, k, k.toString(), serverReasonText(res, why)))
+                                }
+                                is EmptyResult.Conflict -> conflict = true
+                                is EmptyResult.Failed -> toaster.show(serverReasonText(res, r.reason))
+                            }
+                        }
+                        if (conflict) {
+                            // The trash changed since it was shown: its figures now, each group checked again.
+                            dialog = TrashDialog.EmptyGroups(changed = true, unchecked = lines.map { it.key }.toSet() - checked)
+                            return@launch
+                        }
+                        if (EmptyLine.LOCAL in checked) {
+                            val o = vm.emptyLocal()
+                            if (o.count > 0) toaster.show(res.getQuantityString(R.plurals.trash_purged, o.count, o.count.toString()))
+                            for ((reason, n) in o.refused) toaster.show(refusedText(res, reason, n))
+                        }
+                        if (purged > 0) toaster.show(res.getQuantityString(R.plurals.trash_purged_shots, purged, purged.toString()))
+                        dialog = null
+                    }
+                },
+            )
+        }
         is TrashDialog.Conflict -> HoardDialog(
             title = stringResource(R.string.trash_restore_conflict_title),
             onDismiss = { dialog = null },
@@ -346,7 +525,12 @@ fun TrashContent(
     thumbs: dev.hfps.hoard.app.gallery.ThumbSource? = null,
     onRestoreCompressed: (List<CompressedTrashRow>) -> Unit = {},
     onDeleteCompressed: (List<CompressedTrashRow>) -> Unit = {},
+    onServerRestore: (List<ServerTrashLine>) -> Unit = {},
+    onServerDelete: (List<ServerTrashLine>) -> Unit = {},
+    /** Places shown open (goldens); a tap opens or closes a place. */
+    expandedPlaces: Set<String> = emptySet(),
 ) {
+    var open by remember { mutableStateOf(emptySet<String>()) }
     HfpsScaffold(
         header = rememberCollapsingHeaderState(),
         topBar = {
@@ -356,7 +540,7 @@ fun TrashContent(
                     PhosphorRegular.Trash,
                     stringResource(R.string.trash_empty_action),
                     onEmpty,
-                    enabled = ui.reachableFiles > 0,
+                    enabled = ui.canEmpty,
                     tint = HfpsTheme.colors.destructive,
                     modifier = Modifier.testTag("trash-empty"),
                 )
@@ -374,8 +558,24 @@ fun TrashContent(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )
                 }
-                if (ui.loaded && ui.days.isEmpty() && ui.server.isEmpty() && ui.compressed.isEmpty()) {
+                if (ui.loaded && ui.days.isEmpty() && ui.server.isEmpty() && ui.compressed.isEmpty() && ui.serverDays.isEmpty() && ui.waiting == 0 && ui.serverReachable) {
                     item("empty") { EmptyTrash() }
+                }
+                if (ui.serverMode && (ui.serverDays.isNotEmpty() || ui.waiting > 0 || !ui.serverReachable)) {
+                    item("srv-header") { ServerSectionHeader(ui.serverReachable, ui.serverTrashDays, ui.waiting) }
+                    for (day in ui.serverDays) {
+                        item("srv-day-${day.day}") { ServerDayHeader(day, dayLabel(runCatching { LocalDate.parse(day.day) }.getOrNull()), onServerRestore, onServerDelete) }
+                        items(day.places, key = { "srv-p-${day.day}-${it.source}-${it.name}-${it.dir}" }) { place ->
+                            Column(Modifier.background(HfpsTheme.colors.card)) {
+                                if (place != day.places.first()) HfpsRowDivider(Modifier.padding(start = 16.dp))
+                                val key = "${day.day}|${place.source}|${place.name}|${place.dir}"
+                                ServerPlaceRow(place, onServerRestore, onServerDelete, expanded = key in open || key in expandedPlaces) {
+                                    open = if (key in open) open - key else open + key
+                                }
+                            }
+                        }
+                    }
+                    if (ui.days.isNotEmpty()) item("local-header") { LocalSectionHeader() }
                 }
                 for (day in ui.days) {
                     item("day-${day.date}") { DayHeader(day, onRestore, onDelete) }

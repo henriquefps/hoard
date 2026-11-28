@@ -836,3 +836,131 @@ moved by the web gallery; older Hoards keep their SMB trash (their files are `by
 4. `TestRevokedKeyIsRejected` was flaky: a revoke's background sweep wrote into the test's directory while its cleanup
    removed it; the server now counts those sweeps (`Server.sweeps`) and the harness waits for them before it closes.
    Tests: `trash_review_test.go`.
+
+## Amendment (2.10.0): server photos through the server
+
+**The owner's decision (2026-11-27): Hoard does not use SMB to trash, restore or empty photos the server indexes.**
+Hoard 2.10.0 uses hoard-server 0.15.0's `/v1/trash` (Amendment (0.15.0), feature `trash-actions`) for every server
+photo. A server without the feature keeps 2.9's behaviour (everything above). No schema change (`hoard.db` 4 and
+`gallery.db` 7 as they were).
+
+### Client model (`:core:server` `trash/`, pure over `TrashRoutes`; `ServerTrashTest` against a fake server)
+
+- **Move**: `ServerTrash.dryRun` then `move`, both in batches of 500, answers added up. The dry run gives counts,
+  size, `onlyCopy` and `edits` warnings, skips by reason and `nasBlocked`. The move gives per item `moved`,
+  `skipped` and `failed`, with the reason.
+  - A batch the server refuses with `503` fails its items with `details.reason`, the write mount's problem. One it
+    cannot be asked fails them `unreachable`.
+  - A `429` waits its `Retry-After`: at most 3 times, 120 s each.
+  - Cancel stops between batches. The rest fail `cancelled`: nothing of them moved.
+  - **Retry the failed ones** sends every failed id again; the server decides again. `MoveResult.merge` keeps the
+    latest answer per item.
+- **Listing**: every page of `GET /v1/trash`. The first page's `groups` and `webOnly` are kept as the figures Empty
+  confirms. `ServerTrash.days` groups units by day (newest first), then place: a NAS folder's name and the original
+  directory, or "Backup of <phone>" and the phone directory.
+- **Restore and Delete permanently** go by unit, 500 a call. Two kinds of unit are never sent to delete; they are
+  refused locally:
+  - **held** units (a compression journal holds them): listed, never deletable;
+  - **backup-only** units (key `server`, or `webOnly`; server-0150b): Restore is offered, Delete permanently is not.
+    The server would answer `web_only`: only the web gallery deletes them.
+- **Empty** sends `groups` (the ones checked) and `confirm`, the sum of those groups' shown figures.
+  - On `409 confirm`, when every chosen group still has the figures shown, the server's own `count`/`size` is sent
+    once more. They differ only because a shot with units in two groups counts once in the server's total.
+  - Otherwise the dialog shows again with the new figures, and the groups the owner unchecked stay unchecked.
+  - `details.webOnly` and the listing's `webOnly` are said in the dialog: "N backed-up items can only be deleted from
+    the web gallery".
+- **Reasons**: every server reason has words, in English and Brazilian Portuguese (`serverReasonText`), including
+  `web_only` and `not_hoard` (`403 forbidden` for a device that is not a Hoard).
+
+### Gallery and Files (`:native`)
+
+- **Gallery Move to trash** (`GalleryTrash.planWithServer`): every server item goes to the server; the phone's files
+  go to the phone's trash as before.
+  - Nothing is "left out for want of a mapping" any more, and no share is needed.
+  - An item whose phone copy is in the selection does not report the server's `on_phone` skip: it goes to the phone's
+    trash.
+  - Moved items get `trashed_since` at once, until the feed says so.
+- **Files' delete and culling's "Move rejects to trash" in a mapped server folder** (the coordinator's decision): see
+  `ServerRouting`, JVM-tested in `ServerRoutingTest`. The planned units whose root is in a NAS folder are split:
+  - a unit with photos becomes a `ServerUnit`. Its media files are looked up with `POST /v1/items/by-path`, using the
+    mapping's `serverPrefix` + the path under the root, and the server moves the items;
+  - plain files, sidecars on their own, and folders with no photo below them stay SMB moves;
+  - refused, never moved over SMB instead:
+    - `PHOTO_SERVER_UNREACHABLE`: the lookup failed;
+    - `NOT_ON_SERVER_YET`: a path the server does not know; a walk of the folder is asked for;
+    - `PART_OF_SHOT`: in Files, another media file of the same item in the folder is not selected (the server trashes
+      whole photos);
+    - `FOLDER_ON_SERVER`: a selected folder with photos below it.
+  - The dialog (`MoveToTrashDialog`) runs the SMB part, then the server's move. It shows both in one confirmation, and
+    the server's per-item result with Retry.
+
+### The Trash screen
+
+With the feature, the screen lists the server's trash first ("On the photo server": by day, then place; tap a place to
+see each photo with its own menu), then Hoard's own trash ("On this phone and your drives"). The old server section and
+the compressed originals section are not shown: the server lists those itself, through the same routes.
+
+**Shown once** (`ServerTrashSplit`, JVM-tested in `ServerTrashSplitTest`): a row of Hoard's index is in a server
+folder when its root is a mapping's `smbPrefix` on that share, or its row or root has a `server_folder_id`. Such a
+row's shot (place, root, day folder, shot key) is matched to the server's listing by NAS folder and its
+`.hoard-trash/<day>/<path>` tail. The share's trash root is the folder's `<P>`, so the tails are equal
+(`ServerTrashIndex`). Three outcomes:
+
+- **covered**: hidden. Its rows are forgotten when the server restores or deletes that item.
+- **waiting**: media the server does not list yet, or every server-folder photo while the server cannot be read. Shown
+  as a count, with no action.
+- **local**: everything else (the phone, drives, shares outside the server, plain files). Unchanged.
+
+`TrashService.restore` and `empty` drop server-folder rows whatever a caller passes (`ownRows`).
+
+### Auto-empty
+
+- The server's auto-empty takes what it moved: units `by` the admin or a device.
+- `TrashCleanupWorker` no longer walks trash roots in server folders.
+- It lists the server's trash and asks `POST /v1/trash/delete` for the NAS units that meet all of these:
+  - `by` absent: Hoard's SMB moves before 2.10.0, which the server never auto-empties;
+  - in group `hoard`;
+  - not held, and not a compressed original;
+  - whose day is on or before today minus Hoard's setting (A1 item 7's rule). The same clock guard applies: nothing
+    while now is before `trashNewestTrashedAt`, and now is the earliest of the phone's and the network's clocks.
+- The shorter-period preview counts them too.
+- The server's units carry no mtime, so the day folder's name dates them. The A1 item 12 mtime check is not available
+  for them. Accepted: the server's own day folder names are the only date it reports, and the clock guard still holds.
+- Settings › Trash says "Server photos are emptied by the photo server after N days" (`compress.trashDays`, 30 when
+  absent). Hoard's setting is explained as covering this phone, drives, shares outside the server, and its own older
+  moves in server folders.
+
+### Not changed
+
+The phone's photos use Android's trash. The Files tab's trash in places that are not server folders is unchanged, and
+so are servers without `trash-actions`. Hoard's index (`trash_entries`) still records what it moves over SMB; its
+refresh still lists `.hoard-trash` folders it can reach (a read, so rows of files restored or deleted elsewhere go
+away).
+
+**Review of #88** (fixes before merge):
+
+1. **Empty never reaches a server-folder row over SMB, whatever the screen's state.** The Trash screen switched to
+   server mode only after the server's listing came back. Until then, Empty ran 2.9's Empty over every row, including
+   photos Hoard moved into server folders before 2.10.0. Now:
+   - `TrashService.emptyAll` gives the SMB purge only Hoard's own rows whenever the server lists `trash-actions`
+     (`rowsForEmptyAll`). Without a listing (still loading, or unreachable) server-folder rows wait and are left.
+   - The screen enters server mode before asking for the listing.
+   - Test: `EmptyAllServerRowsTest`.
+2. **No SMB permanent delete for a server folder's photos.** Files' delete inside a server folder's `.hoard-trash` was
+   refused `ALREADY_IN_TRASH`, which offered the permanent delete over SMB. That delete skipped the server, the held
+   rule and the compressed-original protection. With `trash-actions`, `ServerRouting.serverOnly` makes such refusals
+   `SERVER_TRASH_ONLY` (no offer; "restore it or delete it from the Trash screen"):
+   - anything already in a mapped folder's `.hoard-trash`;
+   - any other offered refusal of a photo or folder unit in a mapped folder.
+
+   A plain file keeps the offer. `RefusedUnit` carries the unit's `serverFolderId` for this. Tests: `ServerRoutingTest`.
+3. **A folder trashed whole over SMB is never Hoard's in a server folder.** Before 2.10.0, Files' delete of a folder
+   was one index row (`is_directory`); its name is not media, and the server lists the photos inside it at deeper
+   paths. The split classed it as Hoard's own, so Empty and Delete permanently deleted it recursively over SMB, and
+   Restore moved it back. Now a directory row in a server folder is:
+   - **covered** when the server lists anything at or under its path (`ServerTrashIndex.coverUnder`; restore, delete
+     and Empty go through `/v1` for those units);
+   - **waiting** otherwise.
+
+   A folder outside a server folder is unchanged. Tests: `ServerTrashSplitTest`, `EmptyAllServerRowsTest`.
+

@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.10.0 (unreleased)
+
+Server photos go to the trash through the photo server, never through a shared folder ([ADR 0023](docs/adr/0023-trash.md), "Amendment (2.10.0)"). Made for hoard-server 0.15.0 (feature `trash-actions`). With older servers Hoard keeps 2.9's trash.
+
+- **Move to trash without a shared folder.** In the Gallery, select photos (for example **Select all** with the **Rejected** filter) and **Move to trash**. The photo server moves its own files, and phone backups and uploads go to its trash too. You no longer need a share or a folder opened in Files. Before anything moves, the confirmation shows how many photos, files and how much space. It also lists what the server leaves out and why: held by a video compression, being compressed, still on a phone. It warns about photos with no other copy and photos with Reveal edits.
+- **Per-photo results, and Retry.** When some photos are not moved, Hoard says how many and why (the file changed, a folder the server cannot write, the server not reachable…). **Retry the failed ones** sends just those again.
+- **Files and culling in server folders.** Deleting photos in Files and **Move rejects to trash** in culling, inside a folder the photo server indexes, also go through the server. Other files (a text file, a sidecar on its own) still move over the share. Hoard does not fall back to the share in these cases:
+  - the server is not reachable: Hoard says to try again;
+  - the server has not seen a photo yet: Hoard asks it to look at the folder and says to try again in a minute;
+  - you deleted only the JPEG of a RAW + JPEG: select both, or use the Gallery;
+  - a folder that holds photos: open it and select the photos.
+- **The Trash lists the photo server's trash** by day and place, with sizes, next to this phone's and your drives' own trash. Tap a place to see its photos. **Restore** and **Delete permanently** work on a day, a place or a single photo, through the server. Photos held by a video compression are listed but never deleted. Backups that only the web gallery can delete can still be restored.
+- **Photos Hoard trashed over a share before** are the same files the server lists. They show once, and restore and delete through the server.
+- **Empty trash asks group by group**, as the web gallery does. Each line has its count, size and a checkbox: "Moved from the web gallery", "Trashed by Hoard on your devices", "Originals of compressed videos", and "On this phone, your drives and shares". If the trash changed in the meantime, the dialog shows the new figures before deleting anything.
+- **Who empties what by date.** The photo server empties what it moved after its own number of days. Settings › Trash says so: "Server photos are emptied by the photo server after 30 days". Hoard's setting still covers this phone, your drives and shares outside the server. For server folders, Hoard no longer deletes anything over the share. It asks the server to delete the photos Hoard itself trashed over a share before 2.10.0, once they are older than Hoard's setting.
+
 ## 2.9.1 (unreleased)
 
 The phone backup after the photo server's admin deletes it, and a photo server whose disk is full ([ADR 0024](docs/adr/0024-phone-backup.md) and [ADR 0025](docs/adr/0025-video-compression.md), "Amendment (2.9.1)"). Made for hoard-server 0.14.0; works with older servers too.

@@ -21,7 +21,8 @@ object GalleryTrashJobs {
         val items = entries.mapNotNull { it.itemId }.distinct().associateWith { id ->
             db.items().json(id)?.let { runCatching { ServerJson.decodeFromString(Item.serializer(), it) }.getOrNull() }
         }
-        val selection = GalleryTrash.plan(entries, { items[it] }, mappings)
+        // ADR 0023 Amendment (2.10.0): with `trash-actions` server photos go through the server, never a share.
+        val selection = if (container.trash.server.enabled()) GalleryTrash.planWithServer(entries) else GalleryTrash.plan(entries, { items[it] }, mappings)
         val machines = container.database.machines().all()
         val volumes = runCatching { container.volumeRegistry.list() }.getOrDefault(emptyList())
         val requests = selection.groups.mapNotNull { g ->

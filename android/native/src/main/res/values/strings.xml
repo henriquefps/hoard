@@ -956,4 +956,109 @@
     <string name="settings_browsing_summary">Sort order, hidden files, existing files</string>
     <string name="settings_culling_summary">Culling assist and XMP</string>
     <string name="settings_about_summary">Version and licences</string>
+    <!-- Server photos through the server (ADR 0023 Amendment (2.10.0)) -->
+    <string name="trash_reason_photo_server_unreachable">The photo server is not reachable; try again</string>
+    <string name="trash_reason_not_on_server_yet">the photo server has not seen it yet; it is looking at the folder now, try again in a minute</string>
+    <string name="trash_reason_part_of_shot">it is part of a photo with other files (RAW + JPEG): select all of them, or move the photo to the trash from the Gallery</string>
+    <string name="trash_reason_folder_on_server">folders on the photo server go to the trash photo by photo: open the folder and select its photos</string>
+    <string name="trash_server_done_title">Moved to the trash</string>
+    <string name="trash_server_failed_title">Some photos were not moved</string>
+    <string name="trash_server_retry">Retry the failed ones</string>
+    <string name="trash_server_auto_note">The photo server empties its trash after %1$d days.</string>
+    <string name="trash_server_blocked">The photo server cannot write its folders now (%1$s): its NAS photos cannot move.</string>
+    <string name="trash_server_progress">%1$d of %2$d photos</string>
+    <string name="trash_srv_not_found">no longer on the photo server</string>
+    <string name="trash_srv_trashed">already in the trash</string>
+    <string name="trash_srv_held">a video compression holds it</string>
+    <string name="trash_srv_busy">it is being compressed right now</string>
+    <string name="trash_srv_on_phone">it is still on a phone: delete it on that phone</string>
+    <string name="trash_srv_nothing">the photo server has no copy it can move</string>
+    <string name="trash_srv_changed">the file changed since the photo server read it; try again after its next look</string>
+    <string name="trash_srv_path_taken">another file is already in its place</string>
+    <string name="trash_srv_not_writable">the photo server cannot write that folder</string>
+    <string name="trash_srv_not_same_device">the folder spans two disks</string>
+    <string name="trash_srv_unreadable">a folder could not be read</string>
+    <string name="trash_srv_partial">only part of it moved (what moved is in the trash)</string>
+    <string name="trash_srv_state">a video compression cannot undo it now</string>
+    <string name="trash_srv_unreachable">the photo server is not reachable</string>
+    <string name="trash_srv_cancelled">stopped before it</string>
+    <string name="trash_srv_rate_limited">the photo server asked Hoard to slow down; try again in a minute</string>
+    <string name="trash_srv_write_mount">the photo server cannot write its folders now</string>
+    <string name="trash_srv_error">the photo server had a problem</string>
+    <string name="trash_srv_other">the photo server answered %1$s</string>
+    <string name="trash_group_web">Moved from the web gallery</string>
+    <string name="trash_group_hoard">Trashed by Hoard on your devices</string>
+    <string name="trash_group_compressed">Originals of compressed videos</string>
+    <string name="trash_group_local">On this phone, your drives and shares</string>
+    <string name="trash_empty_changed">The trash changed since you opened it: these are its figures now.</string>
+    <string name="trash_empty_groups_body">Choose what to delete for good:</string>
+    <string name="trash_server_unreachable">The photo server is not reachable: its trash is not shown. Try again when it is.</string>
+    <string name="trash_local_section">On this phone and your drives</string>
+    <string name="trash_server_backup_of">Backup of %1$s</string>
+    <string name="trash_settings_auto_hint_server">Applies to this phone, your drives and shares outside the photo server, and to photos Hoard put in the server folders\' trash before 2.10.0.</string>
+    <string name="trash_settings_server">Server photos are emptied by the photo server after %1$d days.</string>
+    <plurals name="trash_server_confirm_body">
+        <item quantity="one">%1$s photo (%2$s) goes to the photo server\'s trash.</item>
+        <item quantity="other">%1$s photos (%2$s) go to the photo server\'s trash.</item>
+    </plurals>
+    <plurals name="trash_server_files_size">
+        <item quantity="one">%1$s file, %2$s</item>
+        <item quantity="other">%1$s files, %2$s</item>
+    </plurals>
+    <plurals name="trash_server_only_copy">
+        <item quantity="one">%1$s of them has no other copy: emptying the trash deletes it for good.</item>
+        <item quantity="other">%1$s of them have no other copy: emptying the trash deletes them for good.</item>
+    </plurals>
+    <plurals name="trash_server_edits">
+        <item quantity="one">%1$s has Reveal edits: they come back with a restore and go when the trash is emptied.</item>
+        <item quantity="other">%1$s have Reveal edits: they come back with a restore and go when the trash is emptied.</item>
+    </plurals>
+    <plurals name="trash_server_skipped">
+        <item quantity="one">%1$s left out: %2$s</item>
+        <item quantity="other">%1$s left out: %2$s</item>
+    </plurals>
+    <plurals name="trash_server_failed">
+        <item quantity="one">%1$s not moved: %2$s</item>
+        <item quantity="other">%1$s not moved: %2$s</item>
+    </plurals>
+    <plurals name="trash_group_shots">
+        <item quantity="one">%1$s photo · %2$s</item>
+        <item quantity="other">%1$s photos · %2$s</item>
+    </plurals>
+    <plurals name="trash_server_waiting">
+        <item quantity="one">%1$s photo Hoard put in a server folder\'s trash is not listed by the photo server yet.</item>
+        <item quantity="other">%1$s photos Hoard put in server folders\' trash are not listed by the photo server yet.</item>
+    </plurals>
+    <plurals name="trash_server_held">
+        <item quantity="one">%1$s held by a compression (kept)</item>
+        <item quantity="other">%1$s held by a compression (kept)</item>
+    </plurals>
+    <plurals name="trash_restored_shots">
+        <item quantity="one">%1$s photo restored</item>
+        <item quantity="other">%1$s photos restored</item>
+    </plurals>
+    <plurals name="trash_purged_shots">
+        <item quantity="one">%1$s photo deleted for good</item>
+        <item quantity="other">%1$s photos deleted for good</item>
+    </plurals>
+    <plurals name="trash_server_refused">
+        <item quantity="one">%1$s not done: %2$s</item>
+        <item quantity="other">%1$s not done: %2$s</item>
+    </plurals>
+    <plurals name="trash_server_delete_title">
+        <item quantity="one">Delete %1$s photo permanently?</item>
+        <item quantity="other">Delete %1$s photos permanently?</item>
+    </plurals>
+    <plurals name="trash_server_delete_body">
+        <item quantity="one">%1$s photo (%2$s) will be deleted for good from the photo server. This cannot be undone.</item>
+        <item quantity="other">%1$s photos (%2$s) will be deleted for good from the photo server. This cannot be undone.</item>
+    </plurals>
+    <string name="trash_srv_web_only">only the web gallery can delete it permanently</string>
+    <string name="trash_srv_not_hoard">this photo server lets only Hoard do this</string>
+    <string name="trash_web_only_label">only the web gallery can delete it</string>
+    <plurals name="trash_empty_web_only">
+        <item quantity="one">%1$s backed-up item (%2$s) can only be deleted from the web gallery.</item>
+        <item quantity="other">%1$s backed-up items (%2$s) can only be deleted from the web gallery.</item>
+    </plurals>
+    <string name="trash_reason_server_trash_only">it is a photo on the photo server: restore it or delete it from the Trash screen (it goes through the photo server)</string>
 </resources>

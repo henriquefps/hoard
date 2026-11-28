@@ -40,26 +40,24 @@ import dev.hfps.hoard.app.ui.common.errorTitle
 import dev.hfps.hoard.app.ui.common.formatNumber
 import dev.hfps.hoard.app.ui.common.locale
 import dev.hfps.hoard.designsystem.theme.HfpsTheme
+import dev.hfps.hoard.server.trash.MovePreview
+import dev.hfps.hoard.server.trash.MoveResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** What a trash dialog moves: [paths] of [folder] in [location] (the trash adds each shot's other files and sidecars). */
 data class TrashRequest(val location: BrowseLocation, val folder: String, val paths: List<String>)
 
-/** What left the folder: units moved to the trash entirely, and units deleted permanently instead. */
-data class TrashDone(val trashed: List<TrashUnit>, val deleted: List<TrashUnit>) {
+/**
+ * What left the folder: units moved to the trash entirely (the server's moves included), and units deleted permanently
+ * instead; [serverMoved]: the server items the server moved (ADR 0023 Amendment (2.10.0)).
+ */
+data class TrashDone(val trashed: List<TrashUnit>, val deleted: List<TrashUnit>, val serverMoved: List<String> = emptyList()) {
     val gone: List<TrashUnit> get() = trashed + deleted
 }
 
 /** Refusals for which the dialog offers today's permanent delete instead (ADR 0023 "When the trash is not possible"). */
-val PERMANENT_OFFER: Set<TrashRefusal> = setOf(
-    TrashRefusal.ROOT_NOT_WRITABLE,
-    TrashRefusal.NOT_SAME_DEVICE,
-    TrashRefusal.MOVE_UNSUPPORTED,
-    TrashRefusal.ALREADY_IN_TRASH,
-    TrashRefusal.PHONE_TRASH_UNAVAILABLE,
-    TrashRefusal.FOLDER_NOT_TRASHABLE,
-)
+val PERMANENT_OFFER: Set<TrashRefusal> = dev.hfps.hoard.app.trash.ServerRouting.OFFERS_PERMANENT
 
 fun reasonText(reason: TrashRefusal): Int = when (reason) {
     TrashRefusal.ALREADY_IN_TRASH -> R.string.trash_reason_already_in_trash
@@ -75,6 +73,11 @@ fun reasonText(reason: TrashRefusal): Int = when (reason) {
     TrashRefusal.DECLINED -> R.string.trash_reason_declined
     TrashRefusal.FOLDER_NOT_TRASHABLE -> R.string.trash_reason_folder
     TrashRefusal.FAILED -> R.string.trash_reason_failed
+    TrashRefusal.PHOTO_SERVER_UNREACHABLE -> R.string.trash_reason_photo_server_unreachable
+    TrashRefusal.NOT_ON_SERVER_YET -> R.string.trash_reason_not_on_server_yet
+    TrashRefusal.PART_OF_SHOT -> R.string.trash_reason_part_of_shot
+    TrashRefusal.FOLDER_ON_SERVER -> R.string.trash_reason_folder_on_server
+    TrashRefusal.SERVER_TRASH_ONLY -> R.string.trash_reason_server_trash_only
 }
 
 /** Where a plan's trash is, for the dialog: `machine › share › root` (or the drive's name). */
@@ -89,9 +92,12 @@ private sealed interface Step {
     data object Preparing : Step
     data class PrepareFailed(val message: Int) : Step
 
-    /** Each request with its plan; [plan] is all of them together, for the counts. */
-    data class Confirm(val plans: List<Pair<TrashRequest, TrashPlan>>, val plan: TrashPlan) : Step
+    /** Each request with its plan; [plan] is all of them together, for the counts; [server]: the server's dry run. */
+    data class Confirm(val plans: List<Pair<TrashRequest, TrashPlan>>, val plan: TrashPlan, val server: ServerPart? = null) : Step
     data object Running : Step
+
+    /** What the server did with the photos (ADR 0023 Amendment (2.10.0)): moved, skipped and failed, with Retry. */
+    data class ServerDone(val result: MoveResult, val trashed: List<TrashUnit>, val serverUnits: List<dev.hfps.hoard.app.trash.ServerUnit>, val retrying: Boolean = false) : Step
 
     /** Units the trash refused that can be deleted permanently instead, by request ([trashed] already went to the trash). */
     data class Offer(val units: List<Pair<TrashRequest, List<TrashUnit>>>, val reason: TrashRefusal, val trashed: List<TrashUnit>) : Step {
@@ -101,7 +107,21 @@ private sealed interface Step {
 
 /** Plans of several places shown as one (the counts, the size, the warnings; never run as one). */
 private fun combined(plans: List<TrashPlan>): TrashPlan =
-    TrashPlan(plans.first().place, plans.flatMap { it.units }, plans.flatMap { it.refused }, plans.any { it.oldServerWarning })
+    TrashPlan(plans.first().place, plans.flatMap { it.units }, plans.flatMap { it.refused }, plans.any { it.oldServerWarning }, plans.flatMap { it.server })
+
+/**
+ * The server's part of a Move to trash (ADR 0023 Amendment (2.10.0)): the photos it moves ([ids]), its dry run
+ * ([preview]; null when it could not be reached), and the items whose `on_phone` skip is not news ([phoneSelected]: their
+ * phone copy is in the selection, it goes to the phone's trash).
+ */
+data class ServerPart(val ids: List<String>, val preview: MovePreview?, val phoneSelected: Set<String> = emptySet()) {
+    /** Skips worth telling (on_phone of a selected phone copy is not one). */
+    val skipped: Map<String, String> get() = preview?.skipped.orEmpty().filter { (id, why) -> !(why == "on_phone" && id in phoneSelected) }
+    val movable: Int get() = preview?.movable ?: 0
+
+    /** Nothing of it can move now: unreachable, or every item skipped, or only NAS shots while the write mount is blocked. */
+    val blocked: Boolean get() = preview == null || movable == 0 || preview.nasBlocked != null && preview.serverItems == 0
+}
 
 /** One request: Files' delete, culling's rejects. */
 @Composable
@@ -130,6 +150,10 @@ fun MoveToTrashDialog(
     onDone: (TrashDone) -> Unit,
     shots: Boolean = true,
     leftOut: String? = null,
+    /** Server photos the server moves (the Gallery, ADR 0023 Amendment (2.10.0)); Files' and culling's come with their plans. */
+    serverItems: List<String> = emptyList(),
+    /** Items whose phone copy is selected too (their `on_phone` skip is expected). */
+    phoneSelected: Set<String> = emptySet(),
 ) {
     val res = LocalResources.current
     val toaster = LocalToaster.current
@@ -154,12 +178,14 @@ fun MoveToTrashDialog(
             val plans = requests.map { r -> r to container.trash.prepareFolder(r.location, r.folder, r.paths, wholeShots = shots) }
             val offers = plans.map { (r, p) -> r to p.refused.filter { it.reason in PERMANENT_OFFER }.map { it.unit } }.filter { it.second.isNotEmpty() }
             val firstReason = plans.flatMap { it.second.refused }.firstOrNull { it.reason in PERMANENT_OFFER }?.reason
-            if (plans.all { it.second.units.isEmpty() } && offers.isNotEmpty() && firstReason != null) {
+            val ids = (serverItems + plans.flatMap { it.second.serverItems }).distinct()
+            val server = if (ids.isEmpty()) null else ServerPart(ids, runCatching { container.trash.server.dryRun(ids) }.getOrElse { if (it is CancellationException) throw it else null }, phoneSelected)
+            if (plans.all { it.second.units.isEmpty() } && server == null && offers.isNotEmpty() && firstReason != null) {
                 Step.Offer(offers, firstReason, emptyList())
             } else if (plans.isEmpty()) {
-                Step.Confirm(emptyList(), TrashPlan(dev.hfps.hoard.app.trash.TrashPlace("device"), emptyList()))
+                Step.Confirm(emptyList(), TrashPlan(dev.hfps.hoard.app.trash.TrashPlace("device"), emptyList()), server)
             } else {
-                Step.Confirm(plans, combined(plans.map { it.second }))
+                Step.Confirm(plans, combined(plans.map { it.second }), server)
             }
         } catch (e: CancellationException) {
             throw e
@@ -168,20 +194,33 @@ fun MoveToTrashDialog(
         }
     }
 
+    var serverMoved by remember { mutableStateOf(emptyList<String>()) }
+
     fun finish(trashed: List<TrashUnit>, deleted: List<TrashUnit>) {
-        onDone(TrashDone(trashed, deleted))
+        onDone(TrashDone(trashed, deleted, serverMoved))
         onDismiss()
     }
 
-    fun run(plans: List<Pair<TrashRequest, TrashPlan>>) {
+    /** Units of the plans the server moved whole (every item of the unit moved). */
+    fun movedUnits(units: List<dev.hfps.hoard.app.trash.ServerUnit>, moved: Collection<String>): List<TrashUnit> =
+        units.filter { u -> u.itemIds.isNotEmpty() && u.itemIds.all { it in moved } }.map { it.unit }
+
+    fun run(plans: List<Pair<TrashRequest, TrashPlan>>, server: ServerPart?) {
         step = Step.Running
         scope.launch {
             val reports = ArrayList<Pair<TrashRequest, dev.hfps.hoard.app.trash.TrashReport>>()
+            var serverResult: MoveResult? = null
+            val serverUnits = plans.flatMap { it.second.server }
             try {
                 for ((r, p) in plans) {
                     if (p.units.isEmpty() && p.refused.isEmpty()) continue
-                    reports += r to container.trash.start(p).await()
+                    reports += r to container.trash.start(p.copy(server = emptyList())).await()
                     if (reports.last().second.cancelled.isNotEmpty()) break
+                }
+                if (server != null && !server.blocked && reports.none { it.second.cancelled.isNotEmpty() }) {
+                    val skipped = server.preview?.skipped.orEmpty().keys
+                    serverResult = container.trash.server.move(server.ids.filter { it !in skipped })
+                    serverMoved = serverResult.moved
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -191,7 +230,7 @@ fun MoveToTrashDialog(
                 return@launch
             }
             val all = reports.map { it.second }
-            val trashed = all.flatMap { r -> r.trashed.map { it.unit } }
+            val trashed = all.flatMap { r -> r.trashed.map { it.unit } } + movedUnits(serverUnits, serverResult?.moved.orEmpty())
             val partial = all.sumOf { it.partial.size }
             val messages = buildList {
                 if (trashed.isNotEmpty()) add(res.getQuantityString(R.plurals.trash_moved, trashed.size, trashed.size.toString()))
@@ -205,7 +244,10 @@ fun MoveToTrashDialog(
             if (messages.isNotEmpty()) toaster.show(messages.joinToString("\n"), long = messages.size > 1)
             val offers = reports.map { (r, rep) -> r to rep.refused.filter { it.reason in PERMANENT_OFFER }.map { it.unit } }.filter { it.second.isNotEmpty() }
             val reason = all.flatMap { it.refused }.firstOrNull { it.reason in PERMANENT_OFFER }?.reason
-            if (offers.isNotEmpty() && reason != null) {
+            val sr = serverResult
+            if (sr != null && (sr.failed.isNotEmpty() || sr.skipped.keys.any { it !in phoneSelected || sr.skipped[it] != "on_phone" })) {
+                step = Step.ServerDone(sr, trashed, serverUnits)
+            } else if (offers.isNotEmpty() && reason != null) {
                 step = Step.Offer(offers, reason, trashed)
             } else {
                 finish(trashed, emptyList())
@@ -234,7 +276,7 @@ fun MoveToTrashDialog(
         is Step.Confirm -> {
             val plan = s.plan
             val allShots = shots && plan.units.all { it.unit.isShot }
-            val count = plan.units.size
+            val count = plan.units.size + (s.server?.takeIf { !it.blocked }?.movable ?: 0)
             HoardDialog(
                 title = if (count == 0) stringResource(R.string.trash_title)
                 else if (allShots) pluralStringResource(R.plurals.trash_confirm_title_shots, count, formatNumber(count, locale()))
@@ -242,14 +284,17 @@ fun MoveToTrashDialog(
                 onDismiss = onDismiss,
                 confirm = {
                     if (count > 0) {
-                        TextButton({ run(s.plans) }, Modifier.testTag("trash-confirm")) {
+                        TextButton({ run(s.plans, s.server) }, Modifier.testTag("trash-confirm")) {
                             Text(stringResource(R.string.trash_confirm_action), color = HfpsTheme.colors.primary, style = HfpsTheme.typography.ui.copy(fontWeight = FontWeight.SemiBold))
                         }
                     }
                 },
                 dismiss = { TextButton(onDismiss) { Text(stringResource(if (count == 0) R.string.t_common_close else R.string.t_common_cancel), color = HfpsTheme.colors.foreground) } },
             ) {
-                TrashConfirmBody(plan, s.plans.map { (r, p) -> trashWhere(r.location, p) }.distinct().joinToString(", "), autoDays)
+                if (plan.units.isNotEmpty() || plan.refused.isNotEmpty() || s.server == null) {
+                    TrashConfirmBody(plan, s.plans.map { (r, p) -> trashWhere(r.location, p) }.distinct().joinToString(", "), autoDays)
+                }
+                s.server?.let { ServerConfirmBody(it, container.compress.info.collectAsState().value?.trashDays ?: SERVER_TRASH_DAYS) }
                 if (leftOut != null) Text(leftOut, style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground, modifier = Modifier.padding(top = 8.dp).testTag("trash-left-out"))
                 if (askMedia) MediaManagementAsk { dev.hfps.hoard.app.ui.trash.openMediaManagement(context) }
             }
@@ -258,9 +303,38 @@ fun MoveToTrashDialog(
             title = stringResource(R.string.trash_running),
             onDismiss = {},
             confirm = {},
-            dismiss = { TextButton({ container.trash.cancel() }) { Text(stringResource(R.string.t_common_cancel), color = HfpsTheme.colors.foreground) } },
+            dismiss = { TextButton({ container.trash.cancel(); container.trash.server.cancel() }) { Text(stringResource(R.string.t_common_cancel), color = HfpsTheme.colors.foreground) } },
         ) {
-            TrashProgressBody(progress)
+            val serverProgress by container.trash.server.progress.collectAsState()
+            val sp = serverProgress
+            if (sp != null && progress == null) ServerProgressBody(sp) else TrashProgressBody(progress)
+        }
+        is Step.ServerDone -> HoardDialog(
+            title = if (s.result.failed.isEmpty()) stringResource(R.string.trash_server_done_title) else stringResource(R.string.trash_server_failed_title),
+            onDismiss = { if (!s.retrying) finish(s.trashed, emptyList()) },
+            confirm = {
+                if (s.result.failed.isNotEmpty()) {
+                    TextButton(
+                        {
+                            step = s.copy(retrying = true)
+                            scope.launch {
+                                val again = s.result.merge(container.trash.server.move(s.result.retryable))
+                                serverMoved = again.moved
+                                val trashed = (s.trashed + movedUnits(s.serverUnits, again.moved)).distinct()
+                                step = Step.ServerDone(again, trashed, s.serverUnits)
+                            }
+                        },
+                        enabled = !s.retrying,
+                        modifier = Modifier.testTag("trash-retry-failed"),
+                    ) {
+                        Text(stringResource(R.string.trash_server_retry), color = HfpsTheme.colors.primary, style = HfpsTheme.typography.ui.copy(fontWeight = FontWeight.SemiBold))
+                    }
+                }
+            },
+            dismiss = { TextButton({ finish(s.trashed, emptyList()) }, enabled = !s.retrying) { Text(stringResource(R.string.t_common_close), color = HfpsTheme.colors.foreground) } },
+        ) {
+            if (s.retrying) LinearProgressIndicator(Modifier.fillMaxWidth(), color = HfpsTheme.colors.primary, trackColor = HfpsTheme.colors.muted)
+            ServerResultBody(s.result, phoneSelected)
         }
         is Step.Offer -> {
             var busy by remember { mutableStateOf(false) }
@@ -297,6 +371,107 @@ fun MoveToTrashDialog(
             }
         }
     }
+}
+
+/** The server trash's days when the server does not say (hoard-server's default `compress.trashDays`). */
+const val SERVER_TRASH_DAYS = 30
+
+/**
+ * The server's part of the confirmation (ADR 0023 Amendment (2.10.0)): how many photos, files and how much go to the
+ * photo server's trash, what it leaves out and why (held, busy, on a phone…), the write mount's problem, and the
+ * warnings (the only copy; Reveal's edits).
+ */
+@Composable
+fun ServerConfirmBody(part: ServerPart, serverDays: Int) {
+    val p = part.preview
+    Column(Modifier.padding(top = 8.dp).testTag("trash-server-confirm"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (p == null) {
+            Text(stringResource(R.string.trash_reason_photo_server_unreachable), style = HfpsTheme.typography.body, color = HfpsTheme.colors.destructive)
+            return@Column
+        }
+        if (p.movable > 0) {
+            Text(
+                pluralStringResource(
+                    R.plurals.trash_server_confirm_body,
+                    p.movable,
+                    formatNumber(p.movable, locale()),
+                    pluralStringResource(R.plurals.trash_server_files_size, p.nasFiles + p.serverItems, formatNumber(p.nasFiles + p.serverItems, locale()), bytes(p.size)),
+                ),
+                style = HfpsTheme.typography.body,
+                color = HfpsTheme.colors.mutedForeground,
+            )
+            Text(stringResource(R.string.trash_server_auto_note, serverDays), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        }
+        p.nasBlocked?.let { Text(stringResource(R.string.trash_server_blocked, serverReason(it)), style = HfpsTheme.typography.uiMedium, color = HfpsTheme.colors.destructive, modifier = Modifier.testTag("trash-server-blocked")) }
+        if (p.onlyCopy.isNotEmpty()) {
+            Text(pluralStringResource(R.plurals.trash_server_only_copy, p.onlyCopy.size, formatNumber(p.onlyCopy.size, locale())), style = HfpsTheme.typography.uiMedium, color = HfpsTheme.colors.warning)
+        }
+        if (p.edits.isNotEmpty()) {
+            Text(pluralStringResource(R.plurals.trash_server_edits, p.edits.size, formatNumber(p.edits.size, locale())), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        }
+        for ((why, n) in part.skipped.values.groupingBy { it }.eachCount()) {
+            Text(pluralStringResource(R.plurals.trash_server_skipped, n, formatNumber(n, locale()), serverReason(why)), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        }
+    }
+}
+
+@Composable
+fun ServerProgressBody(progress: Pair<Int, Int>) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.trash_server_progress, progress.first, progress.second), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground)
+        LinearProgressIndicator(
+            progress = { if (progress.second == 0) 0f else progress.first.toFloat() / progress.second },
+            modifier = Modifier.fillMaxWidth(),
+            color = HfpsTheme.colors.primary,
+            trackColor = HfpsTheme.colors.muted,
+        )
+    }
+}
+
+/** Per item: how many moved, and the skipped and failed ones by reason, in words. */
+@Composable
+fun ServerResultBody(result: MoveResult, phoneSelected: Set<String> = emptySet()) {
+    Column(Modifier.testTag("trash-server-result"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(pluralStringResource(R.plurals.trash_moved, result.moved.size, formatNumber(result.moved.size, locale())), style = HfpsTheme.typography.body, color = HfpsTheme.colors.mutedForeground)
+        val skipped = result.skipped.filter { (id, why) -> !(why == "on_phone" && id in phoneSelected) }
+        for ((why, n) in skipped.values.groupingBy { it }.eachCount()) {
+            Text(pluralStringResource(R.plurals.trash_server_skipped, n, formatNumber(n, locale()), serverReason(why)), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.mutedForeground)
+        }
+        for ((why, n) in result.failedBy) {
+            Text(pluralStringResource(R.plurals.trash_server_failed, n, formatNumber(n, locale()), serverReason(why)), style = HfpsTheme.typography.ui, color = HfpsTheme.colors.destructive)
+        }
+    }
+}
+
+/** A server trash reason (skip, failure or refusal of `/v1/trash`) in words. */
+@Composable
+fun serverReason(reason: String): String = serverReasonText(LocalResources.current, reason)
+
+fun serverReasonText(res: android.content.res.Resources, reason: String): String {
+    val id = when (reason) {
+        "not_found" -> R.string.trash_srv_not_found
+        "trashed" -> R.string.trash_srv_trashed
+        "held" -> R.string.trash_srv_held
+        "busy" -> R.string.trash_srv_busy
+        "on_phone" -> R.string.trash_srv_on_phone
+        "nothing" -> R.string.trash_srv_nothing
+        "changed" -> R.string.trash_srv_changed
+        "path_taken" -> R.string.trash_srv_path_taken
+        "not_writable" -> R.string.trash_srv_not_writable
+        "not_same_device" -> R.string.trash_srv_not_same_device
+        "unreadable" -> R.string.trash_srv_unreadable
+        "partial" -> R.string.trash_srv_partial
+        "state" -> R.string.trash_srv_state
+        dev.hfps.hoard.server.trash.TrashReasons.WEB_ONLY -> R.string.trash_srv_web_only
+        dev.hfps.hoard.server.trash.TrashReasons.NOT_HOARD -> R.string.trash_srv_not_hoard
+        dev.hfps.hoard.server.trash.TrashReasons.UNREACHABLE -> R.string.trash_srv_unreachable
+        dev.hfps.hoard.server.trash.TrashReasons.CANCELLED -> R.string.trash_srv_cancelled
+        dev.hfps.hoard.server.trash.TrashReasons.RATE_LIMITED -> R.string.trash_srv_rate_limited
+        in dev.hfps.hoard.server.trash.TrashReasons.WRITE_MOUNT -> R.string.trash_srv_write_mount
+        "error" -> R.string.trash_srv_error
+        else -> return res.getString(R.string.trash_srv_other, reason)
+    }
+    return res.getString(id)
 }
 
 /** The one-time offer of Media management in the first phone trash dialog. */

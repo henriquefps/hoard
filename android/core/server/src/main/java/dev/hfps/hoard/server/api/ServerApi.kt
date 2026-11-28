@@ -211,6 +211,26 @@ class ServerApi(
     fun compressPurge(itemIds: List<String>): CompressBatchAnswer =
         send("POST", "/v1/compress/purge", CompressBatch(itemIds = itemIds), CompressBatch.serializer(), CompressBatchAnswer.serializer())
 
+    // --- The trash for paired devices (ADR 0023 Amendment (0.15.0), feature `trash-actions`) -------------------------
+
+    /** `GET /v1/trash?cursor=`: a page of the trash, newest first; the first page (no cursor) carries `groups`. */
+    fun trashList(cursor: String?): TrashPage =
+        get("/v1/trash" + (cursor?.takeIf { it.isNotEmpty() }?.let { "?cursor=${enc(it)}" } ?: ""), TrashPage.serializer())
+
+    /** `POST /v1/trash/move` (1–500 ids): the dry run ([dryRun]) or the move; `503 unavailable` when NAS shots cannot move. */
+    fun trashMove(itemIds: List<String>, dryRun: Boolean): TrashMoveAnswer =
+        send("POST", "/v1/trash/move", TrashMoveRequest(itemIds, dryRun), TrashMoveRequest.serializer(), TrashMoveAnswer.serializer())
+
+    fun trashRestore(units: List<TrashUnitRef>): TrashActionAnswer =
+        send("POST", "/v1/trash/restore", TrashUnitsRequest(units), TrashUnitsRequest.serializer(), TrashActionAnswer.serializer())
+
+    fun trashDelete(units: List<TrashUnitRef>): TrashActionAnswer =
+        send("POST", "/v1/trash/delete", TrashUnitsRequest(units), TrashUnitsRequest.serializer(), TrashActionAnswer.serializer())
+
+    /** `POST /v1/trash/empty`: `409 conflict` reason `confirm` (with the current figures) when [confirm] is not the trash's now. */
+    fun trashEmpty(confirm: TrashFigures, groups: List<String>?): TrashActionAnswer =
+        send("POST", "/v1/trash/empty", TrashEmptyRequest(confirm, groups), TrashEmptyRequest.serializer(), TrashActionAnswer.serializer())
+
     /** The path of a phone item's output (`GET /v1/compress/items/{id}/output`, by range: [download]). */
     fun compressOutputPath(id: String): String = "/v1/compress/items/${enc(id)}/output"
 

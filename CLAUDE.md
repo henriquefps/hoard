@@ -99,6 +99,12 @@ change one only through the Hoard ↔ Reveal coordinator. Read `README.md` and
   `GET /v1/backup/roots` first and starts over a root the server no longer lists (an admin purge: made again, rows
   reset, its `freed` history dropped, said once); `507 storage_full` is a pass-wide wait (`server_account.backup_wait`,
   `gallery.db` 7), never a failed file.
+- **Server photos in the trash** (ADR 0023 Amendment (2.10.0), hoard-server 0.15.0 feature `trash-actions`): never
+  over SMB. `:core:server` `trash/` (`ServerTrash`, pure over `TrashRoutes`: dry run and move in batches, listing,
+  restore/delete by unit, Empty by group with the 409 figures, auto-empty of Hoard's old SMB moves; `ServerTrashTest`
+  with `FakeTrash`), `:native` `trash/ServerTrashService.kt`, `ServerRouting.kt` (Files and culling in mapped
+  folders), `ServerTrashSplit.kt` (Hoard's SMB rows shown once), `ui/trash/TrashServerUi.kt`. Held and backup-only
+  (`web_only`) units are never sent to delete. E2E: `docs/testing/server-trash.md`.
 - **Video compression** (ADR 0025, A1, Hoard 2.7.0): the server compresses; Hoard starts library (`nas`) and
   `backup` jobs, only with the feature `compress` and that target's `compress.targets.<t>.ok` (`CompressGate`,
   `:core:server` `compress/`). `:native` `compress/` (`CompressService`, `CompressTargets`), `ui/compress/` (the sheet,
