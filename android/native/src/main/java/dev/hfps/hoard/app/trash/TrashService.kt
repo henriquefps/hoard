@@ -455,7 +455,7 @@ class TrashService(private val container: AppContainer) {
      * ADR 0023 Amendment (2.10.0): with `trash-actions`, rows of server-folder photos are never restored or deleted over
      * SMB, whatever a caller passes (the server does it); without the feature every row is Hoard's own.
      */
-    private suspend fun ownRows(rows: List<TrashEntryEntity>): List<TrashEntryEntity> =
+    internal suspend fun ownRows(rows: List<TrashEntryEntity>): List<TrashEntryEntity> =
         if (rows.isEmpty() || !server.enabled()) rows else split(rows, listing = null, enabled = true).local
 
     /** What an Empty did: rows deleted, compressed originals purged by the server, entries left because they are held. */

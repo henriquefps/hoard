@@ -44,10 +44,13 @@ data class ServerTrashSplit(
                     local += unit
                     continue
                 }
-                val item = index?.let { ix -> unit.firstNotNullOfOrNull { ix.coverOf(folderId, it.trashedPath) } }
+                // A folder Hoard trashed whole (one row) is covered when the server lists anything at or under it.
+                val item = index?.let { ix -> unit.firstNotNullOfOrNull { ix.coverOf(folderId, it.trashedPath) ?: ix.coverUnder(folderId, it.trashedPath) } }
                 when {
                     item != null -> covered.getOrPut(item) { ArrayList() } += unit
-                    unit.any { TrashPlanner.isMedia(SharePaths.name(it.originalPath)) } -> waiting += unit
+                    // A folder in a server folder may hold server photos: never Hoard's to restore or delete over SMB
+                    // (review of #88: a recursive delete would take every photo inside).
+                    unit.any { it.isDirectory || TrashPlanner.isMedia(SharePaths.name(it.originalPath)) } -> waiting += unit
                     else -> local += unit // a plain file or a sidecar alone: the server does not trash those
                 }
             }

@@ -29,10 +29,14 @@ class EmptyAllServerRowsTest {
     private val shareRoot = TrashSamples.row(nas, "", "2026-11-20", "Docs/report.pdf", 10) // the share root: no server folder
     private val drive = TrashSamples.row(usb, "", "2026-11-20", "DCIM/DSC1.JPG", 10)
 
+    // Review of #88: a folder trashed whole before 2.10.0 inside the server folder (photos inside it), one row.
+    private val folder = TrashSamples.row(nas, "Photos", "2026-11-10", "Photos/2023/Wedding", 0).copy(isDirectory = true)
+    private val driveFolder = TrashSamples.row(usb, "", "2026-11-10", "DCIM/Old", 0).copy(isDirectory = true)
+
     private fun seed(features: String) = runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         val db = container.database.trash()
         db.delete(db.all().map { it.id })
-        db.put(listOf(known, byRoot, shareRoot, drive))
+        db.put(listOf(known, byRoot, shareRoot, drive, folder, driveFolder))
         db.putRoot(TrashRootEntity(nas.locationId, nas.share, "Photos", null, "f1"))
         // Paired with a server that is not reachable (nothing listens on port 1).
         container.gallery.db.account().put(
@@ -55,13 +59,18 @@ class EmptyAllServerRowsTest {
         // 2.9's Empty (the screen before it knew the server's features) and the local-only Empty, server unreachable.
         for (localOnly in listOf(false, true)) {
             val rows = container.trash.rowsForEmptyAll(localOnly)
-            assertThat(rows.map { it.id }).containsExactly(shareRoot.id, drive.id)
+            assertThat(rows.map { it.id }).containsExactly(shareRoot.id, drive.id, driveFolder.id)
         }
+        // Delete permanently and Restore of rows (TrashService.empty / restore) take only Hoard's own rows: never the
+        // server folder's trashed folder (its delete is recursive) nor its photos.
+        val all = container.database.trash().all()
+        assertThat(container.trash.ownRows(all).map { it.id }).containsExactly(shareRoot.id, drive.id, driveFolder.id)
+        assertThat(container.trash.ownRows(listOf(folder))).isEmpty()
     }
 
     @Test
     fun withoutTheFeatureEveryRowIsHoardsOwn() = runBlocking<Unit>(kotlinx.coroutines.Dispatchers.IO) {
         seed("items,trash")
-        assertThat(container.trash.rowsForEmptyAll(false).map { it.id }).containsExactly(known.id, byRoot.id, shareRoot.id, drive.id)
+        assertThat(container.trash.rowsForEmptyAll(false).map { it.id }).containsExactly(known.id, byRoot.id, shareRoot.id, drive.id, folder.id, driveFolder.id)
     }
 }

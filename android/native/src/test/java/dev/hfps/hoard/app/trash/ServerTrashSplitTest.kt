@@ -69,4 +69,38 @@ class ServerTrashSplitTest {
     fun `without trash-actions every row is Hoard's own`() {
         assertThat(ServerTrashSplit.allLocal(rows).local).isEqualTo(rows)
     }
+
+    // Review of #88: a folder Hoard trashed whole over SMB before 2.10.0, with server photos inside (one directory row).
+    private val folderRow = TrashSamples.row(nas, "Imagens", "2026-11-10", "Imagens/2023/Wedding", 0).copy(isDirectory = true, shotKey = "imagens/2023/wedding")
+    private val inside = ServerTrashListing(
+        listOf(
+            TrashEntryView(
+                "item-w", "photo", "DSC09912.ARW",
+                places = listOf(TrashPlaceView("nas", "Imagens", "2023/Wedding/DSC09912.ARW", ".hoard-trash/2026-11-10/2023/Wedding/DSC09912.ARW")),
+                units = listOf(TrashUnitView("nas:f1:.hoard-trash/2026-11-10", "nas", "2026-11-10", "f1", "Imagens", "2023/Wedding", group = "hoard")),
+            ),
+        ),
+        emptyMap(),
+    )
+
+    @Test
+    fun `a trashed folder with server photos inside is the server's, never local`() {
+        val listed = ServerTrashSplit.of(listOf(folderRow), ServerTrashIndex(inside), ::root)
+        assertThat(listed.covered.keys).containsExactly("item-w")
+        assertThat(listed.local).isEmpty()
+        // Before the listing, or with the server unreachable: it waits.
+        val unread = ServerTrashSplit.of(listOf(folderRow), null, ::root)
+        assertThat(unread.waiting).containsExactly(folderRow)
+        assertThat(unread.local).isEmpty()
+        // Not listed at all (nothing inside the server indexes): still not Hoard's to delete recursively.
+        assertThat(ServerTrashSplit.of(listOf(folderRow), ServerTrashIndex(listing), ::root).waiting).containsExactly(folderRow)
+    }
+
+    @Test
+    fun `a trashed folder outside a server folder stays local`() {
+        val usbFolder = TrashSamples.row(usb, "", "2026-11-10", "DCIM/Old", 0).copy(isDirectory = true)
+        val shareFolder = TrashSamples.row(nas, "", "2026-11-10", "Docs/Old", 0).copy(isDirectory = true)
+        val s = ServerTrashSplit.of(listOf(usbFolder, shareFolder), ServerTrashIndex(inside), ::root)
+        assertThat(s.local).containsExactly(usbFolder, shareFolder)
+    }
 }

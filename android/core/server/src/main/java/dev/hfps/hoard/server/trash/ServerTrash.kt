@@ -476,6 +476,17 @@ class ServerTrashIndex(listing: ServerTrashListing) {
         return if (folderId != null) byFolder[folderId]?.get(tail) else anyFolder[tail]
     }
 
+    /**
+     * A server item listed at or under [trashedPath] (a share path of a folder Hoard trashed whole, of NAS folder
+     * [folderId]), or null: the server lists the photos inside it at deeper paths.
+     */
+    fun coverUnder(folderId: String?, trashedPath: String): String? {
+        val tail = tailOf(trashedPath) ?: return null
+        val tails = if (folderId != null) byFolder[folderId].orEmpty() else anyFolder
+        tails[tail]?.let { return it }
+        return tails.entries.firstOrNull { it.key.startsWith("$tail/") }?.value
+    }
+
     /** Whether the server lists the file Hoard trashed at [trashedPath] (a share path) of NAS folder [folderId]. */
     fun covers(folderId: String?, trashedPath: String): Boolean = coverOf(folderId, trashedPath) != null
 

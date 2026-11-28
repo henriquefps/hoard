@@ -954,4 +954,13 @@ away).
    - any other offered refusal of a photo or folder unit in a mapped folder.
 
    A plain file keeps the offer. `RefusedUnit` carries the unit's `serverFolderId` for this. Tests: `ServerRoutingTest`.
+3. **A folder trashed whole over SMB is never Hoard's in a server folder.** Before 2.10.0, Files' delete of a folder
+   was one index row (`is_directory`); its name is not media, and the server lists the photos inside it at deeper
+   paths. The split classed it as Hoard's own, so Empty and Delete permanently deleted it recursively over SMB, and
+   Restore moved it back. Now a directory row in a server folder is:
+   - **covered** when the server lists anything at or under its path (`ServerTrashIndex.coverUnder`; restore, delete
+     and Empty go through `/v1` for those units);
+   - **waiting** otherwise.
+
+   A folder outside a server folder is unchanged. Tests: `ServerTrashSplitTest`, `EmptyAllServerRowsTest`.
 
